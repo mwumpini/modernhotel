@@ -11,6 +11,8 @@ async function resolveTenant(req: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const programs = await listHrTrainingPrograms(ctx.tenantId)

@@ -65,7 +65,16 @@ export async function loadOperations(ctx: SampleCtx) {
       { id: `${p}mnt_2`, tenantId, roomNumber: room(3), category: 'hvac', priority: 'normal', status: 'in_progress', description: 'Air conditioner is not cooling', reportedBy: 'Yaw Boateng', assignedTo: 'Maintenance team', estimatedCost: 350 },
       { id: `${p}mnt_3`, tenantId, location: 'Second-floor corridor', category: 'electrical', priority: 'low', status: 'completed', description: 'Replaced two corridor bulbs', reportedBy: 'Yaw Boateng', assignedTo: 'Maintenance team', estimatedCost: 30, actualCost: 30, resolvedAt: dayOffset(ctx, -1) },
     ])
+    // Who looks after which rooms (staff come from HR, the source of truth for people).
+    const numbers = configured.map((r) => r.number)
+    const half = Math.ceil(numbers.length / 2)
+    await seedRows(prisma.housekeepingRoomResponsibility, [
+      { id: `${p}resp_ama`, tenantId, label: 'Lower floors', staffId: `${p}emp_ama`, staffName: 'Ama Serwaa', shift: 'morning', rooms: numbers.slice(0, half), isActive: true },
+      { id: `${p}resp_yaw`, tenantId, label: 'Upper floors', staffId: `${p}emp_yaw`, staffName: 'Yaw Boateng', shift: 'morning', rooms: numbers.slice(half), isActive: true },
+    ])
   }
+  const haveAreas = new Set((await prisma.housekeepingCleaningArea.findMany({ where: { tenantId }, select: { name: true } })).map((a) => a.name))
+  await seedRows(prisma.housekeepingCleaningArea, ['Lobby', 'Restaurant', 'Pool deck', 'Gym', 'Staff canteen', 'Corridors'].filter((n) => !haveAreas.has(n)).map((name, i) => ({ id: `${p}area_${i + 1}`, tenantId, name, sortOrder: 50 + i, isActive: true })))
 
   // ---- events ----
   await seedRows(prisma.conferenceHall, HALLS.map(([key, name, capacity, type, price, features]) => ({ id: `${p}hall_${key}`, tenantId, name, capacity, type, price, features, status: 'available' })))
@@ -97,6 +106,8 @@ export async function loadOperations(ctx: SampleCtx) {
 export async function removeOperations(ctx: SampleCtx) {
   const where = bySampleId(ctx)
   await prisma.housekeepingTask.deleteMany({ where })
+  await prisma.housekeepingRoomResponsibility.deleteMany({ where })
+  await prisma.housekeepingCleaningArea.deleteMany({ where })
   await prisma.housekeepingStaff.deleteMany({ where })
   await prisma.maintenanceRequest.deleteMany({ where })
   await prisma.eventBooking.deleteMany({ where })

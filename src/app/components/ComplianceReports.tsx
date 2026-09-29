@@ -2,11 +2,9 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Badge,
   Button,
   Card,
   CardBody,
-  CardHeader,
   Chip,
   Modal,
   ModalBody,
@@ -32,39 +30,100 @@ import {
   getDaysUntilDueForSchedule,
   scheduleInputFromRule as scheduleInput,
 } from '@/app/lib/compliance/dueDates';
+import { syncOpenSalesTaxFilings } from '@/app/lib/compliance/salesFilingSync';
+import { worksheetTableClassNames } from './frontoffice/StayWorksheetTable';
+import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 import ComplianceHospitalityReference from './ComplianceHospitalityReference';
+import type { ComplianceReport, ReportingRule } from '@/app/lib/models';
+
+function money(n: number) {
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function latestFilingForRule(reports: ComplianceReport[], rule: ReportingRule): ComplianceReport | undefined {
+  return reports
+    .filter((r) => r.countryCode === rule.countryCode && r.reportType === rule.reportType)
+    .sort((a, b) => (b.period || '').localeCompare(a.period || ''))[0];
+}
+
+function filingStatusChip(filing: ComplianceReport | undefined, daysUntilDue: number) {
+  if (filing?.status === 'approved') return { label: 'Approved', color: 'success' as const };
+  if (filing?.status === 'submitted') return { label: 'Submitted', color: 'primary' as const };
+  if (filing?.status === 'pending') return { label: 'Pending', color: 'warning' as const };
+  if (daysUntilDue <= 7) return { label: 'Due soon', color: 'danger' as const };
+  if (daysUntilDue <= 14) return { label: 'Upcoming', color: 'warning' as const };
+  return { label: 'Not started', color: 'default' as const };
+}
+
+function reportIcon(reportType: string) {
+  switch (reportType) {
+    case 'VAT':
+      return '🧾';
+    case 'NHIL':
+      return '🏥';
+    case 'GETFund':
+      return '🎓';
+    case 'Tourism':
+      return '🏖️';
+    case 'SSNIT':
+      return '👥';
+    case 'PAYE':
+      return '💰';
+    case 'WHT':
+      return '📤';
+    case 'CIT':
+      return '🏢';
+    case 'GSL':
+      return '📈';
+    case 'IncomeTax':
+      return '📊';
+    case 'Sales Tax':
+      return '🛒';
+    case 'Hotel Tax':
+      return '🏨';
+    default:
+      return '📋';
+  }
+}
 
 export default function ComplianceReports() {
   const country = useComplianceStore((s) => s.country);
   const reportingRulesAll = useComplianceStore((s) => s.reportingRules);
   const reports = useComplianceStore((s) => s.reports);
   const hydrateReportFilingsFromApi = useComplianceStore((s) => s.hydrateReportFilingsFromApi);
+
   useEffect(() => {
-    hydrateReportFilingsFromApi();
+    void hydrateReportFilingsFromApi().then(() => {
+      try {
+        syncOpenSalesTaxFilings();
+      } catch {
+        // ledger may still be loading
+      }
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
   const reportingRules = useMemo(
     () => reportingRulesAll.filter((r) => r.countryCode === country && r.isActive !== false),
     [reportingRulesAll, country]
   );
   const filingSnapshots = useFilingSnapshots();
   const [viewTab, setViewTab] = useState<'schedule' | 'reference'>('schedule');
-  const [selectedRule, setSelectedRule] = useState<(typeof reportingRulesAll)[number] | null>(null);
+  const [selectedRule, setSelectedRule] = useState<ReportingRule | null>(null);
   const { isOpen, onOpen, onClose } = useDisclosure();
 
-  // Jump straight to where this filing actually gets recorded -- the same "record remittance"
-  // flow (Accounting > Bank & Cash > Taxes) that syncs into the `reports` list below, rather
-  // than leaving "Prepare" as a dead button with no defined destination.
   const goPrepareFiling = () => {
     try {
       localStorage.setItem('accounting.tab', 'taxes');
       localStorage.setItem('nav.section', 'accounting');
       window.dispatchEvent(new CustomEvent('app.navigate', { detail: { section: 'accounting' } }));
       window.dispatchEvent(new CustomEvent('accounting-navigate'));
-    } catch {}
+    } catch {
+      // ignore
+    }
   };
 
-  const openRuleDetail = (rule: (typeof reportingRulesAll)[number]) => {
+  const openRuleDetail = (rule: ReportingRule) => {
     setSelectedRule(rule);
     onOpen();
   };
@@ -78,61 +137,32 @@ export default function ComplianceReports() {
 
   const countryLabel = useMemo(() => getCountryDisplayName(country), [country]);
 
-  const getStatusColor = (frequency: string) => {
+  const frequencyColor = (frequency: string) => {
     switch (frequency) {
       case 'Monthly':
-        return 'primary';
+        return 'primary' as const;
       case 'Quarterly':
-        return 'secondary';
+        return 'secondary' as const;
       case 'Annually':
-        return 'warning';
+        return 'warning' as const;
       default:
-        return 'default';
-    }
-  };
-
-  const getReportIcon = (reportType: string) => {
-    switch (reportType) {
-      case 'VAT':
-        return '🧾';
-      case 'NHIL':
-        return '🏥';
-      case 'GETFund':
-        return '🎓';
-      case 'Tourism':
-        return '🏖️';
-      case 'SSNIT':
-        return '👥';
-      case 'PAYE':
-        return '💰';
-      case 'WHT':
-        return '📤';
-      case 'CIT':
-        return '🏢';
-      case 'GSL':
-        return '📈';
-      case 'IncomeTax':
-        return '📊';
-      case 'Sales Tax':
-        return '🛒';
-      case 'Hotel Tax':
-        return '🏨';
-      default:
-        return '📋';
+        return 'default' as const;
     }
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-gray-600">
-          Filing schedules for <span className="font-medium text-ghana-black">{countryLabel}</span>
+          Live filing schedule · <span className="font-medium text-ghana-black">{countryLabel}</span>
         </p>
         <Tabs
           size="sm"
+          variant="solid"
           selectedKey={viewTab}
           onSelectionChange={(key) => setViewTab(key as 'schedule' | 'reference')}
           aria-label="Reports view"
+          classNames={deskBookTabsClassNames}
         >
           <Tab key="schedule" title="Filing schedule" />
           <Tab key="reference" title="Hospitality reference" />
@@ -141,144 +171,115 @@ export default function ComplianceReports() {
 
       {viewTab === 'reference' ? (
         <ComplianceHospitalityReference countryCode={country} />
+      ) : reportingRules.length === 0 ? (
+        <p className="py-6 text-center text-sm text-gray-600">
+          No filing schedules for {countryLabel}. Sync Tax rules for this country, then reload.
+        </p>
       ) : (
-        <>
-          <Card className="border border-slate-200 shadow-sm">
-            <CardHeader>
-              <h2 className="text-xl font-bold text-ghana-black">Active reporting requirements</h2>
-            </CardHeader>
-            <CardBody>
-              {reportingRules.length === 0 ? (
-                <p className="text-sm text-gray-600 py-4 text-center">
-                  No filing schedules for {countryLabel}. Check Compliance → Tax rules country sync or reload data.
-                </p>
-              ) : (
-                <Table aria-label="Reporting requirements table">
-                  <TableHeader>
-                    <TableColumn>Report type</TableColumn>
-                    <TableColumn>Frequency</TableColumn>
-                    <TableColumn>Due rule</TableColumn>
-                    <TableColumn>Suggested (GHS)</TableColumn>
-                    <TableColumn>Next due</TableColumn>
-                    <TableColumn>Days left</TableColumn>
-                    <TableColumn>Status</TableColumn>
-                    <TableColumn>Actions</TableColumn>
-                  </TableHeader>
-                  <TableBody>
-                    {reportingRules.map((rule) => {
-                      const input = scheduleInput(rule);
-                      const daysUntilDue = getDaysUntilDueForSchedule(input);
-                      const nextDueDate = formatDueDateForSchedule(input);
-                      const snapshot = filingSnapshots.get(rule.id);
+        <Card className="border-0 shadow-lg">
+          <CardBody className="px-2 py-3">
+            <Table aria-label="Filing schedule" removeWrapper classNames={worksheetTableClassNames}>
+              <TableHeader>
+                <TableColumn>Report</TableColumn>
+                <TableColumn>Frequency</TableColumn>
+                <TableColumn>Due rule</TableColumn>
+                <TableColumn>Period</TableColumn>
+                <TableColumn>Amount (GHS)</TableColumn>
+                <TableColumn>Next due</TableColumn>
+                <TableColumn>Days left</TableColumn>
+                <TableColumn>Status</TableColumn>
+                <TableColumn>Actions</TableColumn>
+              </TableHeader>
+              <TableBody emptyContent="No schedules">
+                {reportingRules.map((rule) => {
+                  const input = scheduleInput(rule);
+                  const daysUntilDue = getDaysUntilDueForSchedule(input);
+                  const nextDueDate = formatDueDateForSchedule(input);
+                  const snapshot = filingSnapshots.get(rule.id);
+                  const filing = latestFilingForRule(reports, rule);
+                  const status = filingStatusChip(filing, daysUntilDue);
+                  const amount =
+                    filing && filing.amount > 0
+                      ? filing.amount
+                      : snapshot && snapshot.suggestedAmount > 0
+                        ? snapshot.suggestedAmount
+                        : 0;
+                  const amountSource = filing && filing.amount > 0
+                    ? 'filing'
+                    : snapshot && snapshot.suggestedAmount > 0
+                      ? snapshot.source
+                      : 'none';
+                  const period = filing?.period || snapshot?.period || '—';
 
-                      return (
-                        <TableRow key={rule.id}>
-                          <TableCell>
-                            <div className="flex items-center space-x-2">
-                              <span className="text-lg">{getReportIcon(rule.reportType)}</span>
-                              <div>
-                                <span className="font-medium">{rule.reportType}</span>
-                                {rule.description ? (
-                                  <p className="text-xs text-gray-500 max-w-xs">{rule.description}</p>
-                                ) : null}
-                                {snapshot?.detail ? (
-                                  <p className="text-xs text-gray-400 max-w-xs">{snapshot.detail}</p>
-                                ) : null}
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Chip color={getStatusColor(rule.frequency) as 'primary' | 'secondary' | 'warning' | 'default'} variant="flat" size="sm">
-                              {rule.frequency}
-                            </Chip>
-                          </TableCell>
-                          <TableCell>
-                            <span className="text-xs text-gray-600">{dueDateLabel(input)}</span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="font-mono text-sm">
-                              {snapshot && snapshot.suggestedAmount > 0
-                                ? snapshot.suggestedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })
-                                : '—'}
-                            </span>
-                            {snapshot?.source && snapshot.source !== 'none' ? (
-                              <p className="text-[10px] text-gray-400 capitalize">from {snapshot.source}</p>
-                            ) : null}
-                          </TableCell>
-                          <TableCell>
-                            <span className="font-mono text-sm">{nextDueDate}</span>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center space-x-2">
-                              <span
-                                className={`font-bold ${
-                                  daysUntilDue <= 7
-                                    ? 'text-ghana-red'
-                                    : daysUntilDue <= 14
-                                      ? 'text-ghana-gold'
-                                      : 'text-ghana-green'
-                                }`}
-                              >
-                                {daysUntilDue}
-                              </span>
-                              <span className="text-xs text-gray-500">days</span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge
-                              color={daysUntilDue <= 7 ? 'danger' : daysUntilDue <= 14 ? 'warning' : 'success'}
-                              variant="flat"
-                            >
-                              {daysUntilDue <= 7 ? 'Urgent' : daysUntilDue <= 14 ? 'Due soon' : 'On track'}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex space-x-2">
-                              <Button size="sm" color="primary" variant="flat" onPress={goPrepareFiling}>
-                                Prepare
-                              </Button>
-                              <Button size="sm" variant="light" onPress={() => openRuleDetail(rule)}>
-                                View
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              )}
-            </CardBody>
-          </Card>
-
-          {reportingRules.length > 0 ? (
-            <Card className="border-0 shadow-lg">
-              <CardHeader>
-                <h3 className="text-lg font-semibold text-ghana-black">Required fields summary</h3>
-              </CardHeader>
-              <CardBody>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {reportingRules.map((rule) => (
-                    <div key={rule.id} className="p-4 border border-gray-200 rounded-lg">
-                      <div className="flex items-center space-x-2 mb-3">
-                        <span className="text-lg">{getReportIcon(rule.reportType)}</span>
-                        <h4 className="font-semibold">{rule.reportType}</h4>
-                      </div>
-                      <div className="space-y-1">
-                        {rule.fieldsRequired.map((field) => (
-                          <div key={field} className="flex items-center space-x-2">
-                            <div className="w-2 h-2 bg-ghana-green rounded-full" />
-                            <span className="text-sm text-gray-600">{field}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardBody>
-            </Card>
-          ) : null}
-        </>
+                  return (
+                    <TableRow key={rule.id} className="cursor-pointer" onClick={() => openRuleDetail(rule)}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span aria-hidden>{reportIcon(rule.reportType)}</span>
+                          <span className="font-medium text-ghana-black">{rule.reportType}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Chip color={frequencyColor(rule.frequency)} variant="flat" size="sm">
+                          {rule.frequency}
+                        </Chip>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-xs text-gray-600 whitespace-normal max-w-[14rem] block">
+                          {dueDateLabel(input)}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-mono text-sm tabular-nums">{period}</span>
+                      </TableCell>
+                      <TableCell>
+                        <div>
+                          <span className="font-mono text-sm tabular-nums">
+                            {amount > 0 ? money(amount) : '—'}
+                          </span>
+                          {amountSource !== 'none' && (
+                            <p className="text-[10px] text-gray-400 capitalize">from {amountSource}</p>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-mono text-sm tabular-nums">{nextDueDate}</span>
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className={`font-semibold tabular-nums ${
+                            daysUntilDue <= 7
+                              ? 'text-ghana-red'
+                              : daysUntilDue <= 14
+                                ? 'text-ghana-gold'
+                                : 'text-ghana-green'
+                          }`}
+                        >
+                          {daysUntilDue}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <Chip size="sm" variant="flat" color={status.color}>
+                          {status.label}
+                        </Chip>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                          <Button size="sm" color="primary" variant="flat" onPress={goPrepareFiling}>
+                            Prepare
+                          </Button>
+                          <Button size="sm" variant="light" onPress={() => openRuleDetail(rule)}>
+                            View
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </CardBody>
+        </Card>
       )}
 
       <Modal isOpen={isOpen} onOpenChange={onClose} size="2xl">
@@ -286,8 +287,8 @@ export default function ComplianceReports() {
           {selectedRule && (
             <>
               <ModalHeader className="flex items-center gap-2">
-                <span className="text-lg">{getReportIcon(selectedRule.reportType)}</span>
-                {selectedRule.reportType} filing schedule
+                <span aria-hidden>{reportIcon(selectedRule.reportType)}</span>
+                {selectedRule.reportType} filing
               </ModalHeader>
               <ModalBody>
                 <div className="grid grid-cols-2 gap-4 text-sm">
@@ -301,48 +302,67 @@ export default function ComplianceReports() {
                   </div>
                   <div>
                     <p className="text-gray-500">Next due</p>
-                    <p className="font-medium font-mono">{formatDueDateForSchedule(scheduleInput(selectedRule))}</p>
+                    <p className="font-medium font-mono">
+                      {formatDueDateForSchedule(scheduleInput(selectedRule))}
+                    </p>
                   </div>
                   <div>
                     <p className="text-gray-500">Days left</p>
-                    <p className="font-medium">{getDaysUntilDueForSchedule(scheduleInput(selectedRule))} days</p>
+                    <p className="font-medium">
+                      {getDaysUntilDueForSchedule(scheduleInput(selectedRule))} days
+                    </p>
                   </div>
                 </div>
                 {selectedRule.description && (
-                  <p className="text-sm text-gray-600 mt-3">{selectedRule.description}</p>
+                  <p className="mt-3 text-sm text-gray-600">{selectedRule.description}</p>
                 )}
 
                 {(() => {
                   const snapshot = filingSnapshots.get(selectedRule.id);
-                  if (!snapshot || snapshot.suggestedAmount <= 0) return null;
+                  const filing = latestFilingForRule(reports, selectedRule);
+                  const amount =
+                    filing && filing.amount > 0
+                      ? filing.amount
+                      : snapshot && snapshot.suggestedAmount > 0
+                        ? snapshot.suggestedAmount
+                        : 0;
+                  if (amount <= 0) return null;
                   return (
-                    <div className="mt-3 p-3 bg-slate-50 rounded-lg text-sm">
-                      <p className="text-gray-500">Suggested amount</p>
-                      <p className="font-mono font-semibold">
-                        GHS {snapshot.suggestedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </p>
-                      {snapshot.source && snapshot.source !== 'none' && (
-                        <p className="text-xs text-gray-400 capitalize">from {snapshot.source}{snapshot.detail ? ` — ${snapshot.detail}` : ''}</p>
+                    <div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm">
+                      <p className="text-gray-500">Amount</p>
+                      <p className="font-mono font-semibold">GHS {money(amount)}</p>
+                      {filing?.period && (
+                        <p className="text-xs text-gray-400">Period {filing.period} · {filing.status}</p>
+                      )}
+                      {!filing && snapshot?.source && snapshot.source !== 'none' && (
+                        <p className="text-xs text-gray-400 capitalize">
+                          Suggested from {snapshot.source}
+                          {snapshot.detail ? ` — ${snapshot.detail}` : ''}
+                        </p>
                       )}
                     </div>
                   );
                 })()}
 
                 <div className="mt-4">
-                  <p className="text-xs font-medium text-gray-500 uppercase mb-2">Required fields</p>
+                  <p className="mb-2 text-xs font-medium uppercase text-gray-500">Required fields</p>
                   <div className="flex flex-wrap gap-2">
                     {selectedRule.fieldsRequired.map((field: string) => (
-                      <Chip key={field} size="sm" variant="flat">{field}</Chip>
+                      <Chip key={field} size="sm" variant="flat">
+                        {field}
+                      </Chip>
                     ))}
                   </div>
                 </div>
 
                 <div className="mt-4">
-                  <p className="text-xs font-medium text-gray-500 uppercase mb-2">Filing history</p>
+                  <p className="mb-2 text-xs font-medium uppercase text-gray-500">Filing history</p>
                   {selectedRuleFilings.length === 0 ? (
-                    <p className="text-sm text-gray-500">No filings recorded yet for {selectedRule.reportType}.</p>
+                    <p className="text-sm text-gray-500">
+                      No filings recorded yet for {selectedRule.reportType}.
+                    </p>
                   ) : (
-                    <Table removeWrapper aria-label="Filing history" className="text-sm">
+                    <Table removeWrapper aria-label="Filing history" classNames={worksheetTableClassNames}>
                       <TableHeader>
                         <TableColumn>Period</TableColumn>
                         <TableColumn>Status</TableColumn>
@@ -352,18 +372,28 @@ export default function ComplianceReports() {
                       <TableBody>
                         {selectedRuleFilings.map((f) => (
                           <TableRow key={f.id}>
-                            <TableCell>{f.period || '—'}</TableCell>
+                            <TableCell className="font-mono text-sm">{f.period || '—'}</TableCell>
                             <TableCell>
                               <Chip
                                 size="sm"
                                 variant="flat"
-                                color={f.status === 'submitted' || f.status === 'approved' ? 'success' : f.status === 'pending' ? 'warning' : 'default'}
+                                color={
+                                  f.status === 'submitted' || f.status === 'approved'
+                                    ? 'success'
+                                    : f.status === 'pending'
+                                      ? 'warning'
+                                      : 'default'
+                                }
                               >
                                 {f.status}
                               </Chip>
                             </TableCell>
-                            <TableCell className="font-mono">{f.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
-                            <TableCell>{f.submittedDate ? new Date(f.submittedDate).toLocaleDateString() : '—'}</TableCell>
+                            <TableCell className="font-mono text-sm tabular-nums">
+                              {money(f.amount)}
+                            </TableCell>
+                            <TableCell>
+                              {f.submittedDate ? new Date(f.submittedDate).toLocaleDateString() : '—'}
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -372,8 +402,18 @@ export default function ComplianceReports() {
                 </div>
               </ModalBody>
               <ModalFooter>
-                <Button variant="light" onPress={onClose}>Close</Button>
-                <Button color="primary" onPress={() => { goPrepareFiling(); onClose(); }}>Prepare this filing</Button>
+                <Button variant="light" onPress={onClose}>
+                  Close
+                </Button>
+                <Button
+                  color="primary"
+                  onPress={() => {
+                    goPrepareFiling();
+                    onClose();
+                  }}
+                >
+                  Prepare this filing
+                </Button>
               </ModalFooter>
             </>
           )}

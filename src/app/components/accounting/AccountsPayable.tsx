@@ -6,7 +6,7 @@ import {
   Card, CardBody, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
   Chip, Checkbox, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
-  Tabs, Tab, Textarea, Divider, Spinner, Alert, Progress, Pagination,
+  Tabs, Tab, Textarea, Divider, Spinner, Alert, Pagination,
   Autocomplete, AutocompleteItem,
   Dropdown, DropdownTrigger, DropdownMenu, DropdownItem
 } from "@heroui/react";
@@ -21,6 +21,30 @@ import { filterFinanceApInvoices, computeSupplierAgingFromInvoices } from '@/app
 import { GL_ACCOUNTS } from '@/app/lib/accounting/integration';
 import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
 import AttachmentUpload from '@/app/components/shared/AttachmentUpload';
+import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
+import { useDeskPagination } from '../dashboard/deskTableUi';
+import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName } from './DeskKpiStrip';
+
+type AgingSortKey = 'supplier' | 'outstanding' | 'current' | 'overdue30' | 'overdue60' | 'overdue90' | 'overdue90Plus' | 'lastActivity';
+type SupplierSortKey = 'supplier' | 'contact' | 'address' | 'creditLimit' | 'balance' | 'paymentTerms' | 'lastActivity' | 'status';
+type BillSortKey = 'invoice' | 'supplier' | 'date' | 'dueDate' | 'subtotal' | 'tax' | 'total' | 'paid' | 'balance' | 'status' | 'aging' | 'approval';
+type PaymentSortKey = 'payment' | 'supplier' | 'date' | 'amount' | 'method' | 'status';
+
+const agingColumnWidths: Record<AgingSortKey, number> = {
+  supplier: 152, outstanding: 110, current: 88, overdue30: 92, overdue60: 100,
+  overdue90: 100, overdue90Plus: 92, lastActivity: 132,
+};
+const supplierColumnWidths: Record<SupplierSortKey, number> = {
+  supplier: 152, contact: 148, address: 140, creditLimit: 104, balance: 112,
+  paymentTerms: 112, lastActivity: 132, status: 104,
+};
+const billColumnWidths: Record<BillSortKey, number> = {
+  invoice: 128, supplier: 144, date: 92, dueDate: 96, subtotal: 100, tax: 80,
+  total: 100, paid: 92, balance: 100, status: 104, aging: 112, approval: 96,
+};
+const paymentColumnWidths: Record<PaymentSortKey, number> = {
+  payment: 128, supplier: 152, date: 92, amount: 108, method: 96, status: 132,
+};
 
 export default function AccountsPayablePage() {
   const {
@@ -54,8 +78,9 @@ export default function AccountsPayablePage() {
   const [postOnSave, setPostOnSave] = useState(true);
   const [showAdvancedInvoice, setShowAdvancedInvoice] = useState(false);
   const [isTotalsOpen, setIsTotalsOpen] = useState(false);
-  const [page, setPage] = useState(1);
-  const rowsPerPage = 10;
+  const [viewKind, setViewKind] = useState<'supplier' | 'invoice' | 'payment' | null>(null);
+  const [viewItem, setViewItem] = useState<any>(null);
+  const isViewOpen = viewKind != null && viewItem != null;
 
   // Filter states
   const [statusFilter, setStatusFilter] = useState('all');
@@ -63,6 +88,22 @@ export default function AccountsPayablePage() {
   const [dateFromFilter, setDateFromFilter] = useState('');
   const [dateToFilter, setDateToFilter] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+
+  const [agingSortKey, setAgingSortKey] = useState<AgingSortKey>('outstanding');
+  const [agingSortDir, setAgingSortDir] = useState<'asc' | 'desc'>('desc');
+  const agingCols = useResizableColumns<AgingSortKey>(agingColumnWidths);
+
+  const [supplierSortKey, setSupplierSortKey] = useState<SupplierSortKey>('supplier');
+  const [supplierSortDir, setSupplierSortDir] = useState<'asc' | 'desc'>('asc');
+  const supplierCols = useResizableColumns<SupplierSortKey>(supplierColumnWidths);
+
+  const [billSortKey, setBillSortKey] = useState<BillSortKey>('date');
+  const [billSortDir, setBillSortDir] = useState<'asc' | 'desc'>('desc');
+  const billCols = useResizableColumns<BillSortKey>(billColumnWidths);
+
+  const [paymentSortKey, setPaymentSortKey] = useState<PaymentSortKey>('date');
+  const [paymentSortDir, setPaymentSortDir] = useState<'asc' | 'desc'>('desc');
+  const paymentCols = useResizableColumns<PaymentSortKey>(paymentColumnWidths);
 
   const validate = (): boolean => {
     const e: Record<string, string> = {};
@@ -174,6 +215,14 @@ export default function AccountsPayablePage() {
     [suppliers, invoices, payments],
   );
 
+  const filteredAging = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return supplierAging;
+    return supplierAging.filter((s) =>
+      [s.name, s.code, s.taxNumber].some((v) => (v || '').toLowerCase().includes(q)),
+    );
+  }, [supplierAging, searchTerm]);
+
   // Filtered invoices
   const filteredInvoices = useMemo(() => {
     return purchaseInvoices.filter(invoice => {
@@ -211,25 +260,157 @@ export default function AccountsPayablePage() {
     });
   }, [purchaseInvoices, supplierPayments, suppliers, statusFilter, supplierFilter, dateFromFilter, dateToFilter, searchTerm]);
 
-  // Pagination
-  const paginatedSuppliers = useMemo(() => {
-    const start = (page - 1) * rowsPerPage;
-    return filteredSuppliers.slice(start, start + rowsPerPage);
-  }, [filteredSuppliers, page]);
+  // Sorted list rows + Desk pagination (DESK_PAGE_SIZE 10)
+  const sortedAging = useMemo(() => {
+    const rows = [...filteredAging];
+    const value = (s: (typeof rows)[0]): string | number => {
+      switch (agingSortKey) {
+        case 'supplier': return (s.name || '').toLowerCase();
+        case 'outstanding': return s.outstandingBalance;
+        case 'current': return s.current;
+        case 'overdue30': return s.overdue30;
+        case 'overdue60': return s.overdue60;
+        case 'overdue90': return s.overdue90;
+        case 'overdue90Plus': return s.overdue90Plus;
+        case 'lastActivity': return s.lastInvoiceDate || s.lastPaymentDate || '';
+        default: return '';
+      }
+    };
+    rows.sort((a, b) => {
+      const av = value(a); const bv = value(b);
+      if (av < bv) return -1; if (av > bv) return 1; return 0;
+    });
+    return agingSortDir === 'asc' ? rows : rows.reverse();
+  }, [filteredAging, agingSortKey, agingSortDir]);
 
-  const paginatedInvoices = useMemo(() => {
-    const start = (page - 1) * rowsPerPage;
-    return filteredInvoices.slice(start, start + rowsPerPage);
-  }, [filteredInvoices, page]);
+  const sortedSuppliers = useMemo(() => {
+    const rows = [...filteredSuppliers];
+    const value = (s: (typeof rows)[0]): string | number => {
+      const outstanding = supplierAging.find(a => a.id === s.id)?.outstandingBalance ?? 0;
+      switch (supplierSortKey) {
+        case 'supplier': return (s.name || '').toLowerCase();
+        case 'contact': return (s.contactPerson || s.email || '').toLowerCase();
+        case 'address': return (s.address || '').toLowerCase();
+        case 'creditLimit': return s.creditLimit || 0;
+        case 'balance': return outstanding;
+        case 'paymentTerms': return s.paymentTerms ?? 0;
+        case 'lastActivity': {
+          const invs = purchaseInvoices.filter(inv => inv.businessPartnerId === s.id);
+          return invs.length ? Math.max(...invs.map(inv => new Date(inv.date).getTime())) : 0;
+        }
+        case 'status': return outstanding > (s.creditLimit || 0) ? 2 : outstanding > 0 ? 1 : 0;
+        default: return '';
+      }
+    };
+    rows.sort((a, b) => {
+      const av = value(a); const bv = value(b);
+      if (av < bv) return -1; if (av > bv) return 1; return 0;
+    });
+    return supplierSortDir === 'asc' ? rows : rows.reverse();
+  }, [filteredSuppliers, supplierAging, purchaseInvoices, supplierSortKey, supplierSortDir]);
 
-  const paginatedPayments = useMemo(() => {
-    const start = (page - 1) * rowsPerPage;
-    return filteredPayments.slice(start, start + rowsPerPage);
-  }, [filteredPayments, page]);
+  const sortedInvoices = useMemo(() => {
+    const rows = [...filteredInvoices];
+    const value = (invoice: (typeof rows)[0]): string | number => {
+      const paidAmount = (invoice.paidAmount != null)
+        ? invoice.paidAmount
+        : supplierPayments.filter(p => p.invoiceId === invoice.id).reduce((sum, p) => sum + p.amount, 0);
+      const balance = invoice.total - paidAmount;
+      const daysOverdue = Math.floor((new Date().getTime() - new Date(invoice.dueDate).getTime()) / (1000 * 60 * 60 * 24));
+      switch (billSortKey) {
+        case 'invoice': return (invoice.invoiceNumber || '').toLowerCase();
+        case 'supplier': return (suppliers.find(s => s.id === invoice.businessPartnerId)?.name || '').toLowerCase();
+        case 'date': return new Date(invoice.date).getTime();
+        case 'dueDate': return new Date(invoice.dueDate).getTime();
+        case 'subtotal': return invoice.subtotal || 0;
+        case 'tax': return invoice.taxAmount || 0;
+        case 'total': return invoice.total || 0;
+        case 'paid': return paidAmount;
+        case 'balance': return balance;
+        case 'status': return balance <= 0 ? 'paid' : daysOverdue > 0 ? 'overdue' : 'outstanding';
+        case 'aging': return daysOverdue;
+        case 'approval': return invoice.status || '';
+        default: return '';
+      }
+    };
+    rows.sort((a, b) => {
+      const av = value(a); const bv = value(b);
+      if (av < bv) return -1; if (av > bv) return 1; return 0;
+    });
+    return billSortDir === 'asc' ? rows : rows.reverse();
+  }, [filteredInvoices, supplierPayments, suppliers, billSortKey, billSortDir]);
 
-  const suppliersPages = Math.ceil(filteredSuppliers.length / rowsPerPage);
-  const invoicesPages = Math.ceil(filteredInvoices.length / rowsPerPage);
-  const paymentsPages = Math.ceil(filteredPayments.length / rowsPerPage);
+  const sortedPayments = useMemo(() => {
+    const rows = [...filteredPayments];
+    const value = (p: (typeof rows)[0]): string | number => {
+      switch (paymentSortKey) {
+        case 'payment': return (p.paymentNumber || '').toLowerCase();
+        case 'supplier': return (suppliers.find(s => s.id === p.businessPartnerId)?.name || p.businessPartnerId || '').toLowerCase();
+        case 'date': return new Date(p.date).getTime();
+        case 'amount': return p.amount || 0;
+        case 'method': return p.paymentMethod || '';
+        case 'status': return p.status || '';
+        default: return '';
+      }
+    };
+    rows.sort((a, b) => {
+      const av = value(a); const bv = value(b);
+      if (av < bv) return -1; if (av > bv) return 1; return 0;
+    });
+    return paymentSortDir === 'asc' ? rows : rows.reverse();
+  }, [filteredPayments, suppliers, paymentSortKey, paymentSortDir]);
+
+  const agingPager = useDeskPagination(sortedAging, [agingSortKey, agingSortDir, searchTerm, filteredAging.length]);
+  const suppliersPager = useDeskPagination(sortedSuppliers, [searchTerm, supplierSortKey, supplierSortDir]);
+  const invoicesPager = useDeskPagination(sortedInvoices, [statusFilter, supplierFilter, dateFromFilter, dateToFilter, searchTerm, billSortKey, billSortDir]);
+  const paymentsPager = useDeskPagination(sortedPayments, [searchTerm, paymentSortKey, paymentSortDir]);
+
+  const onAgingSort = (key: AgingSortKey) => {
+    if (agingSortKey === key) setAgingSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setAgingSortKey(key);
+      setAgingSortDir(key === 'supplier' || key === 'lastActivity' ? 'asc' : 'desc');
+    }
+  };
+  const agingColumn = (key: AgingSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+    <TableColumn key={key} className="relative" style={agingCols.style(key)}>
+      <SortLabel active={agingSortKey === key} dir={agingSortDir} align={align} onPress={() => onAgingSort(key)}>{label}</SortLabel>
+      {agingCols.sizer(key, label)}
+    </TableColumn>
+  );
+
+  const onSupplierSort = (key: SupplierSortKey) => {
+    if (supplierSortKey === key) setSupplierSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSupplierSortKey(key); setSupplierSortDir('asc'); }
+  };
+  const supplierColumn = (key: SupplierSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+    <TableColumn key={key} className="relative" style={supplierCols.style(key)}>
+      <SortLabel active={supplierSortKey === key} dir={supplierSortDir} align={align} onPress={() => onSupplierSort(key)}>{label}</SortLabel>
+      {supplierCols.sizer(key, label)}
+    </TableColumn>
+  );
+
+  const onBillSort = (key: BillSortKey) => {
+    if (billSortKey === key) setBillSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setBillSortKey(key); setBillSortDir('asc'); }
+  };
+  const billColumn = (key: BillSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+    <TableColumn key={key} className="relative" style={billCols.style(key)}>
+      <SortLabel active={billSortKey === key} dir={billSortDir} align={align} onPress={() => onBillSort(key)}>{label}</SortLabel>
+      {billCols.sizer(key, label)}
+    </TableColumn>
+  );
+
+  const onPaymentSort = (key: PaymentSortKey) => {
+    if (paymentSortKey === key) setPaymentSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setPaymentSortKey(key); setPaymentSortDir('asc'); }
+  };
+  const paymentColumn = (key: PaymentSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+    <TableColumn key={key} className="relative" style={paymentCols.style(key)}>
+      <SortLabel active={paymentSortKey === key} dir={paymentSortDir} align={align} onPress={() => onPaymentSort(key)}>{label}</SortLabel>
+      {paymentCols.sizer(key, label)}
+    </TableColumn>
+  );
 
   // Opens the "new invoice" dialog pre-filled for a given supplier — used by every quick-action
   // "Invoice" button so they all create a real invoice instead of misusing `editing` (which
@@ -248,6 +429,34 @@ export default function AccountsPayablePage() {
       total: 0,
       description: '',
       lines: [{ id: `INL-${Date.now()}`, description: '', quantity: 1, unitPrice: 0, taxPercent: 20, glAccountCode: '5100' }]
+    });
+    setIsOpen(true);
+  };
+
+  const closeView = () => {
+    setViewKind(null);
+    setViewItem(null);
+  };
+
+  const openBillView = (invoice: any) => {
+    setViewKind('invoice');
+    setViewItem(invoice);
+  };
+
+  const openBillEdit = (invoice: any) => {
+    setDialogType('invoice');
+    setEditing(invoice);
+    setForm({
+      businessPartnerId: invoice.businessPartnerId,
+      invoiceNumber: invoice.invoiceNumber,
+      date: String(invoice.date || '').slice(0, 10),
+      dueDate: String(invoice.dueDate || invoice.date || '').slice(0, 10),
+      subtotal: invoice.subtotal,
+      taxAmount: invoice.taxAmount,
+      total: invoice.total,
+      currency: invoice.currency,
+      description: invoice.description,
+      lines: invoice.lines || invoice.items || invoice.lineItems || [],
     });
     setIsOpen(true);
   };
@@ -296,6 +505,76 @@ export default function AccountsPayablePage() {
       whtVatAmount: whtVatRemaining,
       paymentMethod: 'Bank',
       reference: `Payment for invoice ${inv.invoiceNumber}`,
+    });
+    setIsOpen(true);
+  };
+
+  const openAgingSupplier = (supplier: (typeof supplierAging)[number]) => {
+    setSupplierFilter(supplier.id);
+    setStatusFilter('all');
+    setDateFromFilter('');
+    setDateToFilter('');
+    setSearchTerm('');
+    setSelectedTab('invoices');
+  };
+
+  const openSupplierView = (supplier: (typeof suppliers)[number]) => {
+    setViewKind('supplier');
+    setViewItem(supplier);
+  };
+
+  const openSupplierEdit = (supplier: (typeof suppliers)[number]) => {
+    const outstandingBalance = supplierAging.find((a) => a.id === supplier.id)?.outstandingBalance ?? 0;
+    setDialogType('supplier');
+    setEditing(supplier);
+    setForm({
+      ...supplier,
+      code: supplier.code,
+      name: supplier.name,
+      contactPerson: supplier.contactPerson || '',
+      email: supplier.email || '',
+      phone: supplier.phone || '',
+      taxNumber: supplier.taxNumber || '',
+      taxId: supplier.taxNumber || '',
+      address: supplier.address || '',
+      country: supplier.countryCode === 'GH' ? 'Ghana' : supplier.countryCode || 'Ghana',
+      paymentTerms: supplier.paymentTerms === 0 ? 'immediate' :
+                    supplier.paymentTerms === 30 ? 'net30' :
+                    supplier.paymentTerms === 60 ? 'net60' :
+                    supplier.paymentTerms === 90 ? 'net90' : 'net30',
+      creditLimit: supplier.creditLimit || 0,
+      currentBalance: outstandingBalance,
+      isActive: supplier.isActive !== undefined ? supplier.isActive : true,
+    });
+    setIsOpen(true);
+  };
+
+  const openPaymentView = (payment: (typeof supplierPayments)[number]) => {
+    setViewKind('payment');
+    setViewItem(payment);
+  };
+
+  const openPaymentEdit = (payment: (typeof supplierPayments)[number]) => {
+    setDialogType('payment');
+    setEditing(payment);
+    setForm({
+      businessPartnerId: payment.businessPartnerId,
+      date: String(payment.date || '').slice(0, 10),
+      amount: payment.amount,
+      paymentMethod: payment.paymentMethod,
+      reference: payment.reference || '',
+      invoiceId: payment.invoiceId || '',
+      bankAccountId: payment.bankAccountId || '',
+      checkNumber: payment.checkNumber || '',
+      receivedBy: payment.receivedBy || '',
+      receiverContact: payment.receiverContact || '',
+      receiverIdType: payment.receiverIdType || '',
+      receiverIdNumber: payment.receiverIdNumber || '',
+      receivedDate: payment.receivedDate ? String(payment.receivedDate).slice(0, 10) : '',
+      receiverSignature: payment.receiverSignature || '',
+      attachments: payment.attachments || [],
+      pdfUrl: payment.pdfUrl || '',
+      pdfFileName: payment.pdfFileName || '',
     });
     setIsOpen(true);
   };
@@ -481,48 +760,22 @@ export default function AccountsPayablePage() {
   }
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <div className="flex items-center gap-1.5">
-          <h1 className="text-3xl font-bold text-gray-900">💳 Accounts Payable</h1>
-          <HeadingInfo label="About accounts payable">Manage supplier accounts, purchase invoices, and payments</HeadingInfo>
-        </div>
+    <div className="px-3 pt-2 pb-3 md:px-4 md:pt-3 md:pb-4">
+      <div className="mb-2 flex items-center gap-1.5">
+        <h1 className="text-lg md:text-xl font-bold text-gray-800">💳 Accounts Payable</h1>
+        <HeadingInfo label="About accounts payable">Manage supplier accounts, purchase invoices, and payments</HeadingInfo>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
-        <Card>
-          <CardBody className="text-center">
-            <div className="text-2xl font-bold text-red-600">{formatAccountingCurrency(totalPayables)}</div>
-            <div className="text-sm text-gray-600">Total Payables</div>
-            <Progress value={100} size="sm" color="danger" className="mt-2" />
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardBody className="text-center">
-            <div className="text-2xl font-bold text-orange-600">{formatAccountingCurrency(totalOverduePayables)}</div>
-            <div className="text-sm text-gray-600">Overdue</div>
-            <Progress value={100} size="sm" color="warning" className="mt-2" />
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardBody className="text-center">
-            <div className="text-2xl font-bold text-blue-600">{formatAccountingCurrency(totalInvoices)}</div>
-            <div className="text-sm text-gray-600">Total Invoices</div>
-            <Progress value={100} size="sm" color="primary" className="mt-2" />
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardBody className="text-center">
-            <div className="text-2xl font-bold text-green-600">{formatAccountingCurrency(totalPayments)}</div>
-            <div className="text-sm text-gray-600">Total Payments</div>
-            <Progress value={100} size="sm" color="success" className="mt-2" />
-          </CardBody>
-        </Card>
-      </div>
+      <DeskKpiStrip
+        className="mb-3"
+        items={[
+          { id: 'ap.totalPayables', label: 'Total Payables', value: formatAccountingCurrency(totalPayables), tone: 'text-red-700' },
+          { id: 'ap.overdue', label: 'Overdue', value: formatAccountingCurrency(totalOverduePayables), tone: 'text-orange-700' },
+          { id: 'ap.totalInvoices', label: 'Total Invoices', value: formatAccountingCurrency(totalInvoices), tone: 'text-blue-700' },
+          { id: 'ap.totalPayments', label: 'Total Payments', value: formatAccountingCurrency(totalPayments), tone: 'text-green-700' },
+        ]}
+      />
 
       {/* Error Alert */}
       {error && (
@@ -532,17 +785,20 @@ export default function AccountsPayablePage() {
       )}
 
       {/* Main Content Tabs */}
-      <Card>
+      <Card className="shadow-sm">
         <CardBody className="p-0">
           <Tabs
             selectedKey={selectedTab}
             onSelectionChange={(key) => setSelectedTab(key as string)}
             className="w-full"
+            size="sm"
+            variant="solid"
+            classNames={deskBookTabsClassNames}
           >
             <Tab key="balances" title="📊 Supplier Balances & Aging">
-              <div className="p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold">Supplier Balance Analysis</h3>
+              <div className={deskBookTabPanelClassName}>
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="text-sm font-semibold text-gray-800">Supplier Balance Analysis</h3>
                   <div className="flex gap-2">
                   <Button size="sm" color="primary" onClick={() => { 
                       setDialogType('supplier'); 
@@ -568,42 +824,45 @@ export default function AccountsPayablePage() {
                   </div>
                 </div>
 
-                <div className="max-h-[560px] overflow-y-auto">
-                <Table aria-label="Supplier Aging">
+                <div className="flex flex-wrap items-end gap-3 mb-4">
+                  <Input label="Search" placeholder="Supplier name, code, tax ID..." value={searchTerm} onValueChange={setSearchTerm} className="w-64" size="sm" />
+                </div>
+
+                <div ref={agingCols.frameRef} style={agingCols.frameStyle}>
+                <Table aria-label="Supplier Aging" removeWrapper classNames={deskResizableTableClassNames()}>
                   <TableHeader>
-                    <TableColumn>SUPPLIER</TableColumn>
-                    <TableColumn className="text-right">OUTSTANDING</TableColumn>
-                    <TableColumn className="text-right">CURRENT</TableColumn>
-                    <TableColumn className="text-right">1-30 DAYS</TableColumn>
-                    <TableColumn className="text-right">31-60 DAYS</TableColumn>
-                    <TableColumn className="text-right">61-90 DAYS</TableColumn>
-                    <TableColumn className="text-right">90+ DAYS</TableColumn>
-                    <TableColumn>LAST ACTIVITY</TableColumn>
-                    <TableColumn>ACTIONS</TableColumn>
+                    {agingColumn('supplier', 'Supplier')}
+                    {agingColumn('outstanding', 'Outstanding', 'right')}
+                    {agingColumn('current', 'Current', 'right')}
+                    {agingColumn('overdue30', '1-30 Days', 'right')}
+                    {agingColumn('overdue60', '31-60 Days', 'right')}
+                    {agingColumn('overdue90', '61-90 Days', 'right')}
+                    {agingColumn('overdue90Plus', '90+ Days', 'right')}
+                    {agingColumn('lastActivity', 'Last Activity')}
                   </TableHeader>
                   <TableBody emptyContent="No supplier data found.">
-                    {supplierAging.map((supplier) => (
-                      <TableRow key={supplier.id}>
+                    {agingPager.paged.map((supplier) => (
+                      <TableRow key={supplier.id} className={rowClassNames(false)} onClick={() => openAgingSupplier(supplier)}>
                         <TableCell>
-                          <div className="font-medium">{supplier.name}</div>
+                          <div className="font-medium text-blue-600 hover:underline">{supplier.name}</div>
                           <div className="text-xs text-gray-500 font-mono">{supplier.code}</div>
                         </TableCell>
-                        <TableCell className="text-right font-semibold text-red-600">
+                        <TableCell className="tabular-nums text-right font-semibold text-red-600">
                           {formatAccountingCurrency(supplier.outstandingBalance)}
                         </TableCell>
-                        <TableCell className="text-right text-green-600">
+                        <TableCell className="tabular-nums text-right text-green-600">
                           {formatAccountingCurrency(supplier.current)}
                         </TableCell>
-                        <TableCell className="text-right text-yellow-600">
+                        <TableCell className="tabular-nums text-right text-yellow-600">
                           {formatAccountingCurrency(supplier.overdue30)}
                         </TableCell>
-                        <TableCell className="text-right text-orange-600">
+                        <TableCell className="tabular-nums text-right text-orange-600">
                           {formatAccountingCurrency(supplier.overdue60)}
                         </TableCell>
-                        <TableCell className="text-right text-red-600">
+                        <TableCell className="tabular-nums text-right text-red-600">
                           {formatAccountingCurrency(supplier.overdue90)}
                         </TableCell>
-                        <TableCell className="text-right text-red-800 font-bold">
+                        <TableCell className="tabular-nums text-right text-red-800 font-bold">
                           {formatAccountingCurrency(supplier.overdue90Plus)}
                         </TableCell>
                         <TableCell>
@@ -612,27 +871,22 @@ export default function AccountsPayablePage() {
                             <div>Payment: {supplier.lastPaymentDate || 'Never'}</div>
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <div className="flex gap-1">
-                            <Button size="sm" variant="bordered" onClick={() => openNewInvoiceFor(supplier.id)}>📄 Invoice</Button>
-                            <Button size="sm" color="danger" variant="bordered" onClick={() => openNewPaymentFor(supplier.id, supplier.outstandingBalance || 0, `Payment to ${supplier.name}`)}>💳 Payment</Button>
-                          </div>
-                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
                 </div>
+                <div className="mt-3 flex justify-end">
+                  <Pagination page={agingPager.page} total={agingPager.pages} onChange={agingPager.setPage} showControls size="sm" />
+                </div>
               </div>
             </Tab>
 
             <Tab key="suppliers" title={`🏢 Suppliers (${suppliers.length})`}>
-              <div className="p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold">Supplier Accounts</h3>
+              <div className={deskBookTabPanelClassName}>
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="text-sm font-semibold text-gray-800">Supplier Accounts</h3>
                   <div className="flex items-center gap-2">
-                    <Chip color="primary" variant="flat">{filteredSuppliers.length} suppliers</Chip>
-                    <Chip color="danger" variant="flat">{formatAccountingCurrency(filteredSuppliers.reduce((s, sup) => s + (supplierAging.find(a => a.id === sup.id)?.outstandingBalance ?? 0), 0))}</Chip>
                     <Dropdown>
                       <DropdownTrigger>
                         <Button variant="flat" size="sm">📥 Export</Button>
@@ -670,38 +924,32 @@ export default function AccountsPayablePage() {
                   <Input label="Search" placeholder="Name, code, email, phone, tax ID..." value={searchTerm} onValueChange={setSearchTerm} className="w-64" size="sm" />
                 </div>
 
-                <Table aria-label="Supplier Accounts">
+                <div ref={supplierCols.frameRef} style={supplierCols.frameStyle}>
+                <Table aria-label="Supplier Accounts" removeWrapper classNames={deskResizableTableClassNames()}>
                   <TableHeader>
-                    <TableColumn>SUPPLIER</TableColumn>
-                    <TableColumn>CONTACT INFO</TableColumn>
-                    <TableColumn>ADDRESS</TableColumn>
-                    <TableColumn className="text-right">CREDIT LIMIT</TableColumn>
-                    <TableColumn className="text-right">CURRENT BALANCE</TableColumn>
-                    <TableColumn>PAYMENT TERMS</TableColumn>
-                    <TableColumn>LAST ACTIVITY</TableColumn>
-                    <TableColumn>STATUS</TableColumn>
-                    <TableColumn>ACTIONS</TableColumn>
+                    {supplierColumn('supplier', 'Supplier')}
+                    {supplierColumn('contact', 'Contact Info')}
+                    {supplierColumn('address', 'Address')}
+                    {supplierColumn('creditLimit', 'Credit Limit', 'right')}
+                    {supplierColumn('balance', 'Current Balance', 'right')}
+                    {supplierColumn('paymentTerms', 'Payment Terms')}
+                    {supplierColumn('lastActivity', 'Last Activity')}
+                    {supplierColumn('status', 'Status')}
                   </TableHeader>
                   <TableBody emptyContent="No suppliers found.">
-                    {paginatedSuppliers.map((supplier) => {
+                    {suppliersPager.paged.map((supplier) => {
                       const supplierInvoices = purchaseInvoices.filter(inv => inv.businessPartnerId === supplier.id);
                       const supplierPaymentsFiltered = supplierPayments.filter(pay => pay.businessPartnerId === supplier.id);
-                      const totalInvoiced = supplierInvoices.reduce((sum, inv) => sum + inv.total, 0);
-                      const totalPaid = supplierPaymentsFiltered.reduce((sum, pay) => sum + pay.amount, 0);
                       const lastInvoiceDate = supplierInvoices.length > 0 ?
                         new Date(Math.max(...supplierInvoices.map(inv => new Date(inv.date).getTime()))).toISOString().slice(0,10) : null;
                       const lastPaymentDate = supplierPaymentsFiltered.length > 0 ?
                         new Date(Math.max(...supplierPaymentsFiltered.map(pay => new Date(pay.date).getTime()))).toISOString().slice(0,10) : null;
-                      // supplier.balance is a stored field nudged by many scattered call sites and
-                      // directly hand-editable — it can and does drift from the real invoice-derived
-                      // balance. Use the same live computation the Aging tab already gets right,
-                      // instead of a second, unreliable number for the same thing.
                       const outstandingBalance = supplierAging.find(a => a.id === supplier.id)?.outstandingBalance ?? 0;
 
                       return (
-                        <TableRow key={supplier.id}>
+                        <TableRow key={supplier.id} className={rowClassNames(viewItem?.id === supplier.id && viewKind === 'supplier')} onClick={() => openSupplierView(supplier)}>
                           <TableCell>
-                            <div className="font-medium">{supplier.name}</div>
+                            <div className="font-medium text-blue-600 hover:underline">{supplier.name}</div>
                             <div className="text-xs text-gray-500 font-mono">{supplier.code}</div>
                             <div className="text-xs text-gray-500">{supplier.taxNumber || 'No Tax ID'}</div>
                           </TableCell>
@@ -718,10 +966,10 @@ export default function AccountsPayablePage() {
                               {supplier.countryCode && <div>{supplier.countryCode}</div>}
                             </div>
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="tabular-nums text-right">
                             <div className="font-medium">{formatAccountingCurrency((supplier.creditLimit || 0))}</div>
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="tabular-nums text-right">
                             <div className={`font-semibold ${outstandingBalance >= 0 ? 'text-red-600' : 'text-green-600'}`}>
                               {formatAccountingCurrency(Math.abs(outstandingBalance))}
                             </div>
@@ -752,64 +1000,23 @@ export default function AccountsPayablePage() {
                                'Current'}
                             </Chip>
                           </TableCell>
-                          <TableCell>
-                            <div className="flex gap-1">
-                              <Button size="sm" variant="bordered" onClick={() => { 
-                                setDialogType('supplier'); 
-                                setEditing(supplier); 
-                                // Map BusinessPartner to form fields matching inventory form
-                                setForm({ 
-                                  ...supplier,
-                                  code: supplier.code,
-                                  name: supplier.name,
-                                  contactPerson: supplier.contactPerson || '',
-                                  email: supplier.email || '',
-                                  phone: supplier.phone || '',
-                                  taxNumber: supplier.taxNumber || '',
-                                  taxId: supplier.taxNumber || '', // Also map taxId for compatibility
-                                  address: supplier.address || '',
-                                  country: supplier.countryCode === 'GH' ? 'Ghana' : supplier.countryCode || 'Ghana',
-                                  paymentTerms: supplier.paymentTerms === 0 ? 'immediate' :
-                                                supplier.paymentTerms === 30 ? 'net30' :
-                                                supplier.paymentTerms === 60 ? 'net60' :
-                                                supplier.paymentTerms === 90 ? 'net90' : 'net30',
-                                  creditLimit: supplier.creditLimit || 0,
-                                  currentBalance: outstandingBalance,
-                                  isActive: supplier.isActive !== undefined ? supplier.isActive : true
-                                }); 
-                                setIsOpen(true); 
-                              }}>✏️ Edit</Button>
-                              <Button size="sm" color="primary" variant="bordered" onClick={() => openNewInvoiceFor(supplier.id)}>📄 Invoice</Button>
-                              {outstandingBalance > 0 && (
-                                <Button size="sm" color="danger" variant="bordered" onClick={() => openNewPaymentFor(supplier.id, outstandingBalance, `Payment to ${supplier.name}`)}>💳 Payment</Button>
-                              )}
-                            </div>
-                          </TableCell>
                         </TableRow>
                       );
                     })}
                   </TableBody>
                 </Table>
-                {suppliersPages > 1 && (
-                  <div className="flex justify-center mt-4 p-4">
-                    <Pagination 
-                      total={suppliersPages} 
-                      page={page} 
-                      onChange={setPage}
-                      showControls
-                    />
-                  </div>
-                )}
+                </div>
+                <div className="mt-3 flex justify-end">
+                  <Pagination page={suppliersPager.page} total={suppliersPager.pages} onChange={suppliersPager.setPage} showControls size="sm" />
+                </div>
               </div>
             </Tab>
 
             <Tab key="invoices" title={`📄 Bills (${filteredInvoices.length})`}>
-              <div className="p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold">Bills (Purchases)</h3>
+              <div className={deskBookTabPanelClassName}>
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="text-sm font-semibold text-gray-800">Bills (Purchases)</h3>
                   <div className="flex items-center gap-2">
-                    <Chip color="primary" variant="flat">{filteredInvoices.length} bills</Chip>
-                    <Chip color="danger" variant="flat">{formatAccountingCurrency(filteredInvoices.reduce((s, i) => s + (i.total || 0), 0))}</Chip>
                     <Dropdown>
                       <DropdownTrigger>
                         <Button variant="flat" size="sm">📥 Export</Button>
@@ -891,38 +1098,46 @@ export default function AccountsPayablePage() {
                   />
                 </div>
 
-              <Table aria-label="Bills">
+              <div ref={billCols.frameRef} style={billCols.frameStyle}>
+              <Table aria-label="Bills" removeWrapper classNames={deskResizableTableClassNames()}>
                   <TableHeader>
-                    <TableColumn>INVOICE #</TableColumn>
-                    <TableColumn>SUPPLIER</TableColumn>
-                    <TableColumn>DATE</TableColumn>
-                    <TableColumn>DUE DATE</TableColumn>
-                    <TableColumn className="text-right">SUBTOTAL</TableColumn>
-                    <TableColumn className="text-right">TAX</TableColumn>
-                    <TableColumn className="text-right">TOTAL</TableColumn>
-                    <TableColumn className="text-right">PAID</TableColumn>
-                    <TableColumn className="text-right">BALANCE</TableColumn>
-                    <TableColumn>STATUS</TableColumn>
-                    <TableColumn>AGING</TableColumn>
-                    <TableColumn>APPROVAL</TableColumn>
-                    <TableColumn>ACTIONS</TableColumn>
+                    {billColumn('invoice', 'Invoice #')}
+                    {billColumn('supplier', 'Supplier')}
+                    {billColumn('date', 'Date')}
+                    {billColumn('dueDate', 'Due Date')}
+                    {billColumn('subtotal', 'Subtotal', 'right')}
+                    {billColumn('tax', 'Tax', 'right')}
+                    {billColumn('total', 'Total', 'right')}
+                    {billColumn('paid', 'Paid', 'right')}
+                    {billColumn('balance', 'Balance', 'right')}
+                    {billColumn('status', 'Status')}
+                    {billColumn('aging', 'Aging')}
+                    {billColumn('approval', 'Approval')}
                   </TableHeader>
                   <TableBody emptyContent="No purchase invoices found.">
-                    {paginatedInvoices.map((invoice) => {
+                    {invoicesPager.paged.map((invoice) => {
                       const supplier = suppliers.find(s => s.id === invoice.businessPartnerId);
                       // Use per-invoice paidAmount from store; fall back to invoice-linked payments
                       const paidAmount = (invoice.paidAmount != null)
                         ? invoice.paidAmount
                         : supplierPayments.filter(p => p.invoiceId === invoice.id).reduce((sum, p) => sum + p.amount, 0);
                       const balance = invoice.total - paidAmount;
-                      const dueDate = new Date(invoice.dueDate);
+                      const dueRaw = invoice.dueDate || invoice.date;
+                      const dueDate = new Date(dueRaw);
+                      const dueValid = !Number.isNaN(dueDate.getTime());
                       const today = new Date();
-                      const daysOverdue = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+                      const daysOverdue = dueValid
+                        ? Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24))
+                        : 0;
                       
                       return (
-                        <TableRow key={invoice.id}>
+                        <TableRow
+                          key={invoice.id}
+                          className={rowClassNames(viewItem?.id === invoice.id && viewKind === 'invoice')}
+                          onClick={() => openBillView(invoice)}
+                        >
                           <TableCell>
-                            <div className="font-mono font-medium">{invoice.invoiceNumber}</div>
+                            <div className="font-mono font-medium text-blue-600 hover:underline">{invoice.invoiceNumber}</div>
                             <div className="text-xs text-gray-500">{invoice.poNumber || 'No PO'}</div>
                           </TableCell>
                           <TableCell>
@@ -934,22 +1149,22 @@ export default function AccountsPayablePage() {
                             <div className="text-xs text-gray-500">{new Date(invoice.date).toLocaleDateString('en-US', { weekday: 'short' })}</div>
                           </TableCell>
                           <TableCell>
-                            <div className="text-sm">{new Date(invoice.dueDate).toLocaleDateString()}</div>
-                            <div className="text-xs text-gray-500">{new Date(invoice.dueDate).toLocaleDateString('en-US', { weekday: 'short' })}</div>
+                            <div className="text-sm">{dueValid ? dueDate.toLocaleDateString() : '—'}</div>
+                            <div className="text-xs text-gray-500">{dueValid ? dueDate.toLocaleDateString('en-US', { weekday: 'short' }) : ''}</div>
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="tabular-nums text-right">
                             <div className="font-medium">{formatAccountingCurrency(invoice.subtotal)}</div>
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="tabular-nums text-right">
                             <div className="text-sm">{formatAccountingCurrency(invoice.taxAmount)}</div>
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="tabular-nums text-right">
                             <div className="font-semibold text-red-600">{formatAccountingCurrency(invoice.total)}</div>
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="tabular-nums text-right">
                             <div className="text-green-600">{formatAccountingCurrency(paidAmount)}</div>
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="tabular-nums text-right">
                             <div className={`font-semibold ${balance > 0 ? 'text-red-600' : 'text-green-600'}`}>
                               {formatAccountingCurrency(balance)}
                             </div>
@@ -971,7 +1186,11 @@ export default function AccountsPayablePage() {
                             </Chip>
                           </TableCell>
                           <TableCell>
-                            {daysOverdue > 0 ? (
+                            {balance <= 0 ? (
+                              <div className="text-xs text-green-600">Settled</div>
+                            ) : !dueValid ? (
+                              <div className="text-xs text-gray-400">—</div>
+                            ) : daysOverdue > 0 ? (
                               <div className="text-xs text-red-600 font-medium">
                                 {daysOverdue} days overdue
                               </div>
@@ -999,54 +1218,23 @@ export default function AccountsPayablePage() {
                               {invoice.status}
                             </Chip>
                           </TableCell>
-                          <TableCell>
-                            <div className="flex gap-1">
-                              <Button size="sm" variant="bordered" onClick={() => { 
-                                setDialogType('invoice'); 
-                                setEditing(invoice); 
-                                setForm({
-                                  businessPartnerId: invoice.businessPartnerId,
-                                  invoiceNumber: invoice.invoiceNumber,
-                                  date: invoice.date.slice(0,10),
-                                  dueDate: invoice.dueDate.slice(0,10),
-                                  subtotal: invoice.subtotal,
-                                  taxAmount: invoice.taxAmount,
-                                  total: invoice.total,
-                                  currency: invoice.currency,
-                                  description: invoice.description
-                                }); 
-                                setIsOpen(true); 
-                              }}>✏️ Edit</Button>
-                              {balance > 0 && (
-                                <Button size="sm" color="danger" variant="bordered" onClick={() => openPaymentForInvoice(invoice)}>💳 Payment</Button>
-                              )}
-                            </div>
-                          </TableCell>
                         </TableRow>
                       );
                     })}
                   </TableBody>
                 </Table>
-                {invoicesPages > 1 && (
-                  <div className="flex justify-center mt-4 p-4">
-                    <Pagination 
-                      total={invoicesPages} 
-                      page={page} 
-                      onChange={setPage}
-                      showControls
-                    />
-                  </div>
-                )}
+              </div>
+                <div className="mt-3 flex justify-end">
+                  <Pagination page={invoicesPager.page} total={invoicesPager.pages} onChange={invoicesPager.setPage} showControls size="sm" />
+                </div>
               </div>
             </Tab>
 
             <Tab key="payments" title={`💸 Payments (${filteredPayments.length})`}>
-              <div className="p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold">Supplier Payments</h3>
+              <div className={deskBookTabPanelClassName}>
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="text-sm font-semibold text-gray-800">Supplier Payments</h3>
                   <div className="flex items-center gap-2">
-                    <Chip color="success" variant="flat">{filteredPayments.length} payments</Chip>
-                    <Chip color="primary" variant="flat">{formatAccountingCurrency(filteredPayments.reduce((s: number, p: any) => s + (p.amount || 0), 0))}</Chip>
                     <Dropdown>
                       <DropdownTrigger>
                         <Button variant="flat" size="sm">📥 Export</Button>
@@ -1066,31 +1254,34 @@ export default function AccountsPayablePage() {
                   <Input label="Search" placeholder="Payment #, supplier, reference..." value={searchTerm} onValueChange={setSearchTerm} className="w-64" size="sm" />
                 </div>
 
-                <Table aria-label="Supplier Payments">
+                <div ref={paymentCols.frameRef} style={paymentCols.frameStyle}>
+                <Table aria-label="Supplier Payments" removeWrapper classNames={deskResizableTableClassNames()}>
                   <TableHeader>
-                    <TableColumn>PAYMENT #</TableColumn>
-                    <TableColumn>SUPPLIER</TableColumn>
-                    <TableColumn>DATE</TableColumn>
-                    <TableColumn className="text-right">AMOUNT</TableColumn>
-                    <TableColumn>METHOD</TableColumn>
-                    <TableColumn>STATUS</TableColumn>
-                  <TableColumn>ACTIONS</TableColumn>
+                    {paymentColumn('payment', 'Payment #')}
+                    {paymentColumn('supplier', 'Supplier')}
+                    {paymentColumn('date', 'Date')}
+                    {paymentColumn('amount', 'Amount', 'right')}
+                    {paymentColumn('method', 'Method')}
+                    {paymentColumn('status', 'Status')}
                   </TableHeader>
                   <TableBody emptyContent="No payments found.">
-                    {paginatedPayments.map((payment) => (
-                      <TableRow key={payment.id}>
+                    {paymentsPager.paged.map((payment) => {
+                      const supplierName = suppliers.find((s) => s.id === payment.businessPartnerId)?.name || payment.businessPartnerId;
+                      const canApprove = payment.status === 'Pending Approval' && canApprovePayments;
+                      return (
+                      <TableRow key={payment.id} className={rowClassNames(viewItem?.id === payment.id && viewKind === 'payment')} onClick={() => openPaymentView(payment)}>
                         <TableCell>
-                          <span className="font-mono font-medium">{payment.paymentNumber}</span>
+                          <span className="font-mono font-medium text-blue-600 hover:underline">{payment.paymentNumber}</span>
                         </TableCell>
                         <TableCell>
-                          <span className="text-sm">{payment.businessPartnerId}</span>
+                          <span className="text-sm">{supplierName}</span>
                         </TableCell>
                         <TableCell>
                           <span className="text-sm">
                             {new Date(payment.date).toLocaleDateString()}
                           </span>
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="tabular-nums text-right">
                           <div className="font-medium">
                             {formatAccountingCurrency(payment.amount)}
                           </div>
@@ -1100,62 +1291,41 @@ export default function AccountsPayablePage() {
                             {payment.paymentMethod}
                           </Chip>
                         </TableCell>
-                        <TableCell>
-                          <Chip
-                            color={
-                              payment.status === 'Posted' ? 'success' :
-                              payment.status === 'Draft' ? 'default' :
-                              payment.status === 'Pending Approval' ? 'warning' :
-                              'danger'
-                            }
-                            variant="flat"
-                            size="sm"
-                          >
-                            {payment.status}
-                          </Chip>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            {payment.status === 'Pending Approval' && canApprovePayments && (
-                              <Button size="sm" color="success" variant="flat" onClick={() => { try { postPayment(payment.id); } catch {} }}>
-                                ✅ Approve &amp; Post
-                              </Button>
-                            )}
-                            <Button size="sm" variant="bordered" onClick={() => { setDialogType('payment'); setEditing(payment); setForm({
-                              businessPartnerId: payment.businessPartnerId,
-                              date: payment.date.slice(0,10),
-                              amount: payment.amount,
-                              paymentMethod: payment.paymentMethod,
-                              reference: payment.reference || '',
-                              invoiceId: payment.invoiceId || '',
-                              bankAccountId: payment.bankAccountId || '',
-                              checkNumber: payment.checkNumber || '',
-                              receivedBy: payment.receivedBy || '',
-                              receiverContact: payment.receiverContact || '',
-                              receiverIdType: payment.receiverIdType || '',
-                              receiverIdNumber: payment.receiverIdNumber || '',
-                              receivedDate: payment.receivedDate ? payment.receivedDate.slice(0,10) : '',
-                              receiverSignature: payment.receiverSignature || '',
-                              attachments: payment.attachments || [],
-                              pdfUrl: payment.pdfUrl || '',
-                              pdfFileName: payment.pdfFileName || ''
-                            }); setIsOpen(true); }}>✏️ Edit</Button>
-                          </div>
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          {canApprove ? (
+                            <Chip
+                              color="warning"
+                              variant="flat"
+                              size="sm"
+                              className="cursor-pointer"
+                              onClick={() => { try { postPayment(payment.id); } catch {} }}
+                            >
+                              Pending · Approve
+                            </Chip>
+                          ) : (
+                            <Chip
+                              color={
+                                payment.status === 'Posted' ? 'success' :
+                                payment.status === 'Draft' ? 'default' :
+                                payment.status === 'Pending Approval' ? 'warning' :
+                                'danger'
+                              }
+                              variant="flat"
+                              size="sm"
+                            >
+                              {payment.status}
+                            </Chip>
+                          )}
                         </TableCell>
                       </TableRow>
-                    ))}
+                      );
+                    })}
                   </TableBody>
                 </Table>
-                {paymentsPages > 1 && (
-                  <div className="flex justify-center mt-4 p-4">
-                    <Pagination 
-                      total={paymentsPages} 
-                      page={page} 
-                      onChange={setPage}
-                      showControls
-                    />
-                  </div>
-                )}
+                </div>
+                <div className="mt-3 flex justify-end">
+                  <Pagination page={paymentsPager.page} total={paymentsPager.pages} onChange={paymentsPager.setPage} showControls size="sm" />
+                </div>
               </div>
             </Tab>
 
@@ -2003,6 +2173,220 @@ export default function AccountsPayablePage() {
               </ModalFooter>
             </>
           );
+          }}
+        </ModalContent>
+      </Modal>
+
+      {/* Click-to-view detail (Edit / other actions in footer) */}
+      <Modal
+        isOpen={isViewOpen}
+        onOpenChange={(open) => { if (!open) closeView(); }}
+        size={viewKind === 'invoice' ? '4xl' : '2xl'}
+        scrollBehavior="inside"
+      >
+        <ModalContent>
+          {(onClose) => {
+            if (!viewItem || !viewKind) return null;
+
+            if (viewKind === 'supplier') {
+              const outstanding = supplierAging.find((a) => a.id === viewItem.id)?.outstandingBalance ?? 0;
+              const statusLabel = outstanding > (viewItem.creditLimit || 0) ? 'Over Limit' : outstanding > 0 ? 'Outstanding' : 'Current';
+              const statusColor = outstanding > (viewItem.creditLimit || 0) ? 'danger' : outstanding > 0 ? 'warning' : 'success';
+              return (
+                <>
+                  <ModalHeader className="border-b bg-white px-6 py-4">
+                    <div className="flex justify-between items-start w-full pr-6">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="text-xl font-bold text-gray-900">SUPPLIER</h3>
+                          <Chip size="sm" variant="flat" color={statusColor as any}>{statusLabel}</Chip>
+                        </div>
+                        <p className="text-lg text-gray-800">{viewItem.name}</p>
+                        <p className="text-sm font-mono text-gray-500">{viewItem.code}</p>
+                      </div>
+                    </div>
+                  </ModalHeader>
+                  <ModalBody className="p-6 bg-white">
+                    <div className="grid grid-cols-2 gap-6 text-sm">
+                      <div>
+                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Contact</h4>
+                        <div className="space-y-1">
+                          <div><span className="text-gray-500">Person:</span> <span className="font-medium">{viewItem.contactPerson || '—'}</span></div>
+                          <div><span className="text-gray-500">Email:</span> <span className="font-medium">{viewItem.email || '—'}</span></div>
+                          <div><span className="text-gray-500">Phone:</span> <span className="font-medium">{viewItem.phone || '—'}</span></div>
+                          <div><span className="text-gray-500">Tax ID:</span> <span className="font-mono text-xs">{viewItem.taxNumber || '—'}</span></div>
+                        </div>
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Account</h4>
+                        <div className="space-y-1">
+                          <div><span className="text-gray-500">Address:</span> <span className="font-medium">{viewItem.address || '—'}</span></div>
+                          <div><span className="text-gray-500">Country:</span> <span className="font-medium">{viewItem.countryCode || '—'}</span></div>
+                          <div><span className="text-gray-500">Payment terms:</span> <span className="font-medium">{viewItem.paymentTerms != null ? `${viewItem.paymentTerms} days` : '—'}</span></div>
+                          <div><span className="text-gray-500">Credit limit:</span> <span className="font-medium tabular-nums">{formatAccountingCurrency(viewItem.creditLimit || 0)}</span></div>
+                          <div><span className="text-gray-500">Outstanding:</span> <span className="font-semibold text-red-600 tabular-nums">{formatAccountingCurrency(outstanding)}</span></div>
+                        </div>
+                      </div>
+                    </div>
+                  </ModalBody>
+                  <ModalFooter className="border-t bg-white">
+                    <Button variant="flat" onPress={onClose}>Close</Button>
+                    <Button color="primary" variant="flat" onPress={() => { closeView(); openNewInvoiceFor(viewItem.id); }}>📄 Add Bill</Button>
+                    {outstanding > 0 && (
+                      <Button color="danger" variant="flat" onPress={() => { closeView(); openNewPaymentFor(viewItem.id, outstanding, `Payment to ${viewItem.name}`); }}>💳 Record Payment</Button>
+                    )}
+                    <Button color="primary" onPress={() => { closeView(); openSupplierEdit(viewItem); }}>✏️ Edit</Button>
+                  </ModalFooter>
+                </>
+              );
+            }
+
+            if (viewKind === 'invoice') {
+              const supplier = suppliers.find((s) => s.id === viewItem.businessPartnerId);
+              const paidAmount = (viewItem.paidAmount != null)
+                ? viewItem.paidAmount
+                : supplierPayments.filter((p) => p.invoiceId === viewItem.id).reduce((sum, p) => sum + p.amount, 0);
+              const balance = (viewItem.total || 0) - paidAmount;
+              const dueRaw = viewItem.dueDate || viewItem.date;
+              const dueDate = new Date(dueRaw);
+              const dueValid = !Number.isNaN(dueDate.getTime());
+              const daysOverdue = dueValid ? Math.floor((Date.now() - dueDate.getTime()) / 86400000) : 0;
+              const statusLabel = balance <= 0 ? 'Paid' : daysOverdue > 0 ? 'Overdue' : 'Outstanding';
+              const statusColor = balance <= 0 ? 'success' : daysOverdue > 0 ? 'danger' : 'warning';
+              const lineItems = viewItem.lines || viewItem.items || viewItem.lineItems || [];
+              return (
+                <>
+                  <ModalHeader className="border-b bg-white px-6 py-4">
+                    <div className="flex justify-between items-start w-full pr-6">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="text-xl font-bold text-gray-900">PURCHASE BILL</h3>
+                          <Chip size="sm" variant="flat" color={statusColor as any}>{statusLabel}</Chip>
+                          <Chip size="sm" variant="flat" color="default">{viewItem.status || '—'}</Chip>
+                        </div>
+                        <p className="text-lg font-mono text-gray-700">{viewItem.invoiceNumber || viewItem.id}</p>
+                      </div>
+                      <div className="text-right text-sm text-gray-600">
+                        <div>Supplier: <span className="font-medium">{supplier?.name || '—'}</span></div>
+                        <div>Date: {new Date(viewItem.date).toLocaleDateString()}</div>
+                      </div>
+                    </div>
+                  </ModalHeader>
+                  <ModalBody className="p-6 bg-white">
+                    <div className="grid grid-cols-3 gap-6 pb-6 border-b text-sm">
+                      <div>
+                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Supplier</h4>
+                        <div className="font-semibold">{supplier?.name || 'Unknown'}</div>
+                        <div className="text-xs text-gray-500 font-mono">{supplier?.code || viewItem.businessPartnerId}</div>
+                        {viewItem.description && <div className="mt-2 text-gray-600">{viewItem.description}</div>}
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Dates</h4>
+                        <div className="flex justify-between"><span className="text-gray-500">Invoice:</span><span>{new Date(viewItem.date).toLocaleDateString()}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-500">Due:</span><span className={daysOverdue > 0 && balance > 0 ? 'text-red-600 font-medium' : ''}>{dueValid ? dueDate.toLocaleDateString() : '—'}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-500">PO:</span><span className="font-mono text-xs">{viewItem.poNumber || '—'}</span></div>
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Amounts</h4>
+                        <div className="flex justify-between"><span className="text-gray-500">Subtotal:</span><span className="tabular-nums">{formatAccountingCurrency(viewItem.subtotal || 0)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-500">Tax:</span><span className="tabular-nums">{formatAccountingCurrency(viewItem.taxAmount || 0)}</span></div>
+                        <div className="flex justify-between font-semibold"><span>Total:</span><span className="tabular-nums">{formatAccountingCurrency(viewItem.total || 0)}</span></div>
+                        <div className="flex justify-between text-green-700"><span>Paid:</span><span className="tabular-nums">{formatAccountingCurrency(paidAmount)}</span></div>
+                        <div className={`flex justify-between font-bold ${balance > 0 ? 'text-red-600' : 'text-green-600'}`}><span>Balance:</span><span className="tabular-nums">{formatAccountingCurrency(balance)}</span></div>
+                      </div>
+                    </div>
+                    {lineItems.length > 0 && (
+                      <div>
+                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Line Items</h4>
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b-2 border-gray-200">
+                              <th className="text-left py-2 text-gray-600">Description</th>
+                              <th className="text-right py-2 text-gray-600">Qty</th>
+                              <th className="text-right py-2 text-gray-600">Unit</th>
+                              <th className="text-right py-2 text-gray-600">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {lineItems.map((ln: any, i: number) => (
+                              <tr key={ln.id || i} className="border-b border-gray-100">
+                                <td className="py-2">{ln.description || '—'}</td>
+                                <td className="py-2 text-right tabular-nums">{ln.quantity ?? '—'}</td>
+                                <td className="py-2 text-right tabular-nums">{formatAccountingCurrency(ln.unitPrice || 0)}</td>
+                                <td className="py-2 text-right tabular-nums font-medium">{formatAccountingCurrency(ln.amount ?? ((ln.quantity || 0) * (ln.unitPrice || 0)))}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </ModalBody>
+                  <ModalFooter className="border-t bg-white">
+                    <Button variant="flat" onPress={onClose}>Close</Button>
+                    {balance > 0 && (
+                      <Button color="danger" variant="flat" onPress={() => { closeView(); openPaymentForInvoice(viewItem); }}>💳 Record Payment</Button>
+                    )}
+                    <Button color="primary" onPress={() => { closeView(); openBillEdit(viewItem); }}>✏️ Edit</Button>
+                  </ModalFooter>
+                </>
+              );
+            }
+
+            // payment view
+            const paySupplier = suppliers.find((s) => s.id === viewItem.businessPartnerId);
+            const canApprove = viewItem.status === 'Pending Approval' && canApprovePayments;
+            return (
+              <>
+                <ModalHeader className="border-b bg-white px-6 py-4">
+                  <div className="flex justify-between items-start w-full pr-6">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="text-xl font-bold text-gray-900">SUPPLIER PAYMENT</h3>
+                        <Chip
+                          size="sm"
+                          variant="flat"
+                          color={
+                            viewItem.status === 'Posted' ? 'success' :
+                            viewItem.status === 'Pending Approval' ? 'warning' :
+                            viewItem.status === 'Draft' ? 'default' : 'danger'
+                          }
+                        >
+                          {viewItem.status || '—'}
+                        </Chip>
+                      </div>
+                      <p className="text-lg font-mono text-gray-700">{viewItem.paymentNumber || viewItem.id}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-3xl font-bold tabular-nums text-gray-900">{formatAccountingCurrency(viewItem.amount || 0)}</p>
+                      <p className="text-sm text-gray-500">{viewItem.paymentMethod || '—'}</p>
+                    </div>
+                  </div>
+                </ModalHeader>
+                <ModalBody className="p-6 bg-white">
+                  <div className="grid grid-cols-2 gap-6 text-sm">
+                    <div>
+                      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Paid To</h4>
+                      <div className="font-semibold">{paySupplier?.name || viewItem.businessPartnerId}</div>
+                      <div className="text-xs text-gray-500 font-mono">{paySupplier?.code || '—'}</div>
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Details</h4>
+                      <div className="flex justify-between"><span className="text-gray-500">Date:</span><span>{new Date(viewItem.date).toLocaleDateString()}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-500">Reference:</span><span>{viewItem.reference || '—'}</span></div>
+                      <div className="flex justify-between"><span className="text-gray-500">Invoice:</span><span className="font-mono text-xs">{viewItem.invoiceId || '—'}</span></div>
+                      {viewItem.checkNumber && <div className="flex justify-between"><span className="text-gray-500">Check #:</span><span className="font-mono text-xs">{viewItem.checkNumber}</span></div>}
+                    </div>
+                  </div>
+                </ModalBody>
+                <ModalFooter className="border-t bg-white">
+                  <Button variant="flat" onPress={onClose}>Close</Button>
+                  {canApprove && (
+                    <Button color="success" variant="flat" onPress={() => { try { postPayment(viewItem.id); } catch {} closeView(); }}>✅ Approve &amp; Post</Button>
+                  )}
+                  <Button color="primary" onPress={() => { closeView(); openPaymentEdit(viewItem); }}>✏️ Edit</Button>
+                </ModalFooter>
+              </>
+            );
           }}
         </ModalContent>
       </Modal>

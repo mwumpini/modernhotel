@@ -46,6 +46,14 @@ function localStayDate(now = new Date()) {
   return `${now.getFullYear()}-${month}-${day}`;
 }
 
+/** The fields PUT /api/folios stores — used to skip re-sending an unchanged folio. */
+function folioSignature(f: Folio): string {
+  return JSON.stringify([
+    f.reservationId, f.status, f.currency || 'GHS', f.type ?? null, f.description ?? null,
+    f.responsibleParty ?? null, f.creditBalance ?? null, f.charges || [], f.payments || [],
+  ]);
+}
+
 class FrontOfficeStore {
   reservations: Reservation[] = [];
   guests: GuestProfile[] = [];
@@ -65,6 +73,13 @@ class FrontOfficeStore {
   // this was confirmed as the root cause of hundreds of duplicate GuestFolio
   // rows per reservation in production data.
   private hydrationComplete: boolean = false;
+  // Last folio content known to be on the server (loaded by pullFromApi, or
+  // queued/saved by persistFolio), keyed by folio id. updateFolioBalances()
+  // runs on every render of several billing screens, so without this every
+  // render PUT every folio unchanged — hundreds of thousands of no-op writes
+  // and FOLIO_UPSERTED audit rows. Also marks which local folios the server
+  // knows about (see the phantom-folio drop in pullFromApi).
+  private folioServerSig = new Map<string, string>();
   /** True only after day-ledger has supplied the stored business date. */
   private businessDateSynced = false;
   private hydratedNightAuditState: boolean = false;
@@ -319,9 +334,19 @@ class FrontOfficeStore {
   persistFolio(folio: Folio) {
     if (!this.hydrationComplete) return;
     const t = this.tenant(); if (!t || !folio?.id || !folio?.reservationId) return;
+    const sig = folioSignature(folio);
+    if (this.folioServerSig.get(folio.id) === sig) return;
+    this.folioServerSig.set(folio.id, sig);
     this.enqueueWrite(async () => {
-      const saved = await apiHelpers.upsertFolioViaApi(this as any, t, folio);
+      let saved: Folio;
+      try {
+        saved = await apiHelpers.upsertFolioViaApi(this as any, t, folio);
+      } catch (e) {
+        if (this.folioServerSig.get(folio.id) === sig) this.folioServerSig.delete(folio.id);
+        throw e;
+      }
       if (saved?.id) {
+        this.folioServerSig.set(saved.id, folioSignature(saved));
         const idx = this.folios.findIndex((f) => f.id === saved.id);
         if (idx >= 0) this.folios[idx] = saved;
         else this.folios.unshift(saved);
@@ -358,14 +383,8 @@ class FrontOfficeStore {
           this.reservations.forEach((r) => byId.set(r.id, r));
           data.reservations.forEach((r: Reservation) => byId.set(r.id, this.ensureReservationRates(r)));
           this.reservations = Array.from(byId.values());
-          this.reservations.forEach((r) => {
-            if (r.status === 'checked-in') {
-              try { this.ensureFolioRoomCharges(r.id); } catch {}
-            }
-          });
-          // A prior checkout may have failed only at the GL-post step (invoiceStatus
-          // stuck at 'gl_pending'); retry those now that folios/reservations are fresh.
-          try { this.retryAllPendingGlPosts(); } catch (e) { console.warn('FO: retryAllPendingGlPosts failed', e); }
+          // First-night room charges and the gl_pending retry both read folios, so
+          // they run at the end of this pull, once /api/folios has landed — see below.
           // The resId counter only lives in this browser's localStorage — raise it past
           // whatever the server already has so a fresh/reset browser can't hand out a
           // resId a previous session already used (root cause of duplicate resIds).
@@ -406,6 +425,22 @@ class FrontOfficeStore {
             const localCount = (local?.charges?.length || 0) + (local?.payments?.length || 0);
             const serverCount = (f.charges?.length || 0) + (f.payments?.length || 0);
             byId.set(f.id, serverCount >= localCount ? f : (local as Folio));
+            if (serverCount >= localCount) this.folioServerSig.set(f.id, folioSignature(f));
+          });
+          // A folio the server has never seen (no signature) for a reservation the
+          // server already has a main folio for is a phantom: getOrCreateFolio() made
+          // it (and ensureFolioRoomCharges may have put a Room Charge on it) before
+          // this fetch landed. Keeping it let findMainFolio pick it over the real
+          // one, and the next updateFolioBalances() persisted it as yet another
+          // GuestFolio row — one per checked-in reservation per page load.
+          const serverMainFor = new Set(
+            (data.folios as Folio[]).filter((f) => f.type !== 'split').map((f) => f.reservationId),
+          );
+          const serverIds = new Set((data.folios as Folio[]).map((f) => f.id));
+          byId.forEach((f, id) => {
+            if (!serverIds.has(id) && f.type !== 'split' && serverMainFor.has(f.reservationId) && !this.folioServerSig.has(id)) {
+              byId.delete(id);
+            }
           });
           this.folios = Array.from(byId.values());
           try { useSettingsStore.getState().reconcileNumberFloor('folio', this.folios.map((f) => f.id)); } catch {}
@@ -428,6 +463,14 @@ class FrontOfficeStore {
     // been attempted (success or failure) — see the hydrationComplete field
     // comment for why persistFolio needs this instead of hydratedFromApi.
     this.hydrationComplete = true;
+    this.reservations.forEach((r) => {
+      if (r.status === 'checked-in') {
+        try { this.ensureFolioRoomCharges(r.id); } catch {}
+      }
+    });
+    // A prior checkout may have failed only at the GL-post step (invoiceStatus
+    // stuck at 'gl_pending'); retry those now that folios/reservations are fresh.
+    try { this.retryAllPendingGlPosts(); } catch (e) { console.warn('FO: retryAllPendingGlPosts failed', e); }
   }
 
   // Hydrate once on the client, then keep fresh when the tab regains focus so
@@ -1356,6 +1399,13 @@ class FrontOfficeStore {
   ensureFolioRoomCharges(reservationId: string) {
     const reservation = this.reservations.find((r) => r.id === reservationId);
     if (!reservation || reservation.status !== 'checked-in') return;
+    // Server-backed: wait for the real folios. Posting now would put the charge on
+    // a phantom folio (the real one isn't loaded yet) — pullFromApi calls this
+    // again for every checked-in reservation once they have landed.
+    if (!this.hydrationComplete && this.tenant()) {
+      this.ensureHydratedFromApi();
+      return;
+    }
     try {
       const rm = useSettingsStore.getState().roomManagement;
       if (rm?.postFirstNightAtCheckin) {

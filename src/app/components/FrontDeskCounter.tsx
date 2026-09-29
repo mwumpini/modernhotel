@@ -21,8 +21,8 @@ import {
   Tabs,
 } from '@heroui/react';
 import { useRouter } from 'next/navigation';
-import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
-import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import { HideCardButton } from './dashboard/CustomizeViewControl';
+import { FoDeskKpiCustomize, FO_DESK_KPI_SECTIONS, useFrontOfficeDeskVisibility } from './frontoffice/foDeskKpi';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { autoAssignRoomsEnabled, useSettingsStore } from '../lib/settings/store';
@@ -59,13 +59,7 @@ import type { Reservation } from '../lib/frontoffice/types';
 
 const ReservationsBookingsManager = dynamic(() => import('./ReservationsBookingsManager'), { ssr: false });
 
-const DESK_SUMMARY_CARDS: DashboardSectionDef[] = [
-  { id: 'totalCharges', label: 'Total Charges (incl. tax)' },
-  { id: 'paidAmount', label: 'Paid Amount (incl. tax)' },
-  { id: 'outstanding', label: 'Outstanding (incl. tax)' },
-  { id: 'paidTotal', label: 'Paid/Total' },
-];
-
+const DESK_SUMMARY_CARDS = FO_DESK_KPI_SECTIONS;
 type PayMethod = 'Cash' | 'Card' | 'Mobile Money' | 'Bank Transfer';
 type PrintChoice = 'registration-card' | 'invoice' | 'receipt';
 
@@ -142,8 +136,8 @@ function payLaterAllowed(res: Reservation) {
 
 export default function FrontDeskCounter() {
   const router = useRouter();
-  const { isHidden, hide, toggle: toggleCard, showAll: showAllCards, hiddenCount } =
-    useDashboardVisibility('dashboard.hidden.frontDesk', DESK_SUMMARY_CARDS);
+  const { isHidden, hide, hiddenCount, isHosted } =
+    useFrontOfficeDeskVisibility(FO_DESK_KPI_SECTIONS);
   const [tick, setTick] = useState(0);
   const [query, setQuery] = useState('');
   const [view, setView] = useState<'all' | 'arriving' | 'leaving' | 'inhouse'>('all');
@@ -523,19 +517,13 @@ export default function FrontDeskCounter() {
   const quote = selected ? frontOfficeStore.getReservationQuote(selected) : null;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3">
+    <div className="space-y-3">
+        <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-1.5">
-          <h2 className="text-2xl font-bold text-ghana-black">Front Desk</h2>
+          <h2 className="text-xl font-bold text-ghana-black">Front Desk</h2>
           <HeadingInfo label="About the desk">One list for the shift. Open a row to check a guest in, or to settle and check them out.</HeadingInfo>
         </div>
-        <CustomizeViewControl
-          sections={DESK_SUMMARY_CARDS}
-          isHidden={isHidden}
-          toggle={toggleCard}
-          showAll={showAllCards}
-          hiddenCount={hiddenCount}
-        />
+        {!isHosted && <FoDeskKpiCustomize sections={FO_DESK_KPI_SECTIONS} />}
       </div>
 
       <Card className="border-0 shadow-lg">
@@ -705,12 +693,12 @@ export default function FrontDeskCounter() {
       </Card>
 
       {hiddenCount < DESK_SUMMARY_CARDS.length && (
-        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <div className="mb-0 grid grid-cols-2 gap-2 lg:grid-cols-4">
           {([
-            ['totalCharges', money(summary.charges), 'text-blue-700'],
-            ['paidAmount', money(summary.paid), 'text-green-700'],
-            ['outstanding', money(summary.outstanding), 'text-orange-700'],
-            ['paidTotal', `${summary.settled}/${shown.length}`, 'text-purple-700'],
+            ['desk.totalCharges', money(summary.charges), 'text-blue-700'],
+            ['desk.paidAmount', money(summary.paid), 'text-green-700'],
+            ['desk.outstanding', money(summary.outstanding), 'text-orange-700'],
+            ['desk.paidTotal', `${summary.settled}/${shown.length}`, 'text-purple-700'],
           ] as const).map(([id, value, tone]) => {
             if (isHidden(id)) return null;
             const label = DESK_SUMMARY_CARDS.find((card) => card.id === id)?.label || id;

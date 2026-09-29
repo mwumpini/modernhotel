@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { Button, Chip, Tabs, Tab } from '@heroui/react';
+import { deskBookTabsClassNames } from '../dashboard/deskTabsUi';
 import { useSettingsStore } from '../../lib/settings/store';
 import type { BlockTemplate } from '../../lib/print/blocks';
 import type { PrintType } from '../../lib/print/templates';
@@ -207,21 +208,22 @@ export default function DocumentTemplatesPanel() {
   };
 
   return (
-    <div className="space-y-6 mt-4">
+    <div className="mt-2 space-y-3">
       <div>
-        <h3 className="text-xl font-semibold">Document Templates</h3>
-        <p className="text-sm text-gray-600">
+        <h3 className="text-lg font-semibold">Document Templates</h3>
+        <p className="text-xs text-gray-600">
           <strong>Accommodation &amp; Front Desk</strong> covers room, breakfast, restaurant, and other guest-facing
           services. <strong>Events &amp; Conferences</strong> is kept fully separate, and split further into its own
-          Accommodation and Conference &amp; Events documents — edit each independently below, and Events &amp;
-          Conferences prints using exactly what's set here for each, so an edit always lands where it should.
+          Accommodation and Conference &amp; Events documents — edit each independently below.
         </p>
       </div>
 
-      <div className="space-y-3 border-b pb-4">
+      <div className="space-y-2 border-b pb-3">
         <Tabs
           aria-label="Document family"
-          color="primary"
+          size="sm"
+          variant="solid"
+          classNames={deskBookTabsClassNames}
           selectedKey={activeFamily.key}
           onSelectionChange={(key) => {
             const family = FAMILIES.find(f => f.key === key);
@@ -234,13 +236,13 @@ export default function DocumentTemplatesPanel() {
             const typesForTab = legForTab?.types || family.types || [];
             return (
               <Tab key={family.key} title={`${family.icon} ${family.label}`}>
-                <div className="space-y-3 pt-3">
+                <div className="space-y-2 pt-2">
                   {family.legs && (
-                    <div className="flex items-center gap-1 bg-amber-50 border border-amber-200 rounded-lg p-1 w-fit">
+                    <div className="flex w-fit items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 p-1">
                       {family.legs.map(leg => (
                         <button
                           key={leg.key}
-                          className={`text-sm px-3 py-1.5 rounded-md font-medium transition-colors ${
+                          className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                             legForTab?.key === leg.key ? 'bg-white shadow-sm text-ghana-black' : 'text-amber-900/70 hover:text-amber-900'
                           }`}
                           onClick={() => selectLeg(leg)}

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Button, Card, CardBody, CardHeader, Chip, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, Textarea } from '@heroui/react';
+import { Button, Card, CardBody, CardHeader, Chip, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Pagination, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, Textarea } from '@heroui/react';
 import { usePerformanceStore } from '@/app/lib/hr/performanceStore';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { usePerformanceLogStore } from '@/app/lib/hr/performanceLogStore';
@@ -9,7 +9,22 @@ import { categoryLabel, fmtScore, reviewPeriodRange, summarize, type LogCategory
 import { dayKey } from '@/app/lib/hr/leaveDates';
 import { useCurrentUserName } from '@/app/lib/auth/useCurrentUserName';
 import type { PerformanceReview } from '@/app/lib/hr/models';
+import { printDetailSheet } from '@/app/lib/print/simpleReport';
+import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
+import { DetailGrid, DetailField } from '../frontoffice/detailView';
+import { useDeskPagination } from '../dashboard/deskTableUi';
 import ScoreChip from './ScoreChip';
+
+type ReviewSortKey = 'employee' | 'period' | 'date' | 'reviewer' | 'rating' | 'status';
+
+const reviewColumnWidths: Record<ReviewSortKey, number> = {
+  employee: 160,
+  period: 100,
+  date: 110,
+  reviewer: 140,
+  rating: 80,
+  status: 120,
+};
 
 type CategoryKey = keyof PerformanceReview['categories'];
 
@@ -55,7 +70,10 @@ export default function PerformanceReviewsPanel() {
   const [status, setStatus] = React.useState<string>('all');
   const [q, setQ] = React.useState('');
   const [isOpen, setIsOpen] = React.useState(false);
-  const [viewId, setViewId] = React.useState<string | null>(null);
+  const [viewing, setViewing] = React.useState<PerformanceReview | null>(null);
+  const [sortKey, setSortKey] = React.useState<ReviewSortKey>('date');
+  const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('desc');
+  const cols = useResizableColumns<ReviewSortKey>(reviewColumnWidths);
   const [form, setForm] = React.useState<FormState>({ employeeId: '', reviewPeriod: '', reviewDate: '', reviewerName: '', ratings: {}, comments: '', status: 'draft' });
 
   const current = employees.filter((e) => e.status !== 'terminated' && e.status !== 'inactive');
@@ -74,7 +92,42 @@ export default function PerformanceReviewsPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, current.length]);
 
-  const filtered = reviews.filter((r) => (status === 'all' || r.status === status) && nameOf(r.employeeId).toLowerCase().includes(q.toLowerCase()));
+  const filtered = React.useMemo(() => {
+    const rows = reviews.filter((r) => (status === 'all' || r.status === status) && nameOf(r.employeeId).toLowerCase().includes(q.toLowerCase()));
+    const value = (r: PerformanceReview): string | number => {
+      switch (sortKey) {
+        case 'employee': return nameOf(r.employeeId).toLowerCase();
+        case 'period': return r.reviewPeriod || '';
+        case 'date': return new Date(r.reviewDate).getTime();
+        case 'reviewer': return (r.reviewerName || '').toLowerCase();
+        case 'rating': return Number(r.overallRating || 0);
+        case 'status': return r.status || '';
+        default: return '';
+      }
+    };
+    const sorted = [...rows].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      if (av < bv) return -1;
+      if (av > bv) return 1;
+      return 0;
+    });
+    return sortDir === 'asc' ? sorted : sorted.reverse();
+  }, [reviews, status, q, sortKey, sortDir, employees]);
+
+  const { page, setPage, pages, paged } = useDeskPagination(filtered, [status, q, sortKey, sortDir]);
+
+  const onSort = (key: ReviewSortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(key); setSortDir('asc'); }
+  };
+
+  const column = (key: ReviewSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+    <TableColumn key={key} className="relative" style={cols.style(key)}>
+      <SortLabel active={sortKey === key} dir={sortDir} align={align} onPress={() => onSort(key)}>{label}</SortLabel>
+      {cols.sizer(key, label)}
+    </TableColumn>
+  );
 
   const allRated = REVIEW_CATEGORIES.every((c) => !!form.ratings[c.key]);
   const overall = average(REVIEW_CATEGORIES.map((c) => form.ratings[c.key] || 0).filter(Boolean));
@@ -114,7 +167,7 @@ export default function PerformanceReviewsPanel() {
   };
   const evidenceFor = (logCategories: LogCategory[]) => summarize(periodEntries.filter((e) => logCategories.includes(e.category as LogCategory)));
 
-  const viewed = reviews.find((r) => r.id === viewId);
+  const viewed = viewing ? reviews.find((r) => r.id === viewing.id) || viewing : null;
 
   const statusColor = (
     s: string
@@ -148,37 +201,41 @@ export default function PerformanceReviewsPanel() {
           </div>
         </CardHeader>
         <CardBody>
-          <Table aria-label="performance-reviews">
-            <TableHeader>
-              <TableColumn>EMPLOYEE</TableColumn>
-              <TableColumn>PERIOD</TableColumn>
-              <TableColumn>DATE</TableColumn>
-              <TableColumn>REVIEWER</TableColumn>
-              <TableColumn>RATING</TableColumn>
-              <TableColumn>STATUS</TableColumn>
-              <TableColumn>{' '}</TableColumn>
-            </TableHeader>
-            <TableBody emptyContent="No reviews yet.">
-              {filtered.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell>{nameOf(r.employeeId)}</TableCell>
-                  <TableCell>{r.reviewPeriod}</TableCell>
-                  <TableCell>{new Date(r.reviewDate).toLocaleDateString()}</TableCell>
-                  <TableCell>{r.reviewerName}</TableCell>
-                  <TableCell>{r.overallRating}</TableCell>
-                  <TableCell><Chip size="sm" variant="flat" color={statusColor(r.status)}>{r.status}</Chip></TableCell>
-                  <TableCell>
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="flat" onPress={() => setViewId(r.id)}>View</Button>
-                      <Button size="sm" variant="flat" onPress={() => updateReview(r.id, { status: 'submitted' })}>Submit</Button>
-                      <Button size="sm" variant="flat" onPress={() => updateReview(r.id, { status: 'completed' })}>Complete</Button>
-                      <Button size="sm" variant="flat" color="danger" onPress={() => deleteReview(r.id)}>Delete</Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <div ref={cols.frameRef} style={cols.frameStyle}>
+            <Table aria-label="performance-reviews" removeWrapper classNames={deskResizableTableClassNames()}>
+              <TableHeader>
+                {column('employee', 'Employee')}
+                {column('period', 'Period')}
+                {column('date', 'Date')}
+                {column('reviewer', 'Reviewer')}
+                {column('rating', 'Rating', 'center')}
+                {column('status', 'Status')}
+              </TableHeader>
+              <TableBody emptyContent="No reviews match these filters.">
+                {paged.map((r) => (
+                  <TableRow
+                    key={r.id}
+                    className={rowClassNames(viewing?.id === r.id)}
+                    onClick={() => setViewing(r)}
+                  >
+                    <TableCell className="font-semibold text-ghana-black">
+                      <span className="block truncate" title={nameOf(r.employeeId)}>{nameOf(r.employeeId)}</span>
+                    </TableCell>
+                    <TableCell>{r.reviewPeriod}</TableCell>
+                    <TableCell>{new Date(r.reviewDate).toLocaleDateString()}</TableCell>
+                    <TableCell>
+                      <span className="block truncate" title={r.reviewerName}>{r.reviewerName}</span>
+                    </TableCell>
+                    <TableCell className="text-center tabular-nums">{r.overallRating}</TableCell>
+                    <TableCell><Chip size="sm" variant="flat" color={statusColor(r.status)}>{r.status}</Chip></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="mt-3 flex justify-end">
+            <Pagination page={page} total={pages} onChange={setPage} showControls size="sm" />
+          </div>
         </CardBody>
       </Card>
 
@@ -271,33 +328,64 @@ export default function PerformanceReviewsPanel() {
         </ModalContent>
       </Modal>
 
-      <Modal isOpen={!!viewed} onOpenChange={(open) => { if (!open) setViewId(null); }} size="lg" scrollBehavior="inside">
+      <Modal isOpen={!!viewed} onOpenChange={(open) => { if (!open) setViewing(null); }} size="2xl" scrollBehavior="inside">
         <ModalContent>
           {() => viewed && (
             <>
-              <ModalHeader>{nameOf(viewed.employeeId)} — {viewed.reviewPeriod}</ModalHeader>
-              <ModalBody>
-                <div className="grid grid-cols-3 gap-3 text-sm">
-                  <div><p className="text-gray-500">Reviewer</p><p className="font-medium">{viewed.reviewerName}</p></div>
-                  <div><p className="text-gray-500">Date</p><p className="font-medium">{new Date(viewed.reviewDate).toLocaleDateString('en-GB')}</p></div>
-                  <div><p className="text-gray-500">Overall</p><p className="font-medium">{viewed.overallRating} / 5</p></div>
-                </div>
+              <ModalHeader className="flex flex-col gap-1">
+                <span>{nameOf(viewed.employeeId)}</span>
+                <span className="text-sm font-normal text-gray-500">{viewed.reviewPeriod} · {viewed.status}</span>
+              </ModalHeader>
+              <ModalBody className="space-y-4">
+                <DetailGrid>
+                  <DetailField label="Reviewer" value={viewed.reviewerName} />
+                  <DetailField label="Date" value={new Date(viewed.reviewDate).toLocaleDateString('en-GB')} />
+                  <DetailField label="Overall" value={`${viewed.overallRating} / 5`} />
+                  <DetailField label="Status" value={<Chip size="sm" variant="flat" color={statusColor(viewed.status)}>{viewed.status}</Chip>} />
+                </DetailGrid>
                 <div className="space-y-1.5">
                   {REVIEW_CATEGORIES.map((c) => {
                     const v = viewed.categories?.[c.key] ?? 0;
                     return (
                       <div key={c.key} className="flex items-center gap-3 text-sm">
-                        <div className="w-52">{c.label}</div>
+                        <div className="w-52 shrink-0">{c.label}</div>
                         <div className="flex-1 h-2 rounded bg-gray-100"><div className="h-2 rounded bg-blue-500" style={{ width: `${(v / 5) * 100}%` }} /></div>
-                        <div className="w-8 text-right font-medium">{v}</div>
+                        <div className="w-8 text-right font-medium tabular-nums">{v}</div>
                       </div>
                     );
                   })}
                 </div>
-                {viewed.comments && <div><p className="text-sm text-gray-500">Comments</p><p className="whitespace-pre-wrap text-sm">{viewed.comments}</p></div>}
+                {viewed.comments && <DetailField label="Comments" value={viewed.comments} full />}
                 <p className="text-xs text-gray-500">Reviews saved before this update recorded one rating for all eight areas, so their breakdown is not meaningful.</p>
               </ModalBody>
-              <ModalFooter><Button variant="flat" onPress={() => setViewId(null)}>Close</Button></ModalFooter>
+              <ModalFooter className="flex flex-wrap justify-between gap-2">
+                <Button variant="flat" onPress={() => setViewing(null)}>Close</Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="bordered"
+                    onPress={() => printDetailSheet(
+                      nameOf(viewed.employeeId),
+                      [
+                        { label: 'Reviewer', value: viewed.reviewerName },
+                        { label: 'Date', value: new Date(viewed.reviewDate).toLocaleDateString('en-GB') },
+                        { label: 'Overall', value: `${viewed.overallRating} / 5` },
+                        { label: 'Status', value: viewed.status },
+                        ...REVIEW_CATEGORIES.map((c) => ({
+                          label: c.label,
+                          value: String(viewed.categories?.[c.key] ?? 0),
+                        })),
+                        { label: 'Comments', value: viewed.comments || '—' },
+                      ],
+                      `${viewed.reviewPeriod} · ${viewed.status}`,
+                    )}
+                  >
+                    Print
+                  </Button>
+                  <Button variant="flat" onPress={() => updateReview(viewed.id, { status: 'submitted' })}>Submit</Button>
+                  <Button variant="flat" onPress={() => updateReview(viewed.id, { status: 'completed' })}>Complete</Button>
+                  <Button variant="flat" color="danger" onPress={() => { deleteReview(viewed.id); setViewing(null); }}>Delete</Button>
+                </div>
+              </ModalFooter>
             </>
           )}
         </ModalContent>

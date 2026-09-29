@@ -9,13 +9,26 @@ import type { DashboardSectionDef } from '../../lib/dashboard/useDashboardVisibi
  * decluttering a busy dashboard while working. Restoring a hidden card
  * happens via CustomizeViewControl below. Shared by every dashboard that
  * uses useDashboardVisibility (Executive, Accounting, Restaurant & Bar). */
-export function HideCardButton({ onHide, label }: { onHide: () => void; label: string }) {
+export function HideCardButton({
+  onHide,
+  label,
+  size = 'sm',
+}: {
+  onHide: () => void;
+  label: string;
+  size?: 'sm' | 'md';
+}) {
   return (
     <button
+      type="button"
       onClick={onHide}
       title={`Hide ${label}`}
       aria-label={`Hide ${label}`}
-      className="text-gray-400 hover:text-gray-700 transition-colors leading-none px-1"
+      className={
+        size === 'sm'
+          ? 'text-[9px] text-gray-400 hover:text-gray-700 transition-colors leading-none px-0.5'
+          : 'text-xs text-gray-400 hover:text-gray-700 transition-colors leading-none px-1'
+      }
     >
       ✕
     </button>

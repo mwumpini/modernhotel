@@ -6,7 +6,7 @@ import {
   Card, CardBody, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
   Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure,
-  Tabs, Tab, Spinner, Alert, Progress, Pagination,
+  Tabs, Tab, Spinner, Alert, Pagination,
   Autocomplete, AutocompleteItem, Checkbox, Tooltip,
   Dropdown, DropdownTrigger, DropdownMenu, DropdownItem,
 } from "@heroui/react";
@@ -21,6 +21,9 @@ import type { BankTransaction } from '@/app/lib/accounting/models';
 import { BANK_MANUAL_SOURCE } from '@/app/lib/accounting/bankTransactionLedger';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
+import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
+import { useDeskPagination } from '../dashboard/deskTableUi';
+import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName } from './DeskKpiStrip';
 
 // formatAccountingCurrency always shows a magnitude (and the ₵ symbol), so the sign is
 // reattached in front of it here (balances/net cash flow can be negative).
@@ -29,6 +32,9 @@ const formatAmount = (value: number | undefined | null) => {
   return (n < 0 ? '-' : '') + formatAccountingCurrency(n);
 };
 
+type AccountSortKey = 'account' | 'bank' | 'gl' | 'currency' | 'opening' | 'balance' | 'status';
+type TxnSortKey = 'date' | 'account' | 'reference' | 'description' | 'type' | 'amount' | 'status';
+type ViewKind = 'account' | 'transaction' | null;
 type BankAccountForm = {
   id?: string;
   accountName?: string;
@@ -151,16 +157,26 @@ export default function BankCashManagementPage() {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterType, setFilterType] = useState<string>('all');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
-  const [accountsPage, setAccountsPage] = useState(1);
-  const [transactionsPage, setTransactionsPage] = useState(1);
-  const rowsPerPage = 10;
   const [reconAccountId, setReconAccountId] = useState<string | undefined>();
+  const [accountSortKey, setAccountSortKey] = useState<AccountSortKey>('account');
+  const [accountSortDir, setAccountSortDir] = useState<'asc' | 'desc'>('asc');
+  const [txnSortKey, setTxnSortKey] = useState<TxnSortKey>('date');
+  const [txnSortDir, setTxnSortDir] = useState<'asc' | 'desc'>('desc');
+  const accountCols = useResizableColumns<AccountSortKey>({
+    account: 152, bank: 120, gl: 148, currency: 80, opening: 100, balance: 110, status: 88,
+  });
+  const txnCols = useResizableColumns<TxnSortKey>({
+    date: 92, account: 140, reference: 120, description: 168, type: 96, amount: 108, status: 100,
+  });
   
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [modalMode, setModalMode] = useState<'account' | 'transaction'>('account');
   const [editingItem, setEditingItem] = useState<BankAccountForm | null>(null);
   const [txnForm, setTxnForm] = useState<BankTransactionForm | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
+  const [viewKind, setViewKind] = useState<ViewKind>(null);
+  const [viewItem, setViewItem] = useState<any>(null);
+  const isViewOpen = viewKind != null && viewItem != null;
 
   const bankGlOptions = useMemo(
     () => listBankGlAccounts(chartOfAccounts),
@@ -230,6 +246,21 @@ export default function BankCashManagementPage() {
     });
     onOpen();
   }, [journalEntries, onOpen]);
+
+  const closeView = () => {
+    setViewKind(null);
+    setViewItem(null);
+  };
+
+  const openAccountView = (acc: (typeof bankAccounts)[0]) => {
+    setViewKind('account');
+    setViewItem(acc);
+  };
+
+  const openTransactionView = (txn: BankTransaction) => {
+    setViewKind('transaction');
+    setViewItem(txn);
+  };
 
   const closeModal = useCallback(() => {
     onClose();
@@ -323,24 +354,39 @@ export default function BankCashManagementPage() {
   }, [bankAccounts]);
 
   const filteredBankAccounts = useMemo(() => {
-    if (!accountSearchTerm) return bankAccounts;
-    const q = accountSearchTerm.toLowerCase();
-    return bankAccounts.filter((acc) =>
-      acc.accountName.toLowerCase().includes(q) ||
-      (acc.bankName || '').toLowerCase().includes(q) ||
-      (acc.accountNumber || '').toLowerCase().includes(q)
-    );
-  }, [bankAccounts, accountSearchTerm]);
-
-  // Pagination logic for different tabs
-  const accountsToShow = useMemo(() => {
-    const start = (accountsPage - 1) * rowsPerPage;
-    const end = start + rowsPerPage;
-    return filteredBankAccounts.slice(start, end);
-  }, [filteredBankAccounts, accountsPage]);
+    const filtered = !accountSearchTerm
+      ? bankAccounts
+      : bankAccounts.filter((acc) => {
+          const q = accountSearchTerm.toLowerCase();
+          return (
+            acc.accountName.toLowerCase().includes(q) ||
+            (acc.bankName || '').toLowerCase().includes(q) ||
+            (acc.accountNumber || '').toLowerCase().includes(q)
+          );
+        });
+    const value = (acc: (typeof bankAccounts)[0]): string | number => {
+      switch (accountSortKey) {
+        case 'account': return acc.accountName.toLowerCase();
+        case 'bank': return (acc.bankName || '').toLowerCase();
+        case 'gl': return (acc.glAccountCode || '').toLowerCase();
+        case 'currency': return (acc.currency || '').toLowerCase();
+        case 'opening': return acc.openingBalance ?? 0;
+        case 'balance': return acc.currentBalance ?? 0;
+        case 'status': return acc.isActive ? 1 : 0;
+        default: return '';
+      }
+    };
+    const sorted = [...filtered].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+      return String(av).localeCompare(String(bv));
+    });
+    return accountSortDir === 'asc' ? sorted : sorted.reverse();
+  }, [bankAccounts, accountSearchTerm, accountSortKey, accountSortDir]);
 
   const filteredTransactions = useMemo(() => {
-    return bankTransactions.filter(txn => {
+    const filtered = bankTransactions.filter(txn => {
       if (filterStatus !== 'all' && txn.status !== filterStatus) return false;
       if (filterType !== 'all' && txn.type !== filterType) return false;
       if (dateRange.start && dateRange.end) {
@@ -356,16 +402,75 @@ export default function BankCashManagementPage() {
       }
       return true;
     });
-  }, [bankTransactions, filterStatus, filterType, dateRange, searchTerm]);
+    const accountName = (id: string) =>
+      (bankAccounts.find((b) => b.id === id)?.accountName || id).toLowerCase();
+    const value = (txn: BankTransaction): string | number => {
+      switch (txnSortKey) {
+        case 'date': return new Date(txn.transactionDate).getTime();
+        case 'account': return accountName(txn.bankAccountId);
+        case 'reference': return (txn.reference || '').toLowerCase();
+        case 'description': return (txn.description || '').toLowerCase();
+        case 'type': return txn.type;
+        case 'amount': {
+          const signed = txnDirectionLabel(txn) === 'in' ? Math.abs(txn.amount ?? 0) : -Math.abs(txn.amount ?? 0);
+          return signed;
+        }
+        case 'status': return txn.status;
+        default: return '';
+      }
+    };
+    const sorted = [...filtered].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+      return String(av).localeCompare(String(bv));
+    });
+    return txnSortDir === 'asc' ? sorted : sorted.reverse();
+  }, [bankTransactions, filterStatus, filterType, dateRange, searchTerm, txnSortKey, txnSortDir, bankAccounts]);
 
-  const transactionsToShow = useMemo(() => {
-    const start = (transactionsPage - 1) * rowsPerPage;
-    const end = start + rowsPerPage;
-    return filteredTransactions.slice(start, end);
-  }, [filteredTransactions, transactionsPage]);
+  const {
+    page: accountsPage,
+    setPage: setAccountsPage,
+    pages: accountsPages,
+    paged: accountsToShow,
+  } = useDeskPagination(filteredBankAccounts, [accountSearchTerm, accountSortKey, accountSortDir]);
 
-  const accountsPages = Math.ceil(filteredBankAccounts.length / rowsPerPage);
-  const transactionsPages = Math.ceil(filteredTransactions.length / rowsPerPage);
+  const {
+    page: transactionsPage,
+    setPage: setTransactionsPage,
+    pages: transactionsPages,
+    paged: transactionsToShow,
+  } = useDeskPagination(filteredTransactions, [filterStatus, filterType, dateRange, searchTerm, txnSortKey, txnSortDir]);
+
+  const onAccountSort = (key: AccountSortKey) => {
+    if (accountSortKey === key) setAccountSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setAccountSortKey(key);
+      setAccountSortDir(key === 'balance' || key === 'opening' ? 'desc' : 'asc');
+    }
+  };
+
+  const onTxnSort = (key: TxnSortKey) => {
+    if (txnSortKey === key) setTxnSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setTxnSortKey(key);
+      setTxnSortDir(key === 'date' || key === 'amount' ? 'desc' : 'asc');
+    }
+  };
+
+  const accountColumn = (key: AccountSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+    <TableColumn key={key} className="relative" style={accountCols.style(key)}>
+      <SortLabel active={accountSortKey === key} dir={accountSortDir} align={align} onPress={() => onAccountSort(key)}>{label}</SortLabel>
+      {accountCols.sizer(key, label)}
+    </TableColumn>
+  );
+
+  const txnColumn = (key: TxnSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+    <TableColumn key={key} className="relative" style={txnCols.style(key)}>
+      <SortLabel active={txnSortKey === key} dir={txnSortDir} align={align} onPress={() => onTxnSort(key)}>{label}</SortLabel>
+      {txnCols.sizer(key, label)}
+    </TableColumn>
+  );
 
   // Export Bank Accounts to CSV
   const exportBankAccountsCSV = useCallback(() => {
@@ -476,40 +581,21 @@ export default function BankCashManagementPage() {
   }
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <div className="flex items-center gap-1.5">
-          <h1 className="text-3xl font-bold text-gray-900">🏦 Bank & Cash Management</h1>
-          <HeadingInfo label="About bank and cash">Manage bank accounts, cash positions, and liquidity</HeadingInfo>
-        </div>
+    <div className="px-3 pt-2 pb-3 md:px-4 md:pt-3 md:pb-4">
+      <div className="mb-2 flex items-center gap-1.5">
+        <h1 className="text-lg md:text-xl font-bold text-gray-800">🏦 Bank & Cash Management</h1>
+        <HeadingInfo label="About bank and cash">Manage bank accounts, cash positions, and liquidity</HeadingInfo>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-        <Card>
-          <CardBody className="text-center">
-            <div className="text-2xl font-bold text-green-600">{formatAmount(totalBankBalance)}</div>
-            <div className="text-sm text-gray-600">Total Bank Balance</div>
-            <Progress value={100} size="sm" color="success" className="mt-2" />
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardBody className="text-center">
-            <div className="text-2xl font-bold text-blue-600">{formatAmount(totalCash)}</div>
-            <div className="text-sm text-gray-600">Total Cash</div>
-            <Progress value={100} size="sm" color="primary" className="mt-2" />
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardBody className="text-center">
-            <div className="text-2xl font-bold text-green-600">{formatAmount(totalCashFlow)}</div>
-            <div className="text-sm text-gray-600">Net Cash Flow</div>
-            <Progress value={75} size="sm" color="success" className="mt-2" />
-          </CardBody>
-        </Card>
-      </div>
+      <DeskKpiStrip
+        className="mb-3"
+        items={[
+          { id: 'bank.totalBalance', label: 'Total Bank Balance', value: formatAmount(totalBankBalance), tone: 'text-green-700' },
+          { id: 'bank.totalCash', label: 'Total Cash', value: formatAmount(totalCash), tone: 'text-blue-700' },
+          { id: 'bank.netCashFlow', label: 'Net Cash Flow', value: formatAmount(totalCashFlow), tone: 'text-emerald-700' },
+        ]}
+      />
 
       {/* Error Alert */}
       {error && (
@@ -519,20 +605,21 @@ export default function BankCashManagementPage() {
       )}
 
       {/* Main Content Tabs */}
-      <Card>
+      <Card className="shadow-sm">
         <CardBody className="p-0">
           <Tabs
             selectedKey={selectedTab}
             onSelectionChange={(key) => setSelectedTab(key as string)}
             className="w-full"
+            size="sm"
+            variant="solid"
+            classNames={deskBookTabsClassNames}
           >
             <Tab key="bank-accounts" title={`🏦 Bank Accounts (${filteredBankAccounts.length})`}>
-              <div className="p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold">Bank & Cash Accounts</h3>
+              <div className={deskBookTabPanelClassName}>
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="text-sm font-semibold text-gray-800">Bank & Cash Accounts</h3>
                   <div className="flex items-center gap-2">
-                    <Chip color="primary" variant="flat">{filteredBankAccounts.length} accounts</Chip>
-                    <Chip color="success" variant="flat">{formatAmount(filteredBankAccounts.reduce((s, a) => s + (a.currentBalance ?? 0), 0))}</Chip>
                     <Dropdown>
                       <DropdownTrigger>
                         <Button variant="flat" size="sm">📥 Export</Button>
@@ -552,67 +639,59 @@ export default function BankCashManagementPage() {
                   <Input label="Search" placeholder="Account name, bank, account #..." value={accountSearchTerm} onValueChange={setAccountSearchTerm} className="w-64" size="sm" />
                 </div>
 
-                <Table aria-label="Bank Accounts">
-                  <TableHeader>
-                    <TableColumn>ACCOUNT</TableColumn>
-                    <TableColumn>BANK</TableColumn>
-                    <TableColumn>GL ACCOUNT</TableColumn>
-                    <TableColumn>CURRENCY</TableColumn>
-                    <TableColumn className="text-right">OPENING</TableColumn>
-                    <TableColumn className="text-right">BALANCE</TableColumn>
-                    <TableColumn>STATUS</TableColumn>
-                    <TableColumn>ACTIONS</TableColumn>
-                  </TableHeader>
-                  <TableBody emptyContent="No bank accounts found.">
-                    {accountsToShow.map((acc) => (
-                      <TableRow key={acc.id}>
-                        <TableCell>
-                          <div className="font-medium">{acc.accountName}</div>
-                          <div className="text-xs text-gray-500">{acc.accountNumber}</div>
-                        </TableCell>
-                        <TableCell>{acc.bankName}</TableCell>
-                        <TableCell>
-                          <span className="font-mono text-sm">{acc.glAccountCode}</span>
-                          <div className="text-xs text-gray-500">
-                            {chartOfAccounts.find((c) => c.code === acc.glAccountCode)?.name || '—'}
-                          </div>
-                        </TableCell>
-                        <TableCell><span className="font-mono text-sm">{acc.currency}</span></TableCell>
-                        <TableCell className="text-right">{formatAmount(acc.openingBalance)}</TableCell>
-                        <TableCell className="text-right font-semibold">{formatAmount(acc.currentBalance)}</TableCell>
-                        <TableCell>
-                          <Chip color={acc.isActive ? 'success' : 'danger'} variant="flat" size="sm">{acc.isActive ? 'Active' : 'Inactive'}</Chip>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            <Button size="sm" variant="bordered" onPress={() => { setReconAccountId(acc.id); setSelectedTab('reconciliation'); }}>Reconcile</Button>
-                            <Button size="sm" variant="bordered" onPress={() => openEditBankAccount(acc)}>✏️ Edit</Button>
-                            <Button size="sm" color="danger" variant="bordered" onClick={() => deleteBankAccount(acc.id)}>🗑️ Delete</Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                {accountsPages > 1 && (
-                  <div className="flex justify-center mt-4">
-                    <Pagination 
-                      total={accountsPages} 
-                      page={accountsPage} 
-                      onChange={setAccountsPage}
-                      showControls
-                    />
-                  </div>
-                )}
+                <div ref={accountCols.frameRef} style={accountCols.frameStyle}>
+                  <Table aria-label="Bank Accounts" removeWrapper classNames={deskResizableTableClassNames()}>
+                    <TableHeader>
+                      {accountColumn('account', 'Account')}
+                      {accountColumn('bank', 'Bank')}
+                      {accountColumn('gl', 'GL Account')}
+                      {accountColumn('currency', 'Currency')}
+                      {accountColumn('opening', 'Opening', 'right')}
+                      {accountColumn('balance', 'Balance', 'right')}
+                      {accountColumn('status', 'Status')}
+                    </TableHeader>
+                    <TableBody emptyContent="No bank accounts found.">
+                      {accountsToShow.map((acc) => (
+                        <TableRow key={acc.id} className={rowClassNames(viewItem?.id === acc.id && viewKind === 'account')} onClick={() => openAccountView(acc)}>
+                          <TableCell>
+                            <div className="font-medium truncate text-blue-600 hover:underline" title={acc.accountName}>{acc.accountName}</div>
+                            <div className="text-xs text-gray-500 truncate">{acc.accountNumber}</div>
+                          </TableCell>
+                          <TableCell><span className="block truncate" title={acc.bankName}>{acc.bankName}</span></TableCell>
+                          <TableCell>
+                            <span className="font-mono text-sm">{acc.glAccountCode}</span>
+                            <div className="text-xs text-gray-500 truncate">
+                              {chartOfAccounts.find((c) => c.code === acc.glAccountCode)?.name || '—'}
+                            </div>
+                          </TableCell>
+                          <TableCell><span className="font-mono text-sm">{acc.currency}</span></TableCell>
+                          <TableCell className="text-right tabular-nums">{formatAmount(acc.openingBalance)}</TableCell>
+                          <TableCell className="text-right font-semibold tabular-nums">{formatAmount(acc.currentBalance)}</TableCell>
+                          <TableCell>
+                            <Chip color={acc.isActive ? 'success' : 'danger'} variant="flat" size="sm">{acc.isActive ? 'Active' : 'Inactive'}</Chip>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="mt-3 flex justify-end">
+                  <Pagination
+                    total={accountsPages}
+                    page={accountsPage}
+                    onChange={setAccountsPage}
+                    showControls
+                    size="sm"
+                  />
+                </div>
               </div>
             </Tab>
 
             <Tab key="transactions" title={`🔁 Transactions (${filteredTransactions.length})`}>
-              <div className="p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold">Bank Transactions</h3>
+              <div className={deskBookTabPanelClassName}>
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="text-sm font-semibold text-gray-800">Bank Transactions</h3>
                   <div className="flex items-center gap-2">
-                    <Chip color="primary" variant="flat">{filteredTransactions.length} transactions</Chip>
                     <Dropdown>
                       <DropdownTrigger>
                         <Button variant="flat" size="sm">📥 Export</Button>
@@ -650,79 +729,67 @@ export default function BankCashManagementPage() {
                   </div>
                 </div>
 
-                <Table aria-label="Bank Transactions">
-                  <TableHeader>
-                    <TableColumn>DATE</TableColumn>
-                    <TableColumn>ACCOUNT</TableColumn>
-                    <TableColumn>REFERENCE</TableColumn>
-                    <TableColumn>DESCRIPTION</TableColumn>
-                    <TableColumn>TYPE</TableColumn>
-                    <TableColumn className="text-right">AMOUNT</TableColumn>
-                    <TableColumn>STATUS</TableColumn>
-                    <TableColumn>ACTIONS</TableColumn>
-                  </TableHeader>
-                  <TableBody emptyContent="No transactions found.">
-                    {transactionsToShow.map((txn) => {
-                      const dir = txnDirectionLabel(txn);
-                      const counterparty =
-                        txn.type === 'Transfer' && txn.transferToAccountId
-                          ? bankAccounts.find((b) => b.id === txn.transferToAccountId)?.accountName
-                          : undefined;
-                      const manual = isManualBankTxn(txn, journalEntries);
-                      return (
-                      <TableRow key={txn.id}>
-                        <TableCell>{new Date(txn.transactionDate).toLocaleDateString()}</TableCell>
-                        <TableCell>
-                          <div>{bankAccounts.find(b => b.id === txn.bankAccountId)?.accountName || txn.bankAccountId}</div>
-                          {counterparty && (
-                            <div className="text-xs text-gray-500">
-                              {dir === 'out' ? `→ ${counterparty}` : `← ${counterparty}`}
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell className="font-mono text-sm">{txn.reference}</TableCell>
-                        <TableCell>{txn.description}</TableCell>
-                        <TableCell>
-                          <Chip variant="flat" size="sm">{txn.type}</Chip>
-                        </TableCell>
-                        <TableCell className={`text-right font-medium ${dir === 'in' ? 'text-green-600' : 'text-red-600'}`}>
-                          {dir === 'in' ? '+' : '−'}{formatAmount(txn.amount)}
-                        </TableCell>
-                        <TableCell>
-                          <Chip color={txn.status === 'Reconciled' ? 'success' : txn.status === 'Cleared' ? 'primary' : 'warning'} variant="flat" size="sm">{txn.status}</Chip>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-2 flex-wrap">
-                            {txn.status === 'Pending' && (
-                              <Button size="sm" color="primary" variant="bordered" onPress={() => markBankTransactionCleared(txn.id)}>Mark cleared</Button>
+                <div ref={txnCols.frameRef} style={txnCols.frameStyle}>
+                  <Table aria-label="Bank Transactions" removeWrapper classNames={deskResizableTableClassNames()}>
+                    <TableHeader>
+                      {txnColumn('date', 'Date')}
+                      {txnColumn('account', 'Account')}
+                      {txnColumn('reference', 'Reference')}
+                      {txnColumn('description', 'Description')}
+                      {txnColumn('type', 'Type')}
+                      {txnColumn('amount', 'Amount', 'right')}
+                      {txnColumn('status', 'Status')}
+                    </TableHeader>
+                    <TableBody emptyContent="No transactions found.">
+                      {transactionsToShow.map((txn) => {
+                        const dir = txnDirectionLabel(txn);
+                        const counterparty =
+                          txn.type === 'Transfer' && txn.transferToAccountId
+                            ? bankAccounts.find((b) => b.id === txn.transferToAccountId)?.accountName
+                            : undefined;
+                        return (
+                        <TableRow key={txn.id} className={rowClassNames(viewItem?.id === txn.id && viewKind === 'transaction')} onClick={() => openTransactionView(txn)}>
+                          <TableCell>{new Date(txn.transactionDate).toLocaleDateString()}</TableCell>
+                          <TableCell>
+                            <div className="truncate text-blue-600 hover:underline">{bankAccounts.find(b => b.id === txn.bankAccountId)?.accountName || txn.bankAccountId}</div>
+                            {counterparty && (
+                              <div className="text-xs text-gray-500 truncate">
+                                {dir === 'out' ? `→ ${counterparty}` : `← ${counterparty}`}
+                              </div>
                             )}
-                            {manual && txn.status !== 'Reconciled' && (
-                              <>
-                                <Button size="sm" variant="bordered" onPress={() => openEditTransaction(txn)}>✏️ Edit</Button>
-                                <Button size="sm" color="danger" variant="bordered" onPress={() => deleteManualBankTransaction(txn.id)}>🗑️ Delete</Button>
-                              </>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );})}
-                  </TableBody>
-                </Table>
-                {transactionsPages > 1 && (
-                  <div className="flex justify-center mt-4">
-                    <Pagination 
-                      total={transactionsPages} 
-                      page={transactionsPage} 
-                      onChange={setTransactionsPage}
-                      showControls
-                    />
-                  </div>
-                )}
+                          </TableCell>
+                          <TableCell className="font-mono text-sm truncate">{txn.reference}</TableCell>
+                          <TableCell><span className="block truncate" title={txn.description}>{txn.description}</span></TableCell>
+                          <TableCell>
+                            <Chip variant="flat" size="sm">{txn.type}</Chip>
+                          </TableCell>
+                          <TableCell className={`text-right font-medium tabular-nums ${dir === 'in' ? 'text-green-600' : 'text-red-600'}`}>
+                            {dir === 'in' ? '+' : '−'}{formatAmount(txn.amount)}
+                          </TableCell>
+                          <TableCell>
+                            <Chip color={txn.status === 'Reconciled' ? 'success' : txn.status === 'Cleared' ? 'primary' : 'warning'} variant="flat" size="sm">{txn.status}</Chip>
+                          </TableCell>
+                        </TableRow>
+                      );})}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="mt-3 flex justify-end">
+                  <Pagination
+                    total={transactionsPages}
+                    page={transactionsPage}
+                    onChange={setTransactionsPage}
+                    showControls
+                    size="sm"
+                  />
+                </div>
               </div>
             </Tab>
 
             <Tab key="reconciliation" title="🔄 Reconciliation">
-              <BankReconciliation embedded initialAccountId={reconAccountId || bankAccounts[0]?.id} />
+              <div className={deskBookTabPanelClassName}>
+                <BankReconciliation embedded initialAccountId={reconAccountId || bankAccounts[0]?.id} />
+              </div>
             </Tab>
           </Tabs>
         </CardBody>
@@ -1006,6 +1073,119 @@ export default function BankCashManagementPage() {
               closeModal();
             }}>{isEditMode ? 'Update' : 'Create'}</Button>
           </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Click-to-view detail */}
+      <Modal
+        isOpen={isViewOpen}
+        onOpenChange={(open) => { if (!open) closeView(); }}
+        size="2xl"
+        scrollBehavior="inside"
+      >
+        <ModalContent>
+          {(onClose) => {
+            if (!viewItem || !viewKind) return null;
+
+            if (viewKind === 'account') {
+              const glName = chartOfAccounts.find((c) => c.code === viewItem.glAccountCode)?.name || '—';
+              return (
+                <>
+                  <ModalHeader className="border-b bg-white px-6 py-4">
+                    <div className="flex justify-between items-start w-full pr-6">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="text-xl font-bold text-gray-900">BANK ACCOUNT</h3>
+                          <Chip size="sm" variant="flat" color={viewItem.isActive ? 'success' : 'danger'}>
+                            {viewItem.isActive ? 'Active' : 'Inactive'}
+                          </Chip>
+                        </div>
+                        <p className="text-lg text-gray-800">{viewItem.accountName}</p>
+                        <p className="text-sm font-mono text-gray-500">{viewItem.accountNumber || '—'}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-2xl font-bold tabular-nums">{formatAmount(viewItem.currentBalance)}</p>
+                        <p className="text-xs text-gray-500">Current balance</p>
+                      </div>
+                    </div>
+                  </ModalHeader>
+                  <ModalBody className="p-6 bg-white">
+                    <div className="grid grid-cols-2 gap-6 text-sm">
+                      <div className="space-y-1">
+                        <div><span className="text-gray-500">Bank:</span> <span className="font-medium">{viewItem.bankName || '—'}</span></div>
+                        <div><span className="text-gray-500">Currency:</span> <span className="font-mono">{viewItem.currency || '—'}</span></div>
+                        <div><span className="text-gray-500">GL:</span> <span className="font-mono">{viewItem.glAccountCode}</span> <span className="text-gray-500">({glName})</span></div>
+                      </div>
+                      <div className="space-y-1">
+                        <div><span className="text-gray-500">Opening:</span> <span className="tabular-nums font-medium">{formatAmount(viewItem.openingBalance)}</span></div>
+                        <div><span className="text-gray-500">Balance:</span> <span className="tabular-nums font-semibold">{formatAmount(viewItem.currentBalance)}</span></div>
+                      </div>
+                    </div>
+                  </ModalBody>
+                  <ModalFooter className="border-t bg-white">
+                    <Button variant="flat" onPress={onClose}>Close</Button>
+                    <Button variant="flat" color="primary" onPress={() => { closeView(); setReconAccountId(viewItem.id); setSelectedTab('reconciliation'); }}>Reconcile</Button>
+                    <Button color="danger" variant="flat" onPress={() => { deleteBankAccount(viewItem.id); closeView(); }}>🗑️ Delete</Button>
+                    <Button color="primary" onPress={() => { closeView(); openEditBankAccount(viewItem); }}>✏️ Edit</Button>
+                  </ModalFooter>
+                </>
+              );
+            }
+
+            const dir = txnDirectionLabel(viewItem);
+            const accountName = bankAccounts.find((b) => b.id === viewItem.bankAccountId)?.accountName || viewItem.bankAccountId;
+            const manual = isManualBankTxn(viewItem, journalEntries);
+            return (
+              <>
+                <ModalHeader className="border-b bg-white px-6 py-4">
+                  <div className="flex justify-between items-start w-full pr-6">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="text-xl font-bold text-gray-900">BANK TRANSACTION</h3>
+                        <Chip size="sm" variant="flat" color={viewItem.status === 'Reconciled' ? 'success' : viewItem.status === 'Cleared' ? 'primary' : 'warning'}>
+                          {viewItem.status}
+                        </Chip>
+                      </div>
+                      <p className="text-lg font-mono text-gray-700">{viewItem.reference || viewItem.id}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className={`text-2xl font-bold tabular-nums ${dir === 'in' ? 'text-green-600' : 'text-red-600'}`}>
+                        {dir === 'in' ? '+' : '−'}{formatAmount(viewItem.amount)}
+                      </p>
+                      <p className="text-sm text-gray-500">{viewItem.type}</p>
+                    </div>
+                  </div>
+                </ModalHeader>
+                <ModalBody className="p-6 bg-white">
+                  <div className="grid grid-cols-2 gap-6 text-sm">
+                    <div className="space-y-1">
+                      <div><span className="text-gray-500">Account:</span> <span className="font-medium">{accountName}</span></div>
+                      <div><span className="text-gray-500">Date:</span> <span>{new Date(viewItem.transactionDate).toLocaleDateString()}</span></div>
+                      <div><span className="text-gray-500">Type:</span> <span>{viewItem.type}</span></div>
+                    </div>
+                    <div className="space-y-1">
+                      <div><span className="text-gray-500">Description:</span> <span>{viewItem.description || '—'}</span></div>
+                      {viewItem.transferToAccountId && (
+                        <div><span className="text-gray-500">Transfer:</span> <span>{bankAccounts.find((b) => b.id === viewItem.transferToAccountId)?.accountName || viewItem.transferToAccountId}</span></div>
+                      )}
+                    </div>
+                  </div>
+                </ModalBody>
+                <ModalFooter className="border-t bg-white">
+                  <Button variant="flat" onPress={onClose}>Close</Button>
+                  {viewItem.status === 'Pending' && (
+                    <Button color="primary" variant="flat" onPress={() => { markBankTransactionCleared(viewItem.id); closeView(); }}>Mark cleared</Button>
+                  )}
+                  {manual && viewItem.status !== 'Reconciled' && (
+                    <>
+                      <Button color="danger" variant="flat" onPress={() => { deleteManualBankTransaction(viewItem.id); closeView(); }}>🗑️ Delete</Button>
+                      <Button color="primary" onPress={() => { closeView(); openEditTransaction(viewItem); }}>✏️ Edit</Button>
+                    </>
+                  )}
+                </ModalFooter>
+              </>
+            );
+          }}
         </ModalContent>
       </Modal>
     </div>

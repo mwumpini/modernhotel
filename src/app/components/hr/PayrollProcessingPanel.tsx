@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Tooltip, Card, CardHeader, CardBody, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Select, SelectItem, Chip, Input, Button, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Checkbox, Tabs, Tab } from '@heroui/react';
+import { Tooltip, Card, CardHeader, CardBody, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Select, SelectItem, Chip, Input, Button, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Checkbox, Tabs, Tab, Pagination } from '@heroui/react';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { usePayrollStore, payrollRecordLabels } from '@/app/lib/hr/payrollStore';
 import { todayKey } from '@/app/lib/hr/leaveDates';
@@ -18,6 +18,34 @@ import { notifyError, notifySuccess } from '@/app/lib/notifications/notify';
 import ExportButtons from '@/app/components/ExportButtons';
 import type { PayrollPeriod, PayrollRecord } from '@/app/lib/hr/models';
 import type { ExportFormat } from '@/app/lib/frontoffice/reportExportFormat';
+import { formatGhs, formatMoney } from '@/app/lib/format/currency';
+import { printDetailSheet, printSimpleReport } from '@/app/lib/print/simpleReport';
+import { DESK_PAGE_SIZE, useDeskPagination } from '../dashboard/deskTableUi';
+import { deskBookTabsClassNames, deskBookTabPanelClassName } from '../dashboard/deskTabsUi';
+import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
+import { DetailField, DetailGrid } from '../frontoffice/detailView';
+import { readDebtRepayments, useStaffDebtStore } from '@/app/lib/hr/staffDebtStore';
+
+type PayrollColKey =
+  | 'idNo' | 'staffNo' | 'name' | 'department' | 'position' | 'residencyClass' | 'status' | 'type' | 'secondEmployment'
+  | 'basicSalary' | 'allowances' | 'overtime' | 'gross' | 'incomeTax' | 'socialSecurity' | 'tier2' | 'tier3' | 'other'
+  | 'net' | 'payStatus' | 'paidOn';
+
+const payrollDefaultWidths: Record<PayrollColKey, number> = {
+  idNo: 100, staffNo: 88, name: 148, department: 120, position: 120, residencyClass: 140, status: 110, type: 80,
+  secondEmployment: 96, basicSalary: 104, allowances: 104, overtime: 112, gross: 104, incomeTax: 96, socialSecurity: 96,
+  tier2: 96, tier3: 96, other: 104, net: 104, payStatus: 128, paidOn: 100,
+};
+
+type HistorySortKey = 'month' | 'staff' | 'gross' | 'deductions' | 'net' | 'processed' | 'approved' | 'payment';
+const historyColWidths: Record<HistorySortKey, number> = {
+  month: 140, staff: 72, gross: 104, deductions: 104, net: 104, processed: 140, approved: 140, payment: 120,
+};
+
+type AdviceSortKey = 'channel' | 'count' | 'amount' | 'words' | 'payment';
+const adviceColWidths: Record<AdviceSortKey, number> = {
+  channel: 160, count: 88, amount: 120, words: 200, payment: 120,
+};
 
 // Shared by both the on-screen Payment Advice summary and the downloadable PDF/XLS — one
 // implementation so a payment channel is never classified differently between what the
@@ -67,9 +95,10 @@ export default function PayrollProcessingPanel() {
   const deletePayrollPeriod = usePayrollStore((s) => s.deletePayrollPeriod);
   const canProcessPayroll = useSettingsStore((s) => s.hasPermission('hr.process-payroll'));
   const canApprovePayroll = useSettingsStore((s) => s.hasPermission('hr.approve-payroll'));
+  const requireApprovalForPayroll = useSettingsStore((s) => s.financialSettings.requireApprovalForPayroll !== false);
   const currentUserName = useCurrentUserName();
-  // Each tab has its own month. '' means "the default": Staff Payroll opens on the first month
-  // still awaiting approval, Payment Advice on the oldest approved month still to be paid.
+  // Each tab has its own month. '' means "the default": Staff Payroll opens on a prepared month;
+  // Payment Advice prefers awaiting approval, else the oldest approved month still to be paid.
   const [workKey, setWorkKey] = React.useState<string>('');
   const [adviceKey, setAdviceKey] = React.useState<string>('');
   const [historyKey, setHistoryKey] = React.useState<string>('');
@@ -89,7 +118,36 @@ export default function PayrollProcessingPanel() {
   const taxRules = useComplianceStore((s) => s.taxRules);
   const hotelName = useSettingsStore((s) => s.hotelSettings.hotelName) || 'Hotel';
   const exportFile = useSectionExport();
+  const owedByEmployee = useStaffDebtStore((s) => s.owedByEmployee);
   const [activeTab, setActiveTab] = React.useState<string>('staff');
+  const staffCols = useResizableColumns<PayrollColKey>(payrollDefaultWidths);
+  const historyCols = useResizableColumns<HistorySortKey>(historyColWidths);
+  const adviceCols = useResizableColumns<AdviceSortKey>(adviceColWidths);
+  const [staffSortKey, setStaffSortKey] = React.useState<string>('name');
+  const [staffSortDir, setStaffSortDir] = React.useState<'asc' | 'desc'>('asc');
+  const [historySortKey, setHistorySortKey] = React.useState<HistorySortKey>('month');
+  const [historySortDir, setHistorySortDir] = React.useState<'asc' | 'desc'>('desc');
+  const [adviceSortKey, setAdviceSortKey] = React.useState<AdviceSortKey>('channel');
+  const [adviceSortDir, setAdviceSortDir] = React.useState<'asc' | 'desc'>('asc');
+  const [staffPage, setStaffPage] = React.useState(1);
+
+  // Deep-link from Executive Approvals → open this month on Payment Advice.
+  React.useEffect(() => {
+    const apply = () => {
+      try {
+        const id = localStorage.getItem('payroll.advicePeriodId');
+        if (!id) return;
+        setAdviceKey(id);
+        setActiveTab('advice');
+        localStorage.removeItem('payroll.advicePeriodId');
+      } catch {
+        /* ignore */
+      }
+    };
+    apply();
+    window.addEventListener('payroll-navigate', apply);
+    return () => window.removeEventListener('payroll-navigate', apply);
+  }, []);
 
   // Tier 1/2/3 are separate, independently-renameable rules (different institutions) — the
   // column labels and pre-run estimate rates below read the live rule so a rename in
@@ -117,7 +175,7 @@ export default function PayrollProcessingPanel() {
   const [statusFilter, setStatusFilter] = React.useState<string>('all');
   const [deptFilter, setDeptFilter] = React.useState<string>('all');
   const [q, setQ] = React.useState<string>('');
-  const defaultColumns = ['staffNo', 'name', 'department', 'position', 'basicSalary', 'allowances', 'overtime', 'gross', 'incomeTax', 'socialSecurity', 'tier2', 'tier3', 'net', 'payStatus', 'actions'];
+  const defaultColumns = ['staffNo', 'name', 'department', 'position', 'basicSalary', 'allowances', 'overtime', 'gross', 'incomeTax', 'socialSecurity', 'tier2', 'tier3', 'net', 'payStatus'];
   const [showColumns, setShowColumns] = React.useState<boolean>(false);
   const [visibleColumns, setVisibleColumns] = React.useState<Set<string>>(new Set(defaultColumns));
   const toggleColumn = (key: string, checked: boolean) => {
@@ -245,7 +303,6 @@ export default function PayrollProcessingPanel() {
     URL.revokeObjectURL(url);
   };
 
-  const fmtCurrency = (n: number) => new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS', minimumFractionDigits: 2 }).format(n || 0);
   const fmtDay = (d?: Date | string) => (d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
 
   // ---- Months ----
@@ -259,17 +316,24 @@ export default function PayrollProcessingPanel() {
     p.status === 'paid' || p.status === 'closed' ? 'paid' : p.status === 'approved' ? 'approved' : p.status === 'draft' ? 'draft' : 'awaiting';
   const STAGE_LABEL = { paid: 'Paid', approved: 'Approved, not yet paid', awaiting: 'Awaiting approval', draft: 'Draft' } as const;
   const sortedPeriods = [...payrollPeriods].sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
-  // Where a month lives: being prepared → Staff Payroll; approved → Payment Advice (to pay) and History.
+  // Staff Payroll = prepare/review lines. Payment Advice = approve (if required) then pay. History = approved/paid.
   const inProgress = sortedPeriods.filter((p) => periodStage(p) === 'awaiting' || periodStage(p) === 'draft');
   const approvedPeriods = sortedPeriods.filter((p) => periodStage(p) === 'approved' || periodStage(p) === 'paid');
   const empById = new Map(employees.map((e) => [e.id, e]));
 
   const workSelected = workKey || inProgress[0]?.id || 'estimate';
   const workPeriod = inProgress.find((p) => p.id === workSelected);
-  // Advice opens on the oldest month still waiting to be paid, else the latest one.
-  const adviceDefault = [...approvedPeriods].reverse().find((p) => periodStage(p) === 'approved') ?? approvedPeriods[0];
+  // Advice: awaiting (for Approve) + approved/paid (for Mark paid / review).
+  const adviceEligible = sortedPeriods.filter((p) => {
+    const st = periodStage(p);
+    return st === 'awaiting' || st === 'draft' || st === 'approved' || st === 'paid';
+  });
+  const adviceDefault =
+    [...adviceEligible].reverse().find((p) => periodStage(p) === 'awaiting' || periodStage(p) === 'draft')
+    ?? [...adviceEligible].reverse().find((p) => periodStage(p) === 'approved')
+    ?? adviceEligible[0];
   const adviceSelected = adviceKey || adviceDefault?.id || '';
-  const advicePeriod = approvedPeriods.find((p) => p.id === adviceSelected);
+  const advicePeriod = adviceEligible.find((p) => p.id === adviceSelected);
   const historyPeriod = approvedPeriods.find((p) => p.id === historyKey);
 
   // ---- One row per person: real figures for a processed month, estimates otherwise ----
@@ -341,28 +405,40 @@ export default function PayrollProcessingPanel() {
   const columns: Array<{ key: string; label: string; money?: boolean; value: (r: Row) => string | number; render?: (r: Row) => React.ReactNode }> = [
     { key: 'idNo', label: 'ID No.', value: (r) => (r.e as any)?.governmentIds?.nationalId || '-' },
     { key: 'staffNo', label: 'Staff No.', value: (r) => r.staffNo },
-    { key: 'name', label: 'Name', value: (r) => r.name },
+    { key: 'name', label: 'Name', value: (r) => r.name, render: (r) => {
+      const owed = r.e ? owedByEmployee(r.e.id) : 0;
+      const debtOnSlip = r.record ? readDebtRepayments(r.record.notes).reduce((s, l) => s + l.amount, 0) : 0;
+      return (
+        <div className="min-w-0">
+          <span className="block truncate font-semibold text-ghana-black" title={r.name}>{r.name}</span>
+          {(owed > 0 || debtOnSlip > 0) && (
+            <Chip size="sm" variant="flat" color="warning" className="mt-0.5">
+              {debtOnSlip > 0 ? `Debt ${formatMoney(debtOnSlip)}` : `Owes ${formatMoney(owed)}`}
+            </Chip>
+          )}
+        </div>
+      );
+    } },
     { key: 'department', label: 'Department', value: (r) => r.deptName },
     { key: 'position', label: 'Position', value: (r) => r.posTitle },
     { key: 'residencyClass', label: 'Residency / Class', value: (r) => (r.e ? `${((r.e as any).residencyStatus || 'resident').replace('_', ' ')} / ${((r.e as any).employmentClass || 'regular').replace('_', ' ')}` : '-') },
     { key: 'status', label: 'Employee status', value: (r) => r.e?.status || '-', render: (r) => (r.e ? <Chip size="sm" variant="flat" color={r.e.status === 'active' ? 'success' : r.e.status === 'on_leave' ? 'warning' : 'default'}>{r.e.status}</Chip> : '-') },
     { key: 'type', label: 'Type', value: (r) => r.e?.employmentType || '-' },
     { key: 'secondEmployment', label: 'Second Employ', value: (r) => ((r.e as any)?.secondEmployment ? 'Y' : 'N') },
-    { key: 'basicSalary', label: 'Basic Salary', money: true, value: (r) => r.basic, render: (r) => fmtCurrency(r.basic) },
-    { key: 'allowances', label: 'Allowances', money: true, value: (r) => r.allowances, render: (r) => fmtCurrency(r.allowances) },
-    { key: 'overtime', label: 'Overtime & bonus', money: true, value: (r) => r.overtime, render: (r) => fmtCurrency(r.overtime) },
-    { key: 'gross', label: 'Gross pay', money: true, value: (r) => r.gross, render: (r) => fmtCurrency(r.gross) },
-    { key: 'incomeTax', label: 'Income Tax', money: true, value: (r) => r.tax, render: (r) => fmtCurrency(r.tax) },
-    { key: 'socialSecurity', label: tier1Label, money: true, value: (r) => r.tier1, render: (r) => fmtCurrency(r.tier1) },
-    { key: 'tier2', label: tier2Label, money: true, value: (r) => r.tier2, render: (r) => fmtCurrency(r.tier2) },
-    { key: 'tier3', label: tier3Label, money: true, value: (r) => r.tier3, render: (r) => fmtCurrency(r.tier3) },
-    { key: 'other', label: 'Other deductions', money: true, value: (r) => r.other, render: (r) => fmtCurrency(r.other) },
-    { key: 'net', label: 'Net pay', money: true, value: (r) => r.net, render: (r) => <span className="font-semibold text-green-700">{fmtCurrency(r.net)}</span> },
+    { key: 'basicSalary', label: 'Basic Salary', money: true, value: (r) => r.basic, render: (r) => <span className="tabular-nums">{formatMoney(r.basic)}</span> },
+    { key: 'allowances', label: 'Allowances', money: true, value: (r) => r.allowances, render: (r) => <span className="tabular-nums">{formatMoney(r.allowances)}</span> },
+    { key: 'overtime', label: 'Overtime & bonus', money: true, value: (r) => r.overtime, render: (r) => <span className="tabular-nums">{formatMoney(r.overtime)}</span> },
+    { key: 'gross', label: 'Gross pay', money: true, value: (r) => r.gross, render: (r) => <span className="tabular-nums">{formatMoney(r.gross)}</span> },
+    { key: 'incomeTax', label: 'Income Tax', money: true, value: (r) => r.tax, render: (r) => <span className="tabular-nums">{formatMoney(r.tax)}</span> },
+    { key: 'socialSecurity', label: tier1Label, money: true, value: (r) => r.tier1, render: (r) => <span className="tabular-nums">{formatMoney(r.tier1)}</span> },
+    { key: 'tier2', label: tier2Label, money: true, value: (r) => r.tier2, render: (r) => <span className="tabular-nums">{formatMoney(r.tier2)}</span> },
+    { key: 'tier3', label: tier3Label, money: true, value: (r) => r.tier3, render: (r) => <span className="tabular-nums">{formatMoney(r.tier3)}</span> },
+    { key: 'other', label: 'Other deductions', money: true, value: (r) => r.other, render: (r) => <span className="tabular-nums">{formatMoney(r.other)}</span> },
+    { key: 'net', label: 'Net pay', money: true, value: (r) => r.net, render: (r) => <span className="font-semibold text-green-700 tabular-nums">{formatMoney(r.net)}</span> },
     { key: 'payStatus', label: 'Payment status', value: (r) => PAY_CHIP[r.pay].label, render: (r) => <Chip size="sm" variant="flat" color={PAY_CHIP[r.pay].color}>{PAY_CHIP[r.pay].label}</Chip> },
     { key: 'paidOn', label: 'Paid on', value: (r) => fmtDay(r.paidAt) || '-' },
   ];
   const shownColumns = columns.filter((c) => visibleColumns.has(c.key));
-  const showActions = visibleColumns.has('actions');
   const total = (rows: Row[], key: string) => rows.reduce((s, r) => s + ((columns.find((c) => c.key === key)?.value(r) as number) || 0), 0);
 
   const paidOnOf = (rows: Row[]) => {
@@ -404,6 +480,31 @@ export default function PayrollProcessingPanel() {
   );
 
   // Processed → Approved → Paid, with who/when, and the month's totals.
+  // Slim strip for Staff Payroll / Advice — month, count, net, one chip, actions. No timeline.
+  const renderSlimBanner = (p: PayrollPeriod, allRows: Row[], actions?: React.ReactNode) => {
+    const st = periodStage(p);
+    const net = allRows.reduce((s, r) => s + r.net, 0);
+    const statusLabel =
+      st === 'paid' ? 'Paid'
+        : st === 'approved' ? 'Approved — ready to pay'
+          : 'Awaiting approval';
+    const statusColor = st === 'paid' ? 'success' : st === 'approved' ? 'primary' : 'warning';
+    return (
+      <div
+        data-payroll-banner="slim"
+        className="rounded-lg border border-gray-200 bg-gray-50/80 px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-2"
+      >
+        <div className="min-w-0 flex items-baseline gap-2 flex-wrap">
+          <span className="font-semibold text-ghana-black">{periodMonth(p)}</span>
+          <span className="text-xs text-gray-500">{allRows.length} staff · Net {formatGhs(net)}</span>
+        </div>
+        <Chip size="sm" variant="flat" color={statusColor as 'success' | 'primary' | 'warning'}>{statusLabel}</Chip>
+        <div className="flex items-center gap-2 ml-auto">{actions}</div>
+      </div>
+    );
+  };
+
+  // Full timeline kept for History drill-down only.
   const renderBanner = (p: PayrollPeriod, allRows: Row[], actions?: React.ReactNode) => {
     const st = periodStage(p);
     const gross = allRows.reduce((s, r) => s + r.gross, 0);
@@ -421,59 +522,86 @@ export default function PayrollProcessingPanel() {
           detail={st === 'approved' || st === 'paid' ? [p.approvedBy, fmtDay(p.approvedAt)].filter(Boolean).join(' · ') || undefined : undefined} />
         <Step done={st === 'paid'} label={st === 'paid' ? 'Paid' : paidRows > 0 ? `Part paid (${paidRows}/${allRows.length})` : 'Not paid'} detail={st === 'paid' ? fmtDay(paid) || undefined : undefined} />
         <div className="flex gap-6 text-sm ml-auto">
-          <div><div className="text-xs text-gray-500">Gross pay</div><div className="font-medium">{fmtCurrency(gross)}</div></div>
-          <div><div className="text-xs text-gray-500">Deductions</div><div className="font-medium">{fmtCurrency(gross - net)}</div></div>
-          <div><div className="text-xs text-gray-500">Net pay</div><div className="text-lg font-semibold text-green-700">{fmtCurrency(net)}</div></div>
+          <div><div className="text-xs text-gray-500">Gross pay</div><div className="font-medium">{formatGhs(gross)}</div></div>
+          <div><div className="text-xs text-gray-500">Deductions</div><div className="font-medium">{formatGhs(gross - net)}</div></div>
+          <div><div className="text-xs text-gray-500">Net pay</div><div className="text-lg font-semibold text-green-700">{formatGhs(net)}</div></div>
         </div>
         {actions}
       </div>
     );
   };
 
+  const onStaffSort = (key: string) => {
+    if (staffSortKey === key) setStaffSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setStaffSortKey(key);
+      setStaffSortDir('asc');
+    }
+  };
+
   // The per-person table, shared by Staff Payroll (month being prepared) and History (a past month).
   const renderTable = (allRows: Row[], p: PayrollPeriod | undefined) => {
     const rows = applyFilters(allRows);
+    const colDef = columns.find((c) => c.key === staffSortKey);
+    const sorted = [...rows].sort((a, b) => {
+      const av = colDef ? colDef.value(a) : a.name;
+      const bv = colDef ? colDef.value(b) : b.name;
+      if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+      const as = String(av).toLowerCase();
+      const bs = String(bv).toLowerCase();
+      if (as < bs) return -1;
+      if (as > bs) return 1;
+      return 0;
+    });
+    const displayRows = staffSortDir === 'asc' ? sorted : sorted.reverse();
+    const pages = Math.max(1, Math.ceil(displayRows.length / DESK_PAGE_SIZE));
+    const pageSafe = Math.min(staffPage, pages);
+    const paged = displayRows.slice((pageSafe - 1) * DESK_PAGE_SIZE, pageSafe * DESK_PAGE_SIZE);
     const label = p ? periodMonth(p) : 'Estimate';
     return (
-      <Table aria-label="staff-payroll" className="overflow-x-auto">
-        <TableHeader>
-          {[
-            ...shownColumns.map((c) => <TableColumn key={c.key}>{c.label.toUpperCase()}</TableColumn>),
-            ...(showActions ? [<TableColumn key="actions">ACTIONS</TableColumn>] : []),
-          ]}
-        </TableHeader>
-        <TableBody emptyContent={p ? 'No payroll records for these filters.' : 'No staff match these filters.'}>
-          {[
-            ...rows.map((r) => (
-              <TableRow key={r.key}>
-                {[
-                  ...shownColumns.map((c) => <TableCell key={c.key}>{c.render ? c.render(r) : c.value(r)}</TableCell>),
-                  ...(showActions ? [(
-                    <TableCell key="actions">
-                      <div className="flex gap-2">
-                        <Button size="sm" variant="flat" onPress={() => setDetailRow({ ...r, month: label })}>View</Button>
-                        {p && p.id === workPeriod?.id && canEditLines && r.record && <Button size="sm" variant="flat" color="primary" onPress={() => openEdit(r)}>Edit</Button>}
-                      </div>
-                    </TableCell>
-                  )] : []),
-                ]}
-              </TableRow>
-            )),
-            ...(rows.length > 0 ? [(
-              <TableRow key="__total" className="bg-gray-50">
-                {[
-                  ...shownColumns.map((c, i) => (
-                    <TableCell key={c.key}>
-                      {c.money ? <strong className={c.key === 'net' ? 'text-green-700' : ''}>{fmtCurrency(total(rows, c.key))}</strong> : i === 0 ? <strong>TOTAL</strong> : ''}
-                    </TableCell>
-                  )),
-                  ...(showActions ? [<TableCell key="actions">{''}</TableCell>] : []),
-                ]}
-              </TableRow>
-            )] : []),
-          ]}
-        </TableBody>
-      </Table>
+      <div>
+        <div ref={staffCols.frameRef} style={staffCols.frameStyle}>
+          <Table aria-label="staff-payroll" removeWrapper classNames={deskResizableTableClassNames()}>
+            <TableHeader>
+              {shownColumns.map((c) => (
+                <TableColumn key={c.key} className="relative" style={staffCols.style(c.key as PayrollColKey)}>
+                  <SortLabel active={staffSortKey === c.key} dir={staffSortDir} align={c.money ? 'right' : 'left'} onPress={() => onStaffSort(c.key)}>{c.label}</SortLabel>
+                  {staffCols.sizer(c.key as PayrollColKey, c.label)}
+                </TableColumn>
+              ))}
+            </TableHeader>
+            <TableBody emptyContent={p ? 'No payroll records for these filters.' : 'No staff match these filters.'}>
+              {[
+                ...paged.map((r) => (
+                  <TableRow
+                    key={r.key}
+                    className={rowClassNames(detailRow?.key === r.key)}
+                    onClick={() => setDetailRow({ ...r, month: label })}
+                  >
+                    {shownColumns.map((c) => (
+                      <TableCell key={c.key} className={c.money ? 'text-right' : undefined}>
+                        {c.render ? c.render(r) : c.value(r)}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                )),
+                ...(displayRows.length > 0 ? [(
+                  <TableRow key="__total" className="bg-gray-50">
+                    {shownColumns.map((c, i) => (
+                      <TableCell key={c.key} className={c.money ? 'text-right tabular-nums' : undefined}>
+                        {c.money ? <strong className={c.key === 'net' ? 'text-green-700' : ''}>{formatMoney(total(displayRows, c.key))}</strong> : i === 0 ? <strong>TOTAL</strong> : ''}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                )] : []),
+              ]}
+            </TableBody>
+          </Table>
+        </div>
+        <div className="mt-3 flex justify-end">
+          <Pagination page={pageSafe} total={pages} onChange={setStaffPage} showControls size="sm" />
+        </div>
+      </div>
     );
   };
 
@@ -530,7 +658,7 @@ export default function PayrollProcessingPanel() {
   const prepNumber = `PP-${prepYear}-${String(prepMonth).padStart(2, '0')}`;
   const prepExisting = payrollPeriods.find((p) => p.periodNumber === prepNumber);
   const activeStaff = employees.filter((e) => e.status === 'active').length;
-  const doPrepare = () => {
+  const doPrepare = async () => {
     setPrepError('');
     try {
       const builder = new UniversalPayrollBuilder();
@@ -539,9 +667,29 @@ export default function PayrollProcessingPanel() {
       const result = runMonthlyPayroll({ builder, runtimeId, employees, periods: payrollPeriods, month: prepMonth, year: prepYear, userName: currentUserName, complianceCountry: country });
       if (!result.ok) { setPrepError(result.error); return; }
       setPrepOpen(false);
-      setActiveTab('staff');
-      setWorkKey(result.periodId);
-      notifySuccess(`${MONTHS[prepMonth - 1]} ${prepYear} payroll prepared for ${result.employeeCount} staff — review it, then approve.`, 'Payroll prepared');
+      // Auto-approved months still need the ledger entry that Approve normally posts.
+      if (result.autoApproved) {
+        try {
+          const period = usePayrollStore.getState().payrollPeriods.find((x) => x.id === result.periodId);
+          const accounting = useAccountingStore.getState();
+          const jeId = `JE-PAYROLL-${result.periodId}`;
+          const entry = period && readEmployerContribution(period) !== undefined
+            ? buildPayrollJournal(period, usePayrollStore.getState().payrollRecords.filter((r) => r.payrollPeriodId === result.periodId))
+            : undefined;
+          if (entry) accounting.addJournalEntry(entry);
+          await accounting.postJournalEntry(jeId);
+        } catch (e) {
+          console.warn('[Payroll] Ledger post failed after auto-approve:', e);
+          notifyError(`${MONTHS[prepMonth - 1]} ${prepYear} is ready to pay, but posting to the ledger failed.`, 'Ledger not posted');
+        }
+        setAdviceKey(result.periodId);
+        setActiveTab('advice');
+        notifySuccess(`${MONTHS[prepMonth - 1]} ${prepYear} prepared for ${result.employeeCount} staff — ready to pay from Payment Advice.`, 'Payroll prepared');
+      } else {
+        setWorkKey(result.periodId);
+        setActiveTab('staff');
+        notifySuccess(`${MONTHS[prepMonth - 1]} ${prepYear} prepared for ${result.employeeCount} staff — review the lines, then approve on Payment Advice.`, 'Payroll prepared');
+      }
       if (result.warning) notifyError(result.warning, 'Ledger entry');
     } catch (e: any) {
       console.error('[Payroll] Prepare failed', e);
@@ -549,29 +697,24 @@ export default function PayrollProcessingPanel() {
     }
   };
 
-  // Approving is what posts this run's ledger entry — so only once the server has accepted the
-  // approval (it can refuse: no permission, or you processed the run yourself). An approved
-  // month leaves this screen: it is paid from Payment Advice and kept in History.
-  const doApprove = async () => {
-    if (!workPeriod) return;
-    const p = workPeriod;
+  // Approving posts this run's ledger entry. Lives on Payment Advice (management summary).
+  const doApprove = async (period?: PayrollPeriod | null) => {
+    const p = period || advicePeriod || workPeriod;
+    if (!p) return;
     setConfirm(null);
     const approved = await approvePeriod(p.id, currentUserName);
     if (!approved) return;
     try {
       const accounting = useAccountingStore.getState();
       const jeId = `JE-PAYROLL-${p.id}`;
-      // The entry is built now, from the figures as approved, so any edits are in it. A month
-      // prepared before this change already has its draft entry saved; post that one instead.
       const entry = readEmployerContribution(p) !== undefined ? buildPayrollJournal(p, payrollRecords.filter((r) => r.payrollPeriodId === p.id)) : undefined;
       if (entry) accounting.addJournalEntry(entry);
       await accounting.postJournalEntry(jeId);
-      notifySuccess(`${periodMonth(p)} payroll approved and posted to the ledger — pay it from Payment Advice.`, 'Payroll approved');
+      notifySuccess(`${periodMonth(p)} payroll approved and posted to the ledger — mark staff as paid below.`, 'Payroll approved');
     } catch (e) {
       console.warn('[Payroll] Ledger post failed after approval:', e);
       notifyError(`${periodMonth(p)} payroll was approved, but posting it to the ledger failed. Please tell accounting.`, 'Ledger not posted');
     }
-    setWorkKey('');
     setAdviceKey(p.id);
     setActiveTab('advice');
   };
@@ -616,7 +759,7 @@ export default function PayrollProcessingPanel() {
       });
       if (!result.ok) { setEditError(result.error); return; }
       setEditRow(null);
-      notifySuccess(`${editRow.name}: net pay ${fmtCurrency(result.before)} → ${fmtCurrency(result.after)}`, 'Line recalculated');
+      notifySuccess(`${editRow.name}: net pay ${formatGhs(result.before)} → ${formatGhs(result.after)}`, 'Line recalculated');
     } catch (e: any) {
       console.error('[Payroll] Edit failed', e);
       setEditError(e?.message || 'Could not recalculate this line.');
@@ -624,9 +767,7 @@ export default function PayrollProcessingPanel() {
   };
   const canEditLines = !!workPeriod && canProcessPayroll;
 
-  const processedByMe = !!workPeriod?.processedBy && workPeriod.processedBy.trim().toLowerCase() === currentUserName.trim().toLowerCase();
-
-  // ================= Payment Advice: pay the approved month, one bank/MoMo/cash batch at a time =================
+  // ================= Payment Advice: approve awaiting months, then pay by bank/MoMo/cash =================
   const adviceRecords = advicePeriod ? payrollRecords.filter((r) => r.payrollPeriodId === advicePeriod.id && r.status !== 'failed') : [];
   const channelOf = (rec: PayrollRecord) => resolvePaymentChannel(empById.get(rec.employeeId), rec);
   interface AdviceGroup { label: string; records: PayrollRecord[]; total: number; paid: number; unpaidIds: string[]; paidAt?: Date }
@@ -648,7 +789,12 @@ export default function PayrollProcessingPanel() {
   const adviceCount = adviceGroups.reduce((s, g) => s + g.records.length, 0);
   const adviceUnpaidIds = adviceGroups.flatMap((g) => g.unpaidIds);
   const adviceRows = buildRows(advicePeriod);
-  const adviceItems = approvedPeriods.map((p) => ({ id: p.id, name: `${periodMonth(p)} — ${STAGE_LABEL[periodStage(p)]}` }));
+  const adviceItems = adviceEligible.map((p) => ({ id: p.id, name: `${periodMonth(p)} — ${STAGE_LABEL[periodStage(p)]}` }));
+  const adviceStage = advicePeriod ? periodStage(advicePeriod) : null;
+  const adviceAwaiting = adviceStage === 'awaiting' || adviceStage === 'draft';
+  const adviceCanPay = adviceStage === 'approved';
+  const adviceProcessedByMe = !!advicePeriod?.processedBy
+    && advicePeriod.processedBy.trim().toLowerCase() === currentUserName.trim().toLowerCase();
 
   const payGroup = payTarget === 'all' ? undefined : adviceGroups.find((g) => g.label === payTarget);
   const payIds = payTarget === 'all' ? adviceUnpaidIds : payGroup?.unpaidIds ?? [];
@@ -688,6 +834,80 @@ export default function PayrollProcessingPanel() {
       paidOn: paidTimes.length ? new Date(Math.max(...paidTimes)) : undefined,
     };
   };
+
+  const onAdviceSort = (key: AdviceSortKey) => {
+    if (adviceSortKey === key) setAdviceSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setAdviceSortKey(key);
+      setAdviceSortDir('asc');
+    }
+  };
+  const onHistorySort = (key: HistorySortKey) => {
+    if (historySortKey === key) setHistorySortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setHistorySortKey(key);
+      setHistorySortDir('asc');
+    }
+  };
+
+  const sortedAdviceGroups = React.useMemo(() => {
+    const sorted = [...adviceGroups].sort((a, b) => {
+      const val = (g: AdviceGroup): string | number => {
+        switch (adviceSortKey) {
+          case 'channel': return g.label.toLowerCase();
+          case 'count': return g.records.length;
+          case 'amount': return g.total;
+          case 'words': return amountToWordsGhana(g.total);
+          case 'payment': return g.paid;
+          default: return '';
+        }
+      };
+      const av = val(a);
+      const bv = val(b);
+      if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+      const as = String(av).toLowerCase();
+      const bs = String(bv).toLowerCase();
+      if (as < bs) return -1;
+      if (as > bs) return 1;
+      return 0;
+    });
+    return adviceSortDir === 'asc' ? sorted : sorted.reverse();
+  }, [adviceGroups, adviceSortKey, adviceSortDir]);
+
+  const advicePaging = useDeskPagination(sortedAdviceGroups, [adviceSortKey, adviceSortDir, advicePeriod?.id]);
+  React.useEffect(() => { setStaffPage(1); }, [deptFilter, statusFilter, q, staffSortKey, staffSortDir, workSelected, historyKey, activeTab]);
+
+  const sortedApprovedPeriods = React.useMemo(() => {
+    const sorted = [...approvedPeriods].sort((a, b) => {
+      const stA = historyStats(a.id);
+      const stB = historyStats(b.id);
+      const val = (p: PayrollPeriod, st: ReturnType<typeof historyStats>): string | number => {
+        switch (historySortKey) {
+          case 'month': return new Date(p.startDate).getTime();
+          case 'staff': return st.staff;
+          case 'gross': return st.gross;
+          case 'deductions': return st.gross - st.net;
+          case 'net': return st.net;
+          case 'processed': return new Date(p.processedAt || 0).getTime();
+          case 'approved': return new Date(p.approvedAt || 0).getTime();
+          case 'payment': return st.paid;
+          default: return '';
+        }
+      };
+      const av = val(a, stA);
+      const bv = val(b, stB);
+      if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+      const as = String(av).toLowerCase();
+      const bs = String(bv).toLowerCase();
+      if (as < bs) return -1;
+      if (as > bs) return 1;
+      return 0;
+    });
+    return historySortDir === 'asc' ? sorted : sorted.reverse();
+  }, [approvedPeriods, historySortKey, historySortDir, payrollRecords]);
+
+  const historyPaging = useDeskPagination(sortedApprovedPeriods, [historySortKey, historySortDir]);
+
   const exportHistory = (format: ExportFormat) =>
     exportFile(format, 'Payroll History', {
       title: 'Payroll History',
@@ -699,47 +919,53 @@ export default function PayrollProcessingPanel() {
     });
   const historyRows = buildRows(historyPeriod);
 
-  const approveButton = workPeriod && (
+  const staffBannerActions = workPeriod && (
+    <Tooltip content="Needs the payroll-processing permission" isDisabled={canProcessPayroll}>
+      <span><Button color="danger" variant="flat" size="sm" isDisabled={!canProcessPayroll} onPress={() => setDeleteOpen(true)}>Delete month</Button></span>
+    </Tooltip>
+  );
+
+  const adviceBannerActions = advicePeriod && (
     <div className="flex items-center gap-2">
-      <Tooltip content="Needs the payroll-approval permission" isDisabled={canApprovePayroll}>
-        <span><Button color="primary" isDisabled={!canApprovePayroll} onPress={() => setConfirm('approve')}>Approve payroll</Button></span>
-      </Tooltip>
-      <Tooltip content="Needs the payroll-processing permission" isDisabled={canProcessPayroll}>
-        <span><Button color="danger" variant="flat" isDisabled={!canProcessPayroll} onPress={() => setDeleteOpen(true)}>Delete month</Button></span>
-      </Tooltip>
+      {adviceAwaiting && (
+        <Tooltip content="Needs the payroll-approval permission" isDisabled={canApprovePayroll}>
+          <span><Button color="primary" size="sm" isDisabled={!canApprovePayroll} onPress={() => setConfirm('approve')}>Approve payroll</Button></span>
+        </Tooltip>
+      )}
+      {adviceCanPay && adviceUnpaidIds.length > 0 && (
+        <Tooltip content="Needs the payroll-approval permission" isDisabled={canApprovePayroll}>
+          <span><Button color="success" size="sm" isDisabled={!canApprovePayroll} onPress={() => { setPayDate(todayKey()); setPayTarget('all'); }}>Mark all as paid</Button></span>
+        </Tooltip>
+      )}
     </div>
   );
 
   return (
-    <div className="space-y-4">
-      <Tabs aria-label="Payroll processing views" selectedKey={activeTab} onSelectionChange={(k) => setActiveTab(String(k))}>
+    <div className="space-y-3">
+      <Tabs aria-label="Payroll processing views" size="sm" variant="solid" className="w-full" classNames={deskBookTabsClassNames} selectedKey={activeTab} onSelectionChange={(k) => setActiveTab(String(k))}>
         {/* ---------- Staff Payroll ---------- */}
-        <Tab key="staff" title="👥 Staff Payroll">
-          <Card>
-            <CardHeader className="justify-between gap-2 flex-wrap">
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="font-medium">Staff Payroll</div>
-                {monthSelect(workItems, workSelected, (id) => setWorkKey(id))}
-                <Button size="sm" color="primary" onPress={openPrepare}>+ Prepare payroll for a month</Button>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
+        <Tab key="staff" title="Staff Payroll">
+          <div className={deskBookTabPanelClassName}>
+          <Card className="shadow-sm">
+            <CardHeader className="px-3 py-2 flex items-center gap-3 flex-wrap">
+              <div className="text-sm font-semibold text-gray-800">Staff Payroll</div>
+              {monthSelect(workItems, workSelected, (id) => setWorkKey(id))}
+              <Button size="sm" color="primary" onPress={openPrepare}>+ Prepare</Button>
+            </CardHeader>
+            <CardBody className="space-y-3">
+              <div className="flex items-center gap-2 flex-wrap justify-end">
                 {filterBar}
                 <ExportButtons onDownload={(f) => exportStaff(f, workPeriod, workRows)} />
               </div>
-            </CardHeader>
-            <CardBody className="space-y-4">
               {workPeriod ? (
-                <>
-                  {renderBanner(workPeriod, workRows, approveButton)}
-                  {processedByMe && (
-                    <div className="text-xs text-gray-500">You processed this run, so a different user with payroll-approval permission needs to approve it. Once approved it moves to Payment Advice (to pay) and History.</div>
-                  )}
-                </>
+                renderSlimBanner(workPeriod, workRows, staffBannerActions)
               ) : (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 flex items-center justify-between gap-3 flex-wrap">
                   <span>
                     {inProgress.length === 0
-                      ? 'No payroll is waiting for approval. Choose the month you are preparing salaries for; this table is only a preview at today’s rates.'
+                      ? requireApprovalForPayroll
+                        ? 'No prepared month yet. Prepare a month here, then approve it on Payment Advice before paying.'
+                        : 'No prepared month yet. Prepare a month here — it will be ready to pay on Payment Advice.'
                       : 'Preview at today’s rates — not a prepared payroll. Pick a month above, or prepare a new one.'}
                   </span>
                   <Button size="sm" color="primary" variant="flat" onPress={openPrepare}>Prepare payroll for a month</Button>
@@ -748,14 +974,16 @@ export default function PayrollProcessingPanel() {
               {renderTable(workRows, workPeriod)}
             </CardBody>
           </Card>
+          </div>
         </Tab>
 
         {/* ---------- Payment Advice ---------- */}
-        <Tab key="advice" title="🏦 Payment Advice">
-          <Card>
-            <CardHeader className="justify-between gap-2 flex-wrap">
+        <Tab key="advice" title="Payment Advice">
+          <div className={deskBookTabPanelClassName}>
+          <Card className="shadow-sm">
+            <CardHeader className="px-3 py-2 justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-3 flex-wrap">
-                <div className="font-medium">Payment Advice</div>
+                <div className="text-sm font-semibold text-gray-800">Payment Advice</div>
                 {monthSelect(adviceItems, advicePeriod?.id || '', (id) => setAdviceKey(id))}
               </div>
               <ExportButtons onDownload={exportAdviceSummary} />
@@ -763,142 +991,184 @@ export default function PayrollProcessingPanel() {
             <CardBody className="space-y-3">
               {!advicePeriod ? (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                  {approvedPeriods.length === 0
-                    ? 'Nothing to pay yet. Payment advice is issued from approved payroll — prepare a month and approve it under Staff Payroll first.'
-                    : 'Pick an approved month above.'}
+                  Prepare a month under Staff Payroll first.
                 </div>
               ) : (
                 <>
-                  {renderBanner(advicePeriod, adviceRows, adviceUnpaidIds.length > 0 && (
-                    <Tooltip content="Needs the payroll-approval permission" isDisabled={canApprovePayroll}>
-                      <span><Button color="success" isDisabled={!canApprovePayroll} onPress={() => { setPayDate(todayKey()); setPayTarget('all'); }}>Mark all as paid</Button></span>
-                    </Tooltip>
-                  ))}
-                  <Table aria-label="payment-advice-summary" className="overflow-x-auto">
-                    <TableHeader>
-                      <TableColumn>PAYEE / CHANNEL</TableColumn>
-                      <TableColumn>NO. OF STAFF</TableColumn>
-                      <TableColumn>TOTAL AMOUNT (GHS)</TableColumn>
-                      <TableColumn>AMOUNT IN WORDS</TableColumn>
-                      <TableColumn>PAYMENT</TableColumn>
-                      <TableColumn>ACTIONS</TableColumn>
-                    </TableHeader>
-                    <TableBody emptyContent="No payroll records for this month.">
-                      {[
-                        ...adviceGroups.map((g) => (
-                          <TableRow key={g.label}>
-                            <TableCell className="font-medium">{g.label}</TableCell>
-                            <TableCell>{g.records.length}</TableCell>
-                            <TableCell>{fmtCurrency(g.total)}</TableCell>
-                            <TableCell>{amountToWordsGhana(g.total)}</TableCell>
-                            <TableCell>
-                              {g.paid === g.records.length
-                                ? <Chip size="sm" variant="flat" color="success">Paid {fmtDay(g.paidAt)}</Chip>
-                                : g.paid > 0
-                                  ? <Chip size="sm" variant="flat" color="warning">Part paid ({g.paid}/{g.records.length})</Chip>
-                                  : <Chip size="sm" variant="flat">Not paid</Chip>}
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex gap-2">
-                                <Button size="sm" variant="flat" onPress={() => handleOpenAdvice(g.label)}>View list</Button>
-                                {g.unpaidIds.length > 0 && (
-                                  <Button size="sm" color="success" variant="flat" isDisabled={!canApprovePayroll} onPress={() => { setPayDate(todayKey()); setPayTarget(g.label); }}>Mark as paid</Button>
-                                )}
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        )),
-                        ...(adviceGroups.length > 0 ? [(
-                          <TableRow key="__total" className="bg-gray-50">
-                            <TableCell><strong>TOTAL</strong></TableCell>
-                            <TableCell><strong>{adviceCount}</strong></TableCell>
-                            <TableCell><strong>{fmtCurrency(adviceTotal)}</strong></TableCell>
-                            <TableCell><strong>{amountToWordsGhana(adviceTotal)}</strong></TableCell>
-                            <TableCell>{''}</TableCell>
-                            <TableCell>{''}</TableCell>
-                          </TableRow>
-                        )] : []),
-                      ]}
-                    </TableBody>
-                  </Table>
-                  <p className="text-xs text-gray-500">Pay one bank, MoMo or cash batch at a time — one click marks every staff member in it as paid. “View list” opens the per-staff list to send to the bank (PDF and Excel).</p>
+                  {renderSlimBanner(advicePeriod, adviceRows, adviceBannerActions)}
+                  {adviceAwaiting && adviceProcessedByMe && (
+                    <div className="text-xs text-gray-500">You prepared this run — another user with payroll-approval permission needs to approve it before it can be paid.</div>
+                  )}
+                  <div ref={adviceCols.frameRef} style={adviceCols.frameStyle}>
+                    <Table aria-label="payment-advice-summary" removeWrapper classNames={deskResizableTableClassNames()}>
+                      <TableHeader>
+                        <TableColumn key="channel" className="relative" style={adviceCols.style('channel')}>
+                          <SortLabel active={adviceSortKey === 'channel'} dir={adviceSortDir} onPress={() => onAdviceSort('channel')}>Payee / channel</SortLabel>
+                          {adviceCols.sizer('channel', 'Payee / channel')}
+                        </TableColumn>
+                        <TableColumn key="count" className="relative" style={adviceCols.style('count')}>
+                          <SortLabel active={adviceSortKey === 'count'} dir={adviceSortDir} align="center" onPress={() => onAdviceSort('count')}>Staff</SortLabel>
+                          {adviceCols.sizer('count', 'Staff')}
+                        </TableColumn>
+                        <TableColumn key="amount" className="relative" style={adviceCols.style('amount')}>
+                          <SortLabel active={adviceSortKey === 'amount'} dir={adviceSortDir} align="right" onPress={() => onAdviceSort('amount')}>Total amount</SortLabel>
+                          {adviceCols.sizer('amount', 'Total amount')}
+                        </TableColumn>
+                        <TableColumn key="words" className="relative" style={adviceCols.style('words')}>
+                          <SortLabel active={adviceSortKey === 'words'} dir={adviceSortDir} onPress={() => onAdviceSort('words')}>Amount in words</SortLabel>
+                          {adviceCols.sizer('words', 'Amount in words')}
+                        </TableColumn>
+                        <TableColumn key="payment" className="relative" style={adviceCols.style('payment')}>
+                          <SortLabel active={adviceSortKey === 'payment'} dir={adviceSortDir} onPress={() => onAdviceSort('payment')}>Payment</SortLabel>
+                          {adviceCols.sizer('payment', 'Payment')}
+                        </TableColumn>
+                        <TableColumn key="actions">Actions</TableColumn>
+                      </TableHeader>
+                      <TableBody emptyContent="No payroll records for this month.">
+                        {[
+                          ...advicePaging.paged.map((g) => (
+                            <TableRow
+                              key={g.label}
+                              className={rowClassNames(adviceLabel === g.label && adviceOpen)}
+                              onClick={() => handleOpenAdvice(g.label)}
+                            >
+                              <TableCell className="font-medium"><span className="block truncate" title={g.label}>{g.label}</span></TableCell>
+                              <TableCell className="text-center tabular-nums">{g.records.length}</TableCell>
+                              <TableCell className="text-right tabular-nums">{formatMoney(g.total)}</TableCell>
+                              <TableCell><span className="block truncate" title={amountToWordsGhana(g.total)}>{amountToWordsGhana(g.total)}</span></TableCell>
+                              <TableCell>
+                                {adviceAwaiting
+                                  ? <Chip size="sm" variant="flat" color="warning">Awaiting approval</Chip>
+                                  : g.paid === g.records.length
+                                    ? <Chip size="sm" variant="flat" color="success">Paid {fmtDay(g.paidAt)}</Chip>
+                                    : g.paid > 0
+                                      ? <Chip size="sm" variant="flat" color="warning">Part paid ({g.paid}/{g.records.length})</Chip>
+                                      : <Chip size="sm" variant="flat">Not paid</Chip>}
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex gap-2" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} role="presentation">
+                                  <Button size="sm" variant="flat" onPress={() => handleOpenAdvice(g.label)}>View list</Button>
+                                  {adviceCanPay && g.unpaidIds.length > 0 && (
+                                    <Button size="sm" color="success" variant="flat" isDisabled={!canApprovePayroll} onPress={() => { setPayDate(todayKey()); setPayTarget(g.label); }}>Mark as paid</Button>
+                                  )}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          )),
+                          ...(sortedAdviceGroups.length > 0 ? [(
+                            <TableRow key="__total" className="bg-gray-50">
+                              <TableCell><strong>TOTAL</strong></TableCell>
+                              <TableCell className="text-center"><strong>{adviceCount}</strong></TableCell>
+                              <TableCell className="text-right tabular-nums"><strong>{formatMoney(adviceTotal)}</strong></TableCell>
+                              <TableCell><strong>{amountToWordsGhana(adviceTotal)}</strong></TableCell>
+                              <TableCell>{''}</TableCell>
+                              <TableCell>{''}</TableCell>
+                            </TableRow>
+                          )] : []),
+                        ]}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <div className="mt-3 flex justify-end">
+                    <Pagination page={advicePaging.page} total={advicePaging.pages} onChange={advicePaging.setPage} showControls size="sm" />
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    {adviceAwaiting
+                      ? 'Review the payee / channel summary, then Approve payroll. Mark as paid unlocks after approval.'
+                      : 'Pay one bank, MoMo or cash batch at a time — one click marks every staff member in it as paid. Click a row or “View list” to open the per-staff list (Print, PDF, Excel).'}
+                  </p>
                 </>
               )}
             </CardBody>
           </Card>
+          </div>
         </Tab>
 
         {/* ---------- History ---------- */}
-        <Tab key="history" title="🗂 History">
+        <Tab key="history" title="History">
+          <div className={deskBookTabPanelClassName}>
           {historyPeriod ? (
-            <Card>
-              <CardHeader className="justify-between gap-2 flex-wrap">
+            <Card className="shadow-sm">
+              <CardHeader className="px-3 py-2 justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-3 flex-wrap">
                   <Button size="sm" variant="flat" onPress={() => setHistoryKey('')}>← All months</Button>
-                  <div className="font-medium">{periodMonth(historyPeriod)}</div>
+                  <div className="text-sm font-semibold text-gray-800">{periodMonth(historyPeriod)}</div>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   {filterBar}
                   <ExportButtons onDownload={(f) => exportStaff(f, historyPeriod, historyRows)} />
                 </div>
               </CardHeader>
-              <CardBody className="space-y-4">
+              <CardBody className="space-y-3">
                 {renderBanner(historyPeriod, historyRows)}
                 {renderTable(historyRows, historyPeriod)}
               </CardBody>
             </Card>
           ) : (
-            <Card>
-              <CardHeader className="justify-between gap-2 flex-wrap">
-                <div className="font-medium">Payroll History</div>
+            <Card className="shadow-sm">
+              <CardHeader className="px-3 py-2 justify-between gap-2 flex-wrap">
+                <div className="text-sm font-semibold text-gray-800">Payroll History</div>
                 <ExportButtons onDownload={exportHistory} />
               </CardHeader>
               <CardBody>
-                <Table aria-label="payroll-history" className="overflow-x-auto">
-                  <TableHeader>
-                    <TableColumn>MONTH</TableColumn>
-                    <TableColumn>STAFF</TableColumn>
-                    <TableColumn>GROSS PAY</TableColumn>
-                    <TableColumn>DEDUCTIONS</TableColumn>
-                    <TableColumn>NET PAY</TableColumn>
-                    <TableColumn>PROCESSED</TableColumn>
-                    <TableColumn>APPROVED</TableColumn>
-                    <TableColumn>PAYMENT</TableColumn>
-                    <TableColumn>ACTIONS</TableColumn>
-                  </TableHeader>
-                  <TableBody emptyContent="No approved payroll yet. Once a month is approved it is kept here for reference.">
-                    {approvedPeriods.map((p) => {
-                      const st = historyStats(p.id);
-                      return (
-                        <TableRow key={p.id}>
-                          <TableCell className="font-medium">{periodMonth(p)}</TableCell>
-                          <TableCell>{st.staff}</TableCell>
-                          <TableCell>{fmtCurrency(st.gross)}</TableCell>
-                          <TableCell>{fmtCurrency(st.gross - st.net)}</TableCell>
-                          <TableCell><span className="font-semibold text-green-700">{fmtCurrency(st.net)}</span></TableCell>
-                          <TableCell><div className="text-sm">{p.processedBy || '—'}</div><div className="text-xs text-gray-500">{fmtDay(p.processedAt)}</div></TableCell>
-                          <TableCell><div className="text-sm">{p.approvedBy || '—'}</div><div className="text-xs text-gray-500">{fmtDay(p.approvedAt)}</div></TableCell>
-                          <TableCell>
-                            {st.paid === st.staff && st.staff > 0
-                              ? <Chip size="sm" variant="flat" color="success">Paid {fmtDay(st.paidOn)}</Chip>
-                              : st.paid > 0
-                                ? <Chip size="sm" variant="flat" color="warning">Part paid ({st.paid}/{st.staff})</Chip>
-                                : <Chip size="sm" variant="flat">Not paid</Chip>}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex gap-2">
-                              <Button size="sm" variant="flat" onPress={() => setHistoryKey(p.id)}>View</Button>
-                              {periodStage(p) === 'approved' && <Button size="sm" variant="flat" color="success" onPress={() => { setAdviceKey(p.id); setActiveTab('advice'); }}>Pay</Button>}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                <div ref={historyCols.frameRef} style={historyCols.frameStyle}>
+                  <Table aria-label="payroll-history" removeWrapper classNames={deskResizableTableClassNames()}>
+                    <TableHeader>
+                      {[
+                        ...(['month', 'staff', 'gross', 'deductions', 'net', 'processed', 'approved', 'payment'] as HistorySortKey[]).map((key) => {
+                          const labels: Record<HistorySortKey, string> = {
+                            month: 'Month', staff: 'Staff', gross: 'Gross pay', deductions: 'Deductions', net: 'Net pay',
+                            processed: 'Processed', approved: 'Approved', payment: 'Payment',
+                          };
+                          const align = key === 'staff' ? 'center' : (key === 'gross' || key === 'deductions' || key === 'net') ? 'right' : 'left';
+                          return (
+                            <TableColumn key={key} className="relative" style={historyCols.style(key)}>
+                              <SortLabel active={historySortKey === key} dir={historySortDir} align={align} onPress={() => onHistorySort(key)}>{labels[key]}</SortLabel>
+                              {historyCols.sizer(key, labels[key])}
+                            </TableColumn>
+                          );
+                        }),
+                        <TableColumn key="actions">Actions</TableColumn>,
+                      ]}
+                    </TableHeader>
+                    <TableBody emptyContent="No approved payroll yet. Once a month is approved it is kept here for reference.">
+                      {historyPaging.paged.map((p) => {
+                        const st = historyStats(p.id);
+                        return (
+                          <TableRow key={p.id} className={rowClassNames(historyKey === p.id)} onClick={() => setHistoryKey(p.id)}>
+                            <TableCell className="font-semibold text-ghana-black">{periodMonth(p)}</TableCell>
+                            <TableCell className="text-center tabular-nums">{st.staff}</TableCell>
+                            <TableCell className="text-right tabular-nums">{formatMoney(st.gross)}</TableCell>
+                            <TableCell className="text-right tabular-nums">{formatMoney(st.gross - st.net)}</TableCell>
+                            <TableCell className="text-right tabular-nums"><span className="font-semibold text-green-700">{formatMoney(st.net)}</span></TableCell>
+                            <TableCell><div className="text-sm">{p.processedBy || '—'}</div><div className="text-xs text-gray-500">{fmtDay(p.processedAt)}</div></TableCell>
+                            <TableCell><div className="text-sm">{p.approvedBy || '—'}</div><div className="text-xs text-gray-500">{fmtDay(p.approvedAt)}</div></TableCell>
+                            <TableCell>
+                              {st.paid === st.staff && st.staff > 0
+                                ? <Chip size="sm" variant="flat" color="success">Paid {fmtDay(st.paidOn)}</Chip>
+                                : st.paid > 0
+                                  ? <Chip size="sm" variant="flat" color="warning">Part paid ({st.paid}/{st.staff})</Chip>
+                                  : <Chip size="sm" variant="flat">Not paid</Chip>}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex gap-2" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} role="presentation">
+                                <Button size="sm" variant="flat" onPress={() => setHistoryKey(p.id)}>View</Button>
+                                {periodStage(p) === 'approved' && <Button size="sm" variant="flat" color="success" onPress={() => { setAdviceKey(p.id); setActiveTab('advice'); }}>Pay</Button>}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="mt-3 flex justify-end">
+                  <Pagination page={historyPaging.page} total={historyPaging.pages} onChange={historyPaging.setPage} showControls size="sm" />
+                </div>
               </CardBody>
             </Card>
           )}
+          </div>
         </Tab>
       </Tabs>
 
@@ -910,7 +1180,7 @@ export default function PayrollProcessingPanel() {
               <ModalHeader>Show / Hide Columns</ModalHeader>
               <ModalBody>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                  {[...columns, { key: 'actions', label: 'Actions' }].map((col) => (
+                  {[...columns].map((col) => (
                     <Checkbox key={col.key} isSelected={visibleColumns.has(col.key)} onValueChange={(checked) => toggleColumn(col.key, checked)}>
                       {col.label}
                     </Checkbox>
@@ -931,14 +1201,24 @@ export default function PayrollProcessingPanel() {
           {() => {
             const label = adviceLabel || '';
             const { rows, total: listTotal, monthLabel } = label ? buildAdviceForLabel(label) : { rows: [], total: 0, monthLabel: '' } as any;
+            const printAdvice = () => printSimpleReport(
+              `Salary Payment Advice — ${label}`,
+              `${hotelName} · ${monthLabel}`,
+              ['No.', 'Name', 'Account / wallet', 'Net (GHS)'],
+              [
+                ...rows.map((r: any, idx: number) => [idx + 1, r.employeeName, r.accountNumber, formatMoney(r.net)]),
+                ['', 'TOTAL', '', formatMoney(listTotal)],
+                ['', `Amount in words: ${amountToWordsGhana(listTotal)}`, '', ''],
+              ],
+            );
             return (
               <>
                 <ModalHeader>Salary Payment Advice - {label}</ModalHeader>
                 <ModalBody>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-                    <div><strong>Month:</strong> {monthLabel}</div>
-                    <div><strong>Bank/Channel:</strong> {label}</div>
-                  </div>
+                  <DetailGrid>
+                    <DetailField label="Month" value={monthLabel || '—'} />
+                    <DetailField label="Bank / channel" value={label || '—'} />
+                  </DetailGrid>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
                     <Input label="Signer Name" size="sm" value={signerName} onChange={(e) => setSignerName(e.target.value)} variant="bordered" />
                     <Input label="Signer Position" size="sm" value={signerPosition} onChange={(e) => setSignerPosition(e.target.value)} variant="bordered" />
@@ -946,29 +1226,29 @@ export default function PayrollProcessingPanel() {
                   <div className="text-sm text-gray-700 mt-3">
                     Please pay the underlisted staff of {hotelName} their net salaries via {label} for {monthLabel}.
                   </div>
-                  <div className="mt-3 max-h-[75vh] overflow-y-auto">
-                    <Table aria-label="payment-advice-detail">
+                  <div className="mt-3 max-h-[50vh] overflow-y-auto">
+                    <Table aria-label="payment-advice-detail" removeWrapper classNames={deskResizableTableClassNames()}>
                       <TableHeader>
-                        <TableColumn className="w-[12%] text-center">NO.</TableColumn>
-                        <TableColumn className="w-[40%] pr-8">NAME</TableColumn>
-                        <TableColumn className="w-[30%]">ACCOUNT / WALLET</TableColumn>
-                        <TableColumn className="w-[18%] text-right">NET (GHS)</TableColumn>
+                        <TableColumn className="w-[12%] text-center">No.</TableColumn>
+                        <TableColumn className="w-[40%]">Name</TableColumn>
+                        <TableColumn className="w-[30%]">Account / wallet</TableColumn>
+                        <TableColumn className="w-[18%] text-right">Net</TableColumn>
                       </TableHeader>
                       <TableBody>
                         {[
                           ...rows.map((r: any, idx: number) => (
                             <TableRow key={idx}>
-                              <TableCell className="w-[12%] text-center">{idx + 1}</TableCell>
-                              <TableCell className="w-[40%] pr-8">{r.employeeName}</TableCell>
-                              <TableCell className="w-[30%]">{r.accountNumber}</TableCell>
-                              <TableCell className="w-[18%] text-right">{fmtCurrency(r.net)}</TableCell>
+                              <TableCell className="text-center tabular-nums">{idx + 1}</TableCell>
+                              <TableCell className="font-semibold text-ghana-black">{r.employeeName}</TableCell>
+                              <TableCell>{r.accountNumber}</TableCell>
+                              <TableCell className="text-right tabular-nums">{formatMoney(r.net)}</TableCell>
                             </TableRow>
                           )),
-                          <TableRow key="__total">
+                          <TableRow key="__total" className="bg-gray-50">
                             <TableCell>{' '}</TableCell>
                             <TableCell><strong>Total</strong></TableCell>
                             <TableCell>{' '}</TableCell>
-                            <TableCell className="text-right"><strong>{fmtCurrency(listTotal)}</strong></TableCell>
+                            <TableCell className="text-right tabular-nums"><strong>{formatMoney(listTotal)}</strong></TableCell>
                           </TableRow>,
                           <TableRow key="__words">
                             <TableCell colSpan={4}><em>Amount in words: {amountToWordsGhana(listTotal)}</em></TableCell>
@@ -978,16 +1258,15 @@ export default function PayrollProcessingPanel() {
                     </Table>
                   </div>
                 </ModalBody>
-                <ModalFooter>
-                  <div className="flex items-center gap-2">
-                    <Button variant="flat" onPress={() => setAdviceOpen(false)}>Close</Button>
-                    {label && (
-                      <>
-                        <Button variant="flat" onPress={() => handleDownloadAdvicePdf(label)}>Download PDF</Button>
-                        <Button variant="flat" onPress={() => handleDownloadAdviceXls(label)}>Download XLS</Button>
-                      </>
-                    )}
-                  </div>
+                <ModalFooter className="flex flex-wrap justify-between gap-2">
+                  <Button variant="flat" onPress={() => setAdviceOpen(false)}>Close</Button>
+                  {label && (
+                    <div className="flex items-center gap-2">
+                      <Button variant="bordered" onPress={printAdvice}>Print</Button>
+                      <Button variant="flat" onPress={() => handleDownloadAdvicePdf(label)}>PDF</Button>
+                      <Button variant="flat" onPress={() => handleDownloadAdviceXls(label)}>Excel</Button>
+                    </div>
+                  )}
                 </ModalFooter>
               </>
             );
@@ -996,47 +1275,94 @@ export default function PayrollProcessingPanel() {
       </Modal>
 
       {/* Row detail (the staff table's "View" action) */}
-      <Modal isOpen={!!detailRow} onOpenChange={(open) => { if (!open) setDetailRow(null); }} size="2xl">
+      <Modal
+        isOpen={!!detailRow}
+        onOpenChange={(open) => { if (!open) setDetailRow(null); }}
+        size="lg"
+        scrollBehavior="inside"
+        classNames={{ body: 'gap-2 py-1', header: 'py-2', footer: 'py-2' }}
+      >
         <ModalContent>
           {detailRow && (() => {
             const r = detailRow as any;
+            const debtLines = readDebtRepayments(r.record?.notes);
+            const debtTotal = debtLines.reduce((s, l) => s + l.amount, 0);
             const lines: Array<[string, number, boolean?]> = [
               ['Basic salary', r.basic], ['Allowances', r.allowances], ['Overtime & bonus', r.overtime], ['Gross pay', r.gross, true],
               ['Income tax', r.tax], [tier1Label, r.tier1], [tier2Label, r.tier2], [tier3Label, r.tier3], ['Other deductions', r.other], ['Net pay', r.net, true],
             ];
+            const printPayslip = () => printDetailSheet(
+              `${r.name} — ${r.month}`,
+              [
+                { label: 'Staff No.', value: r.staffNo || '—' },
+                { label: 'Department', value: r.deptName || '—' },
+                { label: 'Position', value: r.posTitle || '—' },
+                { label: 'Payment status', value: PAY_CHIP[r.pay as PayStatus]?.label || r.pay },
+                { label: 'Paid on', value: r.paidAt ? fmtDay(r.paidAt) : '—' },
+                ...lines.map(([label, amount]) => ({ label, value: formatMoney(amount) })),
+                ...debtLines.map((l) => ({ label: `Debt repayment (${l.type})`, value: formatMoney(l.amount) })),
+              ],
+              'Staff payroll detail',
+            );
             return (
               <>
-                <ModalHeader>{r.name} — {r.month}</ModalHeader>
+                <ModalHeader className="text-base">{r.name} — {r.month}</ModalHeader>
                 <ModalBody>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div><p className="text-gray-500">Staff No.</p><p className="font-medium">{r.staffNo}</p></div>
-                    <div><p className="text-gray-500">Department / Position</p><p className="font-medium">{r.deptName || '-'} / {r.posTitle || '-'}</p></div>
-                    <div><p className="text-gray-500">Payment status</p><Chip size="sm" variant="flat" color={PAY_CHIP[r.pay as PayStatus].color}>{PAY_CHIP[r.pay as PayStatus].label}</Chip>{r.paidAt ? <span className="ml-2 text-xs text-gray-500">{fmtDay(r.paidAt)}</span> : null}</div>
-                    <div><p className="text-gray-500">Pay to</p><p className="font-medium">{r.record ? `${r.record.paymentMethod.replace('_', ' ')}${r.record.bankAccount ? ` · ${r.record.bankAccount}` : ''}` : '-'}</p></div>
-                  </div>
-                  <Table removeWrapper aria-label="Pay breakdown" className="text-sm mt-2">
-                    <TableHeader><TableColumn>Item</TableColumn><TableColumn className="text-right">Amount (GHS)</TableColumn></TableHeader>
+                  <DetailGrid className="!gap-x-5 !gap-y-3">
+                    <DetailField dense label="Staff No." value={r.staffNo || '—'} />
+                    <DetailField dense label="Department / Position" value={`${r.deptName || '—'} / ${r.posTitle || '—'}`} />
+                    <DetailField dense label="Payment status" value={<><Chip size="sm" variant="flat" color={PAY_CHIP[r.pay as PayStatus].color}>{PAY_CHIP[r.pay as PayStatus].label}</Chip>{r.paidAt ? <span className="ml-2 text-xs text-gray-500">{fmtDay(r.paidAt)}</span> : null}</>} />
+                    <DetailField dense label="Pay to" value={r.record ? `${r.record.paymentMethod.replace('_', ' ')}${r.record.bankAccount ? ` · ${r.record.bankAccount}` : ''}` : '—'} />
+                    {debtTotal > 0 && <DetailField dense label="Staff debt this month" value={formatGhs(debtTotal)} />}
+                  </DetailGrid>
+                  <Table isCompact removeWrapper aria-label="Pay breakdown" classNames={deskResizableTableClassNames()} className="text-sm mt-1">
+                    <TableHeader><TableColumn>Item</TableColumn><TableColumn className="text-right">Amount</TableColumn></TableHeader>
                     <TableBody>
-                      {lines.map(([label, amount, bold]) => (
-                        <TableRow key={label} className={bold ? 'font-semibold' : ''}>
-                          <TableCell>{label}</TableCell>
-                          <TableCell className={`text-right ${label === 'Net pay' ? 'text-green-700' : ''}`}>{fmtCurrency(amount)}</TableCell>
-                        </TableRow>
-                      ))}
+                      {[
+                        ...lines.map(([label, amount, bold]) => (
+                          <TableRow key={label} className={bold ? 'font-semibold' : ''}>
+                            <TableCell className="py-1">{label}</TableCell>
+                            <TableCell className={`py-1 text-right tabular-nums ${label === 'Net pay' ? 'text-green-700' : ''}`}>{formatMoney(amount)}</TableCell>
+                          </TableRow>
+                        )),
+                        ...debtLines.map((l) => (
+                          <TableRow key={l.debtId}>
+                            <TableCell className="py-1 text-amber-800">Debt repayment ({l.type}{l.reason ? ` — ${l.reason}` : ''})</TableCell>
+                            <TableCell className="py-1 text-right tabular-nums">{formatMoney(l.amount)}</TableCell>
+                          </TableRow>
+                        )),
+                      ]}
                     </TableBody>
                   </Table>
                   {(() => {
                     const adj = readAdjustments(r.record?.notes);
-                    return adj.reason ? <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-900">Adjusted{adj.editedBy ? ` by ${adj.editedBy}` : ''}: {adj.reason}</div> : null;
+                    return adj.reason ? <div className="px-2.5 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-900 mt-1">Adjusted{adj.editedBy ? ` by ${adj.editedBy}` : ''}: {adj.reason}</div> : null;
                   })()}
                   {r.pay === 'estimate' && (
-                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                    <div className="px-2.5 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800 mt-1">
                       These are estimates from today&apos;s rates, not a processed payroll. Prepare a month to get the actual figures.
                     </div>
                   )}
                 </ModalBody>
-                <ModalFooter>
-                  <Button variant="flat" onPress={() => setDetailRow(null)}>Close</Button>
+                <ModalFooter className="flex flex-wrap justify-between gap-2">
+                  <Button size="sm" variant="flat" onPress={() => setDetailRow(null)}>Close</Button>
+                  <div className="flex items-center gap-2">
+                    {canEditLines && r.record && workPeriod && r.record.payrollPeriodId === workPeriod.id && (
+                      <Button
+                        size="sm"
+                        color="primary"
+                        variant="flat"
+                        onPress={() => {
+                          const row = r as Row;
+                          setDetailRow(null);
+                          openEdit(row);
+                        }}
+                      >
+                        Edit
+                      </Button>
+                    )}
+                    <Button size="sm" variant="bordered" onPress={printPayslip}>Print</Button>
+                  </div>
                 </ModalFooter>
               </>
             );
@@ -1051,7 +1377,12 @@ export default function PayrollProcessingPanel() {
             <>
               <ModalHeader>Prepare payroll</ModalHeader>
               <ModalBody>
-                <p className="text-sm text-gray-600">Choose the month you are preparing salaries for. Every active staff member is calculated with the current rates, and HR-approved overtime for that month is included.</p>
+                <p className="text-sm text-gray-600">
+                  Choose the month you are preparing salaries for. Every active staff member is calculated with the current rates, and HR-approved overtime for that month is included.
+                  {requireApprovalForPayroll
+                    ? ' After prepare, approve the month on Payment Advice before paying.'
+                    : ' Approval is off in Settings — the month will be ready to pay on Payment Advice.'}
+                </p>
                 <div className="grid grid-cols-2 gap-3">
                   <Select label="Month" selectedKeys={[String(prepMonth)]} onSelectionChange={(k) => setPrepMonth(Number(Array.from(k)[0]) || 1)} variant="bordered">
                     {MONTHS.map((m, i) => <SelectItem key={String(i + 1)}>{m}</SelectItem>)}
@@ -1061,7 +1392,7 @@ export default function PayrollProcessingPanel() {
                 <p className="text-sm"><strong>{MONTHS[prepMonth - 1]} {prepYear}</strong> · {activeStaff} active staff</p>
                 {prepExisting && (
                   <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
-                    {MONTHS[prepMonth - 1]} {prepYear} has already been prepared ({STAGE_LABEL[periodStage(prepExisting)].toLowerCase()}). {periodStage(prepExisting) === 'awaiting' ? 'Pick it from the month list instead.' : 'See History.'}
+                    {MONTHS[prepMonth - 1]} {prepYear} has already been prepared ({STAGE_LABEL[periodStage(prepExisting)].toLowerCase()}). {periodStage(prepExisting) === 'awaiting' || periodStage(prepExisting) === 'draft' ? 'Open it under Staff Payroll or approve it on Payment Advice.' : 'See Payment Advice or History.'}
                   </div>
                 )}
                 {prepError && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">{prepError}</div>}
@@ -1075,19 +1406,19 @@ export default function PayrollProcessingPanel() {
         </ModalContent>
       </Modal>
 
-      {/* Approve confirmation */}
+      {/* Approve confirmation (from Payment Advice) */}
       <Modal isOpen={confirm === 'approve'} onOpenChange={(open) => { if (!open) setConfirm(null); }} size="md">
         <ModalContent>
-          {workPeriod && (
+          {advicePeriod && adviceAwaiting && (
             <>
-              <ModalHeader>Approve {periodMonth(workPeriod)} payroll?</ModalHeader>
+              <ModalHeader>Approve {periodMonth(advicePeriod)} payroll?</ModalHeader>
               <ModalBody>
-                <p className="text-sm">{workRows.length} staff · Gross {fmtCurrency(workRows.reduce((s, r) => s + r.gross, 0))} · Net pay <strong className="text-green-700">{fmtCurrency(workRows.reduce((s, r) => s + r.net, 0))}</strong></p>
-                <p className="text-xs text-gray-600">Approving confirms these figures are correct and posts this payroll to the ledger. It is recorded under your name ({currentUserName}) and can&apos;t be undone here. The month then moves to Payment Advice, where it is paid, and to History.</p>
+                <p className="text-sm">{adviceRows.length} staff · Gross {formatGhs(adviceRows.reduce((s, r) => s + r.gross, 0))} · Net pay <strong className="text-green-700">{formatGhs(adviceRows.reduce((s, r) => s + r.net, 0))}</strong></p>
+                <p className="text-xs text-gray-600">Approving confirms these figures are correct and posts this payroll to the ledger. It is recorded under your name ({currentUserName}) and can&apos;t be undone here. You can then mark staff as paid on this screen.</p>
               </ModalBody>
               <ModalFooter>
                 <Button variant="flat" onPress={() => setConfirm(null)}>Cancel</Button>
-                <Button color="primary" onPress={doApprove}>Approve payroll</Button>
+                <Button color="primary" onPress={() => { void doApprove(advicePeriod); }}>Approve payroll</Button>
               </ModalFooter>
             </>
           )}
@@ -1101,7 +1432,7 @@ export default function PayrollProcessingPanel() {
             <>
               <ModalHeader>Mark {payTarget === 'all' ? 'all channels' : payTarget} as paid?</ModalHeader>
               <ModalBody>
-                <p className="text-sm">{advicePeriod && periodMonth(advicePeriod)} · <strong>{payIds.length}</strong> staff · <strong className="text-green-700">{fmtCurrency(payAmount)}</strong></p>
+                <p className="text-sm">{advicePeriod && periodMonth(advicePeriod)} · <strong>{payIds.length}</strong> staff · <strong className="text-green-700">{formatGhs(payAmount)}</strong></p>
                 <Input label="Date paid" type="date" max={todayKey()} value={payDate} onChange={(e) => setPayDate(e.target.value)} variant="bordered" />
                 <p className="text-xs text-gray-600">This marks every staff member in {payTarget === 'all' ? 'the month' : 'this batch'} as paid in one go. Do it once the bank or MoMo transfer has actually gone out.</p>
               </ModalBody>
@@ -1121,7 +1452,7 @@ export default function PayrollProcessingPanel() {
             <>
               <ModalHeader>Edit {editRow.name} — {workPeriod ? periodMonth(workPeriod) : ''}</ModalHeader>
               <ModalBody>
-                <p className="text-sm text-gray-600">Saving recalculates this person&apos;s income tax and contributions with today&apos;s rates, then updates the month&apos;s totals. Currently: gross {fmtCurrency(editRow.gross)}, net <strong className="text-green-700">{fmtCurrency(editRow.net)}</strong>.</p>
+                <p className="text-sm text-gray-600">Saving recalculates this person&apos;s income tax and contributions with today&apos;s rates, then updates the month&apos;s totals. Currently: gross {formatGhs(editRow.gross)}, net <strong className="text-green-700">{formatGhs(editRow.net)}</strong>.</p>
                 <div className="grid grid-cols-2 gap-3">
                   <Input label="Allowances (GHS)" type="number" min={0} value={editForm.allowances} onChange={(e) => setEditForm({ ...editForm, allowances: e.target.value })} variant="bordered" />
                   <Input label="Overtime hours" type="number" min={0} value={editForm.overtimeHours} onChange={(e) => setEditForm({ ...editForm, overtimeHours: e.target.value })} variant="bordered" description="Starts from the HR-approved hours" />

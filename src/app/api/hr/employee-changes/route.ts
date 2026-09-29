@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant'
+import { requireAuth } from '@/app/lib/api/auth-guard'
 import { listHrEmployeeChanges, createHrEmployeeChange } from '@/app/lib/hr/repository'
 
 async function resolveTenant(req: NextRequest) {
@@ -11,6 +12,8 @@ async function resolveTenant(req: NextRequest) {
 // Append-only change log -- no update/delete, mirroring the store's logChange().
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const changes = await listHrEmployeeChanges(ctx.tenantId)

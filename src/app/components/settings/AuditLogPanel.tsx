@@ -116,7 +116,7 @@ export default function AuditLogPanel() {
   }
 
   return (
-    <div className="space-y-4 mt-4">
+    <div className="mt-2 space-y-3">
       <div className="flex flex-col md:flex-row md:items-center gap-3 md:justify-between">
         <Input
           placeholder="Search by action, entity, user, IP, or device..."

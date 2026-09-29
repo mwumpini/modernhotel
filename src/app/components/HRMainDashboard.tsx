@@ -14,6 +14,7 @@ import DeptMessenger from './DeptMessenger';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import ModuleExpandButton from './ModuleExpandButton';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
 
 // Hideable summary/widget cards on this dashboard — the "Operations Overview"
 // tabs are core navigation, not clutter, so they're deliberately not included.
@@ -35,6 +36,8 @@ import PerformanceReviewsPanel from './hr/PerformanceReviewsPanel';
 import PerformanceLogPanel from './hr/PerformanceLogPanel';
 import DepartmentsPositionsPanel from './hr/DepartmentsPositionsPanel';
 import LeaveManagementPanel from './hr/LeaveManagementPanel';
+import LeaveBalancesTab from './hr/LeaveBalancesTab';
+import LeaveCalendarTab from './hr/LeaveCalendarTab';
 import TimeTrackingPanel from './hr/TimeTrackingPanel';
 import ShiftSchedulingPanel from './hr/ShiftSchedulingPanel';
 import OvertimeManagementPanel from './hr/OvertimeManagementPanel';
@@ -43,9 +46,9 @@ import TrainingProgramsPanel from './hr/TrainingProgramsPanel';
 import LaborCompliancePanel from './hr/LaborCompliancePanel';
 import ComplianceReportsPanel from './hr/ComplianceReportsPanel';
 import PayrollProcessingPanel from './hr/PayrollProcessingPanel';
-import PayslipGenerationPanel from './hr/PayslipGenerationPanel';
 import BenefitsManagementPanel from './hr/BenefitsManagementPanel';
 import SalaryAnalyticsPanel from './hr/SalaryAnalyticsPanel';
+import StaffDebtsPanel from './hr/StaffDebtsPanel';
 import HRReportsAnalysis from './HRReportsAnalysis';
 import RecentActivities from './RecentActivities';
 import { useEmployeeStore } from '../lib/hr/employeeStore';
@@ -57,12 +60,13 @@ import { usePerformanceStore } from '../lib/hr/performanceStore';
 import { useEmployeeChangesStore } from '../lib/hr/employeeChangesStore';
 import { useBenefitsStore } from '../lib/hr/benefitsStore';
 import { useOnboardingStore } from '../lib/hr/onboardingStore';
+import { useStaffDebtStore } from '../lib/hr/staffDebtStore';
 
 type HrBook = 'employees' | 'leave' | 'time' | 'payroll' | 'benefits' | 'performance' | 'training' | 'compliance' | 'departments' | 'reports';
 
 const DEFAULT_PANEL: Record<HrBook, string> = {
   employees: 'records',
-  leave: 'leave',
+  leave: 'requests',
   time: 'attendance',
   payroll: 'payroll',
   benefits: 'benefits',
@@ -70,7 +74,7 @@ const DEFAULT_PANEL: Record<HrBook, string> = {
   training: 'training',
   compliance: 'tax',
   departments: 'departments',
-  reports: 'reports',
+  reports: 'analysis',
 };
 
 const HR_TARGETS: Record<string, { book: HrBook; panel: string }> = {
@@ -81,14 +85,21 @@ const HR_TARGETS: Record<string, { book: HrBook; panel: string }> = {
   'new-hires': { book: 'employees', panel: 'hires' },
   newhires: { book: 'employees', panel: 'hires' },
   changes: { book: 'employees', panel: 'changes' },
-  leave: { book: 'leave', panel: 'leave' },
+  leave: { book: 'leave', panel: 'requests' },
+  requests: { book: 'leave', panel: 'requests' },
+  balances: { book: 'leave', panel: 'balances' },
+  calendar: { book: 'leave', panel: 'calendar' },
+  'whos-off': { book: 'leave', panel: 'calendar' },
   time: { book: 'time', panel: 'attendance' },
   attendance: { book: 'time', panel: 'attendance' },
   shifts: { book: 'time', panel: 'shifts' },
   overtime: { book: 'time', panel: 'overtime' },
   payroll: { book: 'payroll', panel: 'payroll' },
-  payslips: { book: 'payroll', panel: 'payslips' },
-  salary: { book: 'payroll', panel: 'salary' },
+  // Legacy deep-links: payslips folded into Staff Payroll (print from a line); salary under Reports.
+  payslips: { book: 'payroll', panel: 'payroll' },
+  salary: { book: 'reports', panel: 'salary' },
+  debts: { book: 'payroll', panel: 'debts' },
+  'staff-debts': { book: 'payroll', panel: 'debts' },
   benefits: { book: 'benefits', panel: 'benefits' },
   reviews: { book: 'performance', panel: 'reviews' },
   performance: { book: 'performance', panel: 'reviews' },
@@ -99,8 +110,8 @@ const HR_TARGETS: Record<string, { book: HrBook; panel: string }> = {
   labor: { book: 'compliance', panel: 'labor' },
   'compliance-reports': { book: 'compliance', panel: 'reports' },
   departments: { book: 'departments', panel: 'departments' },
-  reports: { book: 'reports', panel: 'reports' },
-  analytics: { book: 'reports', panel: 'reports' },
+  reports: { book: 'reports', panel: 'analysis' },
+  analytics: { book: 'reports', panel: 'analysis' },
 };
 
 function resolveHrTarget(value: string | null | undefined) {
@@ -123,8 +134,10 @@ function SectionTabs({
     <Tabs
       selectedKey={selected}
       onSelectionChange={(key) => onChange(String(key))}
-      variant="underlined"
+      size="sm"
+      variant="solid"
       className="w-full"
+      classNames={deskBookTabsClassNames}
       aria-label={label}
     >
       {tabs.map((tab) => (
@@ -194,6 +207,7 @@ export default function HRMainDashboard({
   const hydrateTraining = useTrainingStore((s) => s.hydrateFromApi);
   const hydratePerformance = usePerformanceStore((s) => s.hydrateFromApi);
   const hydrateOnboarding = useOnboardingStore((s) => s.hydrateFromApi);
+  const hydrateStaffDebts = useStaffDebtStore((s) => s.hydrateFromApi);
 
   useEffect(() => {
     hydrateEmployees();
@@ -204,7 +218,8 @@ export default function HRMainDashboard({
     hydratePerformance();
     hydrateEmployeeChanges();
     hydrateOnboarding();
-  }, [hydrateEmployees, hydratePayroll, hydrateLeave, hydrateTraining, hydrateBenefits, hydratePerformance, hydrateEmployeeChanges, hydrateOnboarding]);
+    hydrateStaffDebts();
+  }, [hydrateEmployees, hydratePayroll, hydrateLeave, hydrateTraining, hydrateBenefits, hydratePerformance, hydrateEmployeeChanges, hydrateOnboarding, hydrateStaffDebts]);
 
   const today = new Date().toISOString().slice(0, 10);
   const isSameMonth = (d: Date | string) => {
@@ -250,12 +265,12 @@ export default function HRMainDashboard({
   return (
     <>
     {!fullPage && <DeptMessenger from="hr" mode="drawer" />}
-    <div className={fullPage ? 'p-6 pt-2' : 'p-6'}>
+    <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
       <div>
-      {!fullPage && (
-      <>
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">👥 HR & Payroll</h2>
+      <div className={`flex items-center justify-between ${fullPage ? 'mb-2' : 'mb-6'}`}>
+        <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>
+          {fullPage ? '👥 HR' : '👥 HR & Payroll'}
+        </h2>
         <div className="flex items-center gap-2">
           <CustomizeViewControl
             sections={HR_DASHBOARD_SECTIONS}
@@ -264,13 +279,17 @@ export default function HRMainDashboard({
             showAll={showAll}
             hiddenCount={hiddenCount}
           />
-          <ModuleExpandButton
-            href={book === 'reports' ? '/hr/reports' : '/hr/ops'}
-            label={book === 'reports' ? 'Open reports full page' : 'Open HR & payroll full page'}
-          />
+          {!fullPage && (
+            <ModuleExpandButton
+              href={book === 'reports' ? '/hr/reports' : '/hr/ops'}
+              label={book === 'reports' ? 'Open reports full page' : 'Open HR & payroll full page'}
+            />
+          )}
         </div>
       </div>
 
+      {!fullPage && (
+      <>
       <div className="mb-6">
 
         {/* Status Cards - Matching Uniform Design */}
@@ -430,12 +449,7 @@ export default function HRMainDashboard({
       )}
 
       <Card className="border-0 shadow-lg">
-        {fullPage && (
-          <CardHeader className="pb-3">
-            <h3 className="text-xl font-semibold text-ghana-black">HR & Payroll</h3>
-          </CardHeader>
-        )}
-        <CardBody>
+        <CardBody className="p-0">
           <Tabs
             selectedKey={book}
             onSelectionChange={(key) => {
@@ -444,11 +458,14 @@ export default function HRMainDashboard({
               setPanel(DEFAULT_PANEL[next]);
             }}
             className="w-full"
+            size="sm"
+            variant="solid"
+            classNames={deskBookTabsClassNames}
             aria-label="HR operations"
           >
             <Tab key="employees" title="👥 Employees">
               {book === 'employees' && (
-                <div className="pt-4 space-y-4">
+                <div className={`${deskBookTabPanelClassName} space-y-3`}>
                   <SectionTabs
                     label="Employee sections"
                     selected={panel}
@@ -466,11 +483,27 @@ export default function HRMainDashboard({
               )}
             </Tab>
             <Tab key="leave" title="🌴 Leave">
-              {book === 'leave' && <div className="pt-4"><LeaveManagementPanel /></div>}
+              {book === 'leave' && (
+                <div className={`${deskBookTabPanelClassName} space-y-3`}>
+                  <SectionTabs
+                    label="Leave sections"
+                    selected={panel}
+                    onChange={setPanel}
+                    tabs={[
+                      { key: 'requests', title: 'Requests' },
+                      { key: 'balances', title: 'Balances' },
+                      { key: 'calendar', title: "Who's Off" },
+                    ]}
+                  />
+                  {panel === 'requests' && <LeaveManagementPanel />}
+                  {panel === 'balances' && <LeaveBalancesTab />}
+                  {panel === 'calendar' && <LeaveCalendarTab />}
+                </div>
+              )}
             </Tab>
             <Tab key="time" title="⏰ Time">
               {book === 'time' && (
-                <div className="pt-4 space-y-4">
+                <div className={`${deskBookTabPanelClassName} space-y-3`}>
                   <SectionTabs
                     label="Time sections"
                     selected={panel}
@@ -489,29 +522,26 @@ export default function HRMainDashboard({
             </Tab>
             <Tab key="payroll" title="💰 Payroll">
               {book === 'payroll' && (
-                <div className="pt-4 space-y-4">
+                <div className={`${deskBookTabPanelClassName} space-y-3`}>
                   <SectionTabs
                     label="Payroll sections"
-                    selected={panel}
+                    selected={panel === 'debts' ? 'debts' : 'payroll'}
                     onChange={setPanel}
                     tabs={[
-                      { key: 'payroll', title: 'Payroll' },
-                      { key: 'payslips', title: 'Payslips' },
-                      { key: 'salary', title: 'Salary' },
+                      { key: 'payroll', title: 'Run' },
+                      { key: 'debts', title: 'Staff debts' },
                     ]}
                   />
-                  {panel === 'payroll' && <PayrollProcessingPanel />}
-                  {panel === 'payslips' && <PayslipGenerationPanel />}
-                  {panel === 'salary' && <SalaryAnalyticsPanel />}
+                  {panel === 'debts' ? <StaffDebtsPanel /> : <PayrollProcessingPanel />}
                 </div>
               )}
             </Tab>
             <Tab key="benefits" title="💳 Benefits">
-              {book === 'benefits' && <div className="pt-4"><BenefitsManagementPanel /></div>}
+              {book === 'benefits' && <div className={deskBookTabPanelClassName}><BenefitsManagementPanel /></div>}
             </Tab>
             <Tab key="performance" title="📊 Performance">
               {book === 'performance' && (
-                <div className="pt-4 space-y-4">
+                <div className={`${deskBookTabPanelClassName} space-y-3`}>
                   <SectionTabs
                     label="Performance sections"
                     selected={panel}
@@ -527,11 +557,11 @@ export default function HRMainDashboard({
               )}
             </Tab>
             <Tab key="training" title="🎓 Training">
-              {book === 'training' && <div className="pt-4"><TrainingProgramsPanel /></div>}
+              {book === 'training' && <div className={deskBookTabPanelClassName}><TrainingProgramsPanel /></div>}
             </Tab>
             <Tab key="compliance" title="📋 Compliance">
               {book === 'compliance' && (
-                <div className="pt-4 space-y-4">
+                <div className={`${deskBookTabPanelClassName} space-y-3`}>
                   <SectionTabs
                     label="Compliance sections"
                     selected={panel}
@@ -549,10 +579,24 @@ export default function HRMainDashboard({
               )}
             </Tab>
             <Tab key="departments" title="🏢 Departments">
-              {book === 'departments' && <div className="pt-4"><DepartmentsPositionsPanel /></div>}
+              {book === 'departments' && <div className={deskBookTabPanelClassName}><DepartmentsPositionsPanel /></div>}
             </Tab>
             <Tab key="reports" title="📈 Reports & Analysis">
-              {book === 'reports' && <div className="pt-4"><HRReportsAnalysis embedded /></div>}
+              {book === 'reports' && (
+                <div className={`${deskBookTabPanelClassName} space-y-3`}>
+                  <SectionTabs
+                    label="Reports sections"
+                    selected={panel === 'salary' ? 'salary' : 'analysis'}
+                    onChange={setPanel}
+                    tabs={[
+                      { key: 'analysis', title: 'Analysis' },
+                      { key: 'salary', title: 'Salary' },
+                    ]}
+                  />
+                  {(panel === 'analysis' || panel === 'reports') && <HRReportsAnalysis embedded />}
+                  {panel === 'salary' && <SalaryAnalyticsPanel />}
+                </div>
+              )}
             </Tab>
           </Tabs>
         </CardBody>

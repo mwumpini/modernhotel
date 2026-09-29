@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import dynamic from 'next/dynamic';
 import DeptNotices from './DeptNotices';
 import RecentActivities from './RecentActivities';
@@ -17,9 +17,17 @@ import { housekeepingStore } from '../lib/housekeeping/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { useSettingsStore } from '../lib/settings/store';
 import { useComplianceStore } from '../lib/compliance/store';
-import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import { HideCardButton } from './dashboard/CustomizeViewControl';
 import ModuleExpandButton from './ModuleExpandButton';
-import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import {
+  ALL_FO_DESK_SECTIONS,
+  FO_KPI_SECTIONS_BY_TAB,
+  FO_OVERVIEW_SECTIONS,
+  FoDeskKpiCustomize,
+  FrontOfficeDeskVisibilityProvider,
+  useFrontOfficeDeskVisibility,
+} from './frontoffice/foDeskKpi';
+import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
 const panelFallback = <div className="p-6 text-center text-gray-500">Loading...</div>;
 const ReservationsBookingsManager = dynamic(() => import('./ReservationsBookingsManager'), { ssr: false, loading: () => panelFallback });
 const ServiceChargesPage = dynamic(() => import('../guest-services/service-charges/page'), { ssr: false, loading: () => panelFallback });
@@ -47,16 +55,6 @@ function resolveFoTab(raw: string | null) {
   return FO_TABS.has(mapped) ? mapped : null;
 }
 
-// Hideable summary cards. The stay tabs stay visible.
-const FRONTDESK_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
-  { id: 'availableRooms', label: 'Available Rooms' },
-  { id: 'occupiedRooms', label: 'Occupied Rooms' },
-  { id: 'maintenance', label: 'Maintenance & Cleaning' },
-  { id: 'todayOps', label: "Today's Room Operations" },
-  { id: 'recentActivities', label: 'Recent Activities' },
-  { id: 'notices', label: 'Front Desk Notices' },
-];
-
 export default function FrontdeskDashboard({
   initialTab,
   fullPage = false,
@@ -68,7 +66,18 @@ export default function FrontdeskDashboard({
   const [openNewReservation, setOpenNewReservation] = useState(false);
   const [, setRefreshTrigger] = useState(0);
 
-  const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.frontdesk', FRONTDESK_DASHBOARD_SECTIONS);
+  const { isHidden, hide, show, toggle: toggleSection, showAll, hiddenCount } = useFrontOfficeDeskVisibility(
+    ALL_FO_DESK_SECTIONS,
+    'dashboard.hidden.frontoffice',
+  );
+
+  const deskVisibility = useMemo(
+    () => ({ isHidden, hide, show, toggle: toggleSection, showAll, hiddenCount }),
+    [isHidden, hide, show, toggleSection, showAll, hiddenCount],
+  );
+
+  const customizeSections = FO_KPI_SECTIONS_BY_TAB[selectedTab]
+    ?? (!fullPage ? FO_OVERVIEW_SECTIONS : []);
 
   const settings = useSettingsStore();
   const reservations = frontOfficeStore.reservations;
@@ -119,33 +128,28 @@ export default function FrontdeskDashboard({
   const todayCheckIns = reservations.filter(r => (r.status === 'confirmed' || r.status === 'pending') && r.arrival.slice(0,10) === todayIso).length;
   const todayCheckOuts = checkingOutToday;
   return (
-    <div className={fullPage ? 'p-6 pt-2' : 'p-6'}>
-      {!fullPage && (
-        <>
-      <DeptMessenger from="frontdesk" mode="drawer" />
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">🏨 Front Office Operations</h2>
+    <FrontOfficeDeskVisibilityProvider value={deskVisibility}>
+    <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
+      {!fullPage && <DeptMessenger from="frontdesk" mode="drawer" />}
+      <div className={`flex items-center justify-between ${fullPage ? 'mb-2' : 'mb-6'}`}>
+        <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>
+          {fullPage ? '🏨 Front Office' : '🏨 Front Office Operations'}
+        </h2>
         <div className="flex items-center gap-2">
-          <CustomizeViewControl
-            sections={FRONTDESK_DASHBOARD_SECTIONS}
-            isHidden={isHidden}
-            toggle={toggleSection}
-            showAll={showAll}
-            hiddenCount={hiddenCount}
-          />
-          <ModuleExpandButton
-            href="/frontoffice/ops"
-            label="Open front office full page"
-          />
-          <OfflineIndicator />
+          <FoDeskKpiCustomize sections={customizeSections} />
+          {!fullPage && (
+            <ModuleExpandButton
+              href="/frontoffice/ops"
+              label="Open front office full page"
+            />
+          )}
+          {!fullPage && <OfflineIndicator />}
         </div>
       </div>
-        </>
-      )}
 
       {/* Room Status Overview */}
       {!fullPage && (
-      <div className="mb-8">
+      <div className="mb-7">
         {(!isHidden('availableRooms') || !isHidden('occupiedRooms') || !isHidden('maintenance')) && (
         <>
         <div className="flex items-center justify-between mb-4">
@@ -272,16 +276,14 @@ export default function FrontdeskDashboard({
       )}
 
       <Card className="border-0 shadow-lg">
-        {fullPage && (
-          <CardHeader className="pb-3">
-            <h3 className="text-xl font-semibold text-ghana-black">Front Office</h3>
-          </CardHeader>
-        )}
-        <CardBody>
+        <CardBody className="p-0">
           <Tabs
             selectedKey={selectedTab}
             onSelectionChange={(key) => setSelectedTab(key as string)}
             className="w-full"
+            size="sm"
+            variant="solid"
+            classNames={deskBookTabsClassNames}
             aria-label="Front office operations"
           >
             <Tab key="rooms" title="🛏️ Rooms" />
@@ -295,7 +297,7 @@ export default function FrontdeskDashboard({
             <Tab key="night-audit" title="🌙 Night Audit" />
             <Tab key="reports" title="📈 Reports & Analysis" />
           </Tabs>
-          <div className="mt-4">
+          <div className={deskBookTabPanelClassName}>
             {selectedTab === 'reservations' && (
               <ReservationsBookingsManager
                 autoOpenNew={openNewReservation}
@@ -359,5 +361,6 @@ export default function FrontdeskDashboard({
       </div>
       )}
     </div>
+    </FrontOfficeDeskVisibilityProvider>
   );
 }

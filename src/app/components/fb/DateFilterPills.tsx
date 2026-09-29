@@ -66,7 +66,7 @@ export function DateFilterPills({
   onTo: (value: string) => void;
 }) {
   return (
-    <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+    <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
       <span className="mr-1 text-sm font-medium text-gray-500">📅 Date:</span>
       {(['all', 'today', 'specific', 'range'] as const).map((key) => (
         <button

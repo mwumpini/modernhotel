@@ -12,10 +12,43 @@ import {
 import { GL_ACCOUNTS, PAYMENT_GL_MAP } from '@/app/lib/accounting/glAccounts'
 import { departmentSourceGlAccount } from '@/app/lib/fb/venueGl'
 import { prisma } from '@/app/lib/database/client'
+import { GHANA_TAX_CODES } from '@/app/lib/accounting/models'
+import { remapComplianceGlToChart } from '@/app/lib/tax/glMap'
 
 export type FbDepartmentSource = 'restaurant' | 'bar' | 'room_service'
 
-const TAX_PAYABLE_GL = '2310' // VAT / sales tax payable leaf (Ghana CoA)
+/** Fallback when an order has no stored per-tax breakdown (legacy rows) — VAT payable leaf. */
+const FALLBACK_TAX_GL = GHANA_TAX_CODES.VAT.glCode
+
+export type FbTaxLine = { taxCode?: string; name?: string; amount: number; glAccountCode?: string | null }
+
+/**
+ * One credit line per stored tax (VAT 2110, NHIL 2120, GETFund 2130, Tourism 2150 …),
+ * same split the front-office checkout posts. Any rounding gap vs the order's taxAmount
+ * goes on the VAT line (or the last line) so the entry still balances.
+ */
+function buildTaxCredits(taxLines: FbTaxLine[] | null | undefined, taxAmount: number) {
+  const parsed = (Array.isArray(taxLines) ? taxLines : [])
+    .map((tl) => ({
+      name: String(tl?.name || tl?.taxCode || 'Tax'),
+      taxCode: tl?.taxCode ? String(tl.taxCode) : undefined,
+      gl: remapComplianceGlToChart(String(tl?.glAccountCode || '').trim()) || FALLBACK_TAX_GL,
+      amount: +Number(tl?.amount || 0).toFixed(2),
+    }))
+    .filter((tl) => tl.amount > 0)
+
+  if (parsed.length === 0) {
+    return [{ name: 'Output Tax', taxCode: undefined as string | undefined, gl: FALLBACK_TAX_GL, amount: taxAmount }]
+  }
+
+  const diff = +(taxAmount - parsed.reduce((s, tl) => s + tl.amount, 0)).toFixed(2)
+  if (Math.abs(diff) >= 0.01) {
+    const vatIdx = parsed.findIndex((tl) => tl.gl === FALLBACK_TAX_GL)
+    const idx = vatIdx >= 0 ? vatIdx : parsed.length - 1
+    parsed[idx].amount = Math.max(0, +(parsed[idx].amount + diff).toFixed(2))
+  }
+  return parsed.filter((tl) => tl.amount > 0)
+}
 
 function revenueCenter(source: FbDepartmentSource): string {
   switch (source) {
@@ -59,6 +92,8 @@ export type PostFbSaleInput = {
   tableNumber?: string | null
   subtotal: number
   taxAmount: number
+  /** FBOrder.taxLines — per-tax breakdown with glAccountCode */
+  taxLines?: FbTaxLine[] | null
   total: number
   paymentMethod: 'Cash' | 'Card' | 'Mobile Money'
   cashierUserId?: string | null
@@ -125,14 +160,17 @@ export async function postFbSaleAndCogsServer(
         },
       ]
       if (taxAmount > 0.005) {
-        jeLines.push({
-          id: `JL-${journalEntryId}-tax`,
-          journalEntryId,
-          accountCode: TAX_PAYABLE_GL,
-          description: `Tax — ${input.orderNumber}`,
-          debit: 0,
-          credit: taxAmount,
-          costCenter: center,
+        buildTaxCredits(input.taxLines, taxAmount).forEach((tl, idx) => {
+          jeLines.push({
+            id: `JL-${journalEntryId}-tax-${idx}`,
+            journalEntryId,
+            accountCode: tl.gl,
+            description: `${tl.name} — ${input.orderNumber}`,
+            debit: 0,
+            credit: tl.amount,
+            costCenter: center,
+            taxCode: tl.taxCode,
+          })
         })
       }
 
@@ -159,6 +197,8 @@ export async function postFbSaleAndCogsServer(
         invoiceNumber: `INV-${sourceKey}-${Date.now().toString().slice(-6)}`,
         type: 'Sales',
         date: now,
+        // Cash-at-sale F&B invoices settle immediately — due date matches the sale date.
+        dueDate: now,
         businessPartnerId: `GUEST-FB-${input.orderId}`,
         reference: input.orderNumber,
         description: `${source} sale — Table ${input.tableNumber || 'N/A'} — ${input.orderNumber}`,
@@ -311,6 +351,7 @@ async function reverseJournalIfNeeded(tenantId: string, originalId: string, reas
     credit: Number(l.debit || 0),
     currency: l.currency || 'GHS',
     costCenter: l.costCenter || undefined,
+    taxCode: l.taxCode || undefined,
   }))
   const total = lines.reduce((s, l) => s + l.debit, 0)
   await createJournalEntry(tenantId, {

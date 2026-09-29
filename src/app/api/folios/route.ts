@@ -79,7 +79,8 @@ export async function PUT(request: NextRequest) {
         && Number(c.amount) < 0,
     )
 
-    const folio = await upsertFolio(ctx.tenantId, body)
+    const { folio, changed } = await upsertFolio(ctx.tenantId, body)
+    if (!changed) return NextResponse.json({ folio })
     const action = isVoidCharge ? 'FOLIO_CHARGE_VOIDED' : isRefund ? 'FOLIO_PAYMENT_REFUNDED' : discountCharge ? 'FOLIO_CHARGE_DISCOUNTED' : 'FOLIO_UPSERTED'
     const details: Record<string, any> = { reservationId: folio.reservationId, status: folio.status, balance: folio.balance }
     if (discountCharge) {

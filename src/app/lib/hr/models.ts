@@ -453,3 +453,34 @@ export interface EmployeeBenefits {
   createdAt: Date;
   updatedAt: Date;
 }
+
+/** Amount a staff member owes the hotel (loan, IOU, surcharge). */
+export type StaffDebtType = 'loan' | 'iou' | 'surcharge';
+export type StaffDebtStatus = 'active' | 'cleared' | 'written_off';
+
+export interface StaffDebt {
+  id: string;
+  employeeId: string;
+  type: StaffDebtType;
+  originalAmount: number;
+  remainingBalance: number;
+  monthlyInstallment: number;
+  /** Full calendar months after issue before payroll may deduct (0 = from the issue month). */
+  graceMonths?: number;
+  reason?: string;
+  issuedDate: Date;
+  status: StaffDebtStatus;
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface StaffDebtRepayment {
+  id: string;
+  debtId: string;
+  payrollRecordId?: string;
+  amount: number;
+  paidAt: Date;
+  notes?: string;
+  createdAt: Date;
+}

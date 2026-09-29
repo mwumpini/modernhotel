@@ -30,6 +30,7 @@ import {
   DropdownTrigger,
   DropdownMenu,
   DropdownItem,
+  Pagination,
 } from '@heroui/react';
 import { usePpeRegisterStore } from '@/app/lib/accounting/ppeStore';
 import { useAccountingStore } from '@/app/lib/accounting/store';
@@ -66,7 +67,10 @@ import {
 } from '@/app/lib/accounting/ppe';
 import { DEFAULT_ORG_ID, PRESENTATION_GROUP_PREFIX } from '@/app/lib/accounting/ppe/categories';
 import BankAccountOptionLabel from '@/app/components/shared/BankAccountOptionLabel';
-import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
+import { accountingAmountsLabel, formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
+import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
+import { useDeskPagination } from '../dashboard/deskTableUi';
+import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName } from './DeskKpiStrip';
 
 // formatAccountingCurrency always shows a magnitude, so the sign (disposal gain/loss
 // can be negative) is reattached in front of it here.
@@ -74,6 +78,9 @@ const fmt = (n: number) => (n < 0 ? '-' : '') + formatAccountingCurrency(n);
 // Table cells: the ₵ sign is in the column header once, not repeated on every row.
 const fmtNum = (n: number) => (n < 0 ? '-' : '') + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+type PpeSortKey = 'code' | 'name' | 'category' | 'capExp' | 'cost' | 'accumDep' | 'nbv' | 'graWdv' | 'graCa' | 'remaining';
+type CatSortKey = 'name' | 'fsGroup' | 'gra' | 'graRate' | 'ias' | 'life' | 'residual' | 'assets';
+type PpeViewKind = 'asset' | 'category' | null;
 // Shifts only the year of a YYYY-MM-DD report date, keeping month/day — so jumping to a prior
 // year for a rollforward comparison doesn't clobber a specific day the user picked. Falls back
 // a day for Feb 29 landing on a non-leap year.
@@ -153,6 +160,9 @@ export default function PpeAssetRegisterPage() {
   const [categoryForm, setCategoryForm] = useState(defaultCategoryForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [viewKind, setViewKind] = useState<PpeViewKind>(null);
+  const [viewItem, setViewItem] = useState<any>(null);
+  const isViewOpen = viewKind != null && viewItem != null;
   const [notice, setNotice] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [categoryFormError, setCategoryFormError] = useState<string | null>(null);
@@ -160,6 +170,16 @@ export default function PpeAssetRegisterPage() {
   const [categoryFieldErrors, setCategoryFieldErrors] = useState<Record<string, string>>({});
   const [syncResult, setSyncResult] = useState<PpeSyncResult | null>(null);
   const [assetCodeTouched, setAssetCodeTouched] = useState(false);
+  const [ppeSortKey, setPpeSortKey] = useState<PpeSortKey>('code');
+  const [ppeSortDir, setPpeSortDir] = useState<'asc' | 'desc'>('asc');
+  const [catSortKey, setCatSortKey] = useState<CatSortKey>('name');
+  const [catSortDir, setCatSortDir] = useState<'asc' | 'desc'>('asc');
+  const ppeCols = useResizableColumns<PpeSortKey>({
+    code: 88, name: 152, category: 120, capExp: 96, cost: 100, accumDep: 110, nbv: 100, graWdv: 108, graCa: 112, remaining: 100,
+  });
+  const catCols = useResizableColumns<CatSortKey>({
+    name: 140, fsGroup: 128, gra: 72, graRate: 100, ias: 88, life: 88, residual: 88, assets: 72,
+  });
 
   const prefixForCategory = (cat: PpeCategory | undefined) =>
     cat?.codePrefix?.trim() || (cat?.presentationGroup && PRESENTATION_GROUP_PREFIX[cat.presentationGroup]) || 'CA';
@@ -185,6 +205,100 @@ export default function PpeAssetRegisterPage() {
   const computedRows = useMemo(
     () => computeAllAssets(assets, categories, reportDateObj),
     [assets, categories, reportDateObj]
+  );
+
+  const sortedComputedRows = useMemo(() => {
+    const value = (row: (typeof computedRows)[0]): string | number => {
+      switch (ppeSortKey) {
+        case 'code': return row.asset.assetCode.toLowerCase();
+        case 'name': return row.asset.assetName.toLowerCase();
+        case 'category': return row.category.name.toLowerCase();
+        case 'capExp': return row.asset.capExp;
+        case 'cost': return row.computed.totalCost;
+        case 'accumDep': return row.computed.accumDep;
+        case 'nbv': return row.computed.nbv;
+        case 'graWdv': return row.computed.graWdvCurrent;
+        case 'graCa': return row.computed.graCaThisYear;
+        case 'remaining': return row.computed.remainingLife?.display || '';
+        default: return '';
+      }
+    };
+    const sorted = [...computedRows].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+      return String(av).localeCompare(String(bv));
+    });
+    return ppeSortDir === 'asc' ? sorted : sorted.reverse();
+  }, [computedRows, ppeSortKey, ppeSortDir]);
+
+  const {
+    page: ppePage,
+    setPage: setPpePage,
+    pages: ppePages,
+    paged: pagedPpe,
+  } = useDeskPagination(sortedComputedRows, [ppeSortKey, ppeSortDir, reportDate]);
+
+  const sortedCategories = useMemo(() => {
+    const countMap = new Map<string, number>();
+    for (const a of assets) countMap.set(a.categoryId, (countMap.get(a.categoryId) || 0) + 1);
+    const value = (c: PpeCategory): string | number => {
+      switch (catSortKey) {
+        case 'name': return c.name.toLowerCase();
+        case 'fsGroup': return c.presentationGroup;
+        case 'gra': return c.graClass;
+        case 'graRate': return c.graRate;
+        case 'ias': return c.iasMethod;
+        case 'life': return c.usefulLifeYrs || 0;
+        case 'residual': return c.residualPct;
+        case 'assets': return countMap.get(c.id) ?? 0;
+        default: return '';
+      }
+    };
+    const sorted = [...categories].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+      return String(av).localeCompare(String(bv));
+    });
+    return catSortDir === 'asc' ? sorted : sorted.reverse();
+  }, [categories, assets, catSortKey, catSortDir]);
+
+  const {
+    page: catPage,
+    setPage: setCatPage,
+    pages: catPages,
+    paged: pagedCats,
+  } = useDeskPagination(sortedCategories, [catSortKey, catSortDir]);
+
+  const onPpeSort = (key: PpeSortKey) => {
+    if (ppeSortKey === key) setPpeSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setPpeSortKey(key);
+      setPpeSortDir(key === 'cost' || key === 'nbv' || key === 'accumDep' || key === 'graWdv' || key === 'graCa' ? 'desc' : 'asc');
+    }
+  };
+
+  const onCatSort = (key: CatSortKey) => {
+    if (catSortKey === key) setCatSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setCatSortKey(key);
+      setCatSortDir(key === 'assets' || key === 'graRate' || key === 'life' ? 'desc' : 'asc');
+    }
+  };
+
+  const ppeColumn = (key: PpeSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+    <TableColumn key={key} className="relative" style={ppeCols.style(key)}>
+      <SortLabel active={ppeSortKey === key} dir={ppeSortDir} align={align} onPress={() => onPpeSort(key)}>{label}</SortLabel>
+      {ppeCols.sizer(key, label)}
+    </TableColumn>
+  );
+
+  const catColumn = (key: CatSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+    <TableColumn key={key} className="relative" style={catCols.style(key)}>
+      <SortLabel active={catSortKey === key} dir={catSortDir} align={align} onPress={() => onCatSort(key)}>{label}</SortLabel>
+      {catCols.sizer(key, label)}
+    </TableColumn>
   );
 
   const fsSummary = useMemo(
@@ -248,6 +362,21 @@ export default function PpeAssetRegisterPage() {
     setFormError(null);
     setFieldErrors({});
     onOpen();
+  };
+
+  const closeView = () => {
+    setViewKind(null);
+    setViewItem(null);
+  };
+
+  const openAssetView = (row: { asset: PpeAsset; category: PpeCategory; computed: any }) => {
+    setViewKind('asset');
+    setViewItem(row);
+  };
+
+  const openCategoryView = (c: PpeCategory) => {
+    setViewKind('category');
+    setViewItem(c);
   };
 
   const validateAssetForm = (f: typeof form) => {
@@ -636,56 +765,11 @@ export default function PpeAssetRegisterPage() {
   };
 
   return (
-    <div className="p-4 md:p-6 max-w-[1400px] mx-auto">
-      <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">PPE Asset Register</h1>
-          <p className="text-sm text-gray-600 mt-1">
-            IAS 16 book depreciation and GRA capital allowances — all figures computed from the report date.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex items-end gap-1">
-            <Button
-              isIconOnly
-              size="sm"
-              variant="flat"
-              aria-label="Previous year"
-              title="Previous year"
-              onPress={() => setReportDate(shiftReportDateYear(reportDate, -1))}
-            >
-              ◀
-            </Button>
-            <Input
-              type="date"
-              label="Report date"
-              size="sm"
-              className="w-44"
-              value={reportDate}
-              onValueChange={setReportDate}
-              description={`Year ${reportDateObj.getFullYear()} — drives all tabs`}
-            />
-            <Button
-              isIconOnly
-              size="sm"
-              variant="flat"
-              aria-label="Next year"
-              title="Next year"
-              onPress={() => setReportDate(shiftReportDateYear(reportDate, 1))}
-            >
-              ▶
-            </Button>
-          </div>
-          <Button color="primary" size="sm" onPress={openAdd}>
-            Add asset
-          </Button>
-        </div>
-      </div>
-
+    <div className="p-3 md:p-5 max-w-7xl mx-auto">
       {(notice || error) && (
         <Alert
           color={error ? 'danger' : 'success'}
-          className="mb-4"
+          className="mb-3"
           onClose={() => {
             setNotice(null);
             clearError();
@@ -698,7 +782,7 @@ export default function PpeAssetRegisterPage() {
       {syncResult && (
         <Alert
           color={syncResult.errors.length ? 'warning' : 'success'}
-          className="mb-4"
+          className="mb-3"
           onClose={() => setSyncResult(null)}
         >
           {syncResult.errors.length
@@ -709,41 +793,99 @@ export default function PpeAssetRegisterPage() {
         </Alert>
       )}
 
-      <div className="flex flex-wrap items-center gap-2 mb-4 text-xs">
-        <Chip size="sm" variant="flat" color={glRecon.inSync ? 'success' : 'warning'}>
-          GL 1510/1520 {glRecon.inSync ? 'in sync' : `gap ₵${Math.abs(glRecon.costGap).toFixed(2)} cost / ₵${Math.abs(glRecon.accumDepGap).toFixed(2)} dep`}
-        </Chip>
-        {glRecon.uncapitalizedCount > 0 && (
-          <Chip size="sm" variant="flat" color="warning">{glRecon.uncapitalizedCount} not yet capitalized</Chip>
-        )}
-        {glRecon.pendingDisposalCount > 0 && (
-          <Chip size="sm" variant="flat" color="warning">{glRecon.pendingDisposalCount} disposal(s) pending GL post</Chip>
-        )}
-        {glRecon.depPostingGap > 0.01 && (
-          <Chip size="sm" variant="flat" color="warning">₵{glRecon.depPostingGap.toFixed(2)} depreciation not yet posted</Chip>
-        )}
-        {!glRecon.inSync && (
-          <Button size="sm" variant="bordered" onPress={handleSyncToLedger}>🔄 Sync to ledger</Button>
-        )}
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-        <Card className="shadow-sm"><CardBody className="py-3 text-center"><div className="text-lg font-bold text-blue-700">{fmt(totals.cost)}</div><div className="text-xs text-gray-500">Total cost</div></CardBody></Card>
-        <Card className="shadow-sm"><CardBody className="py-3 text-center"><div className="text-lg font-bold text-orange-700">{fmt(totals.dep)}</div><div className="text-xs text-gray-500">Accum. dep (IAS)</div></CardBody></Card>
-        <Card className="shadow-sm"><CardBody className="py-3 text-center"><div className="text-lg font-bold text-green-700">{fmt(totals.nbv)}</div><div className="text-xs text-gray-500">Net book value</div></CardBody></Card>
-        <Card className="shadow-sm"><CardBody className="py-3 text-center"><div className="text-lg font-bold text-indigo-700">{fmt(totals.graWdv)}</div><div className="text-xs text-gray-500">GRA closing WDV</div></CardBody></Card>
-        <Card className="shadow-sm"><CardBody className="py-3 text-center"><div className="text-lg font-bold text-violet-700">{fmt(totals.graCa)}</div><div className="text-xs text-gray-500">GRA CA this year</div></CardBody></Card>
-      </div>
-
       <Card className="shadow-sm">
+        <div className="border-b border-slate-200 px-3 md:px-4 py-2.5">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+            <div className="shrink-0">
+              <h1 className="text-lg md:text-xl font-bold text-gray-800">PPE Asset Register</h1>
+              <p className="text-xs text-gray-500">{accountingAmountsLabel()}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1">
+                <Button
+                  isIconOnly
+                  size="sm"
+                  variant="flat"
+                  aria-label="Previous year"
+                  title="Previous year"
+                  className="min-w-7 w-7 h-7"
+                  onPress={() => setReportDate(shiftReportDateYear(reportDate, -1))}
+                >
+                  ◀
+                </Button>
+                <Input
+                  type="date"
+                  aria-label="Report date"
+                  size="sm"
+                  className="w-40"
+                  classNames={{ inputWrapper: 'h-8 min-h-8' }}
+                  value={reportDate}
+                  onValueChange={setReportDate}
+                />
+                <Button
+                  isIconOnly
+                  size="sm"
+                  variant="flat"
+                  aria-label="Next year"
+                  title="Next year"
+                  className="min-w-7 w-7 h-7"
+                  onPress={() => setReportDate(shiftReportDateYear(reportDate, 1))}
+                >
+                  ▶
+                </Button>
+              </div>
+              <Button color="primary" size="sm" onPress={openAdd}>
+                Add asset
+              </Button>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 mt-2 text-xs">
+            <Chip size="sm" variant="flat" color={glRecon.inSync ? 'success' : 'warning'}>
+              GL 1510/1520 {glRecon.inSync ? 'in sync' : `gap ₵${Math.abs(glRecon.costGap).toFixed(2)} cost / ₵${Math.abs(glRecon.accumDepGap).toFixed(2)} dep`}
+            </Chip>
+            {glRecon.uncapitalizedCount > 0 && (
+              <Chip size="sm" variant="flat" color="warning">{glRecon.uncapitalizedCount} not yet capitalized</Chip>
+            )}
+            {glRecon.pendingDisposalCount > 0 && (
+              <Chip size="sm" variant="flat" color="warning">{glRecon.pendingDisposalCount} disposal(s) pending GL post</Chip>
+            )}
+            {glRecon.depPostingGap > 0.01 && (
+              <Chip size="sm" variant="flat" color="warning">₵{glRecon.depPostingGap.toFixed(2)} depreciation not yet posted</Chip>
+            )}
+            {!glRecon.inSync && (
+              <Button size="sm" variant="bordered" onPress={handleSyncToLedger}>🔄 Sync to ledger</Button>
+            )}
+          </div>
+        </div>
+
+        <div className="px-3 md:px-4 pt-3 pb-2 border-b border-slate-200 bg-white">
+          <DeskKpiStrip
+            className="mb-0"
+            items={[
+              { id: 'ppe.totalCost', label: 'Total cost', value: fmt(totals.cost), tone: 'text-slate-700' },
+              { id: 'ppe.accumDep', label: 'Accum. dep (IAS)', value: fmt(totals.dep), tone: 'text-slate-700' },
+              { id: 'ppe.nbv', label: 'Net book value', value: fmt(totals.nbv), tone: 'text-slate-700' },
+              { id: 'ppe.graWdv', label: 'GRA closing WDV', value: fmt(totals.graWdv), tone: 'text-slate-700' },
+              { id: 'ppe.graCa', label: 'GRA CA this year', value: fmt(totals.graCa), tone: 'text-slate-700' },
+            ]}
+          />
+        </div>
+
         <CardBody className="p-0">
-          <Tabs selectedKey={selectedTab} onSelectionChange={(k) => setSelectedTab(k as string)} size="sm" variant="underlined" classNames={{ tabList: 'px-2 overflow-x-auto flex-nowrap' }}>
+          <Tabs
+            selectedKey={selectedTab}
+            onSelectionChange={(k) => setSelectedTab(k as string)}
+            className="w-full"
+            size="sm"
+            variant="solid"
+            classNames={deskBookTabsClassNames}
+          >
             <Tab key="register" title="Asset register">
-              <div className="p-4 overflow-x-auto">
-                <div className="flex justify-end mb-3">
+              <div className={`${deskBookTabPanelClassName} overflow-x-auto`}>
+                <div className="flex justify-end mb-2">
                   <Dropdown>
                     <DropdownTrigger>
-                      <Button size="sm" variant="bordered">📥 Export</Button>
+                      <Button size="sm" variant="flat">📥 Export</Button>
                     </DropdownTrigger>
                     <DropdownMenu>
                       <DropdownItem key="csv" onPress={exportAssetsCSV}>CSV spreadsheet</DropdownItem>
@@ -751,60 +893,52 @@ export default function PpeAssetRegisterPage() {
                     </DropdownMenu>
                   </Dropdown>
                 </div>
-                <div className="max-h-[560px] overflow-y-auto">
-                <Table aria-label="PPE register" removeWrapper classNames={{ th: 'text-xs' }}>
+                <div ref={ppeCols.frameRef} style={ppeCols.frameStyle}>
+                <Table aria-label="PPE register" removeWrapper classNames={deskResizableTableClassNames()}>
                   <TableHeader>
-                    <TableColumn>CODE</TableColumn>
-                    <TableColumn>NAME</TableColumn>
-                    <TableColumn>CATEGORY</TableColumn>
-                    <TableColumn>CAP/EXP</TableColumn>
-                    <TableColumn className="text-right">COST (₵)</TableColumn>
-                    <TableColumn className="text-right">ACCUM DEP (₵)</TableColumn>
-                    <TableColumn className="text-right">NBV (₵)</TableColumn>
-                    <TableColumn className="text-right">GRA WDV (₵)</TableColumn>
-                    <TableColumn className="text-right">GRA CA YR (₵)</TableColumn>
-                    <TableColumn>REMAINING</TableColumn>
-                    <TableColumn>ACTIONS</TableColumn>
+                    {ppeColumn('code', 'Code')}
+                    {ppeColumn('name', 'Name')}
+                    {ppeColumn('category', 'Category')}
+                    {ppeColumn('capExp', 'Cap/Exp')}
+                    {ppeColumn('cost', 'Cost (₵)', 'right')}
+                    {ppeColumn('accumDep', 'Accum Dep (₵)', 'right')}
+                    {ppeColumn('nbv', 'NBV (₵)', 'right')}
+                    {ppeColumn('graWdv', 'GRA WDV (₵)', 'right')}
+                    {ppeColumn('graCa', 'GRA CA Yr (₵)', 'right')}
+                    {ppeColumn('remaining', 'Remaining')}
                   </TableHeader>
                   <TableBody emptyContent="No assets — add your first PPE item.">
-                    {computedRows.map(({ asset, category, computed }) => (
-                      <TableRow key={asset.id}>
-                        <TableCell><span className="font-mono text-xs">{asset.assetCode}</span></TableCell>
+                    {pagedPpe.map(({ asset, category, computed }) => (
+                      <TableRow key={asset.id} className={rowClassNames(viewItem?.asset?.id === asset.id && viewKind === 'asset')} onClick={() => openAssetView({ asset, category, computed })}>
+                        <TableCell><span className="font-mono text-xs text-blue-600 hover:underline">{asset.assetCode}</span></TableCell>
                         <TableCell>
-                          <div className="font-medium text-sm inline-flex items-center gap-1">
+                          <div className="font-medium text-sm inline-flex items-center gap-1 truncate">
                             {asset.assetName}
                             {!!asset.attachments?.length && <span title={`${asset.attachments.length} attachment(s)`}>📎</span>}
                           </div>
                           <div className="text-xs text-gray-400">{asset.purchaseDate.slice(0, 10)}</div>
                         </TableCell>
-                        <TableCell><div className="text-xs">{category.name}</div><div className="text-[10px] text-gray-400">{category.graClass}</div></TableCell>
+                        <TableCell><div className="text-xs truncate">{category.name}</div><div className="text-[10px] text-gray-400">{category.graClass}</div></TableCell>
                         <TableCell><Chip size="sm" variant="flat" color={asset.capExp === 'Capitalise' ? 'success' : asset.capExp === 'Expense' ? 'default' : 'warning'}>{asset.capExp}</Chip></TableCell>
-                        <TableCell className="text-right font-mono text-sm">{fmtNum(computed.totalCost)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm">{fmtNum(computed.accumDep)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm">{fmtNum(computed.nbv)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm">{fmtNum(computed.graWdvCurrent)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm">{fmtNum(computed.graCaThisYear)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">{fmtNum(computed.totalCost)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">{fmtNum(computed.accumDep)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">{fmtNum(computed.nbv)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">{fmtNum(computed.graWdvCurrent)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">{fmtNum(computed.graCaThisYear)}</TableCell>
                         <TableCell className="text-xs">{computed.remainingLife?.display || '—'}</TableCell>
-                        <TableCell>
-                          <div className="flex gap-1">
-                            <Button size="sm" variant="light" onPress={() => openEdit(asset)}>Edit</Button>
-                            <Button size="sm" variant="light" color="danger" onPress={() => {
-                              if (confirm(`Delete "${asset.assetName}" (${asset.assetCode})? This cannot be undone.`)) {
-                                deleteAsset(asset.id);
-                              }
-                            }}>Del</Button>
-                          </div>
-                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
                 </div>
+                <div className="mt-3 flex justify-end">
+                  <Pagination page={ppePage} total={ppePages} onChange={setPpePage} showControls size="sm" />
+                </div>
               </div>
             </Tab>
 
             <Tab key="fs" title="FS Summary §4">
-              <div className="p-4">
+              <div className={deskBookTabPanelClassName}>
                 <PpeSummaryPivotTable
                   title="FS Summary — Section 4 (PPE)"
                   reportDate={reportDate}
@@ -825,7 +959,7 @@ export default function PpeAssetRegisterPage() {
             </Tab>
 
             <Tab key="gra" title="GRA rollforward">
-              <div className="p-4">
+              <div className={deskBookTabPanelClassName}>
                 <PpeSummaryPivotTable
                   title="GRA capital allowance rollforward"
                   reportDate={reportDate}
@@ -846,9 +980,9 @@ export default function PpeAssetRegisterPage() {
             </Tab>
 
             <Tab key="disposals" title="Disposals">
-              <div className="p-4">
+              <div className={deskBookTabPanelClassName}>
                 <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 py-3 bg-gradient-to-r from-slate-50 to-white border-b border-slate-200">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-3 py-2 bg-gradient-to-r from-slate-50 to-white border-b border-slate-200">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-sm font-semibold text-gray-900">Disposals</h3>
                       <Button
@@ -948,11 +1082,11 @@ export default function PpeAssetRegisterPage() {
             </Tab>
 
             <Tab key="categories" title="Categories">
-              <div className="p-4 overflow-x-auto">
-                <div className="flex justify-end gap-2 mb-3">
+              <div className={`${deskBookTabPanelClassName} overflow-x-auto`}>
+                <div className="flex justify-end gap-2 mb-2">
                   <Dropdown>
                     <DropdownTrigger>
-                      <Button size="sm" variant="bordered">📥 Export</Button>
+                      <Button size="sm" variant="flat">📥 Export</Button>
                     </DropdownTrigger>
                     <DropdownMenu>
                       <DropdownItem key="csv" onPress={exportCategoriesCSV}>CSV spreadsheet</DropdownItem>
@@ -963,47 +1097,37 @@ export default function PpeAssetRegisterPage() {
                     Add category
                   </Button>
                 </div>
-                <Table aria-label="Categories" removeWrapper classNames={{ th: 'text-xs' }}>
+                <div ref={catCols.frameRef} style={catCols.frameStyle}>
+                <Table aria-label="Categories" removeWrapper classNames={deskResizableTableClassNames()}>
                   <TableHeader>
-                    <TableColumn>NAME</TableColumn>
-                    <TableColumn>FS GROUP</TableColumn>
-                    <TableColumn>GRA</TableColumn>
-                    <TableColumn>GRA RATE</TableColumn>
-                    <TableColumn>IAS</TableColumn>
-                    <TableColumn>LIFE (YRS)</TableColumn>
-                    <TableColumn>RESIDUAL</TableColumn>
-                    <TableColumn>ASSETS</TableColumn>
-                    <TableColumn>ACTIONS</TableColumn>
+                    {catColumn('name', 'Name')}
+                    {catColumn('fsGroup', 'FS Group')}
+                    {catColumn('gra', 'GRA')}
+                    {catColumn('graRate', 'GRA Rate')}
+                    {catColumn('ias', 'IAS')}
+                    {catColumn('life', 'Life (Yrs)')}
+                    {catColumn('residual', 'Residual')}
+                    {catColumn('assets', 'Assets', 'center')}
                   </TableHeader>
                   <TableBody>
-                    {categories.map((c: PpeCategory) => (
-                      <TableRow key={c.id}>
-                        <TableCell className="font-medium text-sm">{c.name}</TableCell>
-                        <TableCell className="text-xs">{c.presentationGroup}</TableCell>
+                    {pagedCats.map((c: PpeCategory) => (
+                      <TableRow key={c.id} className={rowClassNames(viewItem?.id === c.id && viewKind === 'category')} onClick={() => openCategoryView(c)}>
+                        <TableCell className="font-medium text-sm truncate text-blue-600 hover:underline">{c.name}</TableCell>
+                        <TableCell className="text-xs truncate">{c.presentationGroup}</TableCell>
                         <TableCell>{c.graClass}</TableCell>
                         <TableCell>{(c.graRate * 100).toFixed(0)}% {c.graMethod}</TableCell>
                         <TableCell>{c.iasMethod}{(c.iasMethod === 'RB' ? ` ${(c.iasRate * 100).toFixed(0)}%` : '')}</TableCell>
-                        <TableCell>{c.usefulLifeYrs || '—'}</TableCell>
-                        <TableCell>{(c.residualPct * 100).toFixed(0)}%</TableCell>
-                        <TableCell>{assetCountByCategory.get(c.id) ?? 0}</TableCell>
-                        <TableCell>
-                          <div className="flex gap-1">
-                            <Button size="sm" variant="light" onPress={() => openEditCategory(c)}>Edit</Button>
-                            <Button
-                              size="sm"
-                              variant="light"
-                              color="danger"
-                              isDisabled={(assetCountByCategory.get(c.id) ?? 0) > 0}
-                              onPress={() => handleDeleteCategory(c)}
-                            >
-                              Del
-                            </Button>
-                          </div>
-                        </TableCell>
+                        <TableCell className="tabular-nums">{c.usefulLifeYrs || '—'}</TableCell>
+                        <TableCell className="tabular-nums">{(c.residualPct * 100).toFixed(0)}%</TableCell>
+                        <TableCell className="text-center tabular-nums">{assetCountByCategory.get(c.id) ?? 0}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
+                </div>
+                <div className="mt-3 flex justify-end">
+                  <Pagination page={catPage} total={catPages} onChange={setCatPage} showControls size="sm" />
+                </div>
               </div>
             </Tab>
           </Tabs>
@@ -1313,6 +1437,93 @@ export default function PpeAssetRegisterPage() {
               {editingCategoryId ? 'Save changes' : 'Add category'}
             </Button>
           </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={isViewOpen} onOpenChange={(open) => { if (!open) closeView(); }} size="2xl" scrollBehavior="inside">
+        <ModalContent>
+          {(onClose) => {
+            if (!viewItem || !viewKind) return null;
+            if (viewKind === 'asset') {
+              const { asset, category, computed } = viewItem;
+              return (
+                <>
+                  <ModalHeader className="border-b bg-white px-6 py-4">
+                    <div className="flex justify-between items-start w-full pr-6">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="text-xl font-bold text-gray-900">PPE ASSET</h3>
+                          <Chip size="sm" variant="flat" color={asset.capExp === 'Capitalise' ? 'success' : asset.capExp === 'Expense' ? 'default' : 'warning'}>{asset.capExp}</Chip>
+                        </div>
+                        <p className="text-lg text-gray-800">{asset.assetName}</p>
+                        <p className="text-sm font-mono text-gray-500">{asset.assetCode}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-2xl font-bold tabular-nums">{fmt(computed.nbv)}</p>
+                        <p className="text-xs text-gray-500">Net book value</p>
+                      </div>
+                    </div>
+                  </ModalHeader>
+                  <ModalBody className="p-6 bg-white text-sm">
+                    <div className="grid grid-cols-2 gap-6">
+                      <div className="space-y-1">
+                        <div><span className="text-gray-500">Category:</span> <span className="font-medium">{category?.name || '—'}</span></div>
+                        <div><span className="text-gray-500">Purchase:</span> <span>{asset.purchaseDate?.slice(0, 10)}</span></div>
+                        <div><span className="text-gray-500">Qty × price:</span> <span className="tabular-nums">{asset.quantity} × {fmt(asset.unitPrice)}</span></div>
+                      </div>
+                      <div className="space-y-1">
+                        <div><span className="text-gray-500">Cost:</span> <span className="tabular-nums font-medium">{fmt(computed.totalCost)}</span></div>
+                        <div><span className="text-gray-500">Accum dep:</span> <span className="tabular-nums">{fmt(computed.accumDep)}</span></div>
+                        <div><span className="text-gray-500">GRA WDV:</span> <span className="tabular-nums">{fmt(computed.graWdvCurrent)}</span></div>
+                        <div><span className="text-gray-500">Remaining:</span> <span>{computed.remainingLife?.display || '—'}</span></div>
+                      </div>
+                    </div>
+                  </ModalBody>
+                  <ModalFooter className="border-t bg-white">
+                    <Button variant="flat" onPress={onClose}>Close</Button>
+                    <Button color="danger" variant="flat" onPress={() => {
+                      if (confirm(`Delete "${asset.assetName}" (${asset.assetCode})? This cannot be undone.`)) {
+                        deleteAsset(asset.id);
+                        closeView();
+                      }
+                    }}>🗑️ Delete</Button>
+                    <Button color="primary" onPress={() => { closeView(); openEdit(asset); }}>✏️ Edit</Button>
+                  </ModalFooter>
+                </>
+              );
+            }
+            const c = viewItem as PpeCategory;
+            const count = assetCountByCategory.get(c.id) ?? 0;
+            return (
+              <>
+                <ModalHeader className="border-b bg-white px-6 py-4">
+                  <div className="pr-6">
+                    <h3 className="text-xl font-bold text-gray-900">PPE CATEGORY</h3>
+                    <p className="text-lg text-gray-800">{c.name}</p>
+                  </div>
+                </ModalHeader>
+                <ModalBody className="p-6 bg-white text-sm">
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-1">
+                      <div><span className="text-gray-500">FS group:</span> <span className="font-medium">{c.presentationGroup}</span></div>
+                      <div><span className="text-gray-500">GRA:</span> <span>{c.graClass} · {(c.graRate * 100).toFixed(0)}% {c.graMethod}</span></div>
+                      <div><span className="text-gray-500">IAS:</span> <span>{c.iasMethod}{c.iasMethod === 'RB' ? ` ${(c.iasRate * 100).toFixed(0)}%` : ''}</span></div>
+                    </div>
+                    <div className="space-y-1">
+                      <div><span className="text-gray-500">Useful life:</span> <span className="tabular-nums">{c.usefulLifeYrs || '—'} yrs</span></div>
+                      <div><span className="text-gray-500">Residual:</span> <span className="tabular-nums">{(c.residualPct * 100).toFixed(0)}%</span></div>
+                      <div><span className="text-gray-500">Assets:</span> <span className="tabular-nums font-medium">{count}</span></div>
+                    </div>
+                  </div>
+                </ModalBody>
+                <ModalFooter className="border-t bg-white">
+                  <Button variant="flat" onPress={onClose}>Close</Button>
+                  <Button color="danger" variant="flat" isDisabled={count > 0} onPress={() => { handleDeleteCategory(c); closeView(); }}>🗑️ Delete</Button>
+                  <Button color="primary" onPress={() => { closeView(); openEditCategory(c); }}>✏️ Edit</Button>
+                </ModalFooter>
+              </>
+            );
+          }}
         </ModalContent>
       </Modal>
     </div>

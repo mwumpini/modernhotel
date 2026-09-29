@@ -164,14 +164,14 @@ export default function Navigation({ onLogout }: NavigationProps) {
   const hasModuleAccess = useSettingsStore.getState().hasModuleAccess;
   const hasPermission = useSettingsStore.getState().hasPermission;
   // The Approvals inbox (pending journal entries/payments/high-value
-  // requisitions) is only useful to someone who can actually approve at
-  // least one of those — gated by permission, not a role name, same as every
-  // approve action itself (see src/app/lib/api/approvalThresholds.ts).
+  // requisitions/overtime/payroll) is only useful to someone who can actually
+  // approve at least one of those — gated by permission, not a role name.
   const canSeeApprovals =
     hasPermission('accounting.approve-journal-entry') ||
     hasPermission('accounting.approve-payment') ||
     hasPermission('inventory.approve-high-value-requisition') ||
-    hasPermission('hr.approve-overtime');
+    hasPermission('hr.approve-overtime') ||
+    hasPermission('hr.approve-payroll');
   const { data: session } = useSession();
   const currentUserName = session?.user?.name || 'User';
   const currentUserRoleLabel = ROLE_LABELS[(session?.user as any)?.role] || (session?.user as any)?.role || '';

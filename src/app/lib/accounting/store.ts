@@ -1136,35 +1136,40 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       return;
     }
 
+    const normalized = {
+      ...invoice,
+      dueDate: invoice.dueDate || invoice.date || new Date().toISOString(),
+    };
+
     set((state) => {
       console.log(`[Accounting] 📄 Invoice Created:`, {
-        invoiceNumber: invoice.invoiceNumber || invoice.id,
-        type: invoice.type,
-        customer: invoice.businessPartnerId,
-        subtotal: `GHS ${(invoice.subtotal || 0).toLocaleString()}`,
-        tax: `GHS ${(invoice.taxAmount || 0).toLocaleString()}`,
-        total: `GHS ${(invoice.total || 0).toLocaleString()}`,
-        status: invoice.status,
-        dueDate: invoice.dueDate,
-        source: (invoice as any).sourceModule || 'manual',
+        invoiceNumber: normalized.invoiceNumber || normalized.id,
+        type: normalized.type,
+        customer: normalized.businessPartnerId,
+        subtotal: `GHS ${(normalized.subtotal || 0).toLocaleString()}`,
+        tax: `GHS ${(normalized.taxAmount || 0).toLocaleString()}`,
+        total: `GHS ${(normalized.total || 0).toLocaleString()}`,
+        status: normalized.status,
+        dueDate: normalized.dueDate,
+        source: (normalized as any).sourceModule || 'manual',
         timestamp: new Date().toISOString()
       });
 
       const updatedPartners = state.businessPartners.map(p => {
-        if (p.id !== invoice.businessPartnerId) return p;
-        if (invoice.isProforma) return p;
-        if (invoice.type === 'Purchase' && (p.type === 'Supplier' || p.type === 'Both')) {
-          return { ...p, balance: +(p.balance + invoice.total).toFixed(2) };
+        if (p.id !== normalized.businessPartnerId) return p;
+        if (normalized.isProforma) return p;
+        if (normalized.type === 'Purchase' && (p.type === 'Supplier' || p.type === 'Both')) {
+          return { ...p, balance: +(p.balance + normalized.total).toFixed(2) };
         }
-        if (invoice.type === 'Sales' && (p.type === 'Customer' || p.type === 'Both')) {
-          return { ...p, balance: +(p.balance + invoice.total).toFixed(2) };
+        if (normalized.type === 'Sales' && (p.type === 'Customer' || p.type === 'Both')) {
+          return { ...p, balance: +(p.balance + normalized.total).toFixed(2) };
         }
         return p;
       });
-      persistInvoice(invoice);
+      persistInvoice(normalized);
       return {
         businessPartners: updatedPartners,
-        invoices: [...state.invoices, invoice]
+        invoices: [...state.invoices, normalized]
       };
     });
 

@@ -3,7 +3,7 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import HeadingInfo from '../HeadingInfo';
 import {
-	Card, CardBody, Button, Progress,
+	Card, CardBody, Button,
 	Tabs, Tab,
 	Input, Select, SelectItem,
 	Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
@@ -54,10 +54,46 @@ import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@herou
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
 import AttachmentUpload from '@/app/components/shared/AttachmentUpload';
+import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
+import { useDeskPagination } from '../dashboard/deskTableUi';
+import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName } from './DeskKpiStrip';
 
 // Shared by the New Invoice form's "new customer" payment-terms select and the due-date
 // auto-calc below it — keeps both in sync with the one mapping instead of two copies.
 const PAYMENT_TERMS_DAYS: Record<string, number> = { immediate: 0, net30: 30, net60: 60, net90: 90 };
+
+type SalesSortKey =
+	| 'invoice' | 'source' | 'customer' | 'date' | 'dueDate' | 'staff'
+	| 'total' | 'paid' | 'balance' | 'status' | 'wht' | 'gl';
+type ProformaSortKey =
+	| 'proforma' | 'source' | 'client' | 'event' | 'dates' | 'pax' | 'venue'
+	| 'amount' | 'validUntil' | 'status';
+type AgingSortKey =
+	| 'customer' | 'source' | 'invoiced' | 'paid' | 'balance'
+	| 'current' | 'days30' | 'days60' | 'days90' | 'over90';
+type ReceiptSortKey =
+	| 'receipt' | 'source' | 'customer' | 'date' | 'time' | 'method' | 'staff'
+	| 'invoice' | 'amount' | 'status';
+type WhtSortKey =
+	| 'certificate' | 'agent' | 'tin' | 'invoice' | 'taxPeriod'
+	| 'wht' | 'whtVat' | 'total' | 'status';
+
+function deskCmp(a: string | number, b: string | number) {
+	if (typeof a === 'number' && typeof b === 'number') return a - b;
+	return String(a).localeCompare(String(b));
+}
+
+function formatDeskDate(value: unknown): string {
+	if (value == null || value === '') return '—';
+	const d = value instanceof Date ? value : new Date(String(value));
+	return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString();
+}
+
+function isPastDue(dueDate: unknown, balance: number): boolean {
+	if (!(balance > 0) || dueDate == null || dueDate === '') return false;
+	const d = dueDate instanceof Date ? dueDate : new Date(String(dueDate));
+	return !Number.isNaN(d.getTime()) && d < new Date();
+}
 
 function InfoTip({ label, children }: { label: string; children: React.ReactNode }) {
 	return (
@@ -75,8 +111,6 @@ function InfoTip({ label, children }: { label: string; children: React.ReactNode
 
 export default function AccountsReceivable() {
 	const [selectedTab, setSelectedTab] = useState('overview');
-	const [page, setPage] = useState(1);
-	const rowsPerPage = 10;
 	const [refreshKey, setRefreshKey] = useState(0);
 	const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -218,10 +252,31 @@ export default function AccountsReceivable() {
 	}, [receipts, sourceFilter, dateFrom, dateTo, searchQuery]);
 
 	// Customer aging — finance subledger only (excludes open folios / proformas)
-	const customerAging = useMemo(
+	const allCustomerAging = useMemo(
 		() => computeCustomerAgingFromInvoices(salesInvoices, customers),
 		[salesInvoices, customers],
 	);
+	const agingScopeInvoices = useMemo(() => {
+		return salesInvoices.filter((inv: any) => {
+			if (sourceFilter !== 'all' && !sourceMatchesFilter(inv.sourceModule, sourceFilter)) return false;
+			if (dateFrom && new Date(inv.date) < new Date(dateFrom)) return false;
+			if (dateTo && new Date(inv.date) > new Date(dateTo)) return false;
+			return true;
+		});
+	}, [salesInvoices, sourceFilter, dateFrom, dateTo]);
+	const scopedCustomerAging = useMemo(
+		() => computeCustomerAgingFromInvoices(agingScopeInvoices, customers),
+		[agingScopeInvoices, customers],
+	);
+	const filteredAging = useMemo(() => {
+		if (!searchQuery) return scopedCustomerAging;
+		const q = searchQuery.toLowerCase();
+		return scopedCustomerAging.filter((c: any) =>
+			(c.customerName || '').toLowerCase().includes(q) ||
+			(c.customerId || '').toLowerCase().includes(q),
+		);
+	}, [scopedCustomerAging, searchQuery]);
+	const customerAging = allCustomerAging;
 
 	// Totals — finance AR subledger (posted sales invoices only)
 	const financeInvoices = useMemo(() => filterFinanceArInvoices(salesInvoices), [salesInvoices]);
@@ -229,12 +284,6 @@ export default function AccountsReceivable() {
 	const totalReceived = financeInvoices.reduce((s: number, i: any) => s + (i.paidAmount || 0), 0);
 	const totalOutstanding = totalFinanceReceivables(salesInvoices);
 	const totalProforma = proformaInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0);
-
-	// Pagination helpers
-	const getPaginatedData = (data: any[], currentPage: number) => {
-		const start = (currentPage - 1) * rowsPerPage;
-		return data.slice(start, start + rowsPerPage);
-	};
 
 	// Modal states
 	const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
@@ -440,7 +489,6 @@ export default function AccountsReceivable() {
 
 	// WHT totals
 	const totalWHTReceivable = (whtCertificates || []).reduce((s: number, c: any) => s + (c.totalWithheld || 0), 0);
-	const pendingWHTCerts = (whtCertificates || []).filter((c: any) => c.status === 'Pending').length;
 
 	const whtCertRates = useMemo(() => getWhtCertificateRates(taxConfigs), [taxConfigs]);
 	const whtLabels = useMemo(() => whtFormLabels(whtCertRates), [whtCertRates]);
@@ -455,6 +503,14 @@ export default function AccountsReceivable() {
 	// Open detail views
 	const openInvoiceDetail = (invoice: any) => { setSelectedInvoice(invoice); setIsDetailOpen(true); };
 	const openReceiptDetail = (receipt: any) => { setSelectedReceipt(receipt); setIsReceiptDetailOpen(true); };
+	const openAgingCustomer = (c: any) => {
+		setSearchQuery(c.customerName || '');
+		setStatusFilter('all');
+		setDateFrom('');
+		setDateTo('');
+		setInvoiceDocType('sales');
+		setSelectedTab('invoices');
+	};
 
 	// ===== EXPORT FUNCTIONS =====
 	
@@ -538,8 +594,8 @@ export default function AccountsReceivable() {
 			{ key: 'days90', label: '61-90 Days' },
 			{ key: 'over90', label: '90+ Days' },
 		];
-		downloadCSV(customerAging, 'customer_aging', columns);
-	}, [customerAging]);
+		downloadCSV(filteredAging, 'customer_aging', columns);
+	}, [filteredAging]);
 
 	// Print Invoices Table as PDF
 	const printInvoicesTablePDF = useCallback(() => {
@@ -689,7 +745,7 @@ export default function AccountsReceivable() {
 
 	// Print Aging Report as PDF
 	const printAgingPDF = useCallback(() => {
-		const rows = customerAging.map((c: any) => `<tr>
+		const rows = filteredAging.map((c: any) => `<tr>
 			<td>${c.customerName}</td>
 			<td>${c.invoiceCount}</td>
 			<td class="amount">${formatAccountingCurrency(c.totalInvoiced)}</td>
@@ -701,7 +757,7 @@ export default function AccountsReceivable() {
 			<td class="amount" style="color:#dc2626">${c.days90 > 0 ? `${formatAccountingCurrency(c.days90)}` : '-'}</td>
 			<td class="amount" style="color:#991b1b;font-weight:bold">${c.over90 > 0 ? `${formatAccountingCurrency(c.over90)}` : '-'}</td>
 		</tr>`).join('');
-		const totals = customerAging.reduce((acc: any, c: any) => ({
+		const totals = filteredAging.reduce((acc: any, c: any) => ({
 			balance: acc.balance + c.balance,
 			current: acc.current + c.current,
 			days30: acc.days30 + c.days30,
@@ -715,7 +771,7 @@ export default function AccountsReceivable() {
 				<div class="subtitle">Generated on ${new Date().toLocaleString()}</div>
 			</div>
 			<div class="meta">
-				<div class="meta-item"><div class="meta-label">Active Customers</div><div class="meta-value">${customerAging.length}</div></div>
+				<div class="meta-item"><div class="meta-label">Active Customers</div><div class="meta-value">${filteredAging.length}</div></div>
 				<div class="meta-item"><div class="meta-label">Total Outstanding</div><div class="meta-value">${formatAccountingCurrency(totals.balance)}</div></div>
 				<div class="meta-item"><div class="meta-label">Overdue (30+ days)</div><div class="meta-value">${formatAccountingCurrency((totals.days30 + totals.days60 + totals.days90 + totals.over90))}</div></div>
 			</div>
@@ -735,7 +791,7 @@ export default function AccountsReceivable() {
 			</table>
 		`, 'Accounts Receivable • Customer Aging Analysis');
 		openPrintPreview(html);
-	}, [customerAging]);
+	}, [filteredAging]);
 
 	// Print Individual Invoice/Proforma PDF
 	const printInvoicePDF = useCallback((invoice: any) => {
@@ -1832,6 +1888,216 @@ export default function AccountsReceivable() {
 		handleRefresh();
 	};
 
+	// —— Desk table: per-list sort, resizable columns, pagination ——
+	const [salesSortKey, setSalesSortKey] = useState<SalesSortKey>('date');
+	const [salesSortDir, setSalesSortDir] = useState<'asc' | 'desc'>('desc');
+	const salesCols = useResizableColumns<SalesSortKey>({
+		// Sized to max(uppercase header, typical cell) — long INV-* numbers & currency chips.
+		invoice: 168, source: 124, customer: 152, date: 92, dueDate: 96, staff: 112,
+		total: 100, paid: 92, balance: 100, status: 84, wht: 104, gl: 72,
+	});
+	const sortedSales = useMemo(() => {
+		const value = (inv: any): string | number => {
+			const balance = (inv.total || 0) - (inv.paidAmount || 0);
+			const isOverdue = balance > 0 && new Date(inv.dueDate) < new Date();
+			const settlement = computeInvoiceWhtSettlement(inv, taxConfigs);
+			const hasPendingWhtCert = (whtCertificates || []).some(
+				(c: any) => c.invoiceId === inv.id && c.status === 'Pending',
+			);
+			const glChip = getGlSyncChip('invoice', inv);
+			switch (salesSortKey) {
+				case 'invoice': return (inv.invoiceNumber || inv.id || '').toLowerCase();
+				case 'source': return (inv.sourceModule || '').toLowerCase();
+				case 'customer': return (inv.customerName || '').toLowerCase();
+				case 'date': return new Date(inv.date).getTime();
+				case 'dueDate': return new Date(inv.dueDate).getTime();
+				case 'staff': return (inv.staffName || '').toLowerCase();
+				case 'total': return Number(inv.total || 0);
+				case 'paid': return Number(inv.paidAmount || 0);
+				case 'balance': return balance;
+				case 'status': return balance === 0 ? 'paid' : isOverdue ? 'overdue' : 'open';
+				case 'wht': return inv.whtStatus === 'Complete' ? 2 : inv.whtStatus === 'Pending' || hasPendingWhtCert ? 1 : settlement.whtTotalRemaining > 0 ? 0 : -1;
+				case 'gl': return glChip?.label || '';
+				default: return '';
+			}
+		};
+		const sorted = [...filteredSalesInvoices].sort((a, b) => deskCmp(value(a), value(b)));
+		return salesSortDir === 'asc' ? sorted : sorted.reverse();
+	}, [filteredSalesInvoices, salesSortKey, salesSortDir, taxConfigs, whtCertificates, journalEntries]);
+	const salesPaging = useDeskPagination(sortedSales, [statusFilter, sourceFilter, dateFrom, dateTo, searchQuery, salesSortKey, salesSortDir, invoiceDocType]);
+	const onSalesSort = (key: SalesSortKey) => {
+		if (salesSortKey === key) setSalesSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+		else {
+			setSalesSortKey(key);
+			setSalesSortDir(key === 'date' || key === 'dueDate' || key === 'total' || key === 'paid' || key === 'balance' ? 'desc' : 'asc');
+		}
+	};
+	const salesColumn = (key: SalesSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+		<TableColumn key={key} className="relative" style={salesCols.style(key)}>
+			<SortLabel active={salesSortKey === key} dir={salesSortDir} align={align} onPress={() => onSalesSort(key)}>{label}</SortLabel>
+			{salesCols.sizer(key, label)}
+		</TableColumn>
+	);
+
+	const [proformaSortKey, setProformaSortKey] = useState<ProformaSortKey>('validUntil');
+	const [proformaSortDir, setProformaSortDir] = useState<'asc' | 'desc'>('desc');
+	const proformaCols = useResizableColumns<ProformaSortKey>({
+		proforma: 140, source: 124, client: 144, event: 148, dates: 104, pax: 64,
+		venue: 112, amount: 100, validUntil: 104, status: 96,
+	});
+	const sortedProformas = useMemo(() => {
+		const value = (inv: any): string | number => {
+			switch (proformaSortKey) {
+				case 'proforma': return (inv.invoiceNumber || inv.id || '').toLowerCase();
+				case 'source': return (inv.sourceModule || '').toLowerCase();
+				case 'client': return (inv.customerName || '').toLowerCase();
+				case 'event': return (inv.description || '').toLowerCase();
+				case 'dates': return inv.checkIn ? new Date(inv.checkIn).getTime() : 0;
+				case 'pax': return Number(inv.pax || 0);
+				case 'venue': return (inv.venue || '').toLowerCase();
+				case 'amount': return Number(inv.total || 0);
+				case 'validUntil': return new Date(inv.dueDate).getTime();
+				case 'status': return new Date(inv.dueDate) < new Date() ? 1 : 0;
+				default: return '';
+			}
+		};
+		const sorted = [...filteredProformas].sort((a, b) => deskCmp(value(a), value(b)));
+		return proformaSortDir === 'asc' ? sorted : sorted.reverse();
+	}, [filteredProformas, proformaSortKey, proformaSortDir]);
+	const proformaPaging = useDeskPagination(sortedProformas, [statusFilter, sourceFilter, dateFrom, dateTo, searchQuery, proformaSortKey, proformaSortDir, invoiceDocType]);
+	const onProformaSort = (key: ProformaSortKey) => {
+		if (proformaSortKey === key) setProformaSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+		else {
+			setProformaSortKey(key);
+			setProformaSortDir(key === 'amount' || key === 'validUntil' || key === 'dates' ? 'desc' : 'asc');
+		}
+	};
+	const proformaColumn = (key: ProformaSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+		<TableColumn key={key} className="relative" style={proformaCols.style(key)}>
+			<SortLabel active={proformaSortKey === key} dir={proformaSortDir} align={align} onPress={() => onProformaSort(key)}>{label}</SortLabel>
+			{proformaCols.sizer(key, label)}
+		</TableColumn>
+	);
+
+	const [agingSortKey, setAgingSortKey] = useState<AgingSortKey>('balance');
+	const [agingSortDir, setAgingSortDir] = useState<'asc' | 'desc'>('desc');
+	const agingCols = useResizableColumns<AgingSortKey>({
+		customer: 152, source: 64, invoiced: 100, paid: 88, balance: 100,
+		current: 88, days30: 92, days60: 100, days90: 100, over90: 92,
+	});
+	const sortedAging = useMemo(() => {
+		const value = (c: any): string | number => {
+			switch (agingSortKey) {
+				case 'customer': return (c.customerName || '').toLowerCase();
+				case 'source': return (c.source || '').toLowerCase();
+				case 'invoiced': return Number(c.totalInvoiced || 0);
+				case 'paid': return Number(c.totalPaid || 0);
+				case 'balance': return Number(c.balance || 0);
+				case 'current': return Number(c.current || 0);
+				case 'days30': return Number(c.days30 || 0);
+				case 'days60': return Number(c.days60 || 0);
+				case 'days90': return Number(c.days90 || 0);
+				case 'over90': return Number(c.over90 || 0);
+				default: return '';
+			}
+		};
+		const sorted = [...filteredAging].sort((a, b) => deskCmp(value(a), value(b)));
+		return agingSortDir === 'asc' ? sorted : sorted.reverse();
+	}, [filteredAging, agingSortKey, agingSortDir]);
+	const agingPaging = useDeskPagination(sortedAging, [agingSortKey, agingSortDir, searchQuery, sourceFilter, dateFrom, dateTo, filteredAging.length]);
+	const onAgingSort = (key: AgingSortKey) => {
+		if (agingSortKey === key) setAgingSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+		else {
+			setAgingSortKey(key);
+			setAgingSortDir(key === 'customer' || key === 'source' ? 'asc' : 'desc');
+		}
+	};
+	const agingColumn = (key: AgingSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+		<TableColumn key={key} className="relative" style={agingCols.style(key)}>
+			<SortLabel active={agingSortKey === key} dir={agingSortDir} align={align} onPress={() => onAgingSort(key)}>{label}</SortLabel>
+			{agingCols.sizer(key, label)}
+		</TableColumn>
+	);
+
+	const [receiptSortKey, setReceiptSortKey] = useState<ReceiptSortKey>('date');
+	const [receiptSortDir, setReceiptSortDir] = useState<'asc' | 'desc'>('desc');
+	const receiptCols = useResizableColumns<ReceiptSortKey>({
+		receipt: 128, source: 124, customer: 144, date: 92, time: 88, method: 88,
+		staff: 112, invoice: 120, amount: 100, status: 84,
+	});
+	const sortedReceipts = useMemo(() => {
+		const value = (r: any): string | number => {
+			switch (receiptSortKey) {
+				case 'receipt': return (r.paymentNumber || r.id || '').toLowerCase();
+				case 'source': return (r.sourceModule || '').toLowerCase();
+				case 'customer': return (r.customerName || '').toLowerCase();
+				case 'date': return new Date(r.date).getTime();
+				case 'time': return new Date(r.date).getTime();
+				case 'method': return (r.paymentMethod || '').toLowerCase();
+				case 'staff': return (r.staffName || '').toLowerCase();
+				case 'invoice': return (r.invoiceId || '').toLowerCase();
+				case 'amount': return Number(r.amount || 0);
+				case 'status': return (r.status || '').toLowerCase();
+				default: return '';
+			}
+		};
+		const sorted = [...filteredReceipts].sort((a, b) => deskCmp(value(a), value(b)));
+		return receiptSortDir === 'asc' ? sorted : sorted.reverse();
+	}, [filteredReceipts, receiptSortKey, receiptSortDir]);
+	const receiptPaging = useDeskPagination(sortedReceipts, [sourceFilter, dateFrom, dateTo, searchQuery, receiptSortKey, receiptSortDir]);
+	const onReceiptSort = (key: ReceiptSortKey) => {
+		if (receiptSortKey === key) setReceiptSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+		else {
+			setReceiptSortKey(key);
+			setReceiptSortDir(key === 'date' || key === 'time' || key === 'amount' ? 'desc' : 'asc');
+		}
+	};
+	const receiptColumn = (key: ReceiptSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+		<TableColumn key={key} className="relative" style={receiptCols.style(key)}>
+			<SortLabel active={receiptSortKey === key} dir={receiptSortDir} align={align} onPress={() => onReceiptSort(key)}>{label}</SortLabel>
+			{receiptCols.sizer(key, label)}
+		</TableColumn>
+	);
+
+	const [whtSortKey, setWhtSortKey] = useState<WhtSortKey>('taxPeriod');
+	const [whtSortDir, setWhtSortDir] = useState<'asc' | 'desc'>('desc');
+	const whtCols = useResizableColumns<WhtSortKey>({
+		certificate: 132, agent: 168, tin: 108, invoice: 112, taxPeriod: 100,
+		wht: 88, whtVat: 96, total: 96, status: 132,
+	});
+	const sortedWhtCerts = useMemo(() => {
+		const value = (cert: any): string | number => {
+			switch (whtSortKey) {
+				case 'certificate': return (cert.certificateNumber || 'PENDING').toLowerCase();
+				case 'agent': return (cert.withholdingAgentName || '').toLowerCase();
+				case 'tin': return (cert.withholdingAgentTIN || '').toLowerCase();
+				case 'invoice': return (cert.invoiceNumber || '').toLowerCase();
+				case 'taxPeriod': return (cert.taxPeriod || '').toLowerCase();
+				case 'wht': return Number(cert.whtAmount || 0);
+				case 'whtVat': return Number(cert.whtVatAmount || 0);
+				case 'total': return Number(cert.totalWithheld || 0);
+				case 'status': return (cert.status || '').toLowerCase();
+				default: return '';
+			}
+		};
+		const sorted = [...filteredWHTCerts].sort((a, b) => deskCmp(value(a), value(b)));
+		return whtSortDir === 'asc' ? sorted : sorted.reverse();
+	}, [filteredWHTCerts, whtSortKey, whtSortDir]);
+	const whtPaging = useDeskPagination(sortedWhtCerts, [statusFilter, dateFrom, dateTo, searchQuery, whtSortKey, whtSortDir]);
+	const onWhtSort = (key: WhtSortKey) => {
+		if (whtSortKey === key) setWhtSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+		else {
+			setWhtSortKey(key);
+			setWhtSortDir(key === 'wht' || key === 'whtVat' || key === 'total' || key === 'taxPeriod' ? 'desc' : 'asc');
+		}
+	};
+	const whtColumn = (key: WhtSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+		<TableColumn key={key} className="relative" style={whtCols.style(key)}>
+			<SortLabel active={whtSortKey === key} dir={whtSortDir} align={align} onPress={() => onWhtSort(key)}>{label}</SortLabel>
+			{whtCols.sizer(key, label)}
+		</TableColumn>
+	);
+
 	// Render filter bar
 	const renderFilters = (showStatus: boolean = true) => (
 		<div className="flex flex-wrap items-end gap-3 mb-4">
@@ -1859,30 +2125,26 @@ export default function AccountsReceivable() {
 	);
 
 	// Render sales invoice table
-	const renderSalesInvoiceTable = (invoiceList: any[]) => {
-		const pages = Math.ceil(invoiceList.length / rowsPerPage);
-		const paginatedData = getPaginatedData(invoiceList, page);
-
-		return (
-			<>
-				<Table aria-label="Sales invoices">
+	const renderSalesInvoiceTable = () => (
+		<>
+			<div ref={salesCols.frameRef} style={salesCols.frameStyle}>
+				<Table removeWrapper classNames={deskResizableTableClassNames()} aria-label="Sales invoices">
 					<TableHeader>
-						<TableColumn>INVOICE #</TableColumn>
-						<TableColumn>SOURCE</TableColumn>
-						<TableColumn>CUSTOMER</TableColumn>
-						<TableColumn>DATE</TableColumn>
-						<TableColumn>DUE DATE</TableColumn>
-						<TableColumn>STAFF</TableColumn>
-						<TableColumn align="end">TOTAL</TableColumn>
-						<TableColumn align="end">PAID</TableColumn>
-						<TableColumn align="end">BALANCE</TableColumn>
-						<TableColumn>STATUS</TableColumn>
-						<TableColumn>WHT</TableColumn>
-						<TableColumn>GL</TableColumn>
-						<TableColumn>ACTIONS</TableColumn>
+						{salesColumn('invoice', 'Invoice #')}
+						{salesColumn('source', 'Source')}
+						{salesColumn('customer', 'Customer')}
+						{salesColumn('date', 'Date')}
+						{salesColumn('dueDate', 'Due date')}
+						{salesColumn('staff', 'Staff')}
+						{salesColumn('total', 'Total', 'right')}
+						{salesColumn('paid', 'Paid', 'right')}
+						{salesColumn('balance', 'Balance', 'right')}
+						{salesColumn('status', 'Status')}
+						{salesColumn('wht', 'WHT')}
+						{salesColumn('gl', 'GL')}
 					</TableHeader>
 					<TableBody emptyContent="No sales invoices found.">
-						{paginatedData.map((inv: any) => {
+						{salesPaging.paged.map((inv: any) => {
 							const source = getSourceLabel(inv.sourceModule);
 							const glChip = getGlSyncChip('invoice', inv);
 							const balance = (inv.total || 0) - (inv.paidAmount || 0);
@@ -1890,9 +2152,9 @@ export default function AccountsReceivable() {
 							const hasPendingWhtCert = (whtCertificates || []).some(
 								(c: any) => c.invoiceId === inv.id && c.status === 'Pending',
 							);
-							const isOverdue = balance > 0 && new Date(inv.dueDate) < new Date();
+							const isOverdue = isPastDue(inv.dueDate, balance);
 							return (
-								<TableRow key={inv.id} className="cursor-pointer hover:bg-gray-50" onClick={() => openInvoiceDetail(inv)}>
+								<TableRow key={inv.id} className={rowClassNames(selectedInvoice?.id === inv.id)} onClick={() => openInvoiceDetail(inv)}>
 									<TableCell>
 										<span className="font-mono text-sm text-blue-600 hover:underline">{inv.invoiceNumber || inv.id}</span>
 									</TableCell>
@@ -1903,21 +2165,21 @@ export default function AccountsReceivable() {
 										<div className="font-medium">{inv.customerName || inv.businessPartnerId}</div>
 										<div className="text-xs text-gray-500 truncate max-w-xs">{inv.description}</div>
 									</TableCell>
-									<TableCell>{new Date(inv.date).toLocaleDateString()}</TableCell>
-									<TableCell className={isOverdue ? 'text-red-600' : ''}>{new Date(inv.dueDate).toLocaleDateString()}</TableCell>
+									<TableCell>{formatDeskDate(inv.date)}</TableCell>
+									<TableCell className={isOverdue ? 'text-red-600' : ''}>{formatDeskDate(inv.dueDate)}</TableCell>
 									<TableCell>
 										<div className="text-sm">{inv.staffName || '-'}</div>
 										<div className="text-xs text-gray-500">{inv.staffRole || ''}</div>
 									</TableCell>
-									<TableCell className="text-right font-medium">{formatAccountingCurrency(Number(inv.total || 0))}</TableCell>
-									<TableCell className="text-right text-green-600">{formatAccountingCurrency(Number(inv.paidAmount || 0))}</TableCell>
-									<TableCell className="text-right text-orange-600 font-medium">{formatAccountingCurrency(balance)}</TableCell>
+									<TableCell className="tabular-nums text-right font-medium">{formatAccountingCurrency(Number(inv.total || 0))}</TableCell>
+									<TableCell className="tabular-nums text-right text-green-600">{formatAccountingCurrency(Number(inv.paidAmount || 0))}</TableCell>
+									<TableCell className="tabular-nums text-right text-orange-600 font-medium">{formatAccountingCurrency(balance)}</TableCell>
 									<TableCell>
 										<Chip size="sm" color={balance === 0 ? 'success' : isOverdue ? 'danger' : 'warning'} variant="flat">
 											{balance === 0 ? 'Paid' : isOverdue ? 'Overdue' : 'Open'}
 										</Chip>
 									</TableCell>
-									<TableCell onClick={(e) => e.stopPropagation()}>
+									<TableCell>
 										{inv.whtStatus === 'Pending' || hasPendingWhtCert ? (
 											<Chip size="sm" color="warning" variant="flat">Cert pending</Chip>
 										) : inv.whtStatus === 'Complete' ? (
@@ -1935,81 +2197,41 @@ export default function AccountsReceivable() {
 											<span className="text-xs text-gray-400">—</span>
 										)}
 									</TableCell>
-									<TableCell onClick={(e) => e.stopPropagation()}>
-										{balance > 0 && (
-											<Dropdown>
-												<DropdownTrigger>
-													<Button size="sm" variant="flat">Actions</Button>
-												</DropdownTrigger>
-												<DropdownMenu aria-label="Invoice actions">
-													<DropdownItem
-														key="receipt"
-														onPress={() => openReceiptForm(inv)}
-													>
-														➕ Record receipt
-													</DropdownItem>
-													<DropdownItem
-														key="wht-settle"
-														onPress={() => openWHTPayment(inv, 'settlement')}
-													>
-														💰 Payment + WHT (cert later OK)
-													</DropdownItem>
-													{settlement.whtTotalRemaining > 0 ? (
-														<DropdownItem
-															key="wht-only"
-															onPress={() => openWHTPayment(inv, 'wht_only')}
-														>
-															📜 WHT only (cash already received)
-														</DropdownItem>
-													) : null}
-													<DropdownItem key="view" onPress={() => openInvoiceDetail(inv)}>
-														🧾 View invoice
-													</DropdownItem>
-												</DropdownMenu>
-											</Dropdown>
-										)}
-									</TableCell>
 								</TableRow>
 							);
 						})}
 					</TableBody>
 				</Table>
-				{pages > 1 && (
-					<div className="flex justify-center mt-4">
-						<Pagination total={pages} page={page} onChange={setPage} />
-					</div>
-				)}
-			</>
-		);
-	};
+			</div>
+			<div className="mt-3 flex justify-end">
+				<Pagination page={salesPaging.page} total={salesPaging.pages} onChange={salesPaging.setPage} showControls size="sm" />
+			</div>
+		</>
+	);
 
 	// Render proforma invoice table with event details
-	const renderProformaTable = (proformaList: any[]) => {
-		const pages = Math.ceil(proformaList.length / rowsPerPage);
-		const paginatedData = getPaginatedData(proformaList, page);
-
-		return (
-			<>
-				<Table aria-label="Proforma invoices">
+	const renderProformaTable = () => (
+		<>
+			<div ref={proformaCols.frameRef} style={proformaCols.frameStyle}>
+				<Table removeWrapper classNames={deskResizableTableClassNames()} aria-label="Proforma invoices">
 					<TableHeader>
-						<TableColumn>PROFORMA #</TableColumn>
-						<TableColumn>SOURCE</TableColumn>
-						<TableColumn>CLIENT</TableColumn>
-						<TableColumn>EVENT/BOOKING</TableColumn>
-						<TableColumn>DATES</TableColumn>
-						<TableColumn>PAX</TableColumn>
-						<TableColumn>VENUE</TableColumn>
-						<TableColumn align="end">AMOUNT</TableColumn>
-						<TableColumn>VALID UNTIL</TableColumn>
-						<TableColumn>STATUS</TableColumn>
-						<TableColumn>ACTIONS</TableColumn>
+						{proformaColumn('proforma', 'Proforma #')}
+						{proformaColumn('source', 'Source')}
+						{proformaColumn('client', 'Client')}
+						{proformaColumn('event', 'Event/booking')}
+						{proformaColumn('dates', 'Dates')}
+						{proformaColumn('pax', 'Pax')}
+						{proformaColumn('venue', 'Venue')}
+						{proformaColumn('amount', 'Amount', 'right')}
+						{proformaColumn('validUntil', 'Valid until')}
+						{proformaColumn('status', 'Status')}
 					</TableHeader>
 					<TableBody emptyContent="No proforma invoices found. Generate a quote from Events & Conferences to create proformas.">
-						{paginatedData.map((inv: any) => {
+						{proformaPaging.paged.map((inv: any) => {
 							const source = getSourceLabel(inv.sourceModule);
 							const isExpired = new Date(inv.dueDate) < new Date();
 							return (
-								<TableRow key={inv.id} className="cursor-pointer hover:bg-gray-50" onClick={() => openInvoiceDetail(inv)}>
+								<TableRow key={inv.id} className={rowClassNames(selectedInvoice?.id === inv.id)} onClick={() => openInvoiceDetail(inv)}>
 									<TableCell>
 										<span className="font-mono text-sm text-purple-600 hover:underline">{inv.invoiceNumber || inv.id}</span>
 									</TableCell>
@@ -2044,7 +2266,7 @@ export default function AccountsReceivable() {
 									<TableCell>
 										<div className="text-sm truncate max-w-[120px]">{inv.venue || '-'}</div>
 									</TableCell>
-									<TableCell className="text-right font-bold text-purple-700">{formatAccountingCurrency(Number(inv.total || 0))}</TableCell>
+									<TableCell className="tabular-nums text-right font-bold text-purple-700">{formatAccountingCurrency(Number(inv.total || 0))}</TableCell>
 									<TableCell className={isExpired ? 'text-red-600' : 'text-gray-600'}>
 										{new Date(inv.dueDate).toLocaleDateString()}
 									</TableCell>
@@ -2053,29 +2275,17 @@ export default function AccountsReceivable() {
 											{isExpired ? '⏰ Expired' : '📋 Active'}
 										</Chip>
 									</TableCell>
-									<TableCell>
-										<Button
-											size="sm"
-											color="primary"
-											variant="flat"
-											onPress={() => handleConvertProforma(inv)}
-										>
-											Convert to invoice
-										</Button>
-									</TableCell>
 								</TableRow>
 							);
 						})}
 					</TableBody>
 				</Table>
-				{pages > 1 && (
-					<div className="flex justify-center mt-4">
-						<Pagination total={pages} page={page} onChange={setPage} />
-					</div>
-				)}
-			</>
-		);
-	};
+			</div>
+			<div className="mt-3 flex justify-end">
+				<Pagination page={proformaPaging.page} total={proformaPaging.pages} onChange={proformaPaging.setPage} showControls size="sm" />
+			</div>
+		</>
+	);
 
 	// Show loading state only on first bootstrap (avoid spinner loop on refresh)
 	if (isLoading && invoices.length === 0 && payments.length === 0) {
@@ -2090,19 +2300,17 @@ export default function AccountsReceivable() {
     }
 
 	return (
-		<div className="p-6" key={refreshKey}>
-			<div className="mb-6 flex justify-between items-start">
-				<div>
-				<div className="flex items-center gap-1.5">
-					<h1 className="text-3xl font-bold text-gray-900">🧾 Accounts Receivable</h1>
+		<div className="px-3 pt-2 pb-3 md:px-4 md:pt-3 md:pb-4" key={refreshKey}>
+			<div className="mb-2 flex justify-between items-center gap-2">
+				<div className="flex items-center gap-1.5 min-w-0">
+					<h1 className="text-lg md:text-xl font-bold text-gray-800 truncate">🧾 Accounts Receivable</h1>
 					<HeadingInfo label="About accounts receivable">
 						<p>Manage customer accounts, sales invoices, proformas, and receipts.</p>
 						<p className="mt-2 font-semibold">Official finance AR</p>
 						<p className="mt-1">Aging and outstanding on this screen come from the accounting subledger (posted invoices + GL). In-house guest folios are operational only until checkout posts here.</p>
 					</HeadingInfo>
 				</div>
-				</div>
-				<div className="flex gap-2">
+				<div className="flex gap-2 shrink-0">
 					<Button 
 						variant="flat" 
 						size="sm" 
@@ -2119,63 +2327,34 @@ export default function AccountsReceivable() {
 			</div>
 
 			{/* Summary Cards */}
-			<div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-				<Card>
-					<CardBody className="text-center py-4">
-						<div className="text-2xl font-bold text-blue-600">{formatAccountingCurrency(totalRevenue)}</div>
-						<div className="text-sm text-gray-600">Total Invoiced</div>
-						<div className="text-xs text-gray-400 mt-1">{salesInvoices.length} invoices</div>
-					</CardBody>
-				</Card>
-				<Card>
-					<CardBody className="text-center py-4">
-						<div className="text-2xl font-bold text-orange-600">{formatAccountingCurrency(totalOutstanding)}</div>
-						<div className="text-sm text-gray-600">Outstanding AR</div>
-						<Progress value={totalRevenue > 0 ? (totalOutstanding / totalRevenue) * 100 : 0} size="sm" color="warning" className="mt-2" />
-					</CardBody>
-				</Card>
-				<Card>
-					<CardBody className="text-center py-4">
-						<div className="text-2xl font-bold text-green-600">{formatAccountingCurrency(totalReceived)}</div>
-						<div className="text-sm text-gray-600">Total Receipts</div>
-						<div className="text-xs text-gray-400 mt-1">{receipts.length} receipts</div>
-					</CardBody>
-				</Card>
-				<Card>
-					<CardBody className="text-center py-4">
-						<div className="text-2xl font-bold text-purple-600">{formatAccountingCurrency(totalProforma)}</div>
-						<div className="text-sm text-gray-600">Proformas</div>
-						<div className="text-xs text-gray-400 mt-1">{proformaInvoices.length} proformas</div>
-					</CardBody>
-				</Card>
-				<Card>
-					<CardBody className="text-center py-4">
-						<div className="text-2xl font-bold text-amber-600">{formatAccountingCurrency(totalWHTReceivable)}</div>
-						<div className="text-sm text-gray-600">WHT Credits</div>
-						<div className="text-xs text-gray-400 mt-1">{whtCertificates?.length || 0} certificates</div>
-					</CardBody>
-				</Card>
-				<Card>
-					<CardBody className="text-center py-4">
-						<div className="text-2xl font-bold text-emerald-600">{customerAging.length}</div>
-						<div className="text-sm text-gray-600">Active Customers</div>
-						<Progress value={100} size="sm" color="success" className="mt-2" />
-					</CardBody>
-				</Card>
-			</div>
+			<DeskKpiStrip
+				className="mb-2"
+				items={[
+					{ id: 'ar.totalInvoiced', label: 'Total Invoiced', value: formatAccountingCurrency(totalRevenue), tone: 'text-blue-700' },
+					{ id: 'ar.outstanding', label: 'Outstanding AR', value: formatAccountingCurrency(totalOutstanding), tone: 'text-orange-700' },
+					{ id: 'ar.receipts', label: 'Total Receipts', value: formatAccountingCurrency(totalReceived), tone: 'text-green-700' },
+					{ id: 'ar.whtCredits', label: 'WHT Credits', value: formatAccountingCurrency(totalWHTReceivable), tone: 'text-amber-700' },
+				]}
+			/>
 
 			{/* Main Tabs */}
-			<Card>
+			<Card className="shadow-sm">
 				<CardBody className="p-0">
-					<Tabs selectedKey={selectedTab} onSelectionChange={(k) => { setSelectedTab(k as string); setPage(1); }} className="w-full">
+					<Tabs
+						selectedKey={selectedTab}
+						onSelectionChange={(k) => setSelectedTab(k as string)}
+						className="w-full"
+						size="sm"
+						variant="solid"
+						classNames={deskBookTabsClassNames}
+					>
 						
 						{/* Overview Tab */}
 						<Tab key="overview" title="📊 Overview & Aging">
-							<div className="p-6">
-								<div className="flex justify-between items-center mb-4">
-									<h3 className="text-lg font-semibold">Customer Balance & Aging Analysis</h3>
+							<div className={deskBookTabPanelClassName}>
+								<div className="flex justify-between items-center mb-2">
+									<h3 className="text-sm font-semibold text-gray-800">Customer Balance & Aging Analysis</h3>
 									<div className="flex items-center gap-2">
-										<Chip color="primary" variant="flat">{customerAging.length} customers</Chip>
 										<Dropdown>
 											<DropdownTrigger>
 												<Button variant="flat" size="sm">📥 Export</Button>
@@ -2187,76 +2366,80 @@ export default function AccountsReceivable() {
 										</Dropdown>
 								</div>
 								</div>
-								<div className="max-h-[560px] overflow-y-auto">
-								<Table aria-label="Customer aging">
+								{renderFilters(false)}
+								<div ref={agingCols.frameRef} style={agingCols.frameStyle}>
+								<Table removeWrapper classNames={deskResizableTableClassNames()} aria-label="Customer aging">
 									<TableHeader>
-										<TableColumn>CUSTOMER</TableColumn>
-										<TableColumn>SOURCE</TableColumn>
-										<TableColumn align="end">INVOICED</TableColumn>
-										<TableColumn align="end">PAID</TableColumn>
-										<TableColumn align="end">BALANCE</TableColumn>
-										<TableColumn align="end">CURRENT</TableColumn>
-										<TableColumn align="end">1-30 DAYS</TableColumn>
-										<TableColumn align="end">31-60 DAYS</TableColumn>
-										<TableColumn align="end">61-90 DAYS</TableColumn>
-										<TableColumn align="end">90+ DAYS</TableColumn>
+										{agingColumn('customer', 'Customer')}
+										{agingColumn('source', 'Source')}
+										{agingColumn('invoiced', 'Invoiced', 'right')}
+										{agingColumn('paid', 'Paid', 'right')}
+										{agingColumn('balance', 'Balance', 'right')}
+										{agingColumn('current', 'Current', 'right')}
+										{agingColumn('days30', '1-30 days', 'right')}
+										{agingColumn('days60', '31-60 days', 'right')}
+										{agingColumn('days90', '61-90 days', 'right')}
+										{agingColumn('over90', '90+ days', 'right')}
 									</TableHeader>
 									<TableBody emptyContent="No customer data.">
-										{customerAging.map((c: any) => {
+										{agingPaging.paged.map((c: any) => {
 											const source = getSourceLabel(c.source);
 											return (
-												<TableRow key={c.customerId}>
+												<TableRow key={c.customerId} className={rowClassNames(false)} onClick={() => openAgingCustomer(c)}>
 												<TableCell>
-														<div className="font-medium">{c.customerName}</div>
+														<div className="font-medium text-blue-600 hover:underline">{c.customerName}</div>
 														<div className="text-xs text-gray-500">{c.invoiceCount} invoices</div>
 												</TableCell>
 													<TableCell>
 														<Chip size="sm" color={source.color} variant="flat">{source.icon}</Chip>
 													</TableCell>
-													<TableCell className="text-right">{formatAccountingCurrency(c.totalInvoiced)}</TableCell>
-													<TableCell className="text-right text-green-600">{formatAccountingCurrency(c.totalPaid)}</TableCell>
-													<TableCell className={`text-right font-bold ${c.balance < -0.005 ? 'text-sky-700' : ''}`}>{c.balance < -0.005 ? `−${formatAccountingCurrency(c.balance)}` : formatAccountingCurrency(c.balance)}</TableCell>
-													<TableCell className="text-right">{c.current > 0 ? `${formatAccountingCurrency(c.current)}` : '-'}</TableCell>
-													<TableCell className="text-right text-yellow-600">{c.days30 > 0 ? `${formatAccountingCurrency(c.days30)}` : '-'}</TableCell>
-													<TableCell className="text-right text-orange-600">{c.days60 > 0 ? `${formatAccountingCurrency(c.days60)}` : '-'}</TableCell>
-													<TableCell className="text-right text-red-500">{c.days90 > 0 ? `${formatAccountingCurrency(c.days90)}` : '-'}</TableCell>
-													<TableCell className="text-right text-red-700 font-medium">{c.over90 > 0 ? `${formatAccountingCurrency(c.over90)}` : '-'}</TableCell>
+													<TableCell className="tabular-nums text-right">{formatAccountingCurrency(c.totalInvoiced)}</TableCell>
+													<TableCell className="tabular-nums text-right text-green-600">{formatAccountingCurrency(c.totalPaid)}</TableCell>
+													<TableCell className={`tabular-nums text-right font-bold ${c.balance < -0.005 ? 'text-sky-700' : ''}`}>{c.balance < -0.005 ? `−${formatAccountingCurrency(c.balance)}` : formatAccountingCurrency(c.balance)}</TableCell>
+													<TableCell className="tabular-nums text-right">{c.current > 0 ? `${formatAccountingCurrency(c.current)}` : '-'}</TableCell>
+													<TableCell className="tabular-nums text-right text-yellow-600">{c.days30 > 0 ? `${formatAccountingCurrency(c.days30)}` : '-'}</TableCell>
+													<TableCell className="tabular-nums text-right text-orange-600">{c.days60 > 0 ? `${formatAccountingCurrency(c.days60)}` : '-'}</TableCell>
+													<TableCell className="tabular-nums text-right text-red-500">{c.days90 > 0 ? `${formatAccountingCurrency(c.days90)}` : '-'}</TableCell>
+													<TableCell className="tabular-nums text-right text-red-700 font-medium">{c.over90 > 0 ? `${formatAccountingCurrency(c.over90)}` : '-'}</TableCell>
 											</TableRow>
 											);
 										})}
 									</TableBody>
 								</Table>
 								</div>
+								<div className="mt-3 flex justify-end">
+									<Pagination page={agingPaging.page} total={agingPaging.pages} onChange={agingPaging.setPage} showControls size="sm" />
+								</div>
 
 								{/* Aging Summary */}
 								<div className="mt-6 grid grid-cols-5 gap-4">
 									<Card className="bg-green-50">
 										<CardBody className="text-center py-3">
-											<div className="text-lg font-bold text-green-700">{formatAccountingCurrency(customerAging.reduce((s, c) => s + c.current, 0))}</div>
+											<div className="text-lg font-bold text-green-700">{formatAccountingCurrency(filteredAging.reduce((s, c) => s + c.current, 0))}</div>
 											<div className="text-xs text-green-600">Current</div>
 										</CardBody>
 									</Card>
 									<Card className="bg-yellow-50">
 										<CardBody className="text-center py-3">
-											<div className="text-lg font-bold text-yellow-700">{formatAccountingCurrency(customerAging.reduce((s, c) => s + c.days30, 0))}</div>
+											<div className="text-lg font-bold text-yellow-700">{formatAccountingCurrency(filteredAging.reduce((s, c) => s + c.days30, 0))}</div>
 											<div className="text-xs text-yellow-600">1-30 Days</div>
 										</CardBody>
 									</Card>
 									<Card className="bg-orange-50">
 										<CardBody className="text-center py-3">
-											<div className="text-lg font-bold text-orange-700">{formatAccountingCurrency(customerAging.reduce((s, c) => s + c.days60, 0))}</div>
+											<div className="text-lg font-bold text-orange-700">{formatAccountingCurrency(filteredAging.reduce((s, c) => s + c.days60, 0))}</div>
 											<div className="text-xs text-orange-600">31-60 Days</div>
 										</CardBody>
 									</Card>
 									<Card className="bg-red-50">
 										<CardBody className="text-center py-3">
-											<div className="text-lg font-bold text-red-600">{formatAccountingCurrency(customerAging.reduce((s, c) => s + c.days90, 0))}</div>
+											<div className="text-lg font-bold text-red-600">{formatAccountingCurrency(filteredAging.reduce((s, c) => s + c.days90, 0))}</div>
 											<div className="text-xs text-red-500">61-90 Days</div>
 										</CardBody>
 									</Card>
 									<Card className="bg-red-100">
 										<CardBody className="text-center py-3">
-											<div className="text-lg font-bold text-red-800">{formatAccountingCurrency(customerAging.reduce((s, c) => s + c.over90, 0))}</div>
+											<div className="text-lg font-bold text-red-800">{formatAccountingCurrency(filteredAging.reduce((s, c) => s + c.over90, 0))}</div>
 											<div className="text-xs text-red-700">90+ Days</div>
 										</CardBody>
 									</Card>
@@ -2268,7 +2451,7 @@ export default function AccountsReceivable() {
 						    split by isProforma; toggle below switches which subset renders instead of
 						    forcing two separate top-level tabs for what is one invoice ledger. */}
 						<Tab key="invoices" title={`🧾 Invoices (${allSalesInvoices.length})`}>
-							<div className="p-6">
+							<div className={deskBookTabPanelClassName}>
 								<div className="flex justify-between items-center mb-4">
 									<div className="flex items-center gap-3">
 										<h3 className="text-lg font-semibold">{invoiceDocType === 'sales' ? 'Sales Invoices' : 'Proforma Invoices'}</h3>
@@ -2291,8 +2474,6 @@ export default function AccountsReceivable() {
 									</div>
 									{invoiceDocType === 'sales' ? (
 										<div className="flex items-center gap-2">
-											<Chip color="primary" variant="flat">{filteredSalesInvoices.length} invoices</Chip>
-											<Chip color="success" variant="flat">{formatAccountingCurrency(filteredSalesInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0))}</Chip>
 											<Dropdown>
 												<DropdownTrigger>
 													<Button variant="flat" size="sm">📥 Export</Button>
@@ -2306,8 +2487,6 @@ export default function AccountsReceivable() {
 										</div>
 									) : (
 										<div className="flex items-center gap-2">
-											<Chip color="secondary" variant="flat">{filteredProformas.length} proformas</Chip>
-											<Chip color="warning" variant="flat">{formatAccountingCurrency(filteredProformas.reduce((s: number, i: any) => s + (i.total || 0), 0))}</Chip>
 											<Dropdown>
 												<DropdownTrigger>
 													<Button variant="flat" size="sm">📥 Export</Button>
@@ -2324,12 +2503,12 @@ export default function AccountsReceivable() {
 								{invoiceDocType === 'sales' ? (
 									<>
 										{renderFilters(true)}
-										{renderSalesInvoiceTable(filteredSalesInvoices)}
+										{renderSalesInvoiceTable()}
 									</>
 								) : (
 									<>
 										{renderFilters(false)}
-										{renderProformaTable(filteredProformas)}
+										{renderProformaTable()}
 									</>
 								)}
 							</div>
@@ -2337,12 +2516,10 @@ export default function AccountsReceivable() {
 
 						{/* Receipts Tab */}
 						<Tab key="receipts" title={`💳 Receipts (${receipts.length})`}>
-							<div className="p-6">
+							<div className={deskBookTabPanelClassName}>
 								<div className="flex justify-between items-center mb-4">
                                     <h3 className="text-lg font-semibold">Customer Receipts</h3>
 									<div className="flex items-center gap-2">
-										<Chip color="success" variant="flat">{filteredReceipts.length} receipts</Chip>
-										<Chip color="primary" variant="flat">{formatAccountingCurrency(filteredReceipts.reduce((s: number, r: any) => s + (r.amount || 0), 0))}</Chip>
 										<Dropdown>
 											<DropdownTrigger>
 												<Button variant="flat" size="sm">📥 Export</Button>
@@ -2358,27 +2535,25 @@ export default function AccountsReceivable() {
 								</div>
 								{renderFilters(false)}
 								
-								<Table aria-label="Customer receipts">
+								<div ref={receiptCols.frameRef} style={receiptCols.frameStyle}>
+								<Table removeWrapper classNames={deskResizableTableClassNames()} aria-label="Customer receipts">
                                     <TableHeader>
-                                        <TableColumn>RECEIPT #</TableColumn>
-										<TableColumn>SOURCE</TableColumn>
-                                        <TableColumn>CUSTOMER</TableColumn>
-                                        <TableColumn>DATE</TableColumn>
-										<TableColumn>TIME</TableColumn>
-                                        <TableColumn>METHOD</TableColumn>
-										<TableColumn>STAFF</TableColumn>
-										<TableColumn>INVOICE</TableColumn>
-										<TableColumn align="end">AMOUNT</TableColumn>
-                                        <TableColumn>STATUS</TableColumn>
-										<TableColumn>ACTIONS</TableColumn>
+                                        {receiptColumn('receipt', 'Receipt #')}
+										{receiptColumn('source', 'Source')}
+                                        {receiptColumn('customer', 'Customer')}
+                                        {receiptColumn('date', 'Date')}
+										{receiptColumn('time', 'Time')}
+                                        {receiptColumn('method', 'Method')}
+										{receiptColumn('staff', 'Staff')}
+										{receiptColumn('invoice', 'Invoice')}
+                                        {receiptColumn('amount', 'Amount', 'right')}
+                                        {receiptColumn('status', 'Status')}
                                     </TableHeader>
                                     <TableBody emptyContent="No receipts found.">
-										{getPaginatedData(filteredReceipts, page).map((r: any) => {
+										{receiptPaging.paged.map((r: any) => {
 											const source = getSourceLabel(r.sourceModule);
-											const canEdit = receiptCanEdit(r);
-											const canVoid = receiptCanVoid(r) && settings.hasPermission('accounting.void-transaction');
 											return (
-												<TableRow key={r.id} className="cursor-pointer hover:bg-gray-50" onClick={() => openReceiptDetail(r)}>
+												<TableRow key={r.id} className={rowClassNames(selectedReceipt?.id === r.id)} onClick={() => openReceiptDetail(r)}>
 													<TableCell>
 														<span className="font-mono text-sm text-blue-600 hover:underline">{r.paymentNumber || r.id}</span>
 													</TableCell>
@@ -2402,57 +2577,26 @@ export default function AccountsReceivable() {
 															<span className="font-mono text-xs text-blue-600">{r.invoiceId.slice(0, 15)}...</span>
 														) : '-'}
 													</TableCell>
-													<TableCell className="text-right font-medium text-green-600">{formatAccountingCurrency(Number(r.amount || 0))}</TableCell>
+													<TableCell className="tabular-nums text-right font-medium text-green-600">{formatAccountingCurrency(Number(r.amount || 0))}</TableCell>
 													<TableCell>
 														<Chip size="sm" color={r.status === 'Posted' ? 'success' : r.status === 'Void' ? 'danger' : 'default'} variant="flat">{r.status || 'Draft'}</Chip>
-													</TableCell>
-													<TableCell onClick={(e) => e.stopPropagation()}>
-														<Dropdown>
-															<DropdownTrigger>
-																<Button size="sm" variant="flat">Actions</Button>
-															</DropdownTrigger>
-															<DropdownMenu aria-label="Receipt actions">
-																<DropdownItem key="view" onPress={() => openReceiptDetail(r)}>
-																	🧾 View
-																</DropdownItem>
-																<DropdownItem key="print" onPress={() => printReceiptPDF(r)}>
-																	🖨️ Print
-																</DropdownItem>
-																{canEdit ? (
-																	<DropdownItem key="edit" onPress={() => openEditReceiptForm(r)}>
-																		✏️ Edit
-																	</DropdownItem>
-																) : null}
-																{canVoid ? (
-																	<DropdownItem
-																		key="void"
-																		className="text-danger"
-																		color="danger"
-																		onPress={() => handleVoidReceipt(r)}
-																	>
-																		🗑️ Void
-																	</DropdownItem>
-																) : null}
-															</DropdownMenu>
-														</Dropdown>
 													</TableCell>
                                             </TableRow>
 											);
 										})}
                                     </TableBody>
                                 </Table>
+								</div>
 								
-								{Math.ceil(filteredReceipts.length / rowsPerPage) > 1 && (
-									<div className="flex justify-center mt-4">
-										<Pagination total={Math.ceil(filteredReceipts.length / rowsPerPage)} page={page} onChange={setPage} />
-									</div>
-								)}
+								<div className="mt-3 flex justify-end">
+									<Pagination page={receiptPaging.page} total={receiptPaging.pages} onChange={receiptPaging.setPage} showControls size="sm" />
+								</div>
                             </div>
                         </Tab>
 
 						{/* WHT Certificates Tab */}
 						<Tab key="wht" title={`📜 WHT Certificates (${whtCertificates?.length || 0})`}>
-							<div className="p-6">
+							<div className={deskBookTabPanelClassName}>
 								<div className="flex justify-between items-center mb-4">
 									<h3 className="text-lg font-semibold inline-flex items-center gap-1.5">
 										WHT Certificates (Tax Credits)
@@ -2469,11 +2613,6 @@ export default function AccountsReceivable() {
 										</InfoTip>
 									</h3>
 									<div className="flex items-center gap-2">
-										<Chip color="warning" variant="flat">{filteredWHTCerts.length} certificates</Chip>
-										<Chip color="primary" variant="flat">{formatAccountingCurrency(totalWHTReceivable)} receivable</Chip>
-										{pendingWHTCerts > 0 && (
-											<Chip color="danger" variant="flat">{pendingWHTCerts} pending</Chip>
-										)}
 										<Dropdown>
 											<DropdownTrigger>
 												<Button variant="flat" size="sm">📥 Export</Button>
@@ -2488,22 +2627,22 @@ export default function AccountsReceivable() {
 
 								{renderFilters(false)}
 
-								<Table aria-label="WHT Certificates">
+								<div ref={whtCols.frameRef} style={whtCols.frameStyle}>
+								<Table removeWrapper classNames={deskResizableTableClassNames()} aria-label="WHT Certificates">
 									<TableHeader>
-										<TableColumn>CERTIFICATE #</TableColumn>
-										<TableColumn>AGENT (WHO WITHHELD)</TableColumn>
-										<TableColumn>TIN</TableColumn>
-										<TableColumn>INVOICE</TableColumn>
-										<TableColumn>TAX PERIOD</TableColumn>
-										<TableColumn align="end">WHT</TableColumn>
-										<TableColumn align="end">WHT-VAT</TableColumn>
-										<TableColumn align="end">TOTAL</TableColumn>
-										<TableColumn>STATUS</TableColumn>
-										<TableColumn>ACTIONS</TableColumn>
+										{whtColumn('certificate', 'Certificate #')}
+										{whtColumn('agent', 'Agent (who withheld)')}
+										{whtColumn('tin', 'TIN')}
+										{whtColumn('invoice', 'Invoice')}
+										{whtColumn('taxPeriod', 'Tax period')}
+										{whtColumn('wht', 'WHT', 'right')}
+										{whtColumn('whtVat', 'WHT-VAT', 'right')}
+										{whtColumn('total', 'Total', 'right')}
+										{whtColumn('status', 'Status')}
 									</TableHeader>
 									<TableBody emptyContent="No WHT certificates found. WHT certificates are created when you record payments with withholding tax.">
-										{getPaginatedData(filteredWHTCerts, page).map((cert: any) => (
-											<TableRow key={cert.id} className="cursor-pointer hover:bg-gray-50" onClick={() => openWHTDetail(cert)}>
+										{whtPaging.paged.map((cert: any) => (
+											<TableRow key={cert.id} className={rowClassNames(selectedWHTCert?.id === cert.id)} onClick={() => openWHTDetail(cert)}>
 												<TableCell>
 													<span className="font-mono text-sm text-blue-600 hover:underline">
 														{cert.certificateNumber || 'PENDING'}
@@ -2517,48 +2656,53 @@ export default function AccountsReceivable() {
 													<span className="font-mono text-xs text-gray-600">{cert.invoiceNumber}</span>
 												</TableCell>
 												<TableCell>{cert.taxPeriod}</TableCell>
-												<TableCell className="text-right font-medium">{formatAccountingCurrency(Number(cert.whtAmount || 0))}</TableCell>
-												<TableCell className="text-right font-medium">{formatAccountingCurrency(Number(cert.whtVatAmount || 0))}</TableCell>
-												<TableCell className="text-right font-bold text-amber-600">{formatAccountingCurrency(Number(cert.totalWithheld || 0))}</TableCell>
-												<TableCell>
-													<Chip 
-														size="sm" 
-														color={
-															cert.status === 'Verified' ? 'success' : 
-															cert.status === 'Received' ? 'primary' :
-															cert.status === 'Pending' ? 'warning' : 'default'
-														} 
-														variant="flat"
-													>
-														{cert.status}
-													</Chip>
-												</TableCell>
-												<TableCell>
-													{cert.status === 'Pending' && (
-														<Tooltip content="Enter GRA certificate number">
-															<Button size="sm" color="primary" variant="flat" onClick={(e) => { e.stopPropagation(); openWHTDetail(cert); }}>
-																📥 Receive cert
-															</Button>
+												<TableCell className="tabular-nums text-right font-medium">{formatAccountingCurrency(Number(cert.whtAmount || 0))}</TableCell>
+												<TableCell className="tabular-nums text-right font-medium">{formatAccountingCurrency(Number(cert.whtVatAmount || 0))}</TableCell>
+												<TableCell className="tabular-nums text-right font-bold text-amber-600">{formatAccountingCurrency(Number(cert.totalWithheld || 0))}</TableCell>
+												<TableCell onClick={(e) => e.stopPropagation()}>
+													{cert.status === 'Received' ? (
+														<Tooltip content="Click to mark as verified">
+															<Chip
+																size="sm"
+																color="primary"
+																variant="flat"
+																className="cursor-pointer"
+																onClick={() => verifyWHTCertificate(cert.id)}
+															>
+																Received · Verify
+															</Chip>
 														</Tooltip>
-													)}
-													{cert.status === 'Received' && (
-														<Tooltip content="Mark as verified">
-															<Button size="sm" color="success" variant="flat" onClick={(e) => { e.stopPropagation(); verifyWHTCertificate(cert.id); }}>
-																✓ Verify
-															</Button>
+													) : cert.status === 'Pending' ? (
+														<Tooltip content="Click to enter GRA certificate number">
+															<Chip
+																size="sm"
+																color="warning"
+																variant="flat"
+																className="cursor-pointer"
+																onClick={() => openWHTDetail(cert)}
+															>
+																Pending · Receive
+															</Chip>
 														</Tooltip>
+													) : (
+														<Chip
+															size="sm"
+															color={cert.status === 'Verified' ? 'success' : 'default'}
+															variant="flat"
+														>
+															{cert.status}
+														</Chip>
 													)}
 												</TableCell>
                                             </TableRow>
                                         ))}
                                     </TableBody>
                                 </Table>
+								</div>
 
-								{Math.ceil(filteredWHTCerts.length / rowsPerPage) > 1 && (
-									<div className="flex justify-center mt-4">
-										<Pagination total={Math.ceil(filteredWHTCerts.length / rowsPerPage)} page={page} onChange={setPage} />
-									</div>
-								)}
+								<div className="mt-3 flex justify-end">
+									<Pagination page={whtPaging.page} total={whtPaging.pages} onChange={whtPaging.setPage} showControls size="sm" />
+								</div>
                             </div>
                         </Tab>
 

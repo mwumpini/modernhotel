@@ -150,18 +150,17 @@ export default function FrontofficeNightAudit() {
     : lastRun ? shortDay(lastRun.businessDate) : '';
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="max-w-2xl">
           <h3 className="text-lg font-semibold text-ghana-black">Night Audit</h3>
-          <p className="mt-1 text-sm text-gray-600">
-            Business date <strong className="text-ghana-black">{dateLabel}</strong>.
-            Closing it posts one room night for each guest still in house, marks arrivals who never checked in as no-show, then opens the next day.
-            {behind ? ' This date is behind the calendar, so one run closes each missed day and leaves today open.' : ''}
+          <p className="mt-0.5 text-sm text-gray-600">
+            Business date <strong className="text-ghana-black">{dateLabel}</strong>
+            {behind ? ' — behind calendar' : ''}
           </p>
-          <p className="mt-1 text-xs text-gray-500">
+          <p className="mt-0.5 text-xs text-gray-500">
             {lastNightAuditAt ? `Last run ${new Date(lastNightAuditAt).toLocaleString()}. ` : ''}
-            Also runs by itself at 1:00 AM. History is under Reports &amp; Analysis.
+            Auto at 1:00 AM · History under Reports &amp; Analysis
           </p>
         </div>
         <Button

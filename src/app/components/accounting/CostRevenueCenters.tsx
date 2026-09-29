@@ -1,7 +1,28 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import {
+  Table,
+  TableHeader,
+  TableColumn,
+  TableBody,
+  TableRow,
+  TableCell,
+  Pagination,
+  Chip,
+  Button,
+  Modal,
+  ModalContent,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
+  Tabs,
+  Tab,
+} from '@heroui/react';
 import HeadingInfo from '../HeadingInfo';
+import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
+import { useDeskPagination } from '../dashboard/deskTableUi';
+import { deskBookTabsClassNames, deskBookTabPanelClassName } from '../dashboard/deskTabsUi';
 import { useAccountingStore } from '../../lib/accounting/store';
 import type { CostCenter, RevenueCenter } from '../../lib/accounting/models';
 import { formatAccountingCurrency } from '../../lib/accounting/tenantAccountingConfig';
@@ -13,6 +34,22 @@ import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accoun
 function fmt(amount: number): string {
   return (amount < 0 ? '-' : '') + formatAccountingCurrency(amount);
 }
+
+type CenterSortKey = 'code' | 'name' | 'department' | 'budget' | 'actual' | 'variance' | 'status';
+type ViewKind = 'cost' | 'revenue' | null;
+type CostCenterRow = {
+  center: CostCenter;
+  actual: number;
+  variance: number;
+  variancePercent: string;
+};
+
+type RevenueCenterRow = {
+  center: RevenueCenter;
+  actual: number;
+  variance: number;
+  variancePercent: string;
+};
 
 export default function CostRevenueCenters() {
   const {
@@ -32,6 +69,20 @@ export default function CostRevenueCenters() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingCostCenter, setEditingCostCenter] = useState<CostCenter | null>(null);
   const [editingRevenueCenter, setEditingRevenueCenter] = useState<RevenueCenter | null>(null);
+  const [sortKey, setSortKey] = useState<CenterSortKey>('code');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [viewKind, setViewKind] = useState<ViewKind>(null);
+  const [viewRow, setViewRow] = useState<CostCenterRow | RevenueCenterRow | null>(null);
+  const isViewOpen = viewKind != null && viewRow != null;
+  const cols = useResizableColumns<CenterSortKey>({
+    code: 88,
+    name: 160,
+    department: 140,
+    budget: 110,
+    actual: 110,
+    variance: 140,
+    status: 88,
+  });
 
   const costDepts = ['front_office', 'housekeeping', 'food_beverage', 'kitchen', 'maintenance', 'sales_marketing', 'accounting', 'hr', 'security', 'general', 'other'];
   const revenueDepts = ['front_office', 'restaurant', 'bar', 'room_service', 'conference', 'spa', 'retail', 'other'];
@@ -86,6 +137,98 @@ export default function CostRevenueCenters() {
   const handleDeleteRevenueCenter = (center: RevenueCenter) => {
     if (!confirm(`Delete revenue centre "${center.name}" (${center.code})?`)) return;
     deleteRevenueCenter(center.id);
+  };
+
+  const costRows = useMemo(() => {
+    const enriched: CostCenterRow[] = costCenters.map((center) => {
+      const actual = computeCostCenterActual(center, journalEntries);
+      const variance = (center.budget || 0) - actual;
+      const variancePercent = center.budget ? (variance / center.budget * 100).toFixed(1) : '0';
+      return { center, actual, variance, variancePercent };
+    });
+    const value = (row: CostCenterRow): string | number => {
+      const { center } = row;
+      switch (sortKey) {
+        case 'code': return center.code.toLowerCase();
+        case 'name': return center.name.toLowerCase();
+        case 'department': return center.department.toLowerCase();
+        case 'budget': return center.budget || 0;
+        case 'actual': return row.actual;
+        case 'variance': return row.variance;
+        case 'status': return center.isActive ? 1 : 0;
+        default: return '';
+      }
+    };
+    const sorted = [...enriched].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+      return String(av).localeCompare(String(bv));
+    });
+    return sortDir === 'asc' ? sorted : sorted.reverse();
+  }, [costCenters, journalEntries, sortKey, sortDir]);
+
+  const revenueRows = useMemo(() => {
+    const enriched: RevenueCenterRow[] = revenueCenters.map((center) => {
+      const actual = computeRevenueCenterActual(center, journalEntries);
+      const variance = actual - (center.budget || 0);
+      const variancePercent = center.budget ? (variance / center.budget * 100).toFixed(1) : '0';
+      return { center, actual, variance, variancePercent };
+    });
+    const value = (row: RevenueCenterRow): string | number => {
+      const { center } = row;
+      switch (sortKey) {
+        case 'code': return center.code.toLowerCase();
+        case 'name': return center.name.toLowerCase();
+        case 'department': return center.department.toLowerCase();
+        case 'budget': return center.budget || 0;
+        case 'actual': return row.actual;
+        case 'variance': return row.variance;
+        case 'status': return center.isActive ? 1 : 0;
+        default: return '';
+      }
+    };
+    const sorted = [...enriched].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+      return String(av).localeCompare(String(bv));
+    });
+    return sortDir === 'asc' ? sorted : sorted.reverse();
+  }, [revenueCenters, journalEntries, sortKey, sortDir]);
+
+  const {
+    page: costPage,
+    setPage: setCostPage,
+    pages: costPages,
+    paged: pagedCostRows,
+  } = useDeskPagination(costRows, [sortKey, sortDir, costCenters, journalEntries]);
+
+  const {
+    page: revenuePage,
+    setPage: setRevenuePage,
+    pages: revenuePages,
+    paged: pagedRevenueRows,
+  } = useDeskPagination(revenueRows, [sortKey, sortDir, revenueCenters, journalEntries]);
+
+  const onSort = (key: CenterSortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDir(key === 'budget' || key === 'actual' || key === 'variance' ? 'desc' : 'asc');
+    }
+  };
+
+  const centerColumn = (key: CenterSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+    <TableColumn key={key} className="relative" style={cols.style(key)}>
+      <SortLabel active={sortKey === key} dir={sortDir} align={align} onPress={() => onSort(key)}>{label}</SortLabel>
+      {cols.sizer(key, label)}
+    </TableColumn>
+  );
+
+  const closeView = () => {
+    setViewKind(null);
+    setViewRow(null);
   };
 
   const exportCSV = () => {
@@ -172,193 +315,137 @@ export default function CostRevenueCenters() {
   };
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <div className="flex items-center gap-1.5">
-          <h1 className="text-2xl font-bold text-gray-900">Cost & Revenue Centers</h1>
-          <HeadingInfo label="About cost and revenue centers">Manage cost and revenue centers for financial tracking and reporting</HeadingInfo>
-        </div>
+    <div className="px-3 pt-2 pb-3 md:px-4 md:pt-3 md:pb-4">
+      <div className="mb-2 flex items-center gap-1.5">
+        <h1 className="text-lg md:text-xl font-bold text-gray-800">Cost & Revenue Centers</h1>
+        <HeadingInfo label="About cost and revenue centers">Manage cost and revenue centers for financial tracking and reporting</HeadingInfo>
       </div>
 
       {error && (
-        <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
+        <div className="mb-3 p-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
           {error}
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="mb-6 border-b border-gray-200">
-        <nav className="flex space-x-4">
-          <button
-            onClick={() => setActiveTab('cost')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 ${
-              activeTab === 'cost'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Cost Centers ({costCenters.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('revenue')}
-            className={`px-4 py-2 text-sm font-medium border-b-2 ${
-              activeTab === 'revenue'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Revenue Centers ({revenueCenters.length})
-          </button>
-        </nav>
-      </div>
+      <Tabs
+        selectedKey={activeTab}
+        onSelectionChange={(k) => setActiveTab(String(k) as 'cost' | 'revenue')}
+        className="w-full"
+        size="sm"
+        variant="solid"
+        classNames={deskBookTabsClassNames}
+        aria-label="Cost and revenue centers"
+      >
+        <Tab key="cost" title={`Cost Centers (${costCenters.length})`} />
+        <Tab key="revenue" title={`Revenue Centers (${revenueCenters.length})`} />
+      </Tabs>
 
+      <div className={`${deskBookTabPanelClassName} !px-0`}>
       {/* Add / Export Buttons */}
-      <div className="mb-4 flex justify-end gap-2">
-        <button
-          onClick={exportCSV}
-          className="px-3 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-        >
-          CSV
-        </button>
-        <button
-          onClick={printPDF}
-          className="px-3 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-        >
-          📑 PDF
-        </button>
-        <button
-          onClick={() => {
+      <div className="mb-2 flex justify-end gap-2">
+        <Button size="sm" variant="bordered" onPress={exportCSV}>CSV</Button>
+        <Button size="sm" variant="bordered" onPress={printPDF}>📑 PDF</Button>
+        <Button
+          size="sm"
+          color="primary"
+          onPress={() => {
             setEditingCostCenter(null);
             setEditingRevenueCenter(null);
             setShowAddModal(true);
           }}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
         >
           + Add {activeTab === 'cost' ? 'Cost' : 'Revenue'} Center
-        </button>
+        </Button>
       </div>
 
       {/* Cost Centers Table */}
       {activeTab === 'cost' && (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Code</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Department</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Budget</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actual</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Variance</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {costCenters.map((center) => {
-                const actual = computeCostCenterActual(center, journalEntries);
-                const variance = (center.budget || 0) - actual;
-                const variancePercent = center.budget ? (variance / center.budget * 100).toFixed(1) : '0';
-                return (
-                  <tr key={center.id}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{center.code}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{center.name}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{center.department}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{fmt(center.budget || 0)}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{fmt(actual)}</td>
-                    <td className={`px-6 py-4 whitespace-nowrap text-sm ${variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+        <div className="bg-white rounded-lg shadow">
+          <div ref={cols.frameRef} style={cols.frameStyle}>
+            <Table aria-label="Cost centers" removeWrapper classNames={deskResizableTableClassNames()}>
+              <TableHeader>
+                {centerColumn('code', 'Code')}
+                {centerColumn('name', 'Name')}
+                {centerColumn('department', 'Department')}
+                {centerColumn('budget', 'Budget', 'right')}
+                {centerColumn('actual', 'Actual', 'right')}
+                {centerColumn('variance', 'Variance', 'right')}
+                {centerColumn('status', 'Status')}
+              </TableHeader>
+              <TableBody emptyContent="No cost centers yet.">
+                {pagedCostRows.map((row) => {
+                  const { center, actual, variance, variancePercent } = row;
+                  return (
+                  <TableRow key={center.id} className={rowClassNames(viewRow?.center.id === center.id && viewKind === 'cost')} onClick={() => { setViewKind('cost'); setViewRow(row); }}>
+                    <TableCell className="font-medium text-blue-600 hover:underline">{center.code}</TableCell>
+                    <TableCell><span className="block truncate">{center.name}</span></TableCell>
+                    <TableCell className="text-gray-500">{center.department}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmt(center.budget || 0)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmt(actual)}</TableCell>
+                    <TableCell className={`text-right tabular-nums ${variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                       {variance >= 0 ? '+' : ''}{fmt(variance)} ({variancePercent}%)
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 py-1 text-xs rounded-full ${center.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                    </TableCell>
+                    <TableCell>
+                      <Chip size="sm" variant="flat" color={center.isActive ? 'success' : 'default'}>
                         {center.isActive ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                      <button
-                        onClick={() => {
-                          setEditingCostCenter(center);
-                          setShowAddModal(true);
-                        }}
-                        className="text-blue-600 hover:text-blue-900"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDeleteCostCenter(center)}
-                        className="text-red-600 hover:text-red-900"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      </Chip>
+                    </TableCell>
+                  </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="mt-3 flex justify-end px-4 pb-4">
+            <Pagination page={costPage} total={costPages} onChange={setCostPage} showControls size="sm" />
+          </div>
         </div>
       )}
 
       {/* Revenue Centers Table */}
       {activeTab === 'revenue' && (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Code</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Department</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Budget</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actual</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Variance</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {revenueCenters.map((center) => {
-                const actual = computeRevenueCenterActual(center, journalEntries);
-                const variance = actual - (center.budget || 0);
-                const variancePercent = center.budget ? (variance / center.budget * 100).toFixed(1) : '0';
-                return (
-                  <tr key={center.id}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{center.code}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{center.name}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{center.department}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{fmt(center.budget || 0)}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{fmt(actual)}</td>
-                    <td className={`px-6 py-4 whitespace-nowrap text-sm ${variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+        <div className="bg-white rounded-lg shadow">
+          <div ref={cols.frameRef} style={cols.frameStyle}>
+            <Table aria-label="Revenue centers" removeWrapper classNames={deskResizableTableClassNames()}>
+              <TableHeader>
+                {centerColumn('code', 'Code')}
+                {centerColumn('name', 'Name')}
+                {centerColumn('department', 'Department')}
+                {centerColumn('budget', 'Budget', 'right')}
+                {centerColumn('actual', 'Actual', 'right')}
+                {centerColumn('variance', 'Variance', 'right')}
+                {centerColumn('status', 'Status')}
+              </TableHeader>
+              <TableBody emptyContent="No revenue centers yet.">
+                {pagedRevenueRows.map((row) => {
+                  const { center, actual, variance, variancePercent } = row;
+                  return (
+                  <TableRow key={center.id} className={rowClassNames(viewRow?.center.id === center.id && viewKind === 'revenue')} onClick={() => { setViewKind('revenue'); setViewRow(row); }}>
+                    <TableCell className="font-medium text-blue-600 hover:underline">{center.code}</TableCell>
+                    <TableCell><span className="block truncate">{center.name}</span></TableCell>
+                    <TableCell className="text-gray-500">{center.department}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmt(center.budget || 0)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmt(actual)}</TableCell>
+                    <TableCell className={`text-right tabular-nums ${variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                       {variance >= 0 ? '+' : ''}{fmt(variance)} ({variancePercent}%)
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 py-1 text-xs rounded-full ${center.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                    </TableCell>
+                    <TableCell>
+                      <Chip size="sm" variant="flat" color={center.isActive ? 'success' : 'default'}>
                         {center.isActive ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                      <button
-                        onClick={() => {
-                          setEditingRevenueCenter(center);
-                          setShowAddModal(true);
-                        }}
-                        className="text-blue-600 hover:text-blue-900"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDeleteRevenueCenter(center)}
-                        className="text-red-600 hover:text-red-900"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      </Chip>
+                    </TableCell>
+                  </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="mt-3 flex justify-end px-4 pb-4">
+            <Pagination page={revenuePage} total={revenuePages} onChange={setRevenuePage} showControls size="sm" />
+          </div>
         </div>
       )}
+      </div>
 
       {/* Add/Edit Modal */}
       {showAddModal && (
@@ -403,6 +490,71 @@ export default function CostRevenueCenters() {
           </div>
         </div>
       )}
+
+      <Modal isOpen={isViewOpen} onOpenChange={(open) => { if (!open) closeView(); }} size="2xl">
+        <ModalContent>
+          {(onClose) => {
+            if (!viewRow || !viewKind) return null;
+            const { center, actual, variance, variancePercent } = viewRow;
+            const isCost = viewKind === 'cost';
+            return (
+              <>
+                <ModalHeader className="border-b bg-white px-6 py-4">
+                  <div className="flex justify-between items-start w-full pr-6">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="text-xl font-bold text-gray-900">{isCost ? 'COST CENTER' : 'REVENUE CENTER'}</h3>
+                        <Chip size="sm" variant="flat" color={center.isActive ? 'success' : 'default'}>
+                          {center.isActive ? 'Active' : 'Inactive'}
+                        </Chip>
+                      </div>
+                      <p className="text-lg text-gray-800">{center.name}</p>
+                      <p className="text-sm font-mono text-gray-500">{center.code}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className={`text-2xl font-bold tabular-nums ${variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {variance >= 0 ? '+' : ''}{fmt(variance)}
+                      </p>
+                      <p className="text-xs text-gray-500">Variance ({variancePercent}%)</p>
+                    </div>
+                  </div>
+                </ModalHeader>
+                <ModalBody className="p-6 bg-white text-sm">
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-1">
+                      <div><span className="text-gray-500">Department:</span> <span className="font-medium">{center.department}</span></div>
+                      <div><span className="text-gray-500">Budget:</span> <span className="tabular-nums font-medium">{fmt(center.budget || 0)}</span></div>
+                    </div>
+                    <div className="space-y-1">
+                      <div><span className="text-gray-500">Actual:</span> <span className="tabular-nums font-medium">{fmt(actual)}</span></div>
+                      <div><span className="text-gray-500">Variance:</span> <span className={`tabular-nums font-semibold ${variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmt(variance)}</span></div>
+                    </div>
+                  </div>
+                </ModalBody>
+                <ModalFooter className="border-t bg-white">
+                  <Button variant="flat" onPress={onClose}>Close</Button>
+                  <Button color="danger" variant="flat" onPress={() => {
+                    if (isCost) handleDeleteCostCenter(center as CostCenter);
+                    else handleDeleteRevenueCenter(center as RevenueCenter);
+                    closeView();
+                  }}>🗑️ Delete</Button>
+                  <Button color="primary" onPress={() => {
+                    closeView();
+                    if (isCost) {
+                      setEditingCostCenter(center as CostCenter);
+                      setEditingRevenueCenter(null);
+                    } else {
+                      setEditingRevenueCenter(center as RevenueCenter);
+                      setEditingCostCenter(null);
+                    }
+                    setShowAddModal(true);
+                  }}>✏️ Edit</Button>
+                </ModalFooter>
+              </>
+            );
+          }}
+        </ModalContent>
+      </Modal>
     </div>
   );
 }

@@ -6,10 +6,15 @@ import {
   Card, CardBody, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
   Chip,
-  Spinner, Alert, Progress, Pagination
+  Spinner, Alert, Pagination
 } from "@heroui/react";
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { downloadCSV } from '@/app/lib/accounting/helpers/exportHelpers';
+import { SortLabel, deskResizableTableClassNames, useResizableColumns } from '../frontoffice/columnResize';
+import { useDeskPagination } from '../dashboard/deskTableUi';
+import { DeskKpiStrip } from './DeskKpiStrip';
+
+type AuditSortKey = 'timestamp' | 'user' | 'action' | 'table' | 'recordId' | 'details';
 
 export default function AuditControlsPage() {
   const {
@@ -22,12 +27,15 @@ export default function AuditControlsPage() {
   const [filterAction, setFilterAction] = useState<string>('all');
   const [filterTable, setFilterTable] = useState<string>('all');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
-  const [page, setPage] = useState(1);
-  const rowsPerPage = 10;
+  const [sortKey, setSortKey] = useState<AuditSortKey>('timestamp');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const cols = useResizableColumns<AuditSortKey>({
+    timestamp: 160, user: 120, action: 100, table: 140, recordId: 120, details: 240,
+  });
 
   // Filter audit trail
   const filteredAuditTrail = useMemo(() => {
-    return auditTrail.filter(entry => {
+    const filtered = auditTrail.filter(entry => {
       const matchesSearch = entry.action.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            entry.tableName.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesAction = filterAction === 'all' || entry.action === filterAction;
@@ -39,15 +47,45 @@ export default function AuditControlsPage() {
 
       return matchesSearch && matchesAction && matchesTable && matchesStart && matchesEnd;
     });
-  }, [auditTrail, searchTerm, filterAction, filterTable, dateRange]);
+    const value = (entry: (typeof auditTrail)[0]): string | number => {
+      switch (sortKey) {
+        case 'timestamp': return new Date(entry.timestamp).getTime();
+        case 'user': return (entry.userId || '').toLowerCase();
+        case 'action': return entry.action;
+        case 'table': return entry.tableName.toLowerCase();
+        case 'recordId': return (entry.recordId || '').toLowerCase();
+        case 'details': return JSON.stringify(entry.newValues || entry.oldValues || '').toLowerCase();
+        default: return '';
+      }
+    };
+    const sorted = [...filtered].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+      return String(av).localeCompare(String(bv));
+    });
+    return sortDir === 'asc' ? sorted : sorted.reverse();
+  }, [auditTrail, searchTerm, filterAction, filterTable, dateRange, sortKey, sortDir]);
 
-  // Pagination
-  const paginatedAuditTrail = useMemo(() => {
-    const start = (page - 1) * rowsPerPage;
-    return filteredAuditTrail.slice(start, start + rowsPerPage);
-  }, [filteredAuditTrail, page]);
+  const { page, setPage, pages, paged: paginatedAuditTrail } = useDeskPagination(
+    filteredAuditTrail,
+    [searchTerm, filterAction, filterTable, dateRange, sortKey, sortDir],
+  );
 
-  const auditTrailPages = Math.ceil(filteredAuditTrail.length / rowsPerPage);
+  const onSort = (key: AuditSortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDir(key === 'timestamp' ? 'desc' : 'asc');
+    }
+  };
+
+  const column = (key: AuditSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+    <TableColumn key={key} className="relative" style={cols.style(key)}>
+      <SortLabel active={sortKey === key} dir={sortDir} align={align} onPress={() => onSort(key)}>{label}</SortLabel>
+      {cols.sizer(key, label)}
+    </TableColumn>
+  );
 
   // Get unique actions and tables for filters
   const actions = useMemo(() => {
@@ -69,50 +107,28 @@ export default function AuditControlsPage() {
   }
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <div className="flex items-center gap-1.5">
-          <h1 className="text-3xl font-bold text-gray-900">🔍 Audit & Controls</h1>
-          <HeadingInfo label="About audit and controls">Monitor system activities, audit trails, and internal controls</HeadingInfo>
-        </div>
+    <div className="px-3 pt-2 pb-3 md:px-4 md:pt-3 md:pb-4">
+      <div className="mb-2 flex items-center gap-1.5">
+        <h1 className="text-lg md:text-xl font-bold text-gray-800">🔍 Audit & Controls</h1>
+        <HeadingInfo label="About audit and controls">Monitor system activities, audit trails, and internal controls</HeadingInfo>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-        <Card>
-          <CardBody className="text-center">
-            <div className="text-2xl font-bold text-blue-600">{auditTrail.length}</div>
-            <div className="text-sm text-gray-600">Total Audit Entries</div>
-            <Progress value={100} size="sm" color="primary" className="mt-2" />
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardBody className="text-center">
-            <div className="text-2xl font-bold text-green-600">
-              {auditTrail.filter(entry => entry.action === 'Create').length}
-            </div>
-            <div className="text-sm text-gray-600">Create Operations</div>
-            <Progress value={100} size="sm" color="success" className="mt-2" />
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardBody className="text-center">
-            <div className="text-2xl font-bold text-orange-600">
-              {auditTrail.filter(entry => entry.action === 'Update').length}
-            </div>
-            <div className="text-sm text-gray-600">Update Operations</div>
-            <Progress value={100} size="sm" color="warning" className="mt-2" />
-          </CardBody>
-        </Card>
-      </div>
+      <DeskKpiStrip
+        className="mb-3"
+        items={[
+          { id: 'audit.total', label: 'Total Audit Entries', value: auditTrail.length, tone: 'text-blue-700' },
+          { id: 'audit.create', label: 'Create Operations', value: auditTrail.filter((entry) => entry.action === 'Create').length, tone: 'text-green-700' },
+          { id: 'audit.update', label: 'Update Operations', value: auditTrail.filter((entry) => entry.action === 'Update').length, tone: 'text-orange-700' },
+        ]}
+      />
 
       {/* Filters */}
-      <Card className="mb-6">
-        <CardBody>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <Card className="mb-3 shadow-sm">
+        <CardBody className="py-2.5 px-3">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
             <Input
+              size="sm"
               placeholder="Search audit trail..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -120,6 +136,7 @@ export default function AuditControlsPage() {
             />
             
             <Select
+              size="sm"
               placeholder="Filter by Action"
               selectedKeys={[filterAction]}
               onSelectionChange={(keys) => setFilterAction(Array.from(keys)[0] as string)}
@@ -130,6 +147,7 @@ export default function AuditControlsPage() {
             </Select>
 
             <Select
+              size="sm"
               placeholder="Filter by Table"
               selectedKeys={[filterTable]}
               onSelectionChange={(keys) => setFilterTable(Array.from(keys)[0] as string)}
@@ -141,12 +159,14 @@ export default function AuditControlsPage() {
 
             <div className="flex gap-2">
               <Input
+                size="sm"
                 type="date"
                 placeholder="Start Date"
                 value={dateRange.start}
                 onChange={(e) => setDateRange({...dateRange, start: e.target.value})}
               />
               <Input
+                size="sm"
                 type="date"
                 placeholder="End Date"
                 value={dateRange.end}
@@ -159,19 +179,20 @@ export default function AuditControlsPage() {
 
       {/* Error Alert */}
       {error && (
-        <Alert color="danger" className="mb-6">
+        <Alert color="danger" className="mb-3">
           {error}
         </Alert>
       )}
 
-      <Card>
+      <Card className="shadow-sm">
         <CardBody className="p-0">
-              <div className="p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold">
+              <div className="px-3 pt-2 pb-3 md:px-4 md:pb-4">
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="text-sm font-semibold text-gray-800">
                     Audit Trail ({filteredAuditTrail.length})
                   </h3>
                   <Button
+                    size="sm"
                     color="primary"
                     variant="bordered"
                     startContent={<span>📥</span>}
@@ -195,69 +216,69 @@ export default function AuditControlsPage() {
                   </Button>
                 </div>
 
-                <Table aria-label="Audit Trail">
-                  <TableHeader>
-                    <TableColumn>TIMESTAMP</TableColumn>
-                    <TableColumn>USER</TableColumn>
-                    <TableColumn>ACTION</TableColumn>
-                    <TableColumn>TABLE</TableColumn>
-                    <TableColumn>RECORD ID</TableColumn>
-                    <TableColumn>DETAILS</TableColumn>
-                  </TableHeader>
-                  <TableBody emptyContent="No audit trail entries found.">
-                    {paginatedAuditTrail.map((entry) => (
-                      <TableRow key={entry.id}>
-                        <TableCell>
-                          <span className="text-sm">
-                            {new Date(entry.timestamp).toLocaleString()}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <span className="font-medium">{entry.userId}</span>
-                        </TableCell>
-                        <TableCell>
-                          <Chip 
-                            color={
-                              entry.action === 'Create' ? 'success' : 
-                              entry.action === 'Update' ? 'warning' : 
-                              entry.action === 'Delete' ? 'danger' : 
-                              'primary'
-                            } 
-                            variant="flat" 
-                            size="sm"
-                          >
-                            {entry.action}
-                          </Chip>
-                        </TableCell>
-                        <TableCell>
-                          <span className="font-mono text-sm">{entry.tableName}</span>
-                        </TableCell>
-                        <TableCell>
-                          <span className="font-mono text-sm">{entry.recordId}</span>
-                        </TableCell>
-                        <TableCell>
-                          <div className="max-w-xs">
-                            {entry.oldValues && (
-                              <div className="text-xs text-gray-500 mb-1">
-                                Old: {JSON.stringify(entry.oldValues).substring(0, 50)}...
-                              </div>
-                            )}
-                            {entry.newValues && (
-                              <div className="text-xs text-gray-500">
-                                New: {JSON.stringify(entry.newValues).substring(0, 50)}...
-                              </div>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                {auditTrailPages > 1 && (
-                  <div className="flex justify-center mt-4">
-                    <Pagination total={auditTrailPages} page={page} onChange={setPage} showControls />
-                  </div>
-                )}
+                <div ref={cols.frameRef} style={cols.frameStyle}>
+                  <Table aria-label="Audit Trail" removeWrapper classNames={deskResizableTableClassNames()}>
+                    <TableHeader>
+                      {column('timestamp', 'Timestamp')}
+                      {column('user', 'User')}
+                      {column('action', 'Action')}
+                      {column('table', 'Table')}
+                      {column('recordId', 'Record ID')}
+                      {column('details', 'Details')}
+                    </TableHeader>
+                    <TableBody emptyContent="No audit trail entries found.">
+                      {paginatedAuditTrail.map((entry) => (
+                        <TableRow key={entry.id}>
+                          <TableCell>
+                            <span className="text-sm">
+                              {new Date(entry.timestamp).toLocaleString()}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="font-medium truncate block">{entry.userId}</span>
+                          </TableCell>
+                          <TableCell>
+                            <Chip 
+                              color={
+                                entry.action === 'Create' ? 'success' : 
+                                entry.action === 'Update' ? 'warning' : 
+                                entry.action === 'Delete' ? 'danger' : 
+                                'primary'
+                              } 
+                              variant="flat" 
+                              size="sm"
+                            >
+                              {entry.action}
+                            </Chip>
+                          </TableCell>
+                          <TableCell>
+                            <span className="font-mono text-sm truncate block">{entry.tableName}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="font-mono text-sm truncate block">{entry.recordId}</span>
+                          </TableCell>
+                          <TableCell>
+                            <div className="max-w-xs">
+                              {entry.oldValues && (
+                                <div className="text-xs text-gray-500 mb-1 truncate">
+                                  Old: {JSON.stringify(entry.oldValues).substring(0, 50)}...
+                                </div>
+                              )}
+                              {entry.newValues && (
+                                <div className="text-xs text-gray-500 truncate">
+                                  New: {JSON.stringify(entry.newValues).substring(0, 50)}...
+                                </div>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="mt-3 flex justify-end">
+                  <Pagination total={pages} page={page} onChange={setPage} showControls size="sm" />
+                </div>
               </div>
         </CardBody>
       </Card>

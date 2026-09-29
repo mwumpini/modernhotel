@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Card, CardBody, CardHeader, Button, Input, Textarea, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Badge, Progress, Tabs, Tab } from "@heroui/react";
+import { Card, CardBody, Button, Input, Textarea, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Badge, Progress, Tabs, Tab } from "@heroui/react";
 import { kitchenOpsStore, type KitchenAction, type KitchenOpRecord } from '../lib/fb/kitchenOpsStore';
 import { fetchFbOrders, openKitchenDisplay, type FbOrderDto } from '../lib/fb/api';
 import { buildLiveStationBoard, kitchenStats, type LiveStationView } from '../lib/fb/kitchenStations';
@@ -9,7 +9,10 @@ import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import KitchenDisplaySystem from './KitchenDisplaySystem';
 import DepartmentRequisitionModal from './inventory/DepartmentRequisitionModal';
 import DepartmentStockCountPanel from './inventory/DepartmentStockCountPanel';
-import DepartmentInventoryPanel from './inventory/DepartmentInventoryPanel';
+import DepartmentInventoryPanel, {
+  STOCK_KPI_SECTIONS,
+  deptInventoryVisibilityKey,
+} from './inventory/DepartmentInventoryPanel';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import ModuleExpandButton from './ModuleExpandButton';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
@@ -18,6 +21,7 @@ import { worksheetTableClassNames } from './frontoffice/StayWorksheetTable';
 import { sizedTableClassNames, useResizableColumns } from './frontoffice/columnResize';
 import { DateFilterPills, matchesDateFilter, useDateFilter } from './fb/DateFilterPills';
 import SubViewPills from './dashboard/SubViewPills';
+import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
 
 type SuppliesView = 'inventory' | 'stock-count' | 'requisitions';
 const SUPPLIES_VIEWS: { key: SuppliesView; label: string }[] = [
@@ -124,6 +128,10 @@ export default function FoodBeverageKitchen({
   const [selectedTab, setSelectedTab] = useState('kds');
   const [suppliesView, setSuppliesView] = useState<SuppliesView>('inventory');
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.kitchen', KITCHEN_DASHBOARD_SECTIONS);
+  const stockVisibility = useDashboardVisibility(deptInventoryVisibilityKey('kitchen'), STOCK_KPI_SECTIONS);
+  const onInventoryKpis = selectedTab === 'supplies' && suppliesView === 'inventory';
+  const customizeSections = onInventoryKpis ? STOCK_KPI_SECTIONS : KITCHEN_DASHBOARD_SECTIONS;
+  const customizeApi = onInventoryKpis ? stockVisibility : { isHidden, toggle: toggleSection, showAll, hiddenCount };
   const [isRecipeModalOpen, setIsRecipeModalOpen] = useState(false);
   const [viewingRecipe, setViewingRecipe] = useState<Recipe | null>(null);
   const [liveOrders, setLiveOrders] = useState<FbOrderDto[]>([]);
@@ -327,98 +335,96 @@ export default function FoodBeverageKitchen({
   };
 
   return (
-    <div className={fullPage ? 'p-6 pt-2' : 'p-6'}>
+    <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
       {/* Header */}
-      {!fullPage && (
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">👨‍🍳 Kitchen</h2>
+      <div className={`flex items-center justify-between ${fullPage ? 'mb-2' : 'mb-6'}`}>
+        <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>👨‍🍳 Kitchen</h2>
         <div className="flex items-center gap-2">
           <CustomizeViewControl
-            sections={KITCHEN_DASHBOARD_SECTIONS}
-            isHidden={isHidden}
-            toggle={toggleSection}
-            showAll={showAll}
-            hiddenCount={hiddenCount}
+            sections={customizeSections}
+            isHidden={customizeApi.isHidden}
+            toggle={customizeApi.toggle}
+            showAll={customizeApi.showAll}
+            hiddenCount={customizeApi.hiddenCount}
           />
-          <ModuleExpandButton
-            href="/kitchen/ops"
-            label="Open kitchen full page"
-          />
+          {!fullPage && (
+            <ModuleExpandButton
+              href="/kitchen/ops"
+              label="Open kitchen full page"
+            />
+          )}
         </div>
       </div>
-      )}
 
       {/* Stats Overview */}
       {!fullPage && (!isHidden('activeOrders') || !isHidden('avgPrepTime') || !isHidden('kitchenEfficiency') || !isHidden('recipesOnFile')) && (
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
         {!isHidden('activeOrders') && (
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Active Orders</p>
-                <p className="text-2xl font-bold text-ghana-black">{stats.activeCount}</p>
-                <p className="text-sm text-blue-600">{stats.urgent > 0 ? `${stats.urgent} urgent` : 'From live KDS'}</p>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <HideCardButton onHide={() => hide('activeOrders')} label="Active Orders" />
-                <div className="text-3xl">📋</div>
-              </div>
+        <Card
+          isPressable
+          className="relative cursor-pointer border border-gray-200 shadow-none"
+          onPress={() => { setSelectedTab('kds'); openKitchenDisplay(); }}
+        >
+          <CardBody className="px-4 py-3 text-center">
+            <div className="absolute right-1.5 top-1 z-10" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+              <HideCardButton onHide={() => hide('activeOrders')} label="Active Orders" />
             </div>
+            <div className="text-2xl font-semibold tabular-nums text-ghana-black">{stats.activeCount}</div>
+            <div className="text-sm leading-tight text-gray-500">Active Orders</div>
+            {stats.urgent > 0 && (
+              <div className="text-xs leading-tight text-blue-600">{stats.urgent} urgent</div>
+            )}
           </CardBody>
         </Card>
         )}
 
         {!isHidden('avgPrepTime') && (
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Avg Prep Time</p>
-                <p className="text-2xl font-bold text-ghana-black">{stats.avgPrep > 0 ? `${stats.avgPrep}min` : '—'}</p>
-                <p className="text-sm text-green-600">{stats.servedToday} served today</p>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <HideCardButton onHide={() => hide('avgPrepTime')} label="Avg Prep Time" />
-                <div className="text-3xl">⏱️</div>
-              </div>
+        <Card
+          isPressable
+          className="relative cursor-pointer border border-gray-200 shadow-none"
+          onPress={() => setSelectedTab('kds')}
+        >
+          <CardBody className="px-4 py-3 text-center">
+            <div className="absolute right-1.5 top-1 z-10" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+              <HideCardButton onHide={() => hide('avgPrepTime')} label="Avg Prep Time" />
             </div>
+            <div className="text-2xl font-semibold tabular-nums text-ghana-black">{stats.avgPrep > 0 ? `${stats.avgPrep}min` : '—'}</div>
+            <div className="text-sm leading-tight text-gray-500">Avg Prep Time</div>
+            <div className="text-xs leading-tight text-green-600">{stats.servedToday} served today</div>
           </CardBody>
         </Card>
         )}
 
         {!isHidden('kitchenEfficiency') && (
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Kitchen Efficiency</p>
-                <p className="text-2xl font-bold text-ghana-black">{avgEfficiency > 0 ? `${avgEfficiency}%` : '—'}</p>
-                <p className="text-sm text-green-600">Live station load</p>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <HideCardButton onHide={() => hide('kitchenEfficiency')} label="Kitchen Efficiency" />
-                <div className="text-3xl">🔥</div>
-              </div>
+        <Card
+          isPressable
+          className="relative cursor-pointer border border-gray-200 shadow-none"
+          onPress={() => setSelectedTab('stations')}
+        >
+          <CardBody className="px-4 py-3 text-center">
+            <div className="absolute right-1.5 top-1 z-10" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+              <HideCardButton onHide={() => hide('kitchenEfficiency')} label="Kitchen Efficiency" />
             </div>
+            <div className="text-2xl font-semibold tabular-nums text-ghana-black">{avgEfficiency > 0 ? `${avgEfficiency}%` : '—'}</div>
+            <div className="text-sm leading-tight text-gray-500">Kitchen Efficiency</div>
+            <div className="text-xs leading-tight text-green-600">Live station load</div>
           </CardBody>
         </Card>
         )}
 
         {!isHidden('recipesOnFile') && (
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Recipes on File</p>
-                <p className="text-2xl font-bold text-ghana-black">{recipes.length}</p>
-                <p className="text-sm text-gray-500">{inventoryItems.length} catalog items</p>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <HideCardButton onHide={() => hide('recipesOnFile')} label="Recipes on File" />
-                <div className="text-3xl">📖</div>
-              </div>
+        <Card
+          isPressable
+          className="relative cursor-pointer border border-gray-200 shadow-none"
+          onPress={() => setSelectedTab('recipes')}
+        >
+          <CardBody className="px-4 py-3 text-center">
+            <div className="absolute right-1.5 top-1 z-10" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+              <HideCardButton onHide={() => hide('recipesOnFile')} label="Recipes on File" />
             </div>
+            <div className="text-2xl font-semibold tabular-nums text-ghana-black">{recipes.length}</div>
+            <div className="text-sm leading-tight text-gray-500">Recipes on File</div>
+            <div className="text-xs leading-tight text-gray-500">{inventoryItems.length} catalog items</div>
           </CardBody>
         </Card>
         )}
@@ -428,8 +434,7 @@ export default function FoodBeverageKitchen({
       {/* Main Content Tabs */}
       <Card className="border-0 shadow-lg">
         {fullPage && (
-          <CardHeader className="pb-3 flex items-center justify-between gap-3">
-            <h3 className="text-xl font-semibold text-ghana-black">Kitchen</h3>
+          <div className="flex justify-end px-3 pt-2">
             <Button
               color="primary"
               size="sm"
@@ -438,13 +443,16 @@ export default function FoodBeverageKitchen({
             >
               Open Full-Screen KDS
             </Button>
-          </CardHeader>
+          </div>
         )}
-        <CardBody>
+        <CardBody className="p-0">
           <Tabs
             selectedKey={selectedTab}
             onSelectionChange={(key) => setSelectedTab(key as string)}
             className="w-full"
+            size="sm"
+            variant="solid"
+            classNames={deskBookTabsClassNames}
             aria-label="Kitchen operations"
           >
             <Tab key="kds" title="🍳 Kitchen Display" />
@@ -455,7 +463,7 @@ export default function FoodBeverageKitchen({
             <Tab key="staff" title="👥 Staff Management" />
           </Tabs>
 
-          <div className="mt-4 px-2 pb-2">
+          <div className={deskBookTabPanelClassName}>
             {selectedTab === 'kds' && (
               <div className="space-y-4">
                 <KitchenDisplaySystem embedded />

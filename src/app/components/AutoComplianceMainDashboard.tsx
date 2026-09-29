@@ -28,6 +28,7 @@ import ComplianceReports from './ComplianceReports';
 import TaxRateBuilder from './TaxRateBuilder';
 import PayrollBuilderPanel from './PayrollBuilderPanel';
 import { syncOpenSalesTaxFilings } from '../lib/compliance/salesFilingSync';
+import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 
 const VALID_TABS = ['tax', 'payroll', 'reports'] as const;
 type ComplianceTab = (typeof VALID_TABS)[number];
@@ -132,7 +133,7 @@ export default function AutoComplianceMainDashboard() {
   };
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-6 space-y-3">
       {error && (
         <Card className={`border ${error.includes('default') ? 'border-amber-200 bg-amber-50' : 'border-red-200 bg-red-50'}`}>
           <CardBody>
@@ -141,8 +142,8 @@ export default function AutoComplianceMainDashboard() {
         </Card>
       )}
 
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">⚖️ Compliance & Reports</h2>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <h2 className="text-xl font-bold text-ghana-black">⚖️ Compliance & Reports</h2>
         <div className="flex flex-wrap items-center gap-2">
           <CountrySelector />
           <Button size="sm" variant="bordered" onPress={openSettings}>
@@ -154,52 +155,52 @@ export default function AutoComplianceMainDashboard() {
         </div>
       </div>
 
-      <Card className="border border-slate-200 shadow-sm">
-        <CardBody className="p-5">
-          <div className="flex flex-wrap items-baseline divide-x divide-slate-200">
-            <div className="flex items-baseline gap-2 px-4 first:pl-0">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tax rules</span>
-              <span className="text-base font-bold text-slate-950">{metrics.taxRules}</span>
+      <Card className="border border-slate-200 shadow-none">
+        <CardBody className="px-3 py-2">
+          <div className="flex flex-wrap items-baseline gap-y-1 divide-x divide-slate-200">
+            <div className="flex items-baseline gap-1.5 px-3 first:pl-0">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Tax rules</span>
+              <span className="text-sm font-bold tabular-nums text-slate-950">{metrics.taxRules}</span>
             </div>
-            <div className="flex items-baseline gap-2 px-4">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Filing schedules</span>
-              <span className="text-base font-bold text-slate-950">{metrics.reportingRules}</span>
+            <div className="flex items-baseline gap-1.5 px-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Filing schedules</span>
+              <span className="text-sm font-bold tabular-nums text-slate-950">{metrics.reportingRules}</span>
             </div>
-            <div className="flex items-baseline gap-2 px-4">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Filed</span>
-              <span className="text-base font-bold text-slate-950">{metrics.complianceScore}%</span>
+            <div className="flex items-baseline gap-1.5 px-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Filed</span>
+              <span className="text-sm font-bold tabular-nums text-slate-950">{metrics.complianceScore}%</span>
             </div>
-            <div className="flex items-baseline gap-2 px-4">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Submitted</span>
-              <span className="text-base font-bold text-slate-950">{metrics.submitted}</span>
+            <div className="flex items-baseline gap-1.5 px-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Submitted</span>
+              <span className="text-sm font-bold tabular-nums text-slate-950">{metrics.submitted}</span>
             </div>
           </div>
         </CardBody>
       </Card>
 
       <Card className="border border-slate-200 shadow-sm">
-        <CardBody className="p-4 pt-2">
+        <CardBody className="p-3 pt-2">
           <Tabs
             selectedKey={selectedTab}
             onSelectionChange={(key) => setSelectedTab(key as ComplianceTab)}
-            color="primary"
-            variant="underlined"
+            size="sm"
+            variant="solid"
             className="w-full"
             aria-label="Compliance"
-            classNames={{ tabList: 'gap-6', cursor: 'w-full', tab: 'px-0 h-10' }}
+            classNames={deskBookTabsClassNames}
           >
             <Tab key="tax" title={tabLabels.tax}>
-              <div className="pt-4">
+              <div className="pt-2">
                 <TaxRateBuilder />
               </div>
             </Tab>
             <Tab key="payroll" title={tabLabels.payroll}>
-              <div className="pt-4">
+              <div className="pt-2">
                 <PayrollBuilderPanel />
               </div>
             </Tab>
             <Tab key="reports" title={tabLabels.reports}>
-              <div className="pt-4">
+              <div className="pt-2">
                 <ComplianceReports />
               </div>
             </Tab>

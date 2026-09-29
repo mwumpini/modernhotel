@@ -2,9 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import {
-	Card, CardBody, CardHeader, Chip, Input, Select, SelectItem, Table, TableHeader, TableColumn,
+	Card, CardBody, Chip, Input, Select, SelectItem, Table, TableHeader, TableColumn,
 	TableBody, TableRow, TableCell, Button, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
-	useDisclosure, Alert, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Tooltip,
+	useDisclosure, Alert, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Tooltip, Pagination,
 } from '@heroui/react';
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { rollupTaxLedger } from '@/app/lib/tax/ledgerRollup';
@@ -13,10 +13,15 @@ import { captureTaxRemittance } from '@/app/lib/tax/remittanceLedgerSync';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
 import BankAccountOptionLabel from '@/app/components/shared/BankAccountOptionLabel';
+import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
+import { useDeskPagination } from '../dashboard/deskTableUi';
+import { DeskKpiStrip } from './DeskKpiStrip';
 
 // formatAccountingCurrency always shows a magnitude, so the sign is reattached in front
 // of it here (net tax position can be a credit, i.e. negative).
 const fmt = (n: number) => (n < 0 ? '-' : '') + formatAccountingCurrency(n);
+
+type TaxSortKey = 'period' | 'tax' | 'gl' | 'collected' | 'withholding' | 'inputOffset' | 'payroll' | 'remitted' | 'net';
 
 const defaultRemitForm = {
 	taxCode: '',
@@ -39,16 +44,60 @@ export default function BooksTaxes() {
 	const [remitErrors, setRemitErrors] = useState<Record<string, string>>({});
 	const [remitFormError, setRemitFormError] = useState<string | null>(null);
 	const { isOpen, onOpen, onClose } = useDisclosure();
-
+	const [sortKey, setSortKey] = useState<TaxSortKey>('period');
+	const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+	const cols = useResizableColumns<TaxSortKey>({
+		period: 88, tax: 148, gl: 80, collected: 100, withholding: 108, inputOffset: 108, payroll: 96, remitted: 100, net: 100,
+	});
+	const [viewRow, setViewRow] = useState<any>(null);
+	const isViewOpen = viewRow != null;
 	const summary = useMemo(() => rollupTaxLedger(journalEntries), [journalEntries]);
 
 	const rows = useMemo(() => {
-		return summary.rows
+		const filtered = summary.rows
 			.filter((r) => (period === 'All' ? true : r.period === period))
 			.filter((r) =>
 				q ? (r.taxCode + r.period + r.taxName).toLowerCase().includes(q.toLowerCase()) : true
 			);
-	}, [summary.rows, period, q]);
+		const value = (r: (typeof filtered)[0]): string | number => {
+			switch (sortKey) {
+				case 'period': return r.period;
+				case 'tax': return r.taxName.toLowerCase();
+				case 'gl': return r.glAccountCode;
+				case 'collected': return r.outputCollected;
+				case 'withholding': return r.withholding;
+				case 'inputOffset': return r.inputOffset;
+				case 'payroll': return r.payrollWithheld;
+				case 'remitted': return r.remitted;
+				case 'net': return r.netPosition;
+				default: return '';
+			}
+		};
+		const sorted = [...filtered].sort((a, b) => {
+			const av = value(a);
+			const bv = value(b);
+			if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+			return String(av).localeCompare(String(bv));
+		});
+		return sortDir === 'asc' ? sorted : sorted.reverse();
+	}, [summary.rows, period, q, sortKey, sortDir]);
+
+	const { page, setPage, pages, paged } = useDeskPagination(rows, [period, q, sortKey, sortDir]);
+
+	const onSort = (key: TaxSortKey) => {
+		if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+		else {
+			setSortKey(key);
+			setSortDir(key === 'period' || key === 'net' || key === 'collected' || key === 'remitted' ? 'desc' : 'asc');
+		}
+	};
+
+	const column = (key: TaxSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+		<TableColumn key={key} className="relative" style={cols.style(key)}>
+			<SortLabel active={sortKey === key} dir={sortDir} align={align} onPress={() => onSort(key)}>{label}</SortLabel>
+			{cols.sizer(key, label)}
+		</TableColumn>
+	);
 
 	const totals = rows.reduce(
 		(acc, r) => {
@@ -173,21 +222,22 @@ export default function BooksTaxes() {
 	};
 
 	return (
-		<div className="space-y-4">
+		<div className="space-y-3 px-3 pt-2 pb-3 md:px-4 md:pt-3 md:pb-4">
 			{notice && (
 				<Alert color="success" className="mb-1" onClose={() => setNotice(null)}>
 					{notice}
 				</Alert>
 			)}
 
-			<div className="flex flex-wrap items-end justify-between gap-3">
-				<div className="flex flex-wrap items-end gap-3">
-					<Input label="Search" placeholder="Period or tax code..." value={q} onValueChange={setQ} className="w-64" />
+			<div className="flex flex-wrap items-end justify-between gap-2">
+				<div className="flex flex-wrap items-end gap-2">
+					<Input label="Search" placeholder="Period or tax code..." value={q} onValueChange={setQ} className="w-64" size="sm" />
 					<Select
 						label="Period"
 						selectedKeys={[period]}
 						onSelectionChange={(s: any) => setPeriod(Array.from(s)[0] as string)}
 						className="w-48"
+						size="sm"
 					>
 						{periodOptions.map((p) => (
 							<SelectItem key={p}>{p}</SelectItem>
@@ -210,79 +260,46 @@ export default function BooksTaxes() {
 				</div>
 			</div>
 
-			<Card>
-				<CardHeader>
-					<div className="flex items-center gap-3">
-						<h3 className="text-lg font-semibold">Tax Inflows & Outflows</h3>
-						<Chip size="sm" color="success" variant="flat">Live from GL</Chip>
-					</div>
-				</CardHeader>
-				<CardBody className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
-					<div>
-						<div className="text-sm text-gray-500">Output Tax Collected</div>
-						<div className="text-2xl font-semibold text-green-700">{fmt(totals.outputCollected)}</div>
-						<div className="text-xs text-gray-400">Inflow (Cr liability)</div>
-					</div>
-					<div>
-						<div className="text-sm text-gray-500">Withholding</div>
-						<div className="text-2xl font-semibold text-purple-700">{fmt(totals.withholding)}</div>
-						<div className="text-xs text-gray-400">Withheld from payees (Cr liability)</div>
-					</div>
-					<div>
-						<div className="text-sm text-gray-500">Input Tax Offset</div>
-						<div className="text-2xl font-semibold text-blue-700">{fmt(totals.inputOffset)}</div>
-						<div className="text-xs text-gray-400">Recoverable (Dr liability)</div>
-					</div>
-					<div>
-						<div className="text-sm text-gray-500">Payroll Withheld</div>
-						<div className="text-2xl font-semibold text-orange-700">{fmt(totals.payrollWithheld)}</div>
-						<div className="text-xs text-gray-400">PAYE / SSNIT</div>
-					</div>
-					<div>
-						<div className="text-sm text-gray-500 inline-flex items-center gap-1">
-							Remitted
-							{totals.remittedUnconfirmed > 0.004 && (
-								<Tooltip content={`${fmt(totals.remittedUnconfirmed)} of this wasn't posted via "Record remittance" — verify it was actually paid.`}>
-									<span className="text-amber-500 cursor-help">⚠</span>
-								</Tooltip>
-							)}
-						</div>
-						<div className="text-2xl font-semibold text-red-700">{fmt(totals.remitted)}</div>
-						<div className="text-xs text-gray-400">Outflow to GRA</div>
-					</div>
-					<div>
-						<div className="text-sm text-gray-500">Net Tax Position</div>
-						<div className="text-2xl font-semibold">{fmt(totals.netPosition)}</div>
-						<div className="text-xs text-gray-400">Owed after offsets</div>
-					</div>
-				</CardBody>
-			</Card>
+			<DeskKpiStrip
+				className="mb-0"
+				items={[
+					{ id: 'tax.output', label: 'Output Tax Collected', value: fmt(totals.outputCollected), tone: 'text-green-700' },
+					{ id: 'tax.withholding', label: 'Withholding', value: fmt(totals.withholding), tone: 'text-purple-700' },
+					{ id: 'tax.input', label: 'Input Tax Offset', value: fmt(totals.inputOffset), tone: 'text-blue-700' },
+					{ id: 'tax.payroll', label: 'Payroll Withheld', value: fmt(totals.payrollWithheld), tone: 'text-orange-700' },
+					{ id: 'tax.remitted', label: 'Remitted', value: fmt(totals.remitted), tone: 'text-red-700' },
+					{ id: 'tax.net', label: 'Net Tax Position', value: fmt(totals.netPosition), tone: 'text-gray-900' },
+				]}
+			/>
 
-			<div className="max-h-[560px] overflow-y-auto">
-			<Table aria-label="Tax ledger rows">
+			<div ref={cols.frameRef} style={cols.frameStyle}>
+			<Table aria-label="Tax ledger rows" removeWrapper classNames={deskResizableTableClassNames()}>
 				<TableHeader>
-					<TableColumn>PERIOD</TableColumn>
-					<TableColumn>TAX</TableColumn>
-					<TableColumn>GL</TableColumn>
-					<TableColumn align="end">COLLECTED</TableColumn>
-					<TableColumn align="end">WITHHOLDING</TableColumn>
-					<TableColumn align="end">INPUT OFFSET</TableColumn>
-					<TableColumn align="end">PAYROLL</TableColumn>
-					<TableColumn align="end">REMITTED</TableColumn>
-					<TableColumn align="end">NET</TableColumn>
-					<TableColumn>ACTIONS</TableColumn>
+					{column('period', 'Period')}
+					{column('tax', 'Tax')}
+					{column('gl', 'GL')}
+					{column('collected', 'Collected', 'right')}
+					{column('withholding', 'Withholding', 'right')}
+					{column('inputOffset', 'Input Offset', 'right')}
+					{column('payroll', 'Payroll', 'right')}
+					{column('remitted', 'Remitted', 'right')}
+					{column('net', 'Net', 'right')}
 				</TableHeader>
 				<TableBody emptyContent="No tax journal entries posted yet">
-					{rows.map((r) => (
-						<TableRow key={`${r.period}-${r.glAccountCode}`}>
-							<TableCell>{r.period}</TableCell>
-							<TableCell>{r.taxName}</TableCell>
+					{paged.map((r) => (
+						<TableRow
+							key={`${r.period}-${r.glAccountCode}`}
+							className={rowClassNames(viewRow?.period === r.period && viewRow?.glAccountCode === r.glAccountCode)}
+							onClick={() => setViewRow(r)}
+						>
+							<TableCell className="text-blue-600 hover:underline">{r.period}</TableCell>
+							<TableCell><span className="block truncate" title={r.taxName}>{r.taxName}</span></TableCell>
 							<TableCell>{r.glAccountCode}</TableCell>
-							<TableCell className="text-right text-green-700">{fmt(r.outputCollected)}</TableCell>
-							<TableCell className="text-right text-purple-700">{fmt(r.withholding)}</TableCell>
-							<TableCell className="text-right text-blue-700">{fmt(r.inputOffset)}</TableCell>
-							<TableCell className="text-right text-orange-700">{fmt(r.payrollWithheld)}</TableCell>
-							<TableCell className="text-right text-red-700">
+							<TableCell className="text-right tabular-nums text-green-700">{fmt(r.outputCollected)}</TableCell>
+							<TableCell className="text-right tabular-nums text-purple-700">{fmt(r.withholding)}</TableCell>
+							<TableCell className="text-right tabular-nums text-blue-700">{fmt(r.inputOffset)}</TableCell>
+							<TableCell className="text-right tabular-nums text-orange-700">{fmt(r.payrollWithheld)}</TableCell>
+							<TableCell className="text-right tabular-nums text-red-700">
 								<span className="inline-flex items-center gap-1">
 									{fmt(r.remitted)}
 									{r.remittedUnconfirmed > 0.004 && (
@@ -292,23 +309,14 @@ export default function BooksTaxes() {
 									)}
 								</span>
 							</TableCell>
-							<TableCell className="text-right font-medium">{fmt(r.netPosition)}</TableCell>
-							<TableCell>
-								{r.netPosition > 0.004 && (
-									<Button
-										size="sm"
-										variant="light"
-										color="primary"
-										onPress={() => openRemit({ taxCode: r.taxCode, period: r.period, amount: r.netPosition })}
-									>
-										Pay
-									</Button>
-								)}
-							</TableCell>
+							<TableCell className="text-right font-medium tabular-nums">{fmt(r.netPosition)}</TableCell>
 						</TableRow>
 					))}
 				</TableBody>
 			</Table>
+			</div>
+			<div className="mt-3 flex justify-end">
+				<Pagination page={page} total={pages} onChange={setPage} showControls size="sm" />
 			</div>
 
 			<Modal isOpen={isOpen} onClose={onClose}>
@@ -399,6 +407,51 @@ export default function BooksTaxes() {
 						<Button variant="bordered" onPress={onClose}>Cancel</Button>
 						<Button color="primary" onPress={handleRemit}>Record</Button>
 					</ModalFooter>
+				</ModalContent>
+			</Modal>
+
+			<Modal isOpen={isViewOpen} onOpenChange={(open) => { if (!open) setViewRow(null); }} size="2xl">
+				<ModalContent>
+					{(onClose) => {
+						if (!viewRow) return null;
+						const r = viewRow;
+						return (
+							<>
+								<ModalHeader className="border-b bg-white px-6 py-4">
+									<div className="flex justify-between items-start w-full pr-6">
+										<div>
+											<h3 className="text-xl font-bold text-gray-900">TAX POSITION</h3>
+											<p className="text-lg text-gray-800">{r.taxName}</p>
+											<p className="text-sm text-gray-500">{r.period} · GL {r.glAccountCode}</p>
+										</div>
+										<div className="text-right">
+											<p className="text-2xl font-bold tabular-nums">{fmt(r.netPosition)}</p>
+											<p className="text-xs text-gray-500">Net position</p>
+										</div>
+									</div>
+								</ModalHeader>
+								<ModalBody className="p-6 bg-white text-sm">
+									<div className="grid grid-cols-2 gap-4">
+										<div className="flex justify-between"><span className="text-gray-500">Collected</span><span className="tabular-nums text-green-700">{fmt(r.outputCollected)}</span></div>
+										<div className="flex justify-between"><span className="text-gray-500">Withholding</span><span className="tabular-nums text-purple-700">{fmt(r.withholding)}</span></div>
+										<div className="flex justify-between"><span className="text-gray-500">Input offset</span><span className="tabular-nums text-blue-700">{fmt(r.inputOffset)}</span></div>
+										<div className="flex justify-between"><span className="text-gray-500">Payroll</span><span className="tabular-nums text-orange-700">{fmt(r.payrollWithheld)}</span></div>
+										<div className="flex justify-between"><span className="text-gray-500">Remitted</span><span className="tabular-nums text-red-700">{fmt(r.remitted)}</span></div>
+										<div className="flex justify-between font-semibold"><span>Net</span><span className="tabular-nums">{fmt(r.netPosition)}</span></div>
+									</div>
+								</ModalBody>
+								<ModalFooter className="border-t bg-white">
+									<Button variant="flat" onPress={onClose}>Close</Button>
+									{r.netPosition > 0.004 && (
+										<Button color="primary" onPress={() => {
+											setViewRow(null);
+											openRemit({ taxCode: r.taxCode, period: r.period, amount: r.netPosition });
+										}}>💳 Record remittance</Button>
+									)}
+								</ModalFooter>
+							</>
+						);
+					}}
 				</ModalContent>
 			</Modal>
 		</div>

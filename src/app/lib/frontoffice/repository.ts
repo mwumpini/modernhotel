@@ -408,7 +408,7 @@ export async function listFolios(tenantId: string): Promise<Folio[]> {
   return rows.map(toStoreFolio)
 }
 
-export async function upsertFolio(tenantId: string, f: Partial<Folio>): Promise<Folio> {
+export async function upsertFolio(tenantId: string, f: Partial<Folio>): Promise<{ folio: Folio; changed: boolean }> {
   if (!f.id) throw new Error('folio id is required')
   if (!f.reservationId) throw new Error('reservationId is required')
   const existing = await prisma.guestFolio.findFirst({ where: { id: f.id, tenantId } })
@@ -432,8 +432,15 @@ export async function upsertFolio(tenantId: string, f: Partial<Folio>): Promise<
     charges: merged.charges as any,
     payments: merged.payments as any,
   }
+  // A re-send of what's already stored is a no-op: no write, and the caller skips
+  // its audit row. (undefined = "leave as is" for Prisma, so it never counts as a change.)
+  if (existing) {
+    const same = Object.entries(fields).every(([k, v]) =>
+      v === undefined || JSON.stringify(v) === JSON.stringify((existing as any)[k] ?? null))
+    if (same) return { folio: toStoreFolio(existing), changed: false }
+  }
   const row = existing
     ? await prisma.guestFolio.update({ where: { id: f.id }, data: fields as any })
     : await prisma.guestFolio.create({ data: { id: f.id, tenantId, ...fields } as any })
-  return toStoreFolio(row)
+  return { folio: toStoreFolio(row), changed: true }
 }

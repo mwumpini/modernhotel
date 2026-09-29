@@ -28,8 +28,8 @@ import {
 import { Autocomplete, AutocompleteItem } from "@heroui/react";
 import GuestSearchEmptyState from './frontoffice/GuestSearchEmptyState';
 import AttachmentUpload from './shared/AttachmentUpload';
-import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
-import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import { HideCardButton } from './dashboard/CustomizeViewControl';
+import { FoDeskKpiCustomize, FO_RESERVATIONS_KPI_SECTIONS, useFrontOfficeDeskVisibility } from './frontoffice/foDeskKpi';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { resolveGuestAddress } from '../lib/frontoffice/helpers/guests';
 import { autoAssignRoomsEnabled, useSettingsStore } from '../lib/settings/store';
@@ -204,20 +204,12 @@ const AuditLogSection = ({ reservationId }: { reservationId: string }) => {
   );
 };
 
-const RESERVATIONS_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
-  { id: 'totalReservations', label: 'Total Reservations' },
-  { id: 'confirmed', label: 'Confirmed' },
-  { id: 'checkedIn', label: 'Checked In' },
-  { id: 'businessStays', label: 'Business Stays' },
-  { id: 'thirdPartyBilling', label: 'Third Party Billing' },
-  { id: 'internationalGuests', label: 'International Guests' },
-  { id: 'pending', label: 'Pending' },
-];
+const RESERVATIONS_DASHBOARD_SECTIONS = FO_RESERVATIONS_KPI_SECTIONS;
 
 export default function ReservationsBookingsManager({ mode = 'reservation', embed = false, autoOpenNew = false, onAutoOpenConsumed, defaultArrival = '', defaultDeparture = '', onFinished }: ReservationsManagerProps) {
   const router = useRouter();
-  const { isHidden, hide, toggle: toggleStatSection, showAll: showAllStats, hiddenCount: hiddenStatsCount } =
-    useDashboardVisibility('dashboard.hidden.reservations', RESERVATIONS_DASHBOARD_SECTIONS);
+  const { isHidden, hide, hiddenCount: hiddenStatsCount, isHosted } =
+    useFrontOfficeDeskVisibility(FO_RESERVATIONS_KPI_SECTIONS);
   // Starts null (matching SSR) and is only ever set from an effect — see the
   // load-reservations effect below — so this component's first render can't
   // diverge from the server-rendered HTML.
@@ -1359,13 +1351,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           <HeadingInfo label="About reservations">Create, view, and manage room reservations and bookings</HeadingInfo>
         </div>
         <div className="flex items-center space-x-2 sm:space-x-4">
-          <CustomizeViewControl
-            sections={RESERVATIONS_DASHBOARD_SECTIONS}
-            isHidden={isHidden}
-            toggle={toggleStatSection}
-            showAll={showAllStats}
-            hiddenCount={hiddenStatsCount}
-          />
+          {!isHosted && (
+            <FoDeskKpiCustomize sections={FO_RESERVATIONS_KPI_SECTIONS} />
+          )}
           <Button
             color="primary"
             variant="flat"
@@ -1381,13 +1369,13 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       {hiddenStatsCount < RESERVATIONS_DASHBOARD_SECTIONS.length && (
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4 xl:grid-cols-7">
         {([
-          ['totalReservations', reservations.length, 'text-gray-900'],
-          ['confirmed', reservations.filter(r => r.status === 'confirmed').length, 'text-green-700'],
-          ['checkedIn', reservations.filter(r => r.status === 'checked-in').length, 'text-blue-700'],
-          ['businessStays', reservations.filter(r => ['business', 'corporate', 'conference', 'training'].includes(r.stayReason || 'personal')).length, 'text-purple-700'],
-          ['thirdPartyBilling', reservations.filter(r => r.billingPersonId).length, 'text-orange-700'],
-          ['internationalGuests', reservations.filter(r => frontOfficeStore.guests.find(g => g.id === r.guestId)?.nationality !== 'ghanaian').length, 'text-indigo-700'],
-          ['pending', reservations.filter(r => r.status === 'pending').length, 'text-yellow-700'],
+          ['res.totalReservations', reservations.length, 'text-gray-900'],
+          ['res.confirmed', reservations.filter(r => r.status === 'confirmed').length, 'text-green-700'],
+          ['res.checkedIn', reservations.filter(r => r.status === 'checked-in').length, 'text-blue-700'],
+          ['res.businessStays', reservations.filter(r => ['business', 'corporate', 'conference', 'training'].includes(r.stayReason || 'personal')).length, 'text-purple-700'],
+          ['res.thirdPartyBilling', reservations.filter(r => r.billingPersonId).length, 'text-orange-700'],
+          ['res.internationalGuests', reservations.filter(r => frontOfficeStore.guests.find(g => g.id === r.guestId)?.nationality !== 'ghanaian').length, 'text-indigo-700'],
+          ['res.pending', reservations.filter(r => r.status === 'pending').length, 'text-yellow-700'],
         ] as const).map(([id, value, tone]) => {
           if (isHidden(id)) return null;
           const label = RESERVATIONS_DASHBOARD_SECTIONS.find((card) => card.id === id)?.label || id;

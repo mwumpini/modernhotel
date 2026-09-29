@@ -174,3 +174,13 @@ export function sizedTableClassNames<T extends { th: string; td: string }>(base:
     td: `${base.td} overflow-hidden`,
   };
 }
+
+/** HeroUI Table classNames for the Desk stay-worksheet look (fixed, resizable columns). */
+export function deskResizableTableClassNames() {
+  return {
+    ...unifiedTableClassNames,
+    table: 'table-fixed w-[var(--col-table-width)] min-w-[var(--col-table-width)] max-w-none',
+    th: `${unifiedTableClassNames.th} relative`,
+    td: `${unifiedTableClassNames.td} overflow-hidden`,
+  };
+}

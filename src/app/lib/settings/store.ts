@@ -99,6 +99,7 @@ function syncApprovalThresholdsToApi(fs: SystemSettings['financialSettings']) {
       paymentApprovalThreshold: fs.paymentApprovalThreshold,
       requireApprovalForOvertime: fs.requireApprovalForOvertime,
       overtimeApprovalThreshold: fs.overtimeApprovalThreshold,
+      requireApprovalForPayroll: fs.requireApprovalForPayroll,
       roundToNearest: fs.roundToNearest,
       roundingRule: fs.roundingRule,
     }),
@@ -955,6 +956,8 @@ export interface SystemSettings {
     // sign-off; below it, Payroll/HR can approve it directly.
     requireApprovalForOvertime: boolean;
     overtimeApprovalThreshold: number;
+    // Whole-month payroll gate — when on, Payment Advice needs manager Approve before pay.
+    requireApprovalForPayroll: boolean;
   };
   
   // Communication Settings
@@ -2389,6 +2392,7 @@ const defaultSettings: SystemSettings = {
     paymentApprovalThreshold: 1000,
     requireApprovalForOvertime: true,
     overtimeApprovalThreshold: 8,
+    requireApprovalForPayroll: true,
   },
   
   // Communication Settings

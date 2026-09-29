@@ -9,6 +9,12 @@ function stripUndefined<T extends Record<string, any>>(obj: T): Partial<T> {
 }
 
 const toDate = (v: any): Date | undefined => (v == null ? undefined : new Date(v))
+/** Like toDate, but preserves explicit `null` so callers can clear nullable date columns. */
+const toDateOrNull = (v: any): Date | null | undefined => {
+  if (v === undefined) return undefined
+  if (v === null) return null
+  return new Date(v)
+}
 
 /**
  * Ownership-checked upsert: `prisma.model.upsert({ where: { id } })` has no tenant filter
@@ -116,9 +122,9 @@ function splitEmployeeData(e: Partial<Record<string, any>>) {
     ...columns,
     dateOfBirth: toDate(columns.dateOfBirth),
     hireDate: toDate(columns.hireDate),
-    terminationDate: toDate(columns.terminationDate),
-    contractEndDate: toDate(columns.contractEndDate),
-    workPermitExpiryDate: toDate(columns.workPermitExpiryDate),
+    terminationDate: toDateOrNull(columns.terminationDate),
+    contractEndDate: toDateOrNull(columns.contractEndDate),
+    workPermitExpiryDate: toDateOrNull(columns.workPermitExpiryDate),
   })
   if (Object.keys(details).length) data.details = details
   return data
@@ -883,4 +889,92 @@ export async function upsertHrOnboardingChecklist(tenantId: string, employeeId: 
     update: { tasks, completedAt },
   })
   return toStoreOnboardingChecklist(row)
+}
+
+// ---------------------------------------------------------------------------
+// Staff debts (loan / IOU / surcharge)
+// ---------------------------------------------------------------------------
+
+function toStoreStaffDebt(row: any) {
+  return {
+    id: row.id,
+    employeeId: row.employeeId,
+    type: row.type,
+    originalAmount: Number(row.originalAmount || 0),
+    remainingBalance: Number(row.remainingBalance || 0),
+    monthlyInstallment: Number(row.monthlyInstallment || 0),
+    graceMonths: Number(row.graceMonths || 0),
+    reason: row.reason ?? undefined,
+    issuedDate: row.issuedDate,
+    status: row.status,
+    notes: row.notes ?? undefined,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
+}
+
+function toStoreStaffDebtRepayment(row: any) {
+  return {
+    id: row.id,
+    debtId: row.debtId,
+    payrollRecordId: row.payrollRecordId ?? undefined,
+    amount: Number(row.amount || 0),
+    paidAt: row.paidAt,
+    notes: row.notes ?? undefined,
+    createdAt: row.createdAt,
+  }
+}
+
+export async function listHrStaffDebts(tenantId: string) {
+  const rows = await prisma.hrStaffDebt.findMany({ where: { tenantId }, orderBy: { issuedDate: 'desc' } })
+  return rows.map(toStoreStaffDebt)
+}
+
+export async function upsertHrStaffDebt(tenantId: string, id: string, debt: Record<string, any>) {
+  const data = stripUndefined({
+    ...debt,
+    issuedDate: toDate(debt.issuedDate),
+    originalAmount: debt.originalAmount,
+    remainingBalance: debt.remainingBalance,
+    monthlyInstallment: debt.monthlyInstallment,
+    graceMonths: debt.graceMonths != null ? Number(debt.graceMonths) : undefined,
+  })
+  const row = await ownershipCheckedUpsert(prisma.hrStaffDebt, id, tenantId, data, {
+    employeeId: debt.employeeId,
+    type: debt.type || 'loan',
+    originalAmount: Number(debt.originalAmount || 0),
+    remainingBalance: Number(debt.remainingBalance ?? debt.originalAmount ?? 0),
+    monthlyInstallment: Number(debt.monthlyInstallment || 0),
+    graceMonths: Number(debt.graceMonths || 0),
+  })
+  return toStoreStaffDebt(row)
+}
+
+export async function deleteHrStaffDebt(tenantId: string, id: string) {
+  const existing = await prisma.hrStaffDebt.findFirst({ where: { id, tenantId } })
+  if (!existing) return false
+  await prisma.hrStaffDebtRepayment.deleteMany({ where: { debtId: id, tenantId } })
+  await prisma.hrStaffDebt.delete({ where: { id } })
+  return true
+}
+
+export async function listHrStaffDebtRepayments(tenantId: string, debtId?: string) {
+  const rows = await prisma.hrStaffDebtRepayment.findMany({
+    where: { tenantId, ...(debtId ? { debtId } : {}) },
+    orderBy: { paidAt: 'desc' },
+  })
+  return rows.map(toStoreStaffDebtRepayment)
+}
+
+export async function upsertHrStaffDebtRepayment(tenantId: string, id: string, repayment: Record<string, any>) {
+  const data = stripUndefined({
+    ...repayment,
+    paidAt: toDate(repayment.paidAt) ?? new Date(),
+    amount: repayment.amount,
+  })
+  const row = await ownershipCheckedUpsert(prisma.hrStaffDebtRepayment, id, tenantId, data, {
+    debtId: repayment.debtId,
+    amount: Number(repayment.amount || 0),
+  })
+  return toStoreStaffDebtRepayment(row)
 }

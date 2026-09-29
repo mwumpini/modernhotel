@@ -28,6 +28,30 @@ import {
 import { logAccountingProcess } from '@/app/lib/accounting/accountingProcessLog';
 import { accountingAmountsLabel } from '@/app/lib/accounting/tenantAccountingConfig';
 import { downloadCSV, openPrintPreview } from '@/app/lib/accounting/helpers/exportHelpers';
+import { unifiedTableClassNames } from '../frontoffice/columnResize';
+import { deskBookTabsClassNames } from './DeskKpiStrip';
+
+const reportTableClassNamesBase = {
+  ...unifiedTableClassNames,
+  base: 'max-w-full overflow-x-auto',
+  table: 'w-full min-w-max',
+};
+
+/** Desk chrome for hierarchical statement tables (no sort/resize/pagination). */
+const reportTableClassNames = {
+  ...reportTableClassNamesBase,
+  th: `${unifiedTableClassNames.th} bg-slate-50 text-gray-600`,
+};
+
+const reportTableClassNamesNested = {
+  ...reportTableClassNamesBase,
+  th: `${unifiedTableClassNames.th} bg-white text-gray-500`,
+};
+
+const trialBalanceReportTableClassNames = {
+  ...reportTableClassNamesBase,
+  th: `${unifiedTableClassNames.th} bg-slate-100 text-gray-600 font-semibold`,
+};
 
 type PeriodType = 'custom' | 'month' | 'quarter' | 'year' | 'ytd';
 type ReportFormat = 'summary' | 'detailed';
@@ -1270,15 +1294,15 @@ export default function FinancialReportsPage() {
   return (
     <div className="p-3 md:p-5 max-w-7xl mx-auto">
       <Card className="shadow-sm">
-        <div className="border-b border-slate-200 px-3 md:px-4 py-2.5">
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        <div className="border-b border-slate-200 px-3 md:px-4 py-2">
+          <div className="flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
             <div className="shrink-0">
               <h1 className="text-lg md:text-xl font-bold text-gray-800">📊 Financial Reports</h1>
               <p className="text-xs text-gray-500">{accountingAmountsLabel()}</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">{periodControls}</div>
           </div>
-          <p className="text-xs text-gray-500 mt-1.5 md:hidden">{periodRangeLabel}</p>
+          <p className="text-xs text-gray-500 mt-1 md:hidden">{periodRangeLabel}</p>
         </div>
 
         <CardBody className="p-0">
@@ -1287,14 +1311,8 @@ export default function FinancialReportsPage() {
             onSelectionChange={(key) => setSelectedTab(key as string)}
             className="w-full"
             size="sm"
-            variant="underlined"
-            classNames={{
-              tabList: 'gap-0 px-2 bg-slate-50/80 border-b border-slate-200 overflow-x-auto flex-nowrap scrollbar-thin',
-              tab: 'px-2.5 sm:px-3 min-w-fit text-xs sm:text-sm',
-              tabContent: 'text-xs sm:text-sm',
-              cursor: 'bg-ghana-green',
-              panel: 'p-0',
-            }}
+            variant="solid"
+            classNames={deskBookTabsClassNames}
           >
             {/* ==================== OVERVIEW TAB ==================== */}
             <Tab key="overview" title="Overview">
@@ -1419,7 +1437,7 @@ export default function FinancialReportsPage() {
                     <div className="border-b">
                       <div className="bg-slate-100 px-4 py-2 font-semibold text-gray-700 text-sm uppercase tracking-wide">Revenue</div>
                       <div className="overflow-x-auto">
-                        <Table removeWrapper aria-label="Revenue" classNames={{ th: "bg-slate-50 text-gray-600", table: "min-w-[420px]" }}>
+                        <Table removeWrapper aria-label="Revenue" classNames={reportTableClassNames}>
                           <TableHeader>
                             <TableColumn>Account</TableColumn>
                             <TableColumn width={150} className="text-right">{compareWithPriorYear ? incomeStatementColumnLabels.current : 'Amount'}</TableColumn>
@@ -1441,7 +1459,7 @@ export default function FinancialReportsPage() {
                     <div className="border-b">
                       <div className="bg-slate-100 px-4 py-2 font-semibold text-gray-700 text-sm uppercase tracking-wide">Less: Expenses</div>
                       <div className="overflow-x-auto">
-                        <Table removeWrapper aria-label="Expenses" classNames={{ th: "bg-slate-50 text-gray-600", table: "min-w-[420px]" }}>
+                        <Table removeWrapper aria-label="Expenses" classNames={reportTableClassNames}>
                           <TableHeader>
                             <TableColumn>Account</TableColumn>
                             <TableColumn width={150} className="text-right">{compareWithPriorYear ? incomeStatementColumnLabels.current : 'Amount'}</TableColumn>
@@ -1525,7 +1543,7 @@ export default function FinancialReportsPage() {
                     <CardHeader className="bg-slate-100 py-2 border-b"><h4 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Assets</h4></CardHeader>
                     <CardBody className={`p-0 ${balanceSheetForm === 'account' ? 'flex-1 flex flex-col' : ''}`}>
                       <div className="overflow-x-auto">
-                        <Table removeWrapper aria-label="Assets" classNames={{ th: "bg-slate-50 text-gray-600", table: "min-w-[320px]" }}>
+                        <Table removeWrapper aria-label="Assets" classNames={reportTableClassNames}>
                           <TableHeader>
                             <TableColumn>Account</TableColumn>
                             <TableColumn width={120} className="text-right">{compareWithPriorYear ? balanceSheetColumnLabels.current : 'Amount'}</TableColumn>
@@ -1556,7 +1574,7 @@ export default function FinancialReportsPage() {
                       <div className="border-b">
                         <div className="bg-slate-50 px-4 py-1 font-medium text-gray-600 text-xs uppercase">Liabilities</div>
                         <div className="overflow-x-auto">
-                          <Table removeWrapper aria-label="Liabilities" classNames={{ th: "bg-white text-gray-500", table: "min-w-[320px]" }}>
+                          <Table removeWrapper aria-label="Liabilities" classNames={reportTableClassNamesNested}>
                             <TableHeader>
                               <TableColumn>Account</TableColumn>
                               <TableColumn width={120} className="text-right">{compareWithPriorYear ? balanceSheetColumnLabels.current : 'Amount'}</TableColumn>
@@ -1577,7 +1595,7 @@ export default function FinancialReportsPage() {
                       <div className="border-b">
                         <div className="bg-slate-50 px-4 py-1 font-medium text-gray-600 text-xs uppercase">Equity</div>
                         <div className="overflow-x-auto">
-                          <Table removeWrapper aria-label="Equity" classNames={{ th: "bg-white text-gray-500", table: "min-w-[320px]" }}>
+                          <Table removeWrapper aria-label="Equity" classNames={reportTableClassNamesNested}>
                             <TableHeader>
                               <TableColumn>Account</TableColumn>
                               <TableColumn width={120} className="text-right">{compareWithPriorYear ? balanceSheetColumnLabels.current : 'Amount'}</TableColumn>
@@ -1738,7 +1756,7 @@ export default function FinancialReportsPage() {
                 <Card className="shadow-none border overflow-hidden">
                   <CardBody className="p-0">
                     <div className="overflow-x-auto">
-                    <Table removeWrapper aria-label="Statement of changes in equity" classNames={{ th: 'bg-slate-50 text-gray-600', table: 'min-w-[600px]' }}>
+                    <Table removeWrapper aria-label="Statement of changes in equity" classNames={reportTableClassNames}>
                       <TableHeader>
                         <TableColumn>Description</TableColumn>
                         <TableColumn width={140} className="text-right">
@@ -1889,7 +1907,7 @@ export default function FinancialReportsPage() {
                 <Card className="shadow-none border overflow-hidden">
                   <CardBody className="p-0">
                     <div className="overflow-x-auto">
-                      <Table removeWrapper aria-label="Trial Balance" classNames={{ th: "bg-slate-100 text-gray-600 font-semibold", table: "min-w-[560px]" }}>
+                      <Table removeWrapper aria-label="Trial Balance" classNames={trialBalanceReportTableClassNames}>
                         <TableHeader>
                           <TableColumn>Account</TableColumn>
                           <TableColumn width={150} className="text-right">Debit</TableColumn>

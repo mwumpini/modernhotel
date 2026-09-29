@@ -296,11 +296,11 @@ export default function RoomAssignmentsManager({ onNewReservation }: { onNewRese
   const reservedCount = assignments.filter((assignment) => assignment.reservedGuest).length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          <h2 className="text-2xl font-bold text-ghana-black">🏠 Room Assignments</h2>
+          <h2 className="text-xl font-bold text-ghana-black">🏠 Room Assignments</h2>
           <HeadingInfo label="About room assignments">View and manage room assignments, status, and guest information</HeadingInfo>
         </div>
         <div className="flex items-center space-x-4">
@@ -316,6 +316,7 @@ export default function RoomAssignmentsManager({ onNewReservation }: { onNewRese
           <Button
             color="primary"
             variant="flat"
+            size="sm"
             onClick={onNewReservation}
           >
             ➕ New Reservation
@@ -325,39 +326,39 @@ export default function RoomAssignmentsManager({ onNewReservation }: { onNewRese
 
       {/* Status Summary */}
       <Card className="border border-gray-200 shadow-none">
-        <CardBody className="px-2 py-2">
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-4 lg:grid-cols-8">
-            <div className="text-center">
-              <div className="text-base font-semibold tabular-nums text-green-700">{statusCounts['occupied'] || 0}</div>
-              <div className="text-xs text-gray-500">🟢 Occupied</div>
+        <CardBody className="px-2 py-1.5">
+          <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4 lg:grid-cols-8">
+            <div className="text-center leading-tight">
+              <div className="text-sm font-semibold tabular-nums text-green-700">{statusCounts['occupied'] || 0}</div>
+              <div className="text-[11px] text-gray-500">🟢 Occupied</div>
             </div>
-            <div className="text-center">
-              <div className="text-base font-semibold tabular-nums text-blue-700">{reservedCount}</div>
-              <div className="text-xs text-gray-500">📌 Reserved</div>
+            <div className="text-center leading-tight">
+              <div className="text-sm font-semibold tabular-nums text-blue-700">{reservedCount}</div>
+              <div className="text-[11px] text-gray-500">📌 Reserved</div>
             </div>
-            <div className="text-center">
-              <div className="text-base font-semibold tabular-nums text-gray-600">{statusCounts['vacant'] || 0}</div>
-              <div className="text-xs text-gray-500">⚪ Vacant</div>
+            <div className="text-center leading-tight">
+              <div className="text-sm font-semibold tabular-nums text-gray-600">{statusCounts['vacant'] || 0}</div>
+              <div className="text-[11px] text-gray-500">⚪ Vacant</div>
             </div>
-            <div className="text-center">
-              <div className="text-base font-semibold tabular-nums text-yellow-700">{statusCounts['dirty'] || 0}</div>
-              <div className="text-xs text-gray-500">🟡 Dirty</div>
+            <div className="text-center leading-tight">
+              <div className="text-sm font-semibold tabular-nums text-yellow-700">{statusCounts['dirty'] || 0}</div>
+              <div className="text-[11px] text-gray-500">🟡 Dirty</div>
             </div>
-            <div className="text-center">
-              <div className="text-base font-semibold tabular-nums text-blue-700">{statusCounts['clean'] || 0}</div>
-              <div className="text-xs text-gray-500">🔵 Clean</div>
+            <div className="text-center leading-tight">
+              <div className="text-sm font-semibold tabular-nums text-blue-700">{statusCounts['clean'] || 0}</div>
+              <div className="text-[11px] text-gray-500">🔵 Clean</div>
             </div>
-            <div className="text-center">
-              <div className="text-base font-semibold tabular-nums text-purple-700">{statusCounts['inspected'] || 0}</div>
-              <div className="text-xs text-gray-500">🟣 Inspected</div>
+            <div className="text-center leading-tight">
+              <div className="text-sm font-semibold tabular-nums text-purple-700">{statusCounts['inspected'] || 0}</div>
+              <div className="text-[11px] text-gray-500">🟣 Inspected</div>
             </div>
-            <div className="text-center">
-              <div className="text-base font-semibold tabular-nums text-red-700">{statusCounts['out-of-order'] || 0}</div>
-              <div className="text-xs text-gray-500">🔴 Out of Order</div>
+            <div className="text-center leading-tight">
+              <div className="text-sm font-semibold tabular-nums text-red-700">{statusCounts['out-of-order'] || 0}</div>
+              <div className="text-[11px] text-gray-500">🔴 Out of Order</div>
             </div>
-            <div className="text-center">
-              <div className="text-base font-semibold tabular-nums text-orange-700">{statusCounts['maintenance'] || 0}</div>
-              <div className="text-xs text-gray-500">🟠 Maintenance</div>
+            <div className="text-center leading-tight">
+              <div className="text-sm font-semibold tabular-nums text-orange-700">{statusCounts['maintenance'] || 0}</div>
+              <div className="text-[11px] text-gray-500">🟠 Maintenance</div>
             </div>
           </div>
         </CardBody>

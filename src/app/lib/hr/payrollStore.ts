@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { PayrollPeriod, PayrollRecord } from './models';
 import { useEmployeeStore } from './employeeStore';
+import { useStaffDebtStore, readDebtRepayments } from './staffDebtStore';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
 import { notifyError } from '../notifications/notify';
@@ -214,6 +215,12 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
       }),
     }));
     if (changed.length === 0) return true;
+
+    // Debt installment was frozen on the record at prepare; remaining balance drops only once paid.
+    for (const rec of changed) {
+      const lines = readDebtRepayments(rec.notes);
+      if (lines.length) useStaffDebtStore.getState().applyRepaymentsFromPayroll(rec.id, lines, paidAt);
+    }
 
     // The period is paid once nothing in it is left unpaid.
     const remaining = get().payrollRecords.filter((r) => r.payrollPeriodId === periodId && r.status !== 'paid' && r.status !== 'failed');

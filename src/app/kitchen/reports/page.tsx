@@ -8,7 +8,7 @@ import KitchenBackButton from '../../components/KitchenBackButton';
 export default function KitchenReportsPage() {
   return (
     <PageLayout>
-      <div className="p-6 pb-0">
+      <div className="px-3 pt-2 pb-0">
         <KitchenBackButton />
       </div>
       <KitchenReportsAnalysis />

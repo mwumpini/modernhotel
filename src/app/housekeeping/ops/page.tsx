@@ -8,7 +8,7 @@ import HousekeepingMainDashboard from '../../components/HousekeepingMainDashboar
 export default function HousekeepingOpsPage() {
   return (
     <PageLayout>
-      <div className="px-3 pt-4 pb-0">
+      <div className="px-3 pt-2 pb-0">
         <HousekeepingBackButton />
       </div>
       {/* HousekeepingMainDashboard reads useSearchParams(), which Next.js requires

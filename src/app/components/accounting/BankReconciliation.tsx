@@ -27,6 +27,7 @@ import {
   DropdownMenu,
   DropdownItem,
   Tooltip,
+  Pagination,
 } from '@heroui/react';
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { useBankReconStore } from '@/app/lib/accounting/bankReconStore';
@@ -47,6 +48,8 @@ import type { ReconcilingItem, ReconcilingItemType, ReconSide } from '@/app/lib/
 import type { BankTransaction } from '@/app/lib/accounting/models';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
+import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
+import { useDeskPagination } from '../dashboard/deskTableUi';
 
 // formatAccountingCurrency always shows a magnitude, so the sign is reattached in front
 // of it here (reconciling items can be negative adjustments).
@@ -780,7 +783,50 @@ function ItemsPanel({
   onClearCheque: (id: string, date: string) => void;
   infoTip?: string;
 }) {
+  type ItemSortKey = 'type' | 'description' | 'amount' | 'status';
   const meta = (type: ReconcilingItemType) => RECON_ITEM_TYPES.find((t) => t.type === type);
+  const [sortKey, setSortKey] = useState<ItemSortKey>('type');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [viewItem, setViewItem] = useState<ReconcilingItem | null>(null);
+  const cols = useResizableColumns<ItemSortKey>({
+    type: 140, description: 240, amount: 110, status: 128,
+  });
+
+  const sorted = useMemo(() => {
+    const value = (item: ReconcilingItem): string | number => {
+      switch (sortKey) {
+        case 'type': return (meta(item.itemType)?.label || item.itemType).toLowerCase();
+        case 'description': return (item.description || '').toLowerCase();
+        case 'amount': return item.amount;
+        case 'status': return item.journalEntryId ? 'posted' : item.isCleared ? 'cleared' : 'open';
+        default: return '';
+      }
+    };
+    const next = [...items].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+      return String(av).localeCompare(String(bv));
+    });
+    return sortDir === 'asc' ? next : next.reverse();
+  }, [items, sortKey, sortDir]);
+
+  const { page, setPage, pages, paged } = useDeskPagination(sorted, [items, sortKey, sortDir, side]);
+
+  const onSort = (key: ItemSortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDir(key === 'amount' ? 'desc' : 'asc');
+    }
+  };
+
+  const column = (key: ItemSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+    <TableColumn key={key} className="relative" style={cols.style(key)}>
+      <SortLabel active={sortKey === key} dir={sortDir} align={align} onPress={() => onSort(key)}>{label}</SortLabel>
+      {cols.sizer(key, label)}
+    </TableColumn>
+  );
 
   return (
     <Card className="shadow-sm border border-slate-200">
@@ -799,74 +845,104 @@ function ItemsPanel({
             </Button>
           )}
         </div>
-        <Table removeWrapper aria-label={title} classNames={{ th: 'text-xs' }}>
-          <TableHeader>
-            <TableColumn>TYPE</TableColumn>
-            <TableColumn>DESCRIPTION</TableColumn>
-            <TableColumn className="text-right">AMOUNT</TableColumn>
-            <TableColumn>STATUS</TableColumn>
-            <TableColumn>ACTIONS</TableColumn>
-          </TableHeader>
-          <TableBody emptyContent={`No ${side}-side items.`}>
-            {items.map((item) => {
-              const m = meta(item.itemType);
-              const deduct = m?.effect === 'deduct';
-              return (
-                <TableRow key={item.id}>
-                  <TableCell className="text-xs">{m?.label || item.itemType}</TableCell>
-                  <TableCell>
-                    <div className="text-sm">{item.description}</div>
-                    {item.reference && <div className="text-xs font-mono text-gray-400">{item.reference}</div>}
-                    {item.carriedFromItemId && (
-                      <Chip size="sm" variant="flat" className="mt-1">
-                        Carried forward
-                      </Chip>
-                    )}
-                  </TableCell>
-                  <TableCell className={`text-right font-mono text-sm ${deduct ? 'text-red-700' : ''}`}>
-                    {fmtSigned(item.amount, deduct)}
-                  </TableCell>
-                  <TableCell>
-                    {item.journalEntryId ? (
-                      <Chip size="sm" color="success" variant="flat">
-                        Posted {item.journalEntryId.slice(-6)}
-                      </Chip>
-                    ) : item.itemType === 'OUTSTANDING_CHEQUE' ? (
-                      <Chip size="sm" color={item.isCleared ? 'success' : 'warning'} variant="flat">
-                        {item.isCleared ? 'Cleared' : 'Outstanding'}
-                      </Chip>
-                    ) : (
-                      <Chip size="sm" variant="flat">
-                        Open
-                      </Chip>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {isReadOnly ? (
-                      <span className="text-gray-300 text-xs">—</span>
-                    ) : (
-                      <div className="flex gap-1">
-                        {item.itemType === 'OUTSTANDING_CHEQUE' && !item.isCleared && (
-                          <Button
-                            size="sm"
-                            variant="light"
-                            onPress={() => onClearCheque(item.id, new Date().toISOString().slice(0, 10))}
-                          >
-                            Clear
-                          </Button>
+        <div className="px-2 pb-2">
+          <div ref={cols.frameRef} style={cols.frameStyle}>
+            <Table removeWrapper aria-label={title} classNames={deskResizableTableClassNames()}>
+              <TableHeader>
+                {column('type', 'Type')}
+                {column('description', 'Description')}
+                {column('amount', 'Amount', 'right')}
+                {column('status', 'Status')}
+              </TableHeader>
+              <TableBody emptyContent={`No ${side}-side items.`}>
+                {paged.map((item) => {
+                  const m = meta(item.itemType);
+                  const deduct = m?.effect === 'deduct';
+                  return (
+                    <TableRow key={item.id} className={rowClassNames(viewItem?.id === item.id)} onClick={() => setViewItem(item)}>
+                      <TableCell className="text-xs truncate text-blue-600 hover:underline">{m?.label || item.itemType}</TableCell>
+                      <TableCell>
+                        <div className="text-sm truncate">{item.description}</div>
+                        {item.reference && <div className="text-xs font-mono text-gray-400 truncate">{item.reference}</div>}
+                        {item.carriedFromItemId && (
+                          <Chip size="sm" variant="flat" className="mt-1">
+                            Carried forward
+                          </Chip>
                         )}
-                        <Button size="sm" variant="light" color="danger" onPress={() => onDelete(item.id)}>
-                          Del
-                        </Button>
-                      </div>
-                    )}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+                      </TableCell>
+                      <TableCell className={`text-right tabular-nums text-sm ${deduct ? 'text-red-700' : ''}`}>
+                        {fmtSigned(item.amount, deduct)}
+                      </TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        {item.journalEntryId ? (
+                          <Chip size="sm" color="success" variant="flat">
+                            Posted {item.journalEntryId.slice(-6)}
+                          </Chip>
+                        ) : item.itemType === 'OUTSTANDING_CHEQUE' && !item.isCleared && !isReadOnly ? (
+                          <Chip
+                            size="sm"
+                            color="warning"
+                            variant="flat"
+                            className="cursor-pointer"
+                            onClick={() => onClearCheque(item.id, new Date().toISOString().slice(0, 10))}
+                          >
+                            Outstanding · Clear
+                          </Chip>
+                        ) : item.itemType === 'OUTSTANDING_CHEQUE' ? (
+                          <Chip size="sm" color={item.isCleared ? 'success' : 'warning'} variant="flat">
+                            {item.isCleared ? 'Cleared' : 'Outstanding'}
+                          </Chip>
+                        ) : (
+                          <Chip size="sm" variant="flat">
+                            Open
+                          </Chip>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="mt-3 flex justify-end">
+            <Pagination page={page} total={pages} onChange={setPage} showControls size="sm" />
+          </div>
+        </div>
       </CardBody>
+
+      <Modal isOpen={!!viewItem} onOpenChange={(open) => { if (!open) setViewItem(null); }} size="lg">
+        <ModalContent>
+          {(onClose) => {
+            if (!viewItem) return null;
+            const m = meta(viewItem.itemType);
+            const deduct = m?.effect === 'deduct';
+            return (
+              <>
+                <ModalHeader className="border-b bg-white px-6 py-4">
+                  <div className="pr-6">
+                    <h3 className="text-xl font-bold text-gray-900">RECONCILING ITEM</h3>
+                    <p className="text-lg text-gray-800">{m?.label || viewItem.itemType}</p>
+                  </div>
+                </ModalHeader>
+                <ModalBody className="p-6 bg-white text-sm space-y-2">
+                  <div><span className="text-gray-500">Description:</span> <span className="font-medium">{viewItem.description || '—'}</span></div>
+                  <div><span className="text-gray-500">Reference:</span> <span className="font-mono text-xs">{viewItem.reference || '—'}</span></div>
+                  <div><span className="text-gray-500">Amount:</span> <span className={`tabular-nums font-semibold ${deduct ? 'text-red-700' : ''}`}>{fmtSigned(viewItem.amount, deduct)}</span></div>
+                </ModalBody>
+                <ModalFooter className="border-t bg-white">
+                  <Button variant="flat" onPress={onClose}>Close</Button>
+                  {!isReadOnly && viewItem.itemType === 'OUTSTANDING_CHEQUE' && !viewItem.isCleared && (
+                    <Button color="primary" variant="flat" onPress={() => { onClearCheque(viewItem.id, new Date().toISOString().slice(0, 10)); setViewItem(null); }}>Clear cheque</Button>
+                  )}
+                  {!isReadOnly && (
+                    <Button color="danger" variant="flat" onPress={() => { onDelete(viewItem.id); setViewItem(null); }}>🗑️ Delete</Button>
+                  )}
+                </ModalFooter>
+              </>
+            );
+          }}
+        </ModalContent>
+      </Modal>
     </Card>
   );
 }
@@ -882,6 +958,54 @@ function RegisterTransactionsPanel({
   isReadOnly: boolean;
   onMarkCleared: (id: string) => void;
 }) {
+  type TxnSortKey = 'date' | 'reference' | 'type' | 'amount' | 'status';
+  const [sortKey, setSortKey] = useState<TxnSortKey>('date');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [viewTxn, setViewTxn] = useState<BankTransaction | null>(null);
+  const cols = useResizableColumns<TxnSortKey>({
+    date: 100, reference: 140, type: 100, amount: 110, status: 140,
+  });
+
+  const sorted = useMemo(() => {
+    const value = (txn: BankTransaction): string | number => {
+      switch (sortKey) {
+        case 'date': return new Date(txn.transactionDate).getTime();
+        case 'reference': return (txn.reference || '').toLowerCase();
+        case 'type': return (txn.type || '').toLowerCase();
+        case 'amount': return txn.amount ?? 0;
+        case 'status': return (txn.status || '').toLowerCase();
+        default: return '';
+      }
+    };
+    const next = [...transactions].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+      return String(av).localeCompare(String(bv));
+    });
+    return sortDir === 'asc' ? next : next.reverse();
+  }, [transactions, sortKey, sortDir]);
+
+  const { page, setPage, pages, paged } = useDeskPagination(sorted, [transactions, sortKey, sortDir]);
+
+  const onSort = (key: TxnSortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDir(key === 'date' || key === 'amount' ? 'desc' : 'asc');
+    }
+  };
+
+  const column = (key: TxnSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+    <TableColumn key={key} className="relative" style={cols.style(key)}>
+      <SortLabel active={sortKey === key} dir={sortDir} align={align} onPress={() => onSort(key)}>{label}</SortLabel>
+      {cols.sizer(key, label)}
+    </TableColumn>
+  );
+
+  const statusColor = (status: string) =>
+    status === 'Reconciled' ? 'success' : status === 'Cleared' ? 'primary' : 'warning';
+
   return (
     <Card className="shadow-sm border border-slate-200 mt-4">
       <CardBody className="p-0">
@@ -899,47 +1023,97 @@ function RegisterTransactionsPanel({
             </Chip>
           )}
         </div>
-        <div className="max-h-[480px] overflow-y-auto">
-        <Table removeWrapper aria-label="Register transactions" classNames={{ th: 'text-xs' }}>
-          <TableHeader>
-            <TableColumn>DATE</TableColumn>
-            <TableColumn>REFERENCE</TableColumn>
-            <TableColumn>TYPE</TableColumn>
-            <TableColumn className="text-right">AMOUNT</TableColumn>
-            <TableColumn>STATUS</TableColumn>
-            <TableColumn>ACTIONS</TableColumn>
-          </TableHeader>
-          <TableBody emptyContent="No register transactions in this period.">
-            {transactions.map((txn) => (
-              <TableRow key={txn.id}>
-                <TableCell className="text-sm">{new Date(txn.transactionDate).toLocaleDateString()}</TableCell>
-                <TableCell className="font-mono text-xs">{txn.reference}</TableCell>
-                <TableCell><Chip size="sm" variant="flat">{txn.type}</Chip></TableCell>
-                <TableCell className="text-right font-mono text-sm">{fmt(txn.amount ?? 0)}</TableCell>
-                <TableCell>
-                  <Chip
-                    size="sm"
-                    variant="flat"
-                    color={txn.status === 'Reconciled' ? 'success' : txn.status === 'Cleared' ? 'primary' : 'warning'}
+        <div className="px-2 pb-2">
+          <div ref={cols.frameRef} style={cols.frameStyle}>
+            <Table removeWrapper aria-label="Register transactions" classNames={deskResizableTableClassNames()}>
+              <TableHeader>
+                {column('date', 'Date')}
+                {column('reference', 'Reference')}
+                {column('type', 'Type')}
+                {column('amount', 'Amount', 'right')}
+                {column('status', 'Status')}
+              </TableHeader>
+              <TableBody emptyContent="No register transactions in this period.">
+                {paged.map((txn) => (
+                  <TableRow
+                    key={txn.id}
+                    className={rowClassNames(viewTxn?.id === txn.id)}
+                    onClick={() => setViewTxn(txn)}
                   >
-                    {txn.status}
-                  </Chip>
-                </TableCell>
-                <TableCell>
-                  {!isReadOnly && txn.status === 'Pending' ? (
-                    <Button size="sm" variant="light" onPress={() => onMarkCleared(txn.id)}>
-                      Mark cleared
-                    </Button>
-                  ) : (
-                    <span className="text-gray-300 text-xs">—</span>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                    <TableCell className="text-sm text-blue-600 hover:underline">
+                      {new Date(txn.transactionDate).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs truncate">{txn.reference}</TableCell>
+                    <TableCell><Chip size="sm" variant="flat">{txn.type}</Chip></TableCell>
+                    <TableCell className="text-right tabular-nums text-sm">{fmt(txn.amount ?? 0)}</TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      {!isReadOnly && txn.status === 'Pending' ? (
+                        <Chip
+                          size="sm"
+                          color="warning"
+                          variant="flat"
+                          className="cursor-pointer"
+                          onClick={() => onMarkCleared(txn.id)}
+                        >
+                          Pending · Clear
+                        </Chip>
+                      ) : (
+                        <Chip size="sm" variant="flat" color={statusColor(txn.status) as any}>
+                          {txn.status}
+                        </Chip>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="mt-3 flex justify-end">
+            <Pagination page={page} total={pages} onChange={setPage} showControls size="sm" />
+          </div>
         </div>
       </CardBody>
+
+      <Modal isOpen={!!viewTxn} onOpenChange={(open) => { if (!open) setViewTxn(null); }} size="lg">
+        <ModalContent>
+          {(onClose) => {
+            if (!viewTxn) return null;
+            return (
+              <>
+                <ModalHeader className="border-b bg-white px-6 py-4">
+                  <div className="pr-6">
+                    <h3 className="text-xl font-bold text-gray-900">REGISTER TRANSACTION</h3>
+                    <p className="text-lg text-gray-800 font-mono">{viewTxn.reference || viewTxn.id}</p>
+                  </div>
+                </ModalHeader>
+                <ModalBody className="p-6 bg-white text-sm space-y-2">
+                  <div><span className="text-gray-500">Date:</span> <span className="font-medium">{new Date(viewTxn.transactionDate).toLocaleDateString()}</span></div>
+                  <div><span className="text-gray-500">Type:</span> <span className="font-medium">{viewTxn.type}</span></div>
+                  <div><span className="text-gray-500">Amount:</span> <span className="tabular-nums font-semibold">{fmt(viewTxn.amount ?? 0)}</span></div>
+                  <div><span className="text-gray-500">Status:</span>{' '}
+                    <Chip size="sm" variant="flat" color={statusColor(viewTxn.status) as any}>{viewTxn.status}</Chip>
+                  </div>
+                  {viewTxn.description && (
+                    <div><span className="text-gray-500">Description:</span> <span className="font-medium">{viewTxn.description}</span></div>
+                  )}
+                </ModalBody>
+                <ModalFooter className="border-t bg-white">
+                  <Button variant="flat" onPress={onClose}>Close</Button>
+                  {!isReadOnly && viewTxn.status === 'Pending' && (
+                    <Button
+                      color="primary"
+                      variant="flat"
+                      onPress={() => { onMarkCleared(viewTxn.id); setViewTxn(null); }}
+                    >
+                      Mark cleared
+                    </Button>
+                  )}
+                </ModalFooter>
+              </>
+            );
+          }}
+        </ModalContent>
+      </Modal>
     </Card>
   );
 }

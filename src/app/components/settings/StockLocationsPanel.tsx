@@ -183,16 +183,16 @@ export default function StockLocationsPanel() {
   };
 
   return (
-    <div className="mt-4 space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="mt-2 space-y-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <div className="flex items-center gap-1.5">
-            <h3 className="text-xl font-semibold">Stock Locations</h3>
+            <h3 className="text-lg font-semibold">Stock Locations</h3>
             <HeadingInfo label="About stock locations">
               Shared list for Stores, Kitchen, Restaurant &amp; Bar, and Housekeeping. Defaults are seeded for each hotel — rename them, add Fridge 2 or Warehouse 1, and deactivate places you do not use.
             </HeadingInfo>
           </div>
-          <p className="mt-1 text-sm text-gray-600">
+          <p className="mt-0.5 text-xs text-gray-600">
             Stock counts, transfers, and item home location pick from this list.
           </p>
         </div>

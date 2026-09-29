@@ -21,28 +21,26 @@ export default function SecurityMainDashboard({
   const { isHidden, hide, toggle, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.security', SECURITY_DASHBOARD_SECTIONS);
 
   return (
-    <div className={fullPage ? 'p-6 pt-2' : 'p-6'}>
-      {!fullPage && (
-        <>
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-bold text-ghana-black">🚨 Security Operations</h2>
-            <div className="flex items-center gap-2">
-              <CustomizeViewControl
-                sections={SECURITY_DASHBOARD_SECTIONS}
-                isHidden={isHidden}
-                toggle={toggle}
-                showAll={showAll}
-                hiddenCount={hiddenCount}
-              />
-              <ModuleExpandButton
-                href="/security/ops"
-                label="Open security full page"
-              />
-            </div>
-          </div>
-          <DeptMessenger from="security" mode="drawer" />
-        </>
-      )}
+    <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
+      <div className={`flex items-center justify-between ${fullPage ? 'mb-2' : 'mb-6'}`}>
+        <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>🚨 Security Operations</h2>
+        <div className="flex items-center gap-2">
+          <CustomizeViewControl
+            sections={SECURITY_DASHBOARD_SECTIONS}
+            isHidden={isHidden}
+            toggle={toggle}
+            showAll={showAll}
+            hiddenCount={hiddenCount}
+          />
+          {!fullPage && (
+            <ModuleExpandButton
+              href="/security/ops"
+              label="Open security full page"
+            />
+          )}
+        </div>
+      </div>
+      {!fullPage && <DeptMessenger from="security" mode="drawer" />}
 
       <SecurityComplianceDashboard fullPage={fullPage} />
 

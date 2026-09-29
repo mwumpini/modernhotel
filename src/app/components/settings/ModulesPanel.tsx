@@ -23,21 +23,22 @@ export default function ModulesPanel() {
   const canManage = useSettingsStore((s) => s.hasPermission('settings.edit') || s.hasPermission('settings.manage-security-policy'));
 
   return (
-    <div className="space-y-4 mt-4 max-w-3xl">
+    <div className="mt-2 max-w-3xl space-y-2">
       <div>
-        <h3 className="text-xl font-semibold">Modules</h3>
-        <p className="text-sm text-gray-600">
+        <h3 className="text-lg font-semibold">Modules</h3>
+        <p className="text-xs text-gray-600">
           A switch that is off removes that area from the side menu. System Settings stays available so it can be turned back on.
         </p>
       </div>
       {MODULES.map((mod) => (
-        <Card key={mod.key}>
-          <CardBody className="flex flex-row items-center justify-between gap-4">
+        <Card key={mod.key} className="shadow-none border border-gray-200">
+          <CardBody className="flex flex-row items-center justify-between gap-3 px-3 py-2">
             <div>
-              <h4 className="font-medium">{mod.label}</h4>
-              <p className="text-sm text-gray-600">{mod.description}</p>
+              <h4 className="text-sm font-medium">{mod.label}</h4>
+              <p className="text-xs text-gray-600">{mod.description}</p>
             </div>
             <Switch
+              size="sm"
               isSelected={modules[mod.key] !== false}
               onValueChange={(on) => updateModuleSettings({ [mod.key]: on })}
               isDisabled={!canManage}

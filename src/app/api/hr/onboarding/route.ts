@@ -12,6 +12,8 @@ async function resolveTenant(req: NextRequest) {
 // GET /api/hr/onboarding — every onboarding checklist for the tenant (one per employee)
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const checklists = await listHrOnboardingChecklists(ctx.tenantId)

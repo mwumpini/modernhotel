@@ -29,7 +29,6 @@ const HOUSEKEEPING_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'quickCreate', label: 'Quick create templates' },
   { id: 'inspectionStats', label: 'Inspections summary' },
   { id: 'maintenanceStats', label: 'Maintenance summary' },
-  { id: 'inventoryStats', label: 'Inventory summary' },
   { id: 'recentActivities', label: 'Recent Activities' },
   { id: 'notices', label: 'Housekeeping Notices' },
 ];
@@ -42,12 +41,17 @@ import RoomInspectionPanel from './housekeeping/RoomInspectionPanel';
 import HousekeepingInventoryPanel from './housekeeping/HousekeepingInventoryPanel';
 import HousekeepingRequisitionsPanel from './housekeeping/HousekeepingRequisitionsPanel';
 import DepartmentStockCountPanel from './inventory/DepartmentStockCountPanel';
+import {
+  STOCK_KPI_SECTIONS,
+  deptInventoryVisibilityKey,
+} from './inventory/DepartmentInventoryPanel';
 import HousekeepingReportsAnalysis from './HousekeepingReportsAnalysis';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
 import RoomResponsibilitiesPanel from './housekeeping/RoomResponsibilitiesPanel';
 import CleaningAreasPanel from './housekeeping/CleaningAreasPanel';
 import PublicSpacesStatusGrid from './housekeeping/PublicSpacesStatusGrid';
 import SubViewPills from './dashboard/SubViewPills';
+import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
 
 /** Slim top-level tabs — Desk/Events style. Legacy keys remap below. */
 const HK_PRIMARY = ['floor', 'work', 'supplies', 'staff', 'reports'] as const;
@@ -139,6 +143,10 @@ export default function HousekeepingMainDashboard({
   const searchParams = useSearchParams();
 
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.housekeeping', HOUSEKEEPING_DASHBOARD_SECTIONS);
+  const stockVisibility = useDashboardVisibility(deptInventoryVisibilityKey('housekeeping'), STOCK_KPI_SECTIONS);
+  const onInventoryKpis = selectedTab === 'supplies' && suppliesView === 'inventory';
+  const customizeSections = onInventoryKpis ? STOCK_KPI_SECTIONS : HOUSEKEEPING_DASHBOARD_SECTIONS;
+  const customizeApi = onInventoryKpis ? stockVisibility : { isHidden, toggle: toggleSection, showAll, hiddenCount };
 
   const reservations = frontOfficeStore.reservations;
 
@@ -194,29 +202,29 @@ export default function HousekeepingMainDashboard({
 
 
   return (
-    <div className={fullPage ? 'px-3 pt-2 pb-4' : 'p-6'}>
-      {!fullPage && (
-        <>
-      <DeptMessenger from="housekeeping" mode="drawer" />
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">🛏️ Housekeeping & Maintenance</h2>
+    <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
+      {!fullPage && <DeptMessenger from="housekeeping" mode="drawer" />}
+      <div className={`flex items-center justify-between ${fullPage ? 'mb-2' : 'mb-6'}`}>
+        <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>
+          {fullPage ? '🛏️ Housekeeping' : '🛏️ Housekeeping & Maintenance'}
+        </h2>
         <div className="flex items-center gap-2">
           <CustomizeViewControl
-            sections={HOUSEKEEPING_DASHBOARD_SECTIONS}
-            isHidden={isHidden}
-            toggle={toggleSection}
-            showAll={showAll}
-            hiddenCount={hiddenCount}
+            sections={customizeSections}
+            isHidden={customizeApi.isHidden}
+            toggle={customizeApi.toggle}
+            showAll={customizeApi.showAll}
+            hiddenCount={customizeApi.hiddenCount}
           />
-          <ModuleExpandButton
-            href={selectedTab === 'reports' ? '/housekeeping/reports' : '/housekeeping/ops'}
-            label={selectedTab === 'reports' ? 'Open reports full page' : 'Open housekeeping full page'}
-          />
-          <OfflineIndicator />
+          {!fullPage && (
+            <ModuleExpandButton
+              href={selectedTab === 'reports' ? '/housekeeping/reports' : '/housekeeping/ops'}
+              label={selectedTab === 'reports' ? 'Open reports full page' : 'Open housekeeping full page'}
+            />
+          )}
+          {!fullPage && <OfflineIndicator />}
         </div>
       </div>
-        </>
-      )}
 
       {/* Room Status Overview - Following Front Desk Pattern */}
       {!fullPage && (
@@ -353,16 +361,14 @@ export default function HousekeepingMainDashboard({
       )}
 
       <Card className="border-0 shadow-lg">
-        {fullPage && (
-          <CardHeader className="pb-3 px-4 pt-4">
-            <h3 className="text-xl font-semibold text-ghana-black">Housekeeping</h3>
-          </CardHeader>
-        )}
-        <CardBody className={fullPage ? 'px-3 py-3' : undefined}>
+        <CardBody className="p-0">
           <Tabs
             selectedKey={selectedTab}
             onSelectionChange={(key) => setSelectedTab(String(key) as HkPrimary)}
             className="w-full"
+            size="sm"
+            variant="solid"
+            classNames={deskBookTabsClassNames}
             aria-label="Housekeeping operations"
           >
             <Tab key="floor" title="🏠 Floor" />
@@ -372,7 +378,7 @@ export default function HousekeepingMainDashboard({
             <Tab key="reports" title="📈 Reports" />
           </Tabs>
 
-          <div className="mt-4 px-0 pb-2">
+          <div className={deskBookTabPanelClassName}>
             {selectedTab === 'floor' && (
               <div>
                 <SubViewPills
@@ -424,12 +430,7 @@ export default function HousekeepingMainDashboard({
                   onSelect={setSuppliesView}
                   ariaLabel="Supplies views"
                 />
-                {suppliesView === 'inventory' && (
-                  <HousekeepingInventoryPanel
-                    hideStats={isHidden('inventoryStats')}
-                    onHideStats={() => hide('inventoryStats')}
-                  />
-                )}
+                {suppliesView === 'inventory' && <HousekeepingInventoryPanel />}
                 {suppliesView === 'stock-count' && (
                   <DepartmentStockCountPanel department="housekeeping" />
                 )}

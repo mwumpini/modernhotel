@@ -38,6 +38,10 @@ const TRANSFERS: Array<[string, 'kitchen' | 'restaurant', number]> = [
   ['star', 'restaurant', 3], ['club', 'restaurant', 4], ['water', 'restaurant', 5], ['soda', 'restaurant', 4],
 ]
 
+// Housekeeping supplies issued to the floors: item key, quantity, reason
+const ISSUED: Array<[string, number, string]> = [['towel', 10, 'Replacing worn towels'], ['tissue', 2, 'Weekly room supplies'], ['detergent', 5, 'Laundry']]
+const issuedQty = (key: string) => ISSUED.find(([k]) => k === key)?.[1] || 0
+
 /** The row for a shared reference (unit / category) — the hotel's own if it already has one with this code, else a sample one. */
 async function ensureRef(model: any, ctx: SampleCtx, code: string, name: string, extra: Record<string, any>): Promise<string> {
   const existing = await model.findFirst({ where: { tenantId: ctx.tenantId, code } })
@@ -62,7 +66,7 @@ export async function loadInventory(ctx: SampleCtx) {
   const itemId = (key: string) => `${p}item_${key}`
   await seedRows(prisma.inventoryItem, ITEMS.map(([key, name, category, unit, supplier, cost, price, onHand, reorder, min, max, perishable], i) => ({
     id: itemId(key), tenantId, code: `SMP-ITM-${String(i + 1).padStart(3, '0')}`, name, categoryId: categoryId.get(category), unitId: unitId.get(unit),
-    supplierId: `${p}sup_${supplier}`, defaultCost: cost, sellingPrice: price, quantityOnHand: onHand, reorderLevel: reorder, minimumStock: min, maximumStock: max,
+    supplierId: `${p}sup_${supplier}`, defaultCost: cost, sellingPrice: price, quantityOnHand: onHand - issuedQty(key), reorderLevel: reorder, minimumStock: min, maximumStock: max,
     location: 'Main Store', isPerishable: perishable, isActive: true,
   })))
 
@@ -78,6 +82,9 @@ export async function loadInventory(ctx: SampleCtx) {
       { id: `${ref}_out`, tenantId, itemId: itemId(key), type: 'transfer_out', quantity: -quantity, referenceType: 'transfer', referenceId: ref, notes: `To ${department} (sample)`, performedBy: 'Sample Storekeeper' },
       { id: `${ref}_in`, tenantId, itemId: itemId(key), locationId: location[department], type: 'transfer_in', quantity, referenceType: 'transfer', referenceId: ref, notes: `To ${department} (sample)`, performedBy: 'Sample Storekeeper' },
     )
+  }
+  for (const [key, quantity, reason] of ISSUED) {
+    transactions.push({ id: `${p}tx_issue_${key}`, tenantId, itemId: itemId(key), type: 'issue', quantity: -quantity, unitCost: ITEMS.find((x) => x[0] === key)![5], referenceType: 'goods_issue', referenceId: `${p}issue_1`, notes: `${reason} (sample)`, performedBy: 'Sample Storekeeper' })
   }
   await seedRows(prisma.inventoryTransaction, transactions)
 
@@ -108,6 +115,48 @@ export async function loadInventory(ctx: SampleCtx) {
     { id: req2, tenantId, requisitionNumber: 'SMP-REQ-002', requestedBy: 'Kofi Adjei', requestedDate: dayOffset(ctx, -3), status: 'approved', department: 'restaurant', approvedBy: 'Sample Manager', approvedAt: dayOffset(ctx, -2), notes: 'Bar restock' },
   ])
   await seedRows(prisma.requisitionItem, [...reqLines([['rice', 5], ['oil', 6], ['fish', 10]], req1), ...reqLines([['star', 4], ['water', 6]], req2)])
+
+  const code = (key: string) => `SMP-ITM-${String(ITEMS.findIndex((x) => x[0] === key) + 1).padStart(3, '0')}`
+
+  // The paperwork behind the store-to-department moves recorded above.
+  for (const department of ['kitchen', 'restaurant'] as const) {
+    const lines = TRANSFERS.filter(([, d]) => d === department)
+    const id = `${p}xferdoc_${department}`
+    const items = lines.map(([key, , quantity], n) => {
+      const cost = itemRow(key)[5]
+      return { id: `${id}_l${n + 1}`, tenantId, transferId: id, itemId: itemId(key), itemCode: code(key), itemName: itemRow(key)[1], quantity, unitCost: cost, totalValue: round2(quantity * cost), transferredQuantity: quantity }
+    })
+    await seedRows(prisma.stockTransfer, [{
+      id, tenantId, transferNumber: `SMP-TRF-${department === 'kitchen' ? '001' : '002'}`, fromLocation: 'Main Store', toLocation: department === 'kitchen' ? 'Kitchen' : 'Restaurant & Bar',
+      transferDate: dayOffset(ctx, -5), actualDeliveryDate: dayOffset(ctx, -5), status: 'delivered', priority: 'medium', totalItems: items.length, totalValue: round2(items.reduce((s, l) => s + l.totalValue, 0)),
+      createdBy: 'Sample Storekeeper', approvedBy: 'Sample Manager', approvedAt: dayOffset(ctx, -5),
+    }])
+    await seedRows(prisma.stockTransferItem, items)
+  }
+
+  const issueItems = ISSUED.map(([key, quantity, reason], n) => {
+    const cost = itemRow(key)[5]
+    return { id: `${p}issue_1_l${n + 1}`, tenantId, issueId: `${p}issue_1`, itemId: itemId(key), itemCode: code(key), itemName: itemRow(key)[1], quantity, unitCost: cost, totalValue: round2(quantity * cost), reason }
+  })
+  await seedRows(prisma.goodsIssue, [{ id: `${p}issue_1`, tenantId, issueNumber: 'SMP-GI-001', department: 'housekeeping', issuedTo: 'Yaw Boateng', issueDate: dayOffset(ctx, -2), status: 'issued', totalItems: issueItems.length, totalValue: round2(issueItems.reduce((s, l) => s + l.totalValue, 0)), issuedBy: 'Sample Storekeeper' }])
+  await seedRows(prisma.goodsIssueItem, issueItems)
+
+  // Last week's stock take of the main store: two items came up short, one over.
+  const counted: Array<[string, number]> = [['rice', 13], ['oil', 3], ['flour', 9], ['star', 1], ['water', 20], ['towel', 71], ['bulb', 61]]
+  const countItems = counted.map(([key, actual], n) => {
+    const [, name, , , , cost, , onHand] = itemRow(key)
+    const moved = TRANSFERS.find(([k]) => k === key)?.[2] || 0
+    const expected = onHand - moved - issuedQty(key)
+    const variance = actual - expected
+    return { id: `${p}count_1_l${n + 1}`, tenantId, countId: `${p}count_1`, itemId: itemId(key), itemCode: code(key), itemName: name, expectedQuantity: expected, countedQuantity: actual, variance, unitCost: cost, varianceValue: round2(variance * cost), notes: variance < 0 ? 'Short — recount requested' : variance > 0 ? 'Over — unrecorded delivery?' : null }
+  })
+  await seedRows(prisma.stockCount, [{
+    id: `${p}count_1`, tenantId, countNumber: 'SMP-SC-001', countType: 'cycle', location: 'Main Store', startDate: dayOffset(ctx, -1), endDate: dayOffset(ctx, -1), status: 'completed',
+    totalItems: countItems.length, countedItems: countItems.length, varianceItems: countItems.filter((l) => l.variance !== 0).length,
+    totalValue: round2(countItems.reduce((s, l) => s + l.countedQuantity * l.unitCost, 0)), varianceValue: round2(countItems.reduce((s, l) => s + l.varianceValue, 0)),
+    createdBy: 'Sample Storekeeper', performedBy: 'Sample Storekeeper', notes: 'Monthly cycle count of fast-moving items',
+  }])
+  await seedRows(prisma.stockCountItem, countItems)
 }
 
 /** Removes what loadInventory made, plus anything a tester attached to it; returns what couldn't be removed. */
@@ -136,6 +185,10 @@ export async function removeInventory(ctx: SampleCtx): Promise<string[]> {
     await prisma.purchaseOrderItem.deleteMany({ where: { tenantId: t, purchaseOrderId: { in: poIds } } })
     await prisma.purchaseOrder.deleteMany({ where: { tenantId: t, id: { in: poIds } } })
   })
+  // Sample transfers, issues and counts (their lines go with them).
+  await attempt('stock transfers', () => prisma.stockTransfer.deleteMany({ where: bySampleId(ctx) }))
+  await attempt('goods issues', () => prisma.goodsIssue.deleteMany({ where: bySampleId(ctx) }))
+  await attempt('stock counts', () => prisma.stockCount.deleteMany({ where: bySampleId(ctx) }))
   await attempt('stock movements', () => prisma.inventoryTransaction.deleteMany({ where: { tenantId: t, itemId: { in: itemIds } } }))
   await attempt('stock items', () => prisma.inventoryItem.deleteMany({ where: { tenantId: t, id: { in: itemIds } } }))
   await attempt('suppliers', () => prisma.supplier.deleteMany({ where: bySampleId(ctx) }))

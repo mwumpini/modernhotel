@@ -35,6 +35,7 @@ import {
 import { DateFilterPills, matchesDateFilter, useDateFilter } from '../fb/DateFilterPills';
 import { getClientTenantSubdomain } from '../../lib/api/clientTenant';
 import { HideCardButton } from '../dashboard/CustomizeViewControl';
+import { useDashboardVisibility, type DashboardSectionDef } from '../../lib/dashboard/useDashboardVisibility';
 
 function tenantHeaders() {
   return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
@@ -48,6 +49,18 @@ function stockLevelLabel(onHand: number, reorder: number, minimum: number) {
 }
 
 export type DepartmentInventoryKey = 'restaurant' | 'kitchen' | 'housekeeping';
+
+export const STOCK_KPI_SECTIONS: DashboardSectionDef[] = [
+  { id: 'stock.total', label: 'Total' },
+  { id: 'stock.active', label: 'Active' },
+  { id: 'stock.ok', label: 'OK' },
+  { id: 'stock.low', label: 'Low' },
+  { id: 'stock.out', label: 'Out' },
+];
+
+export function deptInventoryVisibilityKey(department: DepartmentInventoryKey) {
+  return `dashboard.hidden.deptInventory.${department}`;
+}
 
 interface InventoryItem {
   id: string;
@@ -77,14 +90,14 @@ const DEPT_LABEL: Record<DepartmentInventoryKey, string> = {
  */
 export default function DepartmentInventoryPanel({
   department,
-  hideStats = false,
-  onHideStats,
 }: {
   department: DepartmentInventoryKey;
-  hideStats?: boolean;
-  onHideStats?: () => void;
 }) {
   const label = DEPT_LABEL[department];
+  const { isHidden, hide, hiddenCount } = useDashboardVisibility(
+    deptInventoryVisibilityKey(department),
+    STOCK_KPI_SECTIONS,
+  );
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [stockOnHand, setStockOnHand] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
@@ -280,60 +293,65 @@ export default function DepartmentInventoryPanel({
 
   return (
     <div className="space-y-3">
-      {!hideStats && (
-        <div className="flex items-start gap-1">
-          <div className="grid min-w-0 flex-1 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-            {([
-              { label: 'Total', value: stockStats.total, tone: 'text-ghana-black' },
-              { label: 'Active', value: stockStats.active, tone: 'text-blue-700' },
-              { label: 'OK', value: stockStats.ok, tone: 'text-green-700' },
-              { label: 'Low', value: stockStats.low, tone: 'text-yellow-700' },
-              { label: 'Out', value: stockStats.out, tone: 'text-red-700' },
-            ] as const).map((stat) => (
-              <Card key={stat.label} className="border border-gray-200 shadow-none">
+      {hiddenCount < STOCK_KPI_SECTIONS.length && (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+          {([
+            { id: 'stock.total', label: 'Total', value: stockStats.total, tone: 'text-ghana-black' },
+            { id: 'stock.active', label: 'Active', value: stockStats.active, tone: 'text-blue-700' },
+            { id: 'stock.ok', label: 'OK', value: stockStats.ok, tone: 'text-green-700' },
+            { id: 'stock.low', label: 'Low', value: stockStats.low, tone: 'text-yellow-700' },
+            { id: 'stock.out', label: 'Out', value: stockStats.out, tone: 'text-red-700' },
+          ] as const).map((stat) => {
+            if (isHidden(stat.id)) return null;
+            return (
+              <Card key={stat.id} className="relative border border-gray-200 shadow-none">
                 <CardBody className="px-2 py-1.5 text-center">
+                  <div className="absolute right-1 top-0.5">
+                    <HideCardButton onHide={() => hide(stat.id)} label={stat.label} />
+                  </div>
                   <div className={`text-base font-semibold tabular-nums ${stat.tone}`}>{stat.value}</div>
                   <div className="text-xs leading-tight text-gray-500">{stat.label}</div>
                 </CardBody>
               </Card>
-            ))}
-          </div>
-          {onHideStats && <HideCardButton onHide={onHideStats} label="Inventory summary" />}
+            );
+          })}
         </div>
       )}
 
-      <div className="mb-[18px] flex flex-nowrap items-center gap-2 overflow-x-auto">
-        <Input
-          aria-label="Search inventory"
-          placeholder="Search inventory"
-          size="sm"
-          value={query}
-          onValueChange={setQuery}
-          isClearable
-          onClear={() => setQuery('')}
-          className="w-56 shrink-0"
-        />
-        <Select
-          aria-label="Filter by status"
-          placeholder="All items"
-          size="sm"
-          selectedKeys={[statusFilter]}
-          onSelectionChange={(keys) => {
-            const next = Array.from(keys)[0] as string;
-            if (next) setStatusFilter(next);
-          }}
-          className="w-44 shrink-0"
-        >
-          <SelectItem key="all">All items</SelectItem>
-          <SelectItem key="active">Active</SelectItem>
-          <SelectItem key="inactive">Inactive</SelectItem>
-          <SelectItem key="low">Low / out of stock</SelectItem>
-        </Select>
-        <p className="text-sm text-gray-500 shrink-0 whitespace-nowrap">
-          Catalog {items.length} · Showing {filtered.length}
-          {loading ? ' · Loading…' : ''}
-        </p>
-        <div className="ml-auto flex flex-nowrap items-center justify-end gap-2">
+      <div className="mb-[18px] flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-center">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Input
+            aria-label="Search inventory"
+            placeholder="Search inventory"
+            size="sm"
+            value={query}
+            onValueChange={setQuery}
+            isClearable
+            onClear={() => setQuery('')}
+            className="w-full min-w-[12rem] sm:w-56 sm:shrink-0"
+          />
+          <Select
+            aria-label="Filter by status"
+            placeholder="All items"
+            size="sm"
+            selectedKeys={[statusFilter]}
+            onSelectionChange={(keys) => {
+              const next = Array.from(keys)[0] as string;
+              if (next) setStatusFilter(next);
+            }}
+            className="w-full sm:w-44 sm:shrink-0"
+          >
+            <SelectItem key="all">All items</SelectItem>
+            <SelectItem key="active">Active</SelectItem>
+            <SelectItem key="inactive">Inactive</SelectItem>
+            <SelectItem key="low">Low / out of stock</SelectItem>
+          </Select>
+          <p className="text-sm text-gray-500">
+            Catalog {items.length} · Showing {filtered.length}
+            {loading ? ' · Loading…' : ''}
+          </p>
+        </div>
+        <div className="w-full min-w-0 lg:ml-auto lg:w-auto">
           <DateFilterPills
             mode={dates.mode}
             onMode={dates.setMode}

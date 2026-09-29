@@ -2,18 +2,7 @@
 
 import DepartmentInventoryPanel from '../inventory/DepartmentInventoryPanel';
 
-export default function HousekeepingInventoryPanel({
-  hideStats = false,
-  onHideStats,
-}: {
-  hideStats?: boolean;
-  onHideStats?: () => void;
-} = {}) {
-  return (
-    <DepartmentInventoryPanel
-      department="housekeeping"
-      hideStats={hideStats}
-      onHideStats={onHideStats}
-    />
-  );
+/** Housekeeping Inventory tab — SKUs from Stores, levels editable here. */
+export default function HousekeepingInventoryPanel() {
+  return <DepartmentInventoryPanel department="housekeeping" />;
 }

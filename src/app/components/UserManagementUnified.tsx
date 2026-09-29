@@ -33,6 +33,7 @@ import {
   Accordion,
   AccordionItem
 } from "@heroui/react";
+import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 import { useSettingsStore } from '../lib/settings/store';
 import { passwordPolicyError } from '../lib/settings/passwordPolicy';
 import { applyDisplay, normalizeFontSize, normalizeTheme, type AppFont, type AppFontSize, type AppTheme } from '../lib/theme/applyTheme';
@@ -532,55 +533,55 @@ export default function UserManagementUnified() {
   const getRoleName = (roleId: string) => roles.find(r => r.id === roleId)?.name || roleId;
 
   const renderOverview = () => (
-    <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-      <Card className="border-0 shadow-lg">
-        <CardBody className="p-6">
+    <div className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <Card className="border border-gray-200 shadow-none">
+        <CardBody className="px-3 py-2.5">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Total Users</p>
-              <p className="text-2xl font-bold text-ghana-black">{totalUsers}</p>
-              <p className="text-sm text-green-600">+{activeUsers} active</p>
+              <p className="text-xs font-medium text-gray-600">Total Users</p>
+              <p className="text-xl font-bold text-ghana-black">{totalUsers}</p>
+              <p className="text-xs text-green-600">+{activeUsers} active</p>
             </div>
-            <div className="text-3xl">👥</div>
+            <div className="text-2xl">👥</div>
           </div>
         </CardBody>
       </Card>
       
-      <Card className="border-0 shadow-lg">
-        <CardBody className="p-6">
+      <Card className="border border-gray-200 shadow-none">
+        <CardBody className="px-3 py-2.5">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Active Users</p>
-              <p className="text-2xl font-bold text-ghana-black">{activeUsers}</p>
-              <p className="text-sm text-green-600">{totalUsers > 0 ? Math.round((activeUsers/totalUsers)*100) : 0}% of total</p>
+              <p className="text-xs font-medium text-gray-600">Active Users</p>
+              <p className="text-xl font-bold text-ghana-black">{activeUsers}</p>
+              <p className="text-xs text-green-600">{totalUsers > 0 ? Math.round((activeUsers/totalUsers)*100) : 0}% of total</p>
             </div>
-            <div className="text-3xl">✅</div>
+            <div className="text-2xl">✅</div>
           </div>
         </CardBody>
       </Card>
       
-      <Card className="border-0 shadow-lg">
-        <CardBody className="p-6">
+      <Card className="border border-gray-200 shadow-none">
+        <CardBody className="px-3 py-2.5">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Total Roles</p>
-              <p className="text-2xl font-bold text-ghana-black">{totalRoles}</p>
-              <p className="text-sm text-blue-600">{systemRoles.length} system roles</p>
+              <p className="text-xs font-medium text-gray-600">Total Roles</p>
+              <p className="text-xl font-bold text-ghana-black">{totalRoles}</p>
+              <p className="text-xs text-blue-600">{systemRoles.length} system roles</p>
             </div>
-            <div className="text-3xl">🔑</div>
+            <div className="text-2xl">🔑</div>
           </div>
         </CardBody>
       </Card>
       
-      <Card className="border-0 shadow-lg">
-        <CardBody className="p-6">
+      <Card className="border border-gray-200 shadow-none">
+        <CardBody className="px-3 py-2.5">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Current User</p>
-              <p className="text-lg font-bold text-ghana-black">{currentUser?.firstName} {currentUser?.lastName}</p>
-              <p className="text-sm text-gray-600">{roles.find(r => r.id === currentUser?.roleId)?.name || currentUser?.roleId}</p>
+              <p className="text-xs font-medium text-gray-600">Current User</p>
+              <p className="text-base font-bold text-ghana-black">{currentUser?.firstName} {currentUser?.lastName}</p>
+              <p className="text-xs text-gray-600">{roles.find(r => r.id === currentUser?.roleId)?.name || currentUser?.roleId}</p>
             </div>
-            <div className="text-3xl">👤</div>
+            <div className="text-2xl">👤</div>
           </div>
         </CardBody>
       </Card>
@@ -588,9 +589,9 @@ export default function UserManagementUnified() {
   );
 
   const renderUserManagement = () => (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h3 className="text-xl font-semibold text-ghana-black">User Management</h3>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-lg font-semibold text-ghana-black">User Management</h3>
         {hasPermission('settings.create') && (
           <Button color="primary" onPress={handleCreateUser}>
             + Add New User
@@ -769,9 +770,9 @@ export default function UserManagementUnified() {
   };
 
   const renderRoleManagement = () => (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h3 className="text-xl font-semibold text-ghana-black">Role Management</h3>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-lg font-semibold text-ghana-black">Role Management</h3>
         <Button color="primary" onPress={handleCreateRole} isDisabled={!canManageRolePermissions}>
           + Add New Role
         </Button>
@@ -842,12 +843,12 @@ export default function UserManagementUnified() {
   );
 
   const renderUserPreferences = () => (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h3 className="text-xl font-semibold text-ghana-black">User Preferences & Settings</h3>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-lg font-semibold text-ghana-black">User Preferences & Settings</h3>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {/* Profile Settings */}
         <Card className="border-0 shadow-lg">
           <CardHeader>
@@ -1006,10 +1007,10 @@ export default function UserManagementUnified() {
           actually verified a second factor at login, so it did nothing but
           look like a security control that worked. */}
       <Card className="border-0 shadow-lg">
-        <CardHeader>
-          <h4 className="text-lg font-semibold text-ghana-black">🛡️ Security</h4>
+        <CardHeader className="px-3 py-2">
+          <h4 className="text-base font-semibold text-ghana-black">🛡️ Security</h4>
         </CardHeader>
-        <CardBody className="space-y-4">
+        <CardBody className="space-y-3 px-3 py-2">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Input
               label="Current Password"
@@ -1039,18 +1040,19 @@ export default function UserManagementUnified() {
   );
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
+    <div className="pt-2">
+      <div className="mb-3 flex items-center justify-between gap-2">
         <div>
           <div className="flex items-center gap-1.5">
-            <h1 className="text-3xl font-bold text-ghana-black">👥 User Management & Preferences</h1>
+            <h1 className="text-xl font-bold text-ghana-black">👥 User Management & Preferences</h1>
             <HeadingInfo label="About user management">Complete user lifecycle management with Ghana compliance, role-based access control, and personalized preferences</HeadingInfo>
           </div>
         </div>
                  <div className="flex items-center space-x-2">
-           <Badge color="success">System Online</Badge>
+           <Badge color="success" size="sm">System Online</Badge>
            <Badge 
              color={userPreferences.theme === 'dark' ? 'secondary' : 'default'}
+             size="sm"
              className="flex items-center space-x-1"
            >
              {userPreferences.theme === 'light' && '🌞'}
@@ -1069,6 +1071,9 @@ export default function UserManagementUnified() {
           setSelectedTab(newTab);
         }}
         className="w-full"
+        size="sm"
+        variant="solid"
+        classNames={deskBookTabsClassNames}
       >
         <Tab key="overview" title="Overview" />
         <Tab key="users" title="User Management" />
@@ -1076,7 +1081,7 @@ export default function UserManagementUnified() {
         <Tab key="preferences" title="User Preferences" />
       </Tabs>
 
-      <div className="mt-6">
+      <div className="mt-3">
         {selectedTab === 'overview' && renderOverview()}
         {selectedTab === 'users' && renderUserManagement()}
         {selectedTab === 'roles' && renderRoleManagement()}

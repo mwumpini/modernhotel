@@ -44,3 +44,7 @@ next-env.d.ts
 /src/generated/prisma
 
 .vercel
+
+# local database backups (e.g. from scripts/cleanup-folio-and-room-status-spam.ts) and dev server logs
+prisma/*.db.bak*
+dev.log

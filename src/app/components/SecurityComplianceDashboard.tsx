@@ -26,6 +26,7 @@ import DepartmentStaffTab from './hr/DepartmentStaffTab';
 // click-anywhere-on-row to open).
 import { SortLabel, unifiedTableClassNames, rowClassNames, useResizableColumns } from './frontoffice/columnResize';
 import { DetailGrid, DetailField } from './frontoffice/detailView';
+import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
 
 // Hideable summary cards for the whole Security module — the Recent
 // Activities/Notices cards that live outside this component, in
@@ -440,17 +441,17 @@ export default function SecurityComplianceDashboard({
   };
 
   const renderIncidentManagement = () => (
-    <div className="space-y-6">
-      <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between w-full">
-            <h3 className="text-xl font-semibold text-ghana-black">🚨 Security Incident Management</h3>
-            <Button color="primary" className="bg-red-500 text-white" variant="flat" onClick={() => { setViewingIncident(null); setIsIncidentModalOpen(true); }}>
+    <div className="space-y-3">
+      <Card className="shadow-sm border border-slate-200">
+        <CardHeader className="px-3 py-2">
+          <div className="flex items-center justify-between w-full gap-2">
+            <h3 className="text-sm font-semibold text-gray-800">🚨 Security Incident Management</h3>
+            <Button size="sm" color="primary" className="bg-red-500 text-white" variant="flat" onClick={() => { setViewingIncident(null); setIsIncidentModalOpen(true); }}>
               🚨 Report Incident
             </Button>
           </div>
         </CardHeader>
-        <CardBody>
+        <CardBody className="px-3 pt-0 pb-3">
           <div className="max-h-[560px] overflow-y-auto" ref={incidentColumns.frameRef} style={incidentColumns.frameStyle}>
             <Table
               aria-label="Security incidents table"
@@ -508,17 +509,17 @@ export default function SecurityComplianceDashboard({
   );
 
   const renderVisitorManagement = () => (
-    <div className="space-y-6">
-      <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between w-full">
-            <h3 className="text-xl font-semibold text-ghana-black">👥 Visitor Management</h3>
-            <Button color="primary" className="bg-blue-500 text-white" variant="flat" onClick={() => { setViewingVisitor(null); setIsVisitorModalOpen(true); }}>
+    <div className="space-y-3">
+      <Card className="shadow-sm border border-slate-200">
+        <CardHeader className="px-3 py-2">
+          <div className="flex items-center justify-between w-full gap-2">
+            <h3 className="text-sm font-semibold text-gray-800">👥 Visitor Management</h3>
+            <Button size="sm" color="primary" className="bg-blue-500 text-white" variant="flat" onClick={() => { setViewingVisitor(null); setIsVisitorModalOpen(true); }}>
               👤 Register Visitor
             </Button>
           </div>
         </CardHeader>
-        <CardBody>
+        <CardBody className="px-3 pt-0 pb-3">
           <div className="max-h-[560px] overflow-y-auto" ref={visitorColumns.frameRef} style={visitorColumns.frameStyle}>
             <Table
               aria-label="Visitors table"
@@ -586,58 +587,40 @@ export default function SecurityComplianceDashboard({
     const activePatrolsCount = patrols.filter(p => p.status === 'active').length;
 
     return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Active Patrols</p>
-                <p className="text-2xl font-bold text-ghana-black">{activePatrolsCount}</p>
-                <p className="text-sm text-blue-600">In progress now</p>
-              </div>
-              <div className="text-3xl">🚶</div>
-            </div>
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
+        <Card className="border border-gray-200 shadow-none">
+          <CardBody className="px-2 py-1.5 text-center">
+            <div className="text-base font-semibold tabular-nums text-blue-700">{activePatrolsCount}</div>
+            <div className="text-xs leading-tight text-gray-500">Active Patrols</div>
           </CardBody>
         </Card>
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Patrols Today</p>
-                <p className="text-2xl font-bold text-ghana-black">{todayAnalytics.totalPatrols}</p>
-                <p className="text-sm text-green-600">{todayAnalytics.completedPatrols} completed</p>
-              </div>
-              <div className="text-3xl">📋</div>
-            </div>
+        <Card className="border border-gray-200 shadow-none">
+          <CardBody className="px-2 py-1.5 text-center">
+            <div className="text-base font-semibold tabular-nums text-gray-900">{todayAnalytics.totalPatrols}</div>
+            <div className="text-xs leading-tight text-gray-500">Patrols Today · {todayAnalytics.completedPatrols} done</div>
           </CardBody>
         </Card>
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Checkpoint Compliance</p>
-                <p className="text-2xl font-bold text-ghana-green">{todayAnalytics.complianceRate.toFixed(0)}%</p>
-                <p className="text-sm text-gray-500">Today</p>
-              </div>
-              <div className="text-3xl">✅</div>
-            </div>
+        <Card className="border border-gray-200 shadow-none">
+          <CardBody className="px-2 py-1.5 text-center">
+            <div className="text-base font-semibold tabular-nums text-green-700">{todayAnalytics.complianceRate.toFixed(0)}%</div>
+            <div className="text-xs leading-tight text-gray-500">Checkpoint Compliance</div>
           </CardBody>
         </Card>
       </div>
 
-      <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between w-full">
-            <h3 className="text-xl font-semibold text-ghana-black">🚶 Patrol Log</h3>
+      <Card className="shadow-sm border border-slate-200">
+        <CardHeader className="px-3 py-2">
+          <div className="flex items-center justify-between w-full gap-2">
+            <h3 className="text-sm font-semibold text-gray-800">🚶 Patrol Log</h3>
             {canManagePatrols && (
-              <Button color="primary" className="bg-ghana-green text-white" variant="flat" onClick={openPatrolModal}>
+              <Button size="sm" color="primary" className="bg-ghana-green text-white" variant="flat" onClick={openPatrolModal}>
                 🚶 Start Patrol
               </Button>
             )}
           </div>
         </CardHeader>
-        <CardBody>
+        <CardBody className="px-3 pt-0 pb-3">
           <div className="max-h-[560px] overflow-y-auto" ref={patrolColumns.frameRef} style={patrolColumns.frameStyle}>
             <Table
               aria-label="Patrol log table"
@@ -700,49 +683,37 @@ export default function SecurityComplianceDashboard({
     const checkedInToday = shifts.filter((s) => s.checkInTime >= today).length;
 
     return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">On Duty Now</p>
-                <p className="text-2xl font-bold text-ghana-black">{onDutyShifts.length}</p>
-                <p className="text-sm text-blue-600">Currently on site</p>
-              </div>
-              <div className="text-3xl">🟢</div>
-            </div>
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        <Card className="border border-gray-200 shadow-none">
+          <CardBody className="px-2 py-1.5 text-center">
+            <div className="text-base font-semibold tabular-nums text-blue-700">{onDutyShifts.length}</div>
+            <div className="text-xs leading-tight text-gray-500">On Duty Now</div>
           </CardBody>
         </Card>
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Checked In Today</p>
-                <p className="text-2xl font-bold text-ghana-black">{checkedInToday}</p>
-                <p className="text-sm text-gray-500">Since midnight</p>
-              </div>
-              <div className="text-3xl">📋</div>
-            </div>
+        <Card className="border border-gray-200 shadow-none">
+          <CardBody className="px-2 py-1.5 text-center">
+            <div className="text-base font-semibold tabular-nums text-gray-900">{checkedInToday}</div>
+            <div className="text-xs leading-tight text-gray-500">Checked In Today</div>
           </CardBody>
         </Card>
       </div>
 
-      <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between w-full">
-            <div>
-              <h3 className="text-xl font-semibold text-ghana-black">🕒 Shift / Attendance Log</h3>
-              <p className="text-sm text-gray-500">Who's on site now, and when everyone came and left — real staff and outsourced personnel alike.</p>
+      <Card className="shadow-sm border border-slate-200">
+        <CardHeader className="px-3 py-2">
+          <div className="flex items-center justify-between w-full gap-2">
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold text-gray-800">🕒 Shift / Attendance Log</h3>
+              <p className="text-xs text-gray-500 truncate">Who's on site now, and when everyone came and left.</p>
             </div>
             {canManageShifts && (
-              <Button color="primary" className="bg-ghana-green text-white" variant="flat" onClick={() => setIsCheckInModalOpen(true)}>
+              <Button size="sm" color="primary" className="bg-ghana-green text-white shrink-0" variant="flat" onClick={() => setIsCheckInModalOpen(true)}>
                 + Check In
               </Button>
             )}
           </div>
         </CardHeader>
-        <CardBody>
+        <CardBody className="px-3 pt-0 pb-3">
           <div ref={shiftColumns.frameRef} style={shiftColumns.frameStyle}>
           <Table
             aria-label="Shift log table"
@@ -797,28 +768,28 @@ export default function SecurityComplianceDashboard({
   };
 
   const renderStaffManagement = () => (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <DepartmentStaffTab
         departmentLabel="Security Operations"
         overtimePermissionId="security.log-overtime"
         departmentNameHints={['security']}
         helperText="HR staff in a Security department. Names come from the HR file — this tab does not invent staff. Contracted guards sit below and are not on payroll."
       />
-      <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between w-full">
-            <div>
-              <h3 className="text-xl font-semibold text-ghana-black">🧑‍✈️ Outsourced / Contracted Security Personnel</h3>
-              <p className="text-sm text-gray-500">Guards without a system login. Real staff accounts already show up automatically when picking a patrol officer.</p>
+      <Card className="shadow-sm border border-slate-200">
+        <CardHeader className="px-3 py-2">
+          <div className="flex items-center justify-between w-full gap-2">
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold text-gray-800">🧑‍✈️ Outsourced / Contracted Security Personnel</h3>
+              <p className="text-xs text-gray-500 truncate">Guards without a system login — not on payroll.</p>
             </div>
             {canManagePersonnel && (
-              <Button color="primary" className="bg-ghana-green text-white" variant="flat" onClick={() => setIsPersonnelModalOpen(true)}>
+              <Button size="sm" color="primary" className="bg-ghana-green text-white shrink-0" variant="flat" onClick={() => setIsPersonnelModalOpen(true)}>
                 + Add Personnel
               </Button>
             )}
           </div>
         </CardHeader>
-        <CardBody>
+        <CardBody className="px-3 pt-0 pb-3">
           <div ref={personnelColumns.frameRef} style={personnelColumns.frameStyle}>
           <Table
             aria-label="Security personnel table"
@@ -865,14 +836,14 @@ export default function SecurityComplianceDashboard({
         </CardBody>
       </Card>
 
-      <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <div>
-            <h3 className="text-xl font-semibold text-ghana-black">📍 Checkpoint Locations</h3>
-            <p className="text-sm text-gray-500">A reusable list so building a patrol route means choosing, not retyping.</p>
+      <Card className="shadow-sm border border-slate-200">
+        <CardHeader className="px-3 py-2">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-gray-800">📍 Checkpoint Locations</h3>
+            <p className="text-xs text-gray-500">Reusable list so building a patrol route means choosing, not retyping.</p>
           </div>
         </CardHeader>
-        <CardBody>
+        <CardBody className="px-3 pt-0 pb-3">
           {canManageCheckpoints && (
             <div className="flex items-center gap-2 mb-4">
               <Input
@@ -927,14 +898,14 @@ export default function SecurityComplianceDashboard({
         </CardBody>
       </Card>
 
-      <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <div>
-            <h3 className="text-xl font-semibold text-ghana-black">🗺️ Patrol Routes</h3>
-            <p className="text-sm text-gray-500">A reusable list so starting a patrol means choosing a route, not retyping it.</p>
+      <Card className="shadow-sm border border-slate-200">
+        <CardHeader className="px-3 py-2">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-gray-800">🗺️ Patrol Routes</h3>
+            <p className="text-xs text-gray-500">Reusable list so starting a patrol means choosing a route, not retyping it.</p>
           </div>
         </CardHeader>
-        <CardBody>
+        <CardBody className="px-3 pt-0 pb-3">
           {canManageRoutes && (
             <div className="flex items-center gap-2 mb-4">
               <Input
@@ -994,31 +965,30 @@ export default function SecurityComplianceDashboard({
   return (
     <div>
       <Card className="border-0 shadow-lg">
-        {fullPage && (
-          <CardHeader className="pb-3">
-            <h3 className="text-xl font-semibold text-ghana-black">Security</h3>
-          </CardHeader>
-        )}
-        <CardBody>
-      <Tabs
-        selectedKey={selectedTab}
-        onSelectionChange={(key) => setSelectedTab(key as string)}
-        className="w-full"
-      >
-        <Tab key="patrols" title="Patrol Log" />
-        <Tab key="incidents" title="Incident Management" />
-        <Tab key="visitors" title="Visitor Management" />
-        <Tab key="shifts" title="Shift Log" />
-        <Tab key="staff" title="Staff Management" />
-      </Tabs>
+        <CardBody className="p-0">
+          <Tabs
+            selectedKey={selectedTab}
+            onSelectionChange={(key) => setSelectedTab(key as string)}
+            className="w-full"
+            size="sm"
+            variant="solid"
+            classNames={deskBookTabsClassNames}
+            aria-label="Security operations"
+          >
+            <Tab key="patrols" title="Patrol Log" />
+            <Tab key="incidents" title="Incident Management" />
+            <Tab key="visitors" title="Visitor Management" />
+            <Tab key="shifts" title="Shift Log" />
+            <Tab key="staff" title="Staff Management" />
+          </Tabs>
 
-      <div className="mt-6">
-        {selectedTab === 'patrols' && renderPatrolManagement()}
-        {selectedTab === 'incidents' && renderIncidentManagement()}
-        {selectedTab === 'visitors' && renderVisitorManagement()}
-        {selectedTab === 'shifts' && renderShiftLog()}
-        {selectedTab === 'staff' && renderStaffManagement()}
-      </div>
+          <div className={deskBookTabPanelClassName}>
+            {selectedTab === 'patrols' && renderPatrolManagement()}
+            {selectedTab === 'incidents' && renderIncidentManagement()}
+            {selectedTab === 'visitors' && renderVisitorManagement()}
+            {selectedTab === 'shifts' && renderShiftLog()}
+            {selectedTab === 'staff' && renderStaffManagement()}
+          </div>
         </CardBody>
       </Card>
 

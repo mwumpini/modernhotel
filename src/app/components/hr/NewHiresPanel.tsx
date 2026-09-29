@@ -1,9 +1,23 @@
 'use client';
 
 import React from 'react';
-import { Button, Card, CardBody, CardHeader, Chip, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Progress, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from '@heroui/react';
+import { Button, Card, CardBody, CardHeader, Chip, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Pagination, Progress, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from '@heroui/react';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { useOnboardingStore } from '@/app/lib/hr/onboardingStore';
+import { SortLabel, unifiedTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
+import { useDeskPagination } from '../dashboard/deskTableUi';
+import EmployeeProfileModal from './EmployeeProfileModal';
+
+type HireSortKey = 'number' | 'name' | 'hired' | 'department' | 'position' | 'onboarding';
+
+const defaultColumnWidths: Record<HireSortKey, number> = {
+  number: 120,
+  name: 160,
+  hired: 110,
+  department: 140,
+  position: 140,
+  onboarding: 160,
+};
 
 export default function NewHiresPanel() {
   const employees = useEmployeeStore((s) => s.employees);
@@ -16,17 +30,73 @@ export default function NewHiresPanel() {
 
   const [days, setDays] = React.useState(30);
   const [q, setQ] = React.useState('');
+  const [viewingId, setViewingId] = React.useState<string | null>(null);
   const [activeEmployeeId, setActiveEmployeeId] = React.useState<string | null>(null);
+  const [sortKey, setSortKey] = React.useState<HireSortKey>('hired');
+  const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('desc');
+  const cols = useResizableColumns<HireSortKey>(defaultColumnWidths);
 
-  const since = Date.now() - days * 24 * 60 * 60 * 1000;
-  const hires = employees
-    .filter((e) => new Date(e.hireDate).getTime() >= since)
-    .filter((e) => `${e.firstName} ${e.lastName}`.toLowerCase().includes(q.toLowerCase()) || e.employeeNumber.toLowerCase().includes(q.toLowerCase()));
+  const hires = React.useMemo(() => {
+    const since = Date.now() - days * 24 * 60 * 60 * 1000;
+    const rows = employees
+      .filter((e) => new Date(e.hireDate).getTime() >= since)
+      .filter((e) => `${e.firstName} ${e.lastName}`.toLowerCase().includes(q.toLowerCase()) || e.employeeNumber.toLowerCase().includes(q.toLowerCase()));
+
+    const value = (e: (typeof rows)[number]): string | number => {
+      switch (sortKey) {
+        case 'number': return e.employeeNumber || '';
+        case 'name': return `${e.firstName} ${e.lastName}`.trim().toLowerCase();
+        case 'hired': return new Date(e.hireDate).getTime();
+        case 'department': return getDepartment(e.departmentId)?.name || '';
+        case 'position': return getPosition(e.positionId)?.title || '';
+        case 'onboarding': {
+          const checklist = checklists[e.id];
+          if (!checklist) return -1;
+          const done = checklist.tasks.filter((t) => t.completed).length;
+          return checklist.tasks.length ? done / checklist.tasks.length : 0;
+        }
+        default: return '';
+      }
+    };
+
+    const sorted = [...rows].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      if (av < bv) return -1;
+      if (av > bv) return 1;
+      return 0;
+    });
+    return sortDir === 'asc' ? sorted : sorted.reverse();
+  }, [employees, days, q, sortKey, sortDir, getDepartment, getPosition, checklists]);
+
+  const { page, setPage, pages, paged } = useDeskPagination(hires, [days, q, sortKey, sortDir]);
+
+  const onSort = (key: HireSortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
+
+  const column = (key: HireSortKey, label: string) => (
+    <TableColumn key={key} className="relative" style={cols.style(key)}>
+      <SortLabel active={sortKey === key} dir={sortDir} onPress={() => onSort(key)}>{label}</SortLabel>
+      {cols.sizer(key, label)}
+    </TableColumn>
+  );
 
   const openChecklist = (id: string) => {
+    setViewingId(null);
     if (!checklists[id]) startOnboarding(id);
     setActiveEmployeeId(id);
   };
+
+  const viewingEmployee = viewingId ? employees.find((e) => e.id === viewingId) || null : null;
+  const viewingChecklist = viewingId ? checklists[viewingId] : undefined;
+  const viewingDone = viewingChecklist ? viewingChecklist.tasks.filter((t) => t.completed).length : 0;
+  const viewingTotal = viewingChecklist ? viewingChecklist.tasks.length : 0;
+  const viewingComplete = !!(viewingChecklist && viewingDone === viewingTotal && viewingTotal > 0);
 
   const activeEmployee = activeEmployeeId ? employees.find((e) => e.id === activeEmployeeId) : undefined;
   const activeChecklist = activeEmployeeId ? checklists[activeEmployeeId] : undefined;
@@ -48,17 +118,27 @@ export default function NewHiresPanel() {
           </div>
         </CardHeader>
         <CardBody>
-          <Table aria-label="new-hires">
+          <div ref={cols.frameRef} style={cols.frameStyle}>
+          <Table
+            aria-label="new-hires"
+            removeWrapper
+            classNames={{
+              ...unifiedTableClassNames,
+              table: 'table-fixed w-[var(--col-table-width)] min-w-[var(--col-table-width)] max-w-none',
+              th: `${unifiedTableClassNames.th} relative`,
+              td: `${unifiedTableClassNames.td} overflow-hidden`,
+            }}
+          >
             <TableHeader>
-              <TableColumn>NUMBER</TableColumn>
-              <TableColumn>NAME</TableColumn>
-              <TableColumn>HIRED</TableColumn>
-              <TableColumn>DEPARTMENT</TableColumn>
-              <TableColumn>POSITION</TableColumn>
-              <TableColumn>{' '}</TableColumn>
+              {column('number', 'Number')}
+              {column('name', 'Name')}
+              {column('hired', 'Hired')}
+              {column('department', 'Department')}
+              {column('position', 'Position')}
+              {column('onboarding', 'Onboarding')}
             </TableHeader>
-            <TableBody>
-              {hires.map((e) => {
+            <TableBody emptyContent="No new hires in this period.">
+              {paged.map((e) => {
                 const dept = getDepartment(e.departmentId);
                 const pos = getPosition(e.positionId);
                 const checklist = checklists[e.id];
@@ -66,13 +146,23 @@ export default function NewHiresPanel() {
                 const total = checklist ? checklist.tasks.length : 0;
                 const complete = checklist && done === total && total > 0;
                 return (
-                  <TableRow key={e.id}>
-                    <TableCell>{e.employeeNumber}</TableCell>
-                    <TableCell>{e.firstName} {e.lastName}</TableCell>
+                  <TableRow
+                    key={e.id}
+                    className={rowClassNames(viewingId === e.id || activeEmployeeId === e.id)}
+                    onClick={() => setViewingId(e.id)}
+                  >
+                    <TableCell className="text-gray-600">{e.employeeNumber}</TableCell>
+                    <TableCell className="font-semibold text-ghana-black">
+                      <span className="block truncate" title={`${e.firstName} ${e.lastName}`}>{e.firstName} {e.lastName}</span>
+                    </TableCell>
                     <TableCell>{new Date(e.hireDate).toLocaleDateString()}</TableCell>
-                    <TableCell>{dept?.name || '-'}</TableCell>
-                    <TableCell>{pos?.title || '-'}</TableCell>
                     <TableCell>
+                      <span className="block truncate" title={dept?.name || '-'}>{dept?.name || '-'}</span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="block truncate" title={pos?.title || '-'}>{pos?.title || '-'}</span>
+                    </TableCell>
+                    <TableCell onClick={(ev) => ev.stopPropagation()}>
                       <Button
                         size="sm"
                         color={complete ? 'success' : 'primary'}
@@ -87,8 +177,29 @@ export default function NewHiresPanel() {
               })}
             </TableBody>
           </Table>
+          </div>
+          <div className="mt-3 flex justify-end">
+            <Pagination page={page} total={pages} onChange={setPage} showControls size="sm" />
+          </div>
         </CardBody>
       </Card>
+
+      <EmployeeProfileModal
+        employee={viewingEmployee}
+        isOpen={!!viewingId}
+        onClose={() => setViewingId(null)}
+        extraActions={
+          viewingId ? (
+            <Button
+              color={viewingComplete ? 'success' : 'primary'}
+              variant={viewingComplete ? 'flat' : 'solid'}
+              onPress={() => openChecklist(viewingId)}
+            >
+              {viewingComplete ? '✓ Onboarded' : viewingChecklist ? `Onboarding: ${viewingDone}/${viewingTotal}` : 'Start Onboarding'}
+            </Button>
+          ) : null
+        }
+      />
 
       <Modal isOpen={!!activeEmployeeId} onOpenChange={(open) => !open && setActiveEmployeeId(null)} size="lg">
         <ModalContent>

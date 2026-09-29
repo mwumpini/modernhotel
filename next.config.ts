@@ -9,8 +9,9 @@ const nextConfig: NextConfig = {
   },
   webpack: (config, { dev }) => {
     if (dev) {
-      // Avoid stale/corrupt filesystem cache (common when .next lives on OneDrive).
-      config.cache = false;
+      // The webpack filesystem cache stays on (it makes restarts much faster). It was
+      // turned off while the project lived on OneDrive, where sync corrupted it — keep
+      // the project out of synced folders. If a build ever looks stale, run `npm run clean`.
       config.watchOptions = {
         ...config.watchOptions,
         // prisma/ holds the runtime SQLite files (dev.db, test.db, and their
@@ -22,8 +23,9 @@ const nextConfig: NextConfig = {
         // fetches/RSC streams in the browser). webpack's schema only accepts
         // a single RegExp OR an array of glob *strings*, not an array of
         // RegExps — one RegExp with alternation, matching regardless of
-        // \ vs / path separators on Windows.
-        ignored: /node_modules|[\\/]\.next[\\/]|[\\/]\.git[\\/]|[\\/]prisma[\\/]/,
+        // \ vs / path separators on Windows. .claude/ holds Claude's worktrees
+        // (full copies of the project) — their edits aren't this app's sources.
+        ignored: /node_modules|[\\/]\.next[\\/]|[\\/]\.git[\\/]|[\\/]prisma[\\/]|[\\/]\.claude[\\/]/,
       };
     }
     return config;

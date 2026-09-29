@@ -42,7 +42,7 @@ const STAYS: Stay[] = [
   { key: 'r5', guest: 'g5', typeIndex: 0, arrive: 0, depart: 1, status: 'confirmed', adults: 1, source: 'Booking.com' },
   { key: 'r6', guest: 'g6', typeIndex: 0, arrive: 3, depart: 5, status: 'confirmed', adults: 2, source: 'Direct' },
   { key: 'r7', guest: 'g7', typeIndex: 1, arrive: -6, depart: -3, status: 'checked-out', adults: 2, source: 'Direct', settle: 'Mobile Money' },
-  { key: 'r8', guest: 'g8', typeIndex: 0, arrive: -4, depart: -2, status: 'checked-out', adults: 1, source: 'WALK IN', settle: 'Cash' },
+  { key: 'r8', guest: 'g8', typeIndex: 0, arrive: -4, depart: -1, status: 'checked-out', adults: 1, source: 'WALK IN', settle: 'Cash' },
 ]
 
 export async function loadFrontOffice(ctx: SampleCtx): Promise<string[]> {
@@ -142,10 +142,49 @@ export async function loadFrontOffice(ctx: SampleCtx): Promise<string[]> {
   })
   await seedRows(prisma.reservation, reservationRows)
   await seedRows(prisma.guestFolio, folioRows)
+
+  // ---- night audit history: the last three business days, one with a no-show ----
+  await seedRows(prisma.nightAuditLog, [3, 2, 1].map((back) => ({
+    id: `${p}na_${back}`, tenantId, businessDate: dayString(ctx, -back), source: back === 1 ? 'manual' : 'scheduled', status: 'completed',
+    roomChargesPosted: STAYS.filter((s) => s.status !== 'confirmed' && s.arrive <= -back && s.depart > -back).length, noShowsMarked: back === 2 ? 1 : 0,
+    runBy: back === 1 ? 'Ibrahim Mahama (sample)' : 'System', runAt: new Date(dayOffset(ctx, -back + 1).getTime() + 2 * 3_600_000),
+  })))
+
+  // ---- yesterday's front desk till, closed and counted ----
+  const takenYesterday = folioRows.flatMap((f) => f.payments as any[]).filter((x) => x.date.startsWith(dayString(ctx, -1)))
+  const sumBy = (re: RegExp) => round2(takenYesterday.filter((x) => re.test(x.method)).reduce((s, x) => s + x.amount, 0))
+  const cash = sumBy(/cash/i)
+  await seedRows(prisma.cashierShift, [{
+    id: `${p}till_fo`, tenantId, outlet: 'frontoffice', businessDate: dayString(ctx, -1), cashierUserId: 'sample-cashier', cashierName: 'Akosua Mensah (sample)',
+    openingFloat: 500, openedAt: new Date(dayOffset(ctx, -1).getTime() + 7 * 3_600_000), closedAt: new Date(dayOffset(ctx, -1).getTime() + 15 * 3_600_000),
+    expectedCash: round2(500 + cash), closingCount: round2(500 + cash), variance: 0, totalCash: cash, totalCard: sumBy(/card/i), totalMobileMoney: sumBy(/mobile/i), totalOther: 0,
+    status: 'closed', transferTo: 'accounts', transferToName: 'Abena Danso', transferAmount: cash, transferredAt: new Date(dayOffset(ctx, -1).getTime() + 15 * 3_600_000 + 20 * 60_000),
+  }])
+
+  // ---- guest services and what in-house guests have asked for ----
+  const SERVICES: Array<[string, string, string, number, string]> = [
+    ['airport', 'Airport pick-up', 'transport', 250, 'Hotel shuttle'], ['laundry', 'Laundry & pressing', 'laundry', 60, 'In-house laundry'],
+    ['spa', 'Massage (60 min)', 'wellness', 350, 'Serenity Spa'], ['tour', 'Accra city tour', 'tours', 400, 'Gold Coast Tours'], ['wakeup', 'Wake-up call', 'concierge', 0, 'Front desk'],
+  ]
+  await seedRows(prisma.guestService, SERVICES.map(([key, name, category, price, provider]) => ({ id: `${p}svc_${key}`, tenantId, name, category, price, provider, status: 'available', description: `${name} — sample service` })))
+  const inHouse = (key: string) => {
+    const stay = STAYS.find((s) => s.key === key)!
+    return { guestId: `${p}${stay.guest}`, reservationId: `${p}${key}`, clientName: GUESTS.find((g) => g[0] === stay.guest)![1], roomNumber: roomFor.get(key)?.room?.number }
+  }
+  await seedRows(prisma.serviceRequest, [
+    { id: `${p}sreq_1`, tenantId, serviceId: `${p}svc_airport`, ...inHouse('r2'), requestDate: dayOffset(ctx, 3), status: 'pending', priority: 'high', notes: 'Flight BA078 departs 22:40 — pick up from room at 19:00' },
+    { id: `${p}sreq_2`, tenantId, serviceId: `${p}svc_laundry`, ...inHouse('r1'), requestDate: dayOffset(ctx, 0), status: 'in_progress', priority: 'medium', notes: '3 shirts, 2 trousers — same-day' },
+    { id: `${p}sreq_3`, tenantId, serviceId: `${p}svc_spa`, ...inHouse('r3'), requestDate: dayOffset(ctx, -1), status: 'completed', priority: 'low' },
+    { id: `${p}sreq_4`, tenantId, serviceId: `${p}svc_wakeup`, ...inHouse('r2'), requestDate: dayOffset(ctx, 1), status: 'pending', priority: 'medium', notes: 'Wake-up at 05:30' },
+  ])
   return notes
 }
 
 export async function removeFrontOffice(ctx: SampleCtx) {
+  await prisma.guestService.deleteMany({ where: bySampleId(ctx) }) // its requests go with it
+  await prisma.serviceRequest.deleteMany({ where: bySampleId(ctx) })
+  await prisma.cashierShift.deleteMany({ where: bySampleId(ctx) })
+  await prisma.nightAuditLog.deleteMany({ where: bySampleId(ctx) })
   const guests = await prisma.guest.findMany({ where: bySampleId(ctx), select: { id: true } })
   // Every stay of a sample guest (including ones a tester added) goes with them, along with its folios.
   const reservations = await prisma.reservation.findMany({

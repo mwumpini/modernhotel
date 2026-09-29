@@ -23,6 +23,7 @@ import ApprovalThresholdsPanel from './settings/ApprovalThresholdsPanel';
 import ModulesPanel from './settings/ModulesPanel';
 import StockLocationsPanel from './settings/StockLocationsPanel';
 import SampleDataPanel from './settings/SampleDataPanel';
+import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 
 const VALID_TABS = ['users', 'rooms', 'numbering', 'templates', 'locations', 'security', 'approvals', 'modules', 'sample-data', 'audit'] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
@@ -83,38 +84,38 @@ export default function SystemSettingsMainDashboard() {
   };
 
   return (
-    <div className="p-6">
+    <div className="p-6 space-y-3">
       {!initialSetupCompleted && (
-        <Card className="mb-6 border-0 shadow-lg border-l-4 border-l-amber-500 bg-amber-50">
-          <CardBody className="flex items-center justify-between gap-4">
+        <Card className="border-0 shadow-lg border-l-4 border-l-amber-500 bg-amber-50">
+          <CardBody className="flex items-center justify-between gap-3 py-3">
             <div>
-              <h3 className="text-lg font-semibold text-ghana-black">System Setup Required</h3>
+              <h3 className="text-base font-semibold text-ghana-black">System Setup Required</h3>
               <p className="text-sm text-gray-700">
                 Complete company, localization, tax, numbering, and security setup before going live.
               </p>
             </div>
-            <Button color="warning" className="bg-amber-500 text-white" onPress={openSystemSetup}>
+            <Button color="warning" size="sm" className="bg-amber-500 text-white" onPress={openSystemSetup}>
               Open System Setup
             </Button>
           </CardBody>
         </Card>
       )}
 
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">⚙️ System Settings</h2>
-        <div className="flex flex-wrap gap-2 items-center">
-          <Badge variant="flat" color="primary">{userCount} users</Badge>
-          <Badge variant="flat" color="secondary">{roleCount} roles</Badge>
-          <Badge variant="flat" color="success">{roomCount} rooms</Badge>
-          <Badge variant="flat" color="warning">{ratePlanCount} rate plans</Badge>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-xl font-bold text-ghana-black">⚙️ System Settings</h2>
+        <div className="flex flex-wrap gap-1.5 items-center">
+          <Badge variant="flat" color="primary" size="sm">{userCount} users</Badge>
+          <Badge variant="flat" color="secondary" size="sm">{roleCount} roles</Badge>
+          <Badge variant="flat" color="success" size="sm">{roomCount} rooms</Badge>
+          <Badge variant="flat" color="warning" size="sm">{ratePlanCount} rate plans</Badge>
         </div>
       </div>
 
-      <Card className="mb-6 border-0 shadow-md bg-slate-50">
-        <CardBody className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 py-4">
+      <Card className="border-0 shadow-sm bg-slate-50">
+        <CardBody className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 py-2.5 px-3">
           <div>
             <p className="text-sm font-medium text-ghana-black">Related configuration (not in this screen)</p>
-            <p className="text-xs text-gray-600 mt-1">
+            <p className="text-xs text-gray-600">
               VAT, NHIL, GETFund, and Tourism Levy are managed under Compliance — they drive all invoice and room tax calculations.
             </p>
           </div>
@@ -130,11 +131,14 @@ export default function SystemSettingsMainDashboard() {
       </Card>
 
       <Card className="border-0 shadow-lg">
-        <CardBody>
+        <CardBody className="p-3 pt-2">
           <Tabs
             selectedKey={selectedTab}
             onSelectionChange={(key) => handleTabChange(key as string)}
             className="w-full"
+            size="sm"
+            variant="solid"
+            classNames={deskBookTabsClassNames}
           >
             <Tab key="users" title="Users & Roles">
               <UserManagementUnified />
@@ -157,95 +161,102 @@ export default function SystemSettingsMainDashboard() {
             </Tab>
 
             <Tab key="security" title="Security">
-              <div className="space-y-4 mt-4 max-w-2xl">
-                <p className="text-sm text-gray-600">
+              <div className="mt-2 max-w-2xl space-y-2">
+                <p className="text-xs text-gray-600">
                   Password and session rules apply to all staff accounts. Company name, country, and currency are in{' '}
-                  <Button size="sm" variant="light" className="inline h-auto min-h-0 p-0 align-baseline" onPress={openSystemSetup}>
+                  <Button size="sm" variant="light" className="inline h-auto min-h-0 p-0 align-baseline text-xs" onPress={openSystemSetup}>
                     System Setup
                   </Button>
                   . Tax rates (VAT, NHIL, levies) are in{' '}
-                  <Button size="sm" variant="light" className="inline h-auto min-h-0 p-0 align-baseline" onPress={openComplianceTax}>
+                  <Button size="sm" variant="light" className="inline h-auto min-h-0 p-0 align-baseline text-xs" onPress={openComplianceTax}>
                     Compliance → Tax rules
                   </Button>.
                 </p>
-                <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
                   <div>
-                    <h4 className="font-medium">Two-Factor Authentication</h4>
-                    <p className="text-sm text-gray-600">Sign-in asks every staff member for a code from an authenticator app</p>
+                    <h4 className="text-sm font-medium">Two-Factor Authentication</h4>
+                    <p className="text-xs text-gray-600">Sign-in asks every staff member for a code from an authenticator app</p>
                   </div>
                   <Switch
+                    size="sm"
                     isSelected={settings.security.twoFactorAuth}
                     onValueChange={(v) => updateNestedSetting('security.twoFactorAuth', v)}
                     isDisabled={!canManage2fa}
                   />
                 </div>
-                <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
                   <div>
-                    <h4 className="font-medium">Session Timeout</h4>
-                    <p className="text-sm text-gray-600">Auto-logout after inactivity (minutes)</p>
+                    <h4 className="text-sm font-medium">Session Timeout</h4>
+                    <p className="text-xs text-gray-600">Auto-logout after inactivity (minutes)</p>
                   </div>
                   <Input
                     type="number"
-                    className="max-w-[120px]"
+                    size="sm"
+                    className="max-w-[100px]"
                     value={String(settings.security.sessionTimeout)}
                     onChange={(e) => updateNestedSetting('security.sessionTimeout', Number(e.target.value))}
                     isDisabled={!canManageSecurityPolicy}
                   />
                 </div>
-                <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
                   <div>
-                    <h4 className="font-medium">Password Minimum Length</h4>
-                    <p className="text-sm text-gray-600">Minimum characters required for passwords</p>
+                    <h4 className="text-sm font-medium">Password Minimum Length</h4>
+                    <p className="text-xs text-gray-600">Minimum characters required for passwords</p>
                   </div>
                   <Input
                     type="number"
-                    className="max-w-[120px]"
+                    size="sm"
+                    className="max-w-[100px]"
                     value={String(settings.security.passwordPolicy.minLength)}
                     onChange={(e) => updateNestedSetting('security.passwordPolicy.minLength', Number(e.target.value))}
                     isDisabled={!canManageSecurityPolicy}
                   />
                 </div>
-                <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
                   <div>
-                    <h4 className="font-medium">Password Expiry</h4>
-                    <p className="text-sm text-gray-600">Days before passwords must be changed (0 = never)</p>
+                    <h4 className="text-sm font-medium">Password Expiry</h4>
+                    <p className="text-xs text-gray-600">Days before passwords must be changed (0 = never)</p>
                   </div>
                   <Input
                     type="number"
-                    className="max-w-[120px]"
+                    size="sm"
+                    className="max-w-[100px]"
                     value={String(settings.security.passwordPolicy.expiryDays)}
                     onChange={(e) => updateNestedSetting('security.passwordPolicy.expiryDays', Number(e.target.value))}
                     isDisabled={!canManageSecurityPolicy}
                   />
                 </div>
-                <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
                   <div>
-                    <h4 className="font-medium">Require Uppercase Letters</h4>
-                    <p className="text-sm text-gray-600">Passwords must include uppercase</p>
+                    <h4 className="text-sm font-medium">Require Uppercase Letters</h4>
+                    <p className="text-xs text-gray-600">Passwords must include uppercase</p>
                   </div>
                   <Switch
+                    size="sm"
                     isSelected={settings.security.passwordPolicy.requireUppercase}
                     onValueChange={(v) => updateNestedSetting('security.passwordPolicy.requireUppercase', v)}
                     isDisabled={!canManageSecurityPolicy}
                   />
                 </div>
-                <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
                   <div>
-                    <h4 className="font-medium">Require Lowercase Letters</h4>
-                    <p className="text-sm text-gray-600">Passwords must include lowercase</p>
+                    <h4 className="text-sm font-medium">Require Lowercase Letters</h4>
+                    <p className="text-xs text-gray-600">Passwords must include lowercase</p>
                   </div>
                   <Switch
+                    size="sm"
                     isSelected={settings.security.passwordPolicy.requireLowercase}
                     onValueChange={(v) => updateNestedSetting('security.passwordPolicy.requireLowercase', v)}
                     isDisabled={!canManageSecurityPolicy}
                   />
                 </div>
-                <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
                   <div>
-                    <h4 className="font-medium">Require Numbers</h4>
-                    <p className="text-sm text-gray-600">Passwords must include digits</p>
+                    <h4 className="text-sm font-medium">Require Numbers</h4>
+                    <p className="text-xs text-gray-600">Passwords must include digits</p>
                   </div>
                   <Switch
+                    size="sm"
                     isSelected={settings.security.passwordPolicy.requireNumbers}
                     onValueChange={(v) => updateNestedSetting('security.passwordPolicy.requireNumbers', v)}
                     isDisabled={!canManageSecurityPolicy}

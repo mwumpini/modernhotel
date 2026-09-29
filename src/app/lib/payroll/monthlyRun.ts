@@ -2,6 +2,8 @@ import type UniversalPayrollBuilder from './builder';
 import { useEmployeeStore } from '../hr/employeeStore';
 import { usePayrollStore } from '../hr/payrollStore';
 import { useLeaveAttendanceStore } from '../hr/leaveAttendanceStore';
+import { useStaffDebtStore, readDebtRepayments, type DebtInstallmentLine } from '../hr/staffDebtStore';
+import { useSettingsStore } from '../settings/store';
 import { useComplianceStore } from '../compliance/store';
 import { syncPayrollRunToComplianceFiling } from '../compliance/payrollSync';
 import type { PayrollPeriod, PayrollRecord } from '../hr/models';
@@ -23,7 +25,7 @@ export interface MonthlyRunInput {
 }
 
 export type MonthlyRunResult =
-  | { ok: true; employeeCount: number; periodId: string; warning?: string }
+  | { ok: true; employeeCount: number; periodId: string; warning?: string; autoApproved?: boolean }
   | { ok: false; error: string };
 
 /** Loads the country's payroll template into a fresh builder, with any rate edits saved on this
@@ -110,8 +112,9 @@ interface CalcContext {
 }
 
 /** Calculates one employee's month with the payroll engine and returns the record fields to
- * save. Used for the full run and for re-calculating a single edited line, so both always agree. */
-function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number, adj: StaffAdjustments = {}) {
+ * save. Used for the full run and for re-calculating a single edited line, so both always agree.
+ * `frozenDebts` keeps installment amounts stable when re-editing a prepared line. */
+function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number, adj: StaffAdjustments = {}, frozenDebts?: DebtInstallmentLine[]) {
   const { builder, runtimeId, month, year } = ctx;
   const baseCfg = JSON.parse(JSON.stringify((builder as any).payrollConfigs.get(runtimeId)));
 
@@ -164,7 +167,7 @@ function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number
   // when the employee opted in with a contribution rate; capped at the statutory
   // relief ceiling. The rule's own (renameable) name is used for the deduction label
   // so a rename actually shows up on payslips instead of a hardcoded string.
-  runtimeConfig.deductions = (runtimeConfig.deductions || []).filter((d: any) => d.code !== 'TIER3_EMP' && d.code !== 'OTHER_DED');
+  runtimeConfig.deductions = (runtimeConfig.deductions || []).filter((d: any) => d.code !== 'TIER3_EMP' && d.code !== 'OTHER_DED' && d.code !== 'STAFF_DEBT');
   const tier3Pct = Number((emp as any).tier3Enrolled ? (emp as any).tier3ContributionPct || 0 : 0);
   if (tier3Pct > 0) {
     const basicSalary = Number((emp as any).basicSalary ?? (emp as any).salary ?? 0);
@@ -186,12 +189,55 @@ function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number
     });
   }
   // After-tax deduction (base 'net' is what the engine treats as post-tax).
+  // Manual OTHER_DED first; staff-debt installment is applied in a second pass so we can
+  // clamp it to remaining net (net must not go negative).
   const otherDeduction = Number(adj.otherDeduction || 0);
-  if (otherDeduction > 0) runtimeConfig.deductions.push({ name: 'Other deduction', code: 'OTHER_DED', category: 'other', calculationType: 'fixed', amount: otherDeduction, base: 'net' });
+  if (otherDeduction > 0) {
+    runtimeConfig.deductions.push({
+      name: 'Other deduction',
+      code: 'OTHER_DED',
+      category: 'other',
+      calculationType: 'fixed',
+      amount: otherDeduction,
+      base: 'net',
+    });
+  }
   (builder as any).payrollConfigs.set(runtimeId, runtimeConfig);
 
-  const adjustments = { hours: { OVERTIME: Number(adj.overtimeHours ?? defaultOvertimeHours) } };
-  const calc = (builder as any).calculatePayroll(eid, runtimeId, { month, year }, adjustments);
+  const hoursAdj = { hours: { OVERTIME: Number(adj.overtimeHours ?? defaultOvertimeHours) } };
+  let calc = (builder as any).calculatePayroll(eid, runtimeId, { month, year }, hoursAdj);
+
+  const debtLines: DebtInstallmentLine[] = frozenDebts?.length
+    ? frozenDebts
+    : useStaffDebtStore.getState().installmentDue(String(emp.id || eid), { month, year });
+  const debtWanted = Math.round(debtLines.reduce((s, l) => s + Number(l.amount || 0), 0) * 100) / 100;
+  let appliedDebtLines: DebtInstallmentLine[] = [];
+  if (debtWanted > 0) {
+    const available = Math.max(0, Number(calc.summary?.net || 0));
+    let budget = Math.min(debtWanted, available);
+    for (const line of debtLines) {
+      if (budget <= 0) break;
+      const take = Math.min(Number(line.amount || 0), budget);
+      if (take <= 0) continue;
+      const amount = Math.round(take * 100) / 100;
+      appliedDebtLines.push({ ...line, amount });
+      budget = Math.round((budget - amount) * 100) / 100;
+    }
+    const appliedDebt = Math.round(appliedDebtLines.reduce((s, l) => s + l.amount, 0) * 100) / 100;
+    if (appliedDebt > 0) {
+      runtimeConfig.deductions.push({
+        name: 'Staff debt repayment',
+        code: 'STAFF_DEBT',
+        category: 'other',
+        calculationType: 'fixed',
+        amount: appliedDebt,
+        base: 'net',
+      });
+      (builder as any).payrollConfigs.set(runtimeId, runtimeConfig);
+      calc = (builder as any).calculatePayroll(eid, runtimeId, { month, year }, hoursAdj);
+    }
+  }
+
   const deductionsSum = calc.deductions?.total || 0;
   const tier1Amount = tier1Rule ? (calc.taxes.items.find((t: any) => t.ruleId === tier1Rule.id)?.amount || 0) : 0;
   const tier2Amount = tier2Rule ? (calc.taxes.items.find((t: any) => t.ruleId === tier2Rule.id)?.amount || 0) : 0;
@@ -209,6 +255,7 @@ function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number
     tier2Employer,
     ssnitEmployee,
     deductionsSum,
+    debtRepayments: appliedDebtLines,
     fields: {
       employeeId: eid,
       employeeNumber: emp.employeeNumber || '',
@@ -242,8 +289,8 @@ function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number
 }
 
 /** One employee's month, without saving. Shared by the payroll run and by corrections of a saved month. */
-export function calculateEmployeeMonth(ctx: CalcContext, emp: any, overtimeHours: number, adjustments: StaffAdjustments = {}) {
-  return calculateStaff(ctx, emp, overtimeHours, adjustments);
+export function calculateEmployeeMonth(ctx: CalcContext, emp: any, overtimeHours: number, adjustments: StaffAdjustments = {}, frozenDebts?: DebtInstallmentLine[]) {
+  return calculateStaff(ctx, emp, overtimeHours, adjustments, frozenDebts);
 }
 
 /** Processes payroll for every active employee for one month: calculates each person's pay,
@@ -292,12 +339,15 @@ export function runMonthlyPayroll(input: MonthlyRunInput): MonthlyRunResult {
       ...r.fields,
       // Calculated, not yet approved or paid — that happens in Payroll Processing.
       status: 'processed',
-      notes: 'Monthly payroll run',
+      notes: JSON.stringify({
+        source: 'Monthly payroll run',
+        debtRepayments: r.debtRepayments || [],
+      }),
     } as any);
   });
 
   updatePayrollPeriod(period.id, {
-    status: 'processing', // awaiting approval
+    status: 'processing', // awaiting approval on Payment Advice (unless setting auto-approves below)
     totalGrossPay: totals.gross,
     totalNetPay: totals.net,
     totalDeductions: totals.deductions,
@@ -313,6 +363,16 @@ export function runMonthlyPayroll(input: MonthlyRunInput): MonthlyRunResult {
     }),
   } as any);
 
+  // When the hotel turns off payroll approval, the month is ready to pay immediately.
+  const requireApproval = useSettingsStore.getState().financialSettings.requireApprovalForPayroll !== false;
+  if (!requireApproval) {
+    updatePayrollPeriod(period.id, {
+      status: 'approved',
+      approvedBy: userName,
+      approvedAt: new Date(),
+    } as any);
+  }
+
   syncPayrollRunToComplianceFiling({
     countryCode: complianceCountry,
     period: `${year}-${String(month).padStart(2, '0')}`,
@@ -321,7 +381,12 @@ export function runMonthlyPayroll(input: MonthlyRunInput): MonthlyRunResult {
     employeeCount: activeEmployees.length,
   });
 
-  return { ok: true, employeeCount: activeEmployees.length, periodId: period.id };
+  return {
+    ok: true,
+    employeeCount: activeEmployees.length,
+    periodId: period.id,
+    autoApproved: !requireApproval,
+  };
 }
 
 export interface EditLineInput {
@@ -346,14 +411,24 @@ export function recalculateStaffLine(input: EditLineInput): EditLineResult {
   const my = monthYearOf(period);
   if (!my) return { ok: false, error: 'Could not work out which month this payroll is for.' };
 
-  const r = calculateStaff({ builder, runtimeId, month: my.month, year: my.year }, employee, approvedOvertimeFor(record.employeeId, my.month, my.year), adjustments);
+  const r = calculateStaff(
+    { builder, runtimeId, month: my.month, year: my.year },
+    employee,
+    approvedOvertimeFor(record.employeeId, my.month, my.year),
+    adjustments,
+    readDebtRepayments(record.notes),
+  );
   const { updatePayrollRecord, updatePayrollPeriod } = usePayrollStore.getState();
   const changedAt = new Date().toISOString();
   updatePayrollRecord(record.id, {
     ...r.fields,
     // keep the original payment method / account choice
     paymentMethod: record.paymentMethod,
-    notes: JSON.stringify({ source: 'Monthly payroll run', adjustments: { ...adjustments, editedAt: changedAt } }),
+    notes: JSON.stringify({
+      source: 'Monthly payroll run',
+      adjustments: { ...adjustments, editedAt: changedAt },
+      debtRepayments: r.debtRepayments || [],
+    }),
   } as any);
 
   // Month totals, from every record as they now stand.

@@ -1302,16 +1302,22 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 
 					{activeTab === 'client-list' && (
 						<>
-							<div className="flex justify-between items-center mb-4">
-								<div className="flex items-center gap-2">
-									<Badge content={filtered.length} color="primary" variant="flat">
-										<span className="text-sm text-gray-600">Total Clients</span>
-									</Badge>
+							<div className="mb-2 flex items-center justify-between gap-2">
+								<div className="flex items-center gap-3">
+									<span className="inline-flex items-center gap-1.5 text-sm text-gray-600">
+										Total Clients
+										<span className="rounded-md bg-primary/15 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-primary-700">
+											{filtered.length}
+										</span>
+									</span>
 
 									{duplicateList.length > 0 && (
-										<Badge content={duplicateList.length} color="warning" variant="flat">
-											<span className="text-sm text-gray-600">Duplicates</span>
-										</Badge>
+										<span className="inline-flex items-center gap-1.5 text-sm text-gray-600">
+											Duplicates
+											<span className="rounded-md bg-warning/20 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-warning-700">
+												{duplicateList.length}
+											</span>
+										</span>
 									)}
 
 								</div>

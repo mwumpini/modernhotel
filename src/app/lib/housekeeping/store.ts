@@ -65,6 +65,12 @@ class HousekeepingStore {
   private schedules: DailySchedule[] = [];
   private statusHistory: RoomStatusHistory[] = [];
   private listeners: Array<() => void> = [];
+  // Latest persisted status per room (from RoomStatusLog). Rooms enter this.rooms
+  // from Settings as 'vacant' whenever Settings loads, so this is re-applied at
+  // that point too — otherwise a room already occupied on the server would look
+  // vacant locally and the occupancy reconcile would "fix" and re-log it.
+  private serverRoomStatus = new Map<string, RoomStatus>();
+  private serverRoomStatusLoaded = false;
 
   constructor() {
     // Start empty; will sync from Settings
@@ -97,13 +103,19 @@ class HousekeepingStore {
     // crashes SSR entirely. Existing call sites in this file only ever touch it
     // from inside methods invoked later, never at construction time.
     if (typeof window !== 'undefined') {
+      //
+      // The reconcile waits for the persisted room statuses first: comparing
+      // against the Settings-seeded 'vacant' default instead made it POST a new
+      // "Reconciled" log for every in-house room on every page load, forever.
       setTimeout(() => {
-        try {
-          this.reconcileOccupancyFromFrontOffice();
-          frontOfficeStore.subscribe(() => this.reconcileOccupancyFromFrontOffice());
-        } catch (e) {
-          console.warn('HK: Front Office occupancy reconciliation subscription failed', e);
-        }
+        void this.loadServerRoomStatuses().finally(() => {
+          try {
+            this.reconcileOccupancyFromFrontOffice();
+            frontOfficeStore.subscribe(() => this.reconcileOccupancyFromFrontOffice());
+          } catch (e) {
+            console.warn('HK: Front Office occupancy reconciliation subscription failed', e);
+          }
+        });
       }, 0);
     }
   }
@@ -114,12 +126,41 @@ class HousekeepingStore {
         if (r.status === 'checked-in' && r.roomId && r.roomId !== 'TBD') {
           const room = this.rooms.get(r.roomId);
           if (room && room.status !== 'occupied') {
-            this.updateRoomStatus(r.roomId, 'occupied', 'System', 'Reconciled: guest already checked in');
+            // Only log it when we know the server's view — without that (fetch
+            // failed / signed out) fix the display locally and leave the log alone.
+            this.updateRoomStatus(r.roomId, 'occupied', 'System', 'Reconciled: guest already checked in', {
+              persist: this.serverRoomStatusLoaded,
+            });
           }
         }
       });
     } catch (e) {
       console.warn('HK: occupancy reconciliation failed', e);
+    }
+  }
+
+  private applyServerRoomStatuses(logs: Array<{ roomNumber: string; toStatus: string }>) {
+    // logs are ordered desc by createdAt — first occurrence per room is the latest.
+    this.serverRoomStatus.clear();
+    for (const log of logs) {
+      if (!this.serverRoomStatus.has(log.roomNumber)) this.serverRoomStatus.set(log.roomNumber, log.toStatus as RoomStatus);
+    }
+    this.serverRoomStatus.forEach((status, roomNumber) => {
+      const room = this.rooms.get(roomNumber);
+      if (room) room.status = status;
+    });
+    this.serverRoomStatusLoaded = true;
+  }
+
+  private async loadServerRoomStatuses(): Promise<void> {
+    try {
+      const res = await fetch('/api/housekeeping/room-status', { headers: hkHeaders(), cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      this.applyServerRoomStatuses(data.logs || []);
+      this.notify();
+    } catch (e) {
+      console.warn('HK: loading room statuses failed', e);
     }
   }
 
@@ -227,15 +268,7 @@ class HousekeepingStore {
           reason: log.reason,
           previousStatus: (log.fromStatus || 'vacant') as RoomStatus,
         }));
-        // logs are ordered desc by createdAt — first occurrence per room is the latest.
-        const latestByRoom = new Map<string, string>();
-        for (const log of logs) {
-          if (!latestByRoom.has(log.roomNumber)) latestByRoom.set(log.roomNumber, log.toStatus);
-        }
-        latestByRoom.forEach((status, roomNumber) => {
-          const room = this.rooms.get(roomNumber);
-          if (room) room.status = status as RoomStatus;
-        });
+        this.applyServerRoomStatuses(logs);
       }
 
       this.notify();
@@ -305,11 +338,17 @@ class HousekeepingStore {
   }
 
   // Room Status Management
-  updateRoomStatus(roomNumber: string, status: RoomStatus, changedBy: string, reason?: string) {
+  updateRoomStatus(roomNumber: string, status: RoomStatus, changedBy: string, reason?: string, opts?: { persist?: boolean }) {
     const room = this.rooms.get(roomNumber);
     if (!room) return;
 
     const previousStatus = room.status;
+    if (opts?.persist === false) {
+      room.status = status;
+      room.lastUpdated = new Date().toISOString();
+      this.notify();
+      return;
+    }
     room.status = status;
     room.lastUpdated = new Date().toISOString();
 
@@ -331,6 +370,7 @@ class HousekeepingStore {
       headers: hkHeaders(),
       body: JSON.stringify({ roomNumber, fromStatus: previousStatus, toStatus: status, changedBy, reason }),
     }).catch((e) => console.warn('HK: Failed to sync room status:', e));
+    this.serverRoomStatus.set(roomNumber, status);
   }
 
   getRoomStatus(roomNumber: string): RoomStatusData | undefined {
@@ -359,7 +399,7 @@ class HousekeepingStore {
           this.rooms.set(r.number, {
             roomNumber: r.number,
             roomTypeId: r.typeId,
-            status: 'vacant',
+            status: this.serverRoomStatus.get(r.number) || 'vacant',
             lastUpdated: new Date().toISOString()
           });
         }

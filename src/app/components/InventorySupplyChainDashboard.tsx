@@ -31,6 +31,7 @@ import {
   toggleColumnSort,
   type ColumnSort,
 } from './dashboard/deskTableUi';
+import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
 
 function inventoryHeaders() {
   return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
@@ -3607,6 +3608,11 @@ export default function InventorySupplyChainDashboard({
         <Tabs
           selectedKey={activeOpTab}
           onSelectionChange={(key) => setStockOpSubTab(key as string)}
+          className="w-full"
+          size="sm"
+          variant="solid"
+          classNames={deskBookTabsClassNames}
+          aria-label="Receive and recon sections"
         >
           <Tab key="goods-receipt" title="📥 Goods Receipt" />
           <Tab key="stock-counts" title="🔍 Stock Count" />
@@ -4074,7 +4080,7 @@ export default function InventorySupplyChainDashboard({
   };
 
   return (
-    <div className={embedded ? 'pt-2' : 'p-6'}>
+    <div className={embedded ? undefined : 'p-6'}>
       {!embedded && (
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-ghana-black">Stock & Supply</h1>
@@ -4095,6 +4101,9 @@ export default function InventorySupplyChainDashboard({
           }
         }}
         className="w-full"
+        size="sm"
+        variant="solid"
+        classNames={deskBookTabsClassNames}
         aria-label="Stock and supply sections"
       >
         <Tab key="inventory" title="📦 Items" />
@@ -4107,7 +4116,7 @@ export default function InventorySupplyChainDashboard({
         <Tab key="stock-operations" title="✅ Receive & Recon" />
       </Tabs>
 
-      <div className="mt-6">
+      <div className={deskBookTabPanelClassName}>
         {selectedTab === 'inventory' && renderInventoryManagement()}
         {selectedTab === 'suppliers' && renderSupplierManagement()}
         {selectedTab === 'requisitions' && renderRequisitions()}

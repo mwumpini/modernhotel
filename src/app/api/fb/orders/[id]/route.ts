@@ -288,6 +288,7 @@ export async function PATCH(
           tableNumber,
           subtotal: Number(existing.subtotal),
           taxAmount: Number(existing.taxAmount),
+          taxLines: (existing.taxLines as any[]) || [],
           total: Number(existing.total),
           paymentMethod: tender || 'Cash',
           cashierUserId: sessionUserId,

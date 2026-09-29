@@ -51,3 +51,14 @@ export function SortHeader({
 }
 
 export const DESK_PAGE_SIZE = 10;
+
+/** Slice a sorted/filtered list into Desk-sized pages; resets to page 1 when resetDeps change. */
+export function useDeskPagination<T>(items: T[], resetDeps: React.DependencyList = []) {
+  const [page, setPage] = React.useState(1);
+  const pages = Math.max(1, Math.ceil(items.length / DESK_PAGE_SIZE));
+  const pageSafe = Math.min(page, pages);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- caller controls reset keys
+  React.useEffect(() => { setPage(1); }, resetDeps);
+  const paged = items.slice((pageSafe - 1) * DESK_PAGE_SIZE, pageSafe * DESK_PAGE_SIZE);
+  return { page: pageSafe, setPage, pages, paged, pageSize: DESK_PAGE_SIZE };
+}

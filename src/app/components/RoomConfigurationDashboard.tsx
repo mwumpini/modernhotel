@@ -29,6 +29,7 @@ import {
   Tooltip,
   Badge
 } from '@heroui/react';
+import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 import { useSettingsStore } from '../lib/settings/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import EventRateManagement from './EventRateManagement';
@@ -1566,16 +1567,17 @@ export default function RoomConfigurationDashboard() {
   };
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
+    <div className="pt-2">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
-          <h1 className="text-3xl font-bold text-ghana-black">🏠 Rooms & Pricing</h1>
+          <h1 className="text-xl font-bold text-ghana-black">🏠 Rooms & Pricing</h1>
           <HeadingInfo label="About rooms and pricing">Manage room types, rate plans, service charges, seasonal pricing, and event rates</HeadingInfo>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-2">
           <Button 
             color="primary" 
             variant="flat"
+            size="sm"
             onClick={() => setActiveTab('event-rates')}
             className="bg-purple-600 text-white hover:bg-purple-700"
           >
@@ -1584,6 +1586,7 @@ export default function RoomConfigurationDashboard() {
           <Button 
             color="warning" 
             variant="flat"
+            size="sm"
             onClick={() => setActiveTab('operations-policies')}
           >
             📜 Operational Policies
@@ -1591,6 +1594,7 @@ export default function RoomConfigurationDashboard() {
           <Button 
             color="primary" 
             variant="flat"
+            size="sm"
             onClick={() => setBulkModalOpen(true)}
           >
             Bulk Add Rooms
@@ -1602,6 +1606,9 @@ export default function RoomConfigurationDashboard() {
         selectedKey={activeTab} 
         onSelectionChange={(key) => setActiveTab(key as string)}
         className="w-full"
+        size="sm"
+        variant="solid"
+        classNames={deskBookTabsClassNames}
       >
         <Tab key="room-types" title="Room Types & Categories">
                      <Card className="mb-6">

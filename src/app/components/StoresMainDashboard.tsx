@@ -20,6 +20,7 @@ import ModuleExpandButton from './ModuleExpandButton';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
 import InventoryReportsAnalysis from './InventoryReportsAnalysis';
+import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
 
 const InventorySupplyChainDashboard = lazy(() => import('./InventorySupplyChainDashboard'));
 
@@ -308,11 +309,14 @@ export default function StoresMainDashboard() {
       )}
 
       <Card className="border-0 shadow-lg">
-        <CardBody>
+        <CardBody className="p-0">
           <Tabs
             selectedKey={selectedTab}
             onSelectionChange={(key) => setSelectedTab(String(key))}
             className="w-full"
+            size="sm"
+            variant="solid"
+            classNames={deskBookTabsClassNames}
             aria-label="Inventory operations"
           >
             <Tab key="items" title="📦 Stock & Supply">
@@ -324,16 +328,18 @@ export default function StoresMainDashboard() {
             </Tab>
             <Tab key="staff" title="👥 Staff Management">
               {selectedTab === 'staff' && (
-                <DepartmentStaffTab
-                  departmentLabel="Inventory & Stores"
-                  overtimePermissionId="inventory.log-overtime"
-                  departmentNameHints={['stores', 'inventory', 'warehouse']}
-                />
+                <div className={deskBookTabPanelClassName}>
+                  <DepartmentStaffTab
+                    departmentLabel="Inventory & Stores"
+                    overtimePermissionId="inventory.log-overtime"
+                    departmentNameHints={['stores', 'inventory', 'warehouse']}
+                  />
+                </div>
               )}
             </Tab>
             <Tab key="reports" title="📈 Reports & Analysis">
               {selectedTab === 'reports' && (
-                <div className="pt-2">
+                <div className={deskBookTabPanelClassName}>
                   <InventoryReportsAnalysis embedded />
                 </div>
               )}

@@ -35,9 +35,16 @@ import CostRevenueCenters from './accounting/CostRevenueCenters';
 import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
-import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import { HideCardButton } from './dashboard/CustomizeViewControl';
 import ModuleExpandButton from './ModuleExpandButton';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import {
+  AccountingDeskVisibilityProvider,
+  ALL_BOOKS_KPI_SECTIONS,
+  BOOK_KPI_SECTIONS_BY_TAB,
+  DeskKpiCustomize,
+  deskBookTabsClassNames,
+} from './accounting/DeskKpiStrip';
 
 // Hideable summary cards. The cycle tabs (chart, bank, receivables, payables,
 // assets, statements, taxes, audit) stay visible.
@@ -49,6 +56,11 @@ const ACCOUNTING_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'quickActions', label: 'Quick Actions' },
   { id: 'recentActivities', label: 'Recent Activities' },
   { id: 'notices', label: 'Accounting Notices' },
+];
+
+const ALL_ACCOUNTING_SECTIONS: DashboardSectionDef[] = [
+  ...ACCOUNTING_DASHBOARD_SECTIONS,
+  ...ALL_BOOKS_KPI_SECTIONS,
 ];
 
 export default function AccountingMainDashboard({
@@ -71,7 +83,17 @@ export default function AccountingMainDashboard({
 
   const fmt = (amount: number) => formatAccountingCurrency(amount);
 
-  const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.accounting', ACCOUNTING_DASHBOARD_SECTIONS);
+  const { isHidden, hide, show, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility(
+    'dashboard.hidden.accounting',
+    ALL_ACCOUNTING_SECTIONS,
+  );
+
+  const deskVisibility = useMemo(
+    () => ({ isHidden, hide, show, toggle: toggleSection, showAll, hiddenCount }),
+    [isHidden, hide, show, toggleSection, showAll, hiddenCount],
+  );
+
+  const customizeSections = BOOK_KPI_SECTIONS_BY_TAB[selectedTab] ?? ACCOUNTING_DASHBOARD_SECTIONS;
 
   useEffect(() => {
     setTabsReady(true);
@@ -211,30 +233,25 @@ export default function AccountingMainDashboard({
   };
 
   return (
+    <AccountingDeskVisibilityProvider value={deskVisibility}>
     <>
       {!fullPage && <DeptMessenger from="accounting" mode="drawer" />}
-      <div className={fullPage ? 'p-6 pt-2' : 'p-6'}>
+      <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
         <div>
-          {!fullPage && (
-          <>
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-bold text-ghana-black">🧾 Accounting & Finance</h2>
+          <div className={`flex items-center justify-between ${fullPage ? 'mb-2' : 'mb-6'}`}>
+            <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>
+              {fullPage ? '🧾 Accounting' : '🧾 Accounting & Finance'}
+            </h2>
             <div className="flex items-center gap-2">
-              <CustomizeViewControl
-                sections={ACCOUNTING_DASHBOARD_SECTIONS}
-                isHidden={isHidden}
-                toggle={toggleSection}
-                showAll={showAll}
-                hiddenCount={hiddenCount}
-              />
-              <ModuleExpandButton
-                href="/accounting/ops"
-                label="Open accounting full page"
-              />
+              <DeskKpiCustomize sections={customizeSections} />
+              {!fullPage && (
+                <ModuleExpandButton
+                  href="/accounting/ops"
+                  label="Open accounting full page"
+                />
+              )}
             </div>
           </div>
-          </>
-          )}
 
           {/* Status Cards */}
           {!fullPage && (!isHidden('cashBank') || !isHidden('profitability') || !isHidden('operationalMetrics')) && (
@@ -410,23 +427,19 @@ export default function AccountingMainDashboard({
 
           {/* Main Operations Interface - Following Uniform Pattern */}
           <Card className="border-0 shadow-lg">
-            {fullPage && (
-              <CardHeader className="pb-3">
-                <h3 className="text-xl font-semibold text-ghana-black">Accounting</h3>
-              </CardHeader>
-            )}
-            <CardBody>
+            <CardBody className="p-0">
               {tabsReady ? (
               <Tabs 
                 selectedKey={selectedTab} 
                 onSelectionChange={(key) => setSelectedTab(key as string)}
                 className="w-full"
+                size="sm"
+                variant="solid"
+                classNames={deskBookTabsClassNames}
                 aria-label="Accounting operations"
               >
                 <Tab key="receivables" title="📝 Accounts Receivable">
-                  <div className="p-6">
                   <AccountsReceivable />
-                  </div>
                 </Tab>
 
                 <Tab key="payables" title="🧾 Accounts Payable">
@@ -446,9 +459,7 @@ export default function AccountingMainDashboard({
                 )}
 
                 <Tab key="taxes" title="🧮 Taxes">
-                  <div className="p-6">
-                    <BooksTaxes />
-                  </div>
+                  <BooksTaxes />
                 </Tab>
 
                 <Tab key="journal" title="📒 Journal">
@@ -520,6 +531,7 @@ export default function AccountingMainDashboard({
         </div>
       </div>
     </>
+    </AccountingDeskVisibilityProvider>
   );
 }
 

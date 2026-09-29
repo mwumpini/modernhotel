@@ -2,7 +2,7 @@
 
 import React from 'react';
 
-/** Secondary pills under a primary Desk-style tab (Supplies, Floor, Work, …). */
+/** Secondary pills under a primary desk tab (Supplies, Floor, Work, …). */
 export default function SubViewPills<T extends string>({
   views,
   selected,

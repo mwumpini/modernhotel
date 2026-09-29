@@ -25,11 +25,32 @@ import { useSettingsStore } from '../lib/settings/store';
 import { moduleEnabled } from '../lib/settings/moduleAccess';
 // Removed broadcast/mentions sidebar; bottom notices cover communication needs
 
-// The full set of hideable cards on this dashboard — used both to render the
-// ✕ hide button on each card and to populate the "Customize View" restore
-// panel. Kept as a module-level constant (not recreated per render) since
-// useDashboardVisibility only reads it once on mount.
+/** Same module keys the sidebar uses, minus this dashboard itself. */
+// Same emoji per module the sidebar (Navigation.tsx) uses, so this quick-nav
+// row reads as a shortcut to those same sections rather than a separate icon set.
+const QUICK_MODULES: { key: string; label: string; icon: string }[] = [
+  { key: 'frontdesk', label: 'Front Office', icon: '🏨' },
+  { key: 'events-conferences', label: 'Events', icon: '🎪' },
+  { key: 'restaurant', label: 'Restaurant', icon: '🍽️' },
+  { key: 'kitchen', label: 'Kitchen', icon: '👨‍🍳' },
+  { key: 'housekeeping', label: 'Housekeeping', icon: '🛏️' },
+  { key: 'inventory', label: 'Inventory', icon: '📦' },
+  { key: 'security', label: 'Security', icon: '🚨' },
+  { key: 'hr', label: 'HR', icon: '👥' },
+  { key: 'accounting', label: 'Accounting', icon: '🧾' },
+  { key: 'compliance', label: 'Compliance', icon: '⚖️' },
+  { key: 'settings', label: 'Settings', icon: '⚙️' },
+];
+
+// Hideable cards + module shortcuts — ✕ on cards; modules only via Customize.
+// Stable module-level constant (useDashboardVisibility reads it once on mount).
+const MODULE_SECTIONS: DashboardSectionDef[] = QUICK_MODULES.map((m) => ({
+  id: `mod.${m.key}`,
+  label: `${m.icon} ${m.label}`,
+}));
+
 const DASHBOARD_SECTIONS: DashboardSectionDef[] = [
+  ...MODULE_SECTIONS,
   { id: 'liveOps', label: 'Live Operations' },
   { id: 'security', label: 'Security & Safety' },
   { id: 'housekeeping', label: 'Housekeeping Status' },
@@ -62,23 +83,6 @@ function isoDaysFromToday(offset: number) {
   d.setDate(d.getDate() + offset);
   return d.toISOString().split('T')[0];
 }
-
-/** Same module keys the sidebar uses, minus this dashboard itself. */
-// Same emoji per module the sidebar (Navigation.tsx) uses, so this quick-nav
-// row reads as a shortcut to those same sections rather than a separate icon set.
-const QUICK_MODULES: { key: string; label: string; icon: string }[] = [
-  { key: 'frontdesk', label: 'Front Office', icon: '🏨' },
-  { key: 'events-conferences', label: 'Events', icon: '🎪' },
-  { key: 'restaurant', label: 'Restaurant', icon: '🍽️' },
-  { key: 'kitchen', label: 'Kitchen', icon: '👨‍🍳' },
-  { key: 'housekeeping', label: 'Housekeeping', icon: '🛏️' },
-  { key: 'inventory', label: 'Inventory', icon: '📦' },
-  { key: 'security', label: 'Security', icon: '🚨' },
-  { key: 'hr', label: 'HR', icon: '👥' },
-  { key: 'accounting', label: 'Accounting', icon: '🧾' },
-  { key: 'compliance', label: 'Compliance', icon: '⚖️' },
-  { key: 'settings', label: 'Settings', icon: '⚙️' },
-];
 
 function openModule(section: string) {
   window.dispatchEvent(new CustomEvent('app.navigate', { detail: { section } }));
@@ -352,7 +356,10 @@ export default function ExecutiveManagementDashboard() {
   useSettingsStore((s) => s.roles);
   const moduleSettings = useSettingsStore((s) => s.moduleSettings);
   const quickModules = QUICK_MODULES.filter(
-    (m) => useSettingsStore.getState().hasModuleAccess(m.key) && moduleEnabled(m.key, moduleSettings)
+    (m) =>
+      !isHidden(`mod.${m.key}`) &&
+      useSettingsStore.getState().hasModuleAccess(m.key) &&
+      moduleEnabled(m.key, moduleSettings)
   );
 
   // IMPORTANT: Keep initial render deterministic across server and client

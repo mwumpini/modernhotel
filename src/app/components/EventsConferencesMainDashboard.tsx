@@ -75,6 +75,7 @@ import EventsModuleFilters, {
 import { useEmployeeStore } from '../lib/hr/employeeStore';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
 import ModuleExpandButton from './ModuleExpandButton';
+import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 import {
   buildIdSequence,
   nextSequenceLabel,
@@ -11939,9 +11940,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     }, [frontOfficeGuests]);
 
     return (
-      <div className="space-y-4 mt-4">
+      <div className="space-y-2 mt-2">
         <div>
-          <h3 className="text-xl font-semibold text-ghana-black">Guest Rates</h3>
+          <h3 className="text-lg font-semibold text-ghana-black">Guest Rates</h3>
           <p className="text-sm text-gray-500">
             Rates apply only when the event dates fall within the rate&apos;s effective period.
           </p>
@@ -13709,8 +13710,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     };
 
     return (
-      <div className="space-y-4 mt-4">
-        <h3 className="text-xl font-semibold text-ghana-black">Event Management</h3>
+      <div className="space-y-2 mt-2">
+        <h3 className="text-lg font-semibold text-ghana-black">Event Management</h3>
 
         <div
           role="tablist"
@@ -13765,7 +13766,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           }}
         >
           <Tab key="events" title={`📊 Event Master (${managementTabCounts.events})`}>
-            <Card className="mt-4 border-0 shadow-lg">
+            <Card className="mt-2 border-0 shadow-lg">
               <CardBody className="px-2 py-3">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <h3 className="text-base font-semibold text-slate-800">Event Master</h3>
@@ -14641,7 +14642,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </Card>
           </Tab>
           <Tab key="invoices" title={`🧾 Invoices (${managementTabCounts.invoices})`}>
-            <Card className="mt-4 border-0 shadow-lg">
+            <Card className="mt-2 border-0 shadow-lg">
               <CardBody className="px-2 py-3">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-base font-semibold text-slate-800">Invoices</h3>
@@ -14734,7 +14735,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </Card>
           </Tab>
           <Tab key="receipts" title={`💳 Receipts (${managementTabCounts.receipts})`}>
-            <Card className="mt-4 border-0 shadow-lg">
+            <Card className="mt-2 border-0 shadow-lg">
               <CardBody className="px-2 py-3">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-base font-semibold text-slate-800">Receipts</h3>
@@ -14827,7 +14828,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </Card>
           </Tab>
           <Tab key="folios" title={`📂 Folios (${managementTabCounts.folios})`}>
-            <Card className="mt-4 border-0 shadow-lg">
+            <Card className="mt-2 border-0 shadow-lg">
               <CardBody className="px-2 py-3">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-base font-semibold text-slate-800">Folios</h3>
@@ -15013,15 +15014,12 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
   };
   return (
     <>
-      <div className={fullPage ? 'p-6 pt-2' : 'p-6'}>
+      <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
       {/* Removed top notices; bottom section contains notices & activities */}
       {!fullPage && <DeptMessenger from="events" mode="drawer" />}
       
-      <div className="mb-6 flex items-center justify-between gap-3">
-        {!fullPage && (
-          <h2 className="text-2xl font-bold text-ghana-black">🎪 Events & Conferences</h2>
-        )}
-        {fullPage && <h3 className="text-xl font-semibold text-ghana-black">Events & Conferences</h3>}
+      <div className={`${fullPage ? 'mb-2' : 'mb-3'} flex items-center justify-between gap-3`}>
+        <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>🎪 Events & Conferences</h2>
         {!fullPage && (
           <ModuleExpandButton
             href={selectedTab === 'reports' ? '/events/reports' : '/events/ops'}
@@ -15039,15 +15037,18 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
               setSelectedTab(key as string);
             }}
             className="w-full"
+            size="sm"
+            variant="solid"
+            classNames={deskBookTabsClassNames}
             aria-label="Events and conferences operations"
           >
             <Tab key="confirmed" title="📋 Event Management">
               <EventManagementTab />
             </Tab>
             <Tab key="venues" title={`🏢 Venue Management (${filteredModernVenues.length})`}>
-              <div className="space-y-6 mt-4">
+              <div className="space-y-3 mt-2">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-xl font-semibold text-ghana-black">Venue Management</h3>
+                  <h3 className="text-lg font-semibold text-ghana-black">Venue Management</h3>
                   <Button 
                     color="success" 
                     variant="solid"

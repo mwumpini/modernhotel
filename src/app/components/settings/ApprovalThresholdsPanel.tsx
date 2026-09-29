@@ -52,6 +52,7 @@ export default function ApprovalThresholdsPanel() {
     paymentApprovalThreshold: settings.financialSettings.paymentApprovalThreshold,
     requireApprovalForOvertime: settings.financialSettings.requireApprovalForOvertime,
     overtimeApprovalThreshold: settings.financialSettings.overtimeApprovalThreshold,
+    requireApprovalForPayroll: settings.financialSettings.requireApprovalForPayroll ?? true,
   }));
   const [savedAt, setSavedAt] = React.useState<number | null>(null);
 
@@ -67,6 +68,7 @@ export default function ApprovalThresholdsPanel() {
       paymentApprovalThreshold: settings.financialSettings.paymentApprovalThreshold,
       requireApprovalForOvertime: settings.financialSettings.requireApprovalForOvertime,
       overtimeApprovalThreshold: settings.financialSettings.overtimeApprovalThreshold,
+      requireApprovalForPayroll: settings.financialSettings.requireApprovalForPayroll ?? true,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -78,6 +80,7 @@ export default function ApprovalThresholdsPanel() {
     settings.financialSettings.paymentApprovalThreshold,
     settings.financialSettings.requireApprovalForOvertime,
     settings.financialSettings.overtimeApprovalThreshold,
+    settings.financialSettings.requireApprovalForPayroll,
   ]);
 
   const handleSave = () => {
@@ -93,17 +96,17 @@ export default function ApprovalThresholdsPanel() {
   };
 
   return (
-    <div className="space-y-4 mt-4 max-w-3xl">
-      <div className="flex items-center justify-between">
+    <div className="mt-2 max-w-3xl space-y-3">
+      <div className="flex items-center justify-between gap-2">
         <div>
-          <h3 className="text-xl font-semibold">Director Approval Thresholds</h3>
-          <p className="text-sm text-gray-600">
+          <h3 className="text-lg font-semibold">Director Approval Thresholds</h3>
+          <p className="text-xs text-gray-600">
             Transactions at or above these amounts require director/GM sign-off before they post.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {savedAt && <Chip color="success" variant="flat" size="sm">Saved</Chip>}
-          <Button color="primary" onPress={handleSave} isDisabled={!canManage}>Save Thresholds</Button>
+          <Button color="primary" size="sm" onPress={handleSave} isDisabled={!canManage}>Save Thresholds</Button>
         </div>
       </div>
 
@@ -165,6 +168,27 @@ export default function ApprovalThresholdsPanel() {
             disabled={!canManage}
             unit="hours"
           />
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader><h4 className="font-semibold">Payroll</h4></CardHeader>
+        <CardBody>
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-4 border rounded-lg">
+            <div>
+              <h4 className="font-medium">Payroll — require manager approval before paying</h4>
+              <p className="text-sm text-gray-600">
+                When on, a prepared month waits in Executive → Approvals (and Payment Advice) until someone with payroll-approval permission signs it off. When off, preparing a month makes it ready to pay immediately.
+              </p>
+            </div>
+            <Switch
+              isSelected={form.requireApprovalForPayroll}
+              onValueChange={(v) => setForm((f) => ({ ...f, requireApprovalForPayroll: v }))}
+              isDisabled={!canManage}
+            >
+              Require approval
+            </Switch>
+          </div>
         </CardBody>
       </Card>
     </div>

@@ -8,7 +8,7 @@ import EventsConferencesMainDashboard from '../../components/EventsConferencesMa
 export default function EventsOpsPage() {
   return (
     <PageLayout>
-      <div className="p-6 pb-0">
+      <div className="px-3 pt-2 pb-0">
         <EventsBackButton />
       </div>
       <EventsConferencesMainDashboard fullPage />

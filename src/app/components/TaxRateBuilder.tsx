@@ -31,6 +31,7 @@ import {
   Accordion,
   AccordionItem,
 } from "@heroui/react";
+import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 import { useComplianceStore } from '@/app/lib/compliance/store';
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import {
@@ -828,14 +829,14 @@ export default function TaxRateBuilder() {
   }, [selectedCountry]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Compact filter toolbar — country is controlled by the page header */}
-      <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4 p-4 rounded-lg bg-default-50 border border-default-200">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
+      <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-3 p-3 rounded-lg bg-default-50 border border-default-200">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1">
           <div>
             <span className="text-sm font-medium text-gray-700">Tax Area</span>
             <Select
-              className="mt-2"
+              className="mt-1.5"
               selectedKeys={[filterDomain]}
               onSelectionChange={(keys) => setFilterDomain(Array.from(keys)[0] as any)}
               variant="bordered"
@@ -849,7 +850,7 @@ export default function TaxRateBuilder() {
           </div>
           <div>
             <span className="text-sm font-medium text-gray-700">Search rules</span>
-            <Input className="mt-2" placeholder="Name or GL code" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} variant="bordered" size="sm" />
+            <Input className="mt-1.5" placeholder="Name or GL code" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} variant="bordered" size="sm" />
           </div>
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
@@ -867,38 +868,70 @@ export default function TaxRateBuilder() {
         </div>
       )}
 
-      {countryQuickApply && (
-        <Accordion variant="bordered" itemClasses={{ title: 'text-sm font-medium' }}>
-          <AccordionItem
-            key="country-ref"
-            aria-label="Country tax reference"
-            title={`${getCountryFlag(selectedCountry)} Loaded sales rules`}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Tabs
+          selectedKey={workspaceTab}
+          onSelectionChange={(key) => setWorkspaceTab(key as 'rules' | 'types' | 'simulator')}
+          aria-label="Tax builder sections"
+          size="sm"
+          variant="solid"
+          classNames={{
+            ...deskBookTabsClassNames,
+            base: 'w-auto',
+            panel: 'hidden',
+          }}
+        >
+          <Tab key="rules" title={`Rules (${filteredRules.length})`} />
+          <Tab key="types" title={`Tax Types (${countryTypesCount})`} />
+          <Tab key="simulator" title="Simulator" />
+        </Tabs>
+        {countryQuickApply && (
+          <Accordion
+            variant="bordered"
+            className="min-w-0 flex-1 sm:max-w-xs"
+            itemClasses={{
+              base: 'px-2',
+              title: 'text-xs font-medium',
+              trigger: 'py-1.5 min-h-9 gap-2',
+              content: 'pt-0 pb-2',
+            }}
           >
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-2">
-              <p className="text-xs text-gray-600">
-                {salesRulesSummary}
-                {countryQuickApply.note ? ` — ${countryQuickApply.note}` : ''}
-              </p>
-              <Button
-                size="sm"
-                className="bg-ghana-green text-white shrink-0"
-                onPress={reApplyCountryTemplate}
-                isLoading={isApplyingTemplate}
-              >
-                Apply country template
-              </Button>
-            </div>
-          </AccordionItem>
-        </Accordion>
-      )}
+            <AccordionItem
+              key="country-ref"
+              aria-label="Country tax reference"
+              title={`${getCountryFlag(selectedCountry)} Loaded sales rules`}
+            >
+              <div className="flex flex-col gap-2">
+                <p className="text-xs text-gray-600">
+                  {salesRulesSummary}
+                  {countryQuickApply.note ? ` — ${countryQuickApply.note}` : ''}
+                </p>
+                <Button
+                  size="sm"
+                  className="bg-ghana-green text-white shrink-0 self-start"
+                  onPress={reApplyCountryTemplate}
+                  isLoading={isApplyingTemplate}
+                >
+                  Apply country template
+                </Button>
+              </div>
+            </AccordionItem>
+          </Accordion>
+        )}
+      </div>
 
       <Tabs
         selectedKey={workspaceTab}
         onSelectionChange={(key) => setWorkspaceTab(key as 'rules' | 'types' | 'simulator')}
-        aria-label="Tax builder sections"
+        aria-label="Tax builder panels"
+        classNames={{
+          base: 'w-full',
+          tabList: 'hidden',
+          panel: 'pt-0',
+        }}
       >
         <Tab key="rules" title={`Rules (${filteredRules.length})`}>
-          <Card className="mt-4 border-0 shadow-sm" id="rules-section">
+          <Card className="mt-1 border-0 shadow-sm" id="rules-section">
             <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <p className="font-semibold">{getCountryDisplayName(selectedCountry)} — tax rules</p>

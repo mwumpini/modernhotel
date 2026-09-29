@@ -16,6 +16,11 @@ import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import {
+  STOCK_KPI_SECTIONS,
+  deptInventoryVisibilityKey,
+} from './inventory/DepartmentInventoryPanel';
+import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
 
 // Hideable summary cards. The service tabs (tables, reservations, menu,
 // stock, requisitions, reports) stay visible.
@@ -96,6 +101,10 @@ export default function FoodBeverageMainDashboard({
   const [showPOS, setShowPOS] = useState(false);
 
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.restaurantBar', FB_DASHBOARD_SECTIONS);
+  const stockVisibility = useDashboardVisibility(deptInventoryVisibilityKey('restaurant'), STOCK_KPI_SECTIONS);
+  const onInventoryKpis = selectedTab === 'supplies' && suppliesView === 'inventory';
+  const customizeSections = onInventoryKpis ? STOCK_KPI_SECTIONS : FB_DASHBOARD_SECTIONS;
+  const customizeApi = onInventoryKpis ? stockVisibility : { isHidden, toggle: toggleSection, showAll, hiddenCount };
 
   useEffect(() => {
     const applyStoredTab = () => {
@@ -145,37 +154,37 @@ export default function FoodBeverageMainDashboard({
   }
 
   return (
-    <div className={fullPage ? 'p-6 pt-2' : 'p-6'}>
-      {!fullPage && (
-        <>
-      <DeptMessenger from="f&b" mode="drawer" />
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">🍽️ Restaurant & Bar</h2>
+    <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
+      {!fullPage && <DeptMessenger from="f&b" mode="drawer" />}
+      <div className={`flex items-center justify-between ${fullPage ? 'mb-2' : 'mb-6'}`}>
+        <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>🍽️ Restaurant & Bar</h2>
         <div className="flex items-center gap-2">
-          <Button
-            color="success"
-            size="sm"
-            className="bg-green-600 text-white"
-            onClick={() => setShowPOS(true)}
-          >
-            Open POS
-          </Button>
+          {!fullPage && (
+            <Button
+              color="success"
+              size="sm"
+              className="bg-green-600 text-white"
+              onClick={() => setShowPOS(true)}
+            >
+              Open POS
+            </Button>
+          )}
           <CustomizeViewControl
-            sections={FB_DASHBOARD_SECTIONS}
-            isHidden={isHidden}
-            toggle={toggleSection}
-            showAll={showAll}
-            hiddenCount={hiddenCount}
+            sections={customizeSections}
+            isHidden={customizeApi.isHidden}
+            toggle={customizeApi.toggle}
+            showAll={customizeApi.showAll}
+            hiddenCount={customizeApi.hiddenCount}
           />
-          <ModuleExpandButton
-            href={selectedTab === 'reports' ? '/fb/reports' : '/fb/ops'}
-            label={selectedTab === 'reports' ? 'Open reports full page' : 'Open restaurant & bar full page'}
-          />
-          <OfflineIndicator />
+          {!fullPage && (
+            <ModuleExpandButton
+              href={selectedTab === 'reports' ? '/fb/reports' : '/fb/ops'}
+              label={selectedTab === 'reports' ? 'Open reports full page' : 'Open restaurant & bar full page'}
+            />
+          )}
+          {!fullPage && <OfflineIndicator />}
         </div>
       </div>
-        </>
-      )}
 
       {/* Order Status Overview - Following Uniform Pattern */}
       {!fullPage && (
@@ -322,8 +331,7 @@ export default function FoodBeverageMainDashboard({
 
       <Card className="border-0 shadow-lg">
         {fullPage && (
-          <CardHeader className="pb-3 flex items-center justify-between gap-3">
-            <h3 className="text-xl font-semibold text-ghana-black">Restaurant & Bar</h3>
+          <div className="flex justify-end px-3 pt-2">
             <Button
               color="success"
               size="sm"
@@ -332,20 +340,23 @@ export default function FoodBeverageMainDashboard({
             >
               Open POS
             </Button>
-          </CardHeader>
+          </div>
         )}
-        <CardBody>
+        <CardBody className="p-0">
           <Tabs
             selectedKey={selectedTab}
             onSelectionChange={(key) => setSelectedTab(String(key))}
             className="w-full"
+            size="sm"
+            variant="solid"
+            classNames={deskBookTabsClassNames}
             aria-label="Restaurant and bar operations"
           >
             {FB_TAB_OPTIONS.map((tab) => (
               <Tab key={tab.key} title={tab.label} />
             ))}
           </Tabs>
-          <div className="mt-4 px-2 pb-2">
+          <div className={deskBookTabPanelClassName}>
             {selectedTab === 'activity' && <FoodBeveragePosActivity />}
             {selectedTab === 'tables' && <FoodBeverageRestaurantBar panel="tables" />}
             {selectedTab === 'reservations' && <FoodBeverageRestaurantBar panel="reservations" />}

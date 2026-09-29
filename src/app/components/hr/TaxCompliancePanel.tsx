@@ -3,8 +3,13 @@
 import React, { useMemo, useState } from 'react';
 import { Button, Card, CardBody, CardHeader, Input, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from '@heroui/react';
 import { useComplianceStore } from '@/app/lib/compliance/store';
+import { formatMoney } from '@/app/lib/format/currency';
+import { deskResizableTableClassNames, useResizableColumns } from '../frontoffice/columnResize';
+
+const taxColWidths = { name: 200, amount: 120, glCode: 100 };
 
 export default function TaxCompliancePanel() {
+  const taxCols = useResizableColumns(taxColWidths);
   const country = useComplianceStore((s) => s.country);
   const setCountry = useComplianceStore((s) => s.setCountry);
   const taxRules = useComplianceStore((s) => s.taxRules);
@@ -81,18 +86,24 @@ export default function TaxCompliancePanel() {
                 <div className="p-3 bg-gray-50 rounded"><div className="text-xs text-gray-500">Total Statutory Deductions</div><div className="text-xl font-semibold">{result.total.toFixed(2)}</div></div>
                 <div className="p-3 bg-gray-50 rounded"><div className="text-xs text-gray-500">Net Pay</div><div className="text-xl font-semibold">{result.netPay.toFixed(2)}</div></div>
               </div>
-              <Table aria-label="taxes">
-                <TableHeader>
-                  <TableColumn>WITHHOLDING</TableColumn>
-                  <TableColumn>AMOUNT</TableColumn>
-                  <TableColumn>GL CODE</TableColumn>
-                </TableHeader>
-                <TableBody>
-                  {result.taxes.map((t, i) => (
-                    <TableRow key={i}><TableCell>{t.name}</TableCell><TableCell>{t.amount.toFixed(2)}</TableCell><TableCell>{t.glCode}</TableCell></TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <div ref={taxCols.frameRef} style={taxCols.frameStyle}>
+                <Table aria-label="taxes" removeWrapper classNames={deskResizableTableClassNames()}>
+                  <TableHeader>
+                    <TableColumn style={taxCols.style('name')}>Withholding</TableColumn>
+                    <TableColumn style={taxCols.style('amount')}>Amount</TableColumn>
+                    <TableColumn style={taxCols.style('glCode')}>GL code</TableColumn>
+                  </TableHeader>
+                  <TableBody>
+                    {result.taxes.map((t, i) => (
+                      <TableRow key={i}>
+                        <TableCell>{t.name}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatMoney(t.amount)}</TableCell>
+                        <TableCell>{t.glCode}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </>
           )}
         </CardBody>

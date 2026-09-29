@@ -5,8 +5,12 @@ import { Card, CardBody, CardHeader, Table, TableBody, TableCell, TableColumn, T
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { useTrainingStore } from '@/app/lib/hr/trainingStore';
 import { computeLaborCompliance } from '@/app/lib/hr/laborCompliance';
+import { deskResizableTableClassNames, useResizableColumns } from '../frontoffice/columnResize';
+
+const laborColWidths = { item: 220, coverage: 160, status: 140 };
 
 export default function LaborCompliancePanel() {
+  const laborCols = useResizableColumns(laborColWidths);
   const employees = useEmployeeStore((s) => s.employees);
   const trainingPrograms = useTrainingStore((s) => s.programs);
   const trainingEnrollments = useTrainingStore((s) => s.enrollments);
@@ -29,29 +33,31 @@ export default function LaborCompliancePanel() {
             Ghana Card numbers, work-permit expiry dates, and documents on employee profiles to
             improve this score.
           </div>
-          <Table aria-label="labor-checklist">
-            <TableHeader>
-              <TableColumn>ITEM</TableColumn>
-              <TableColumn>COVERAGE</TableColumn>
-              <TableColumn>STATUS</TableColumn>
-            </TableHeader>
-            <TableBody>
-              {checklist.map((c) => {
-                const isCompliant = c.total === 0 || c.compliant === c.total;
-                return (
-                  <TableRow key={c.id}>
-                    <TableCell>{c.label}</TableCell>
-                    <TableCell>{c.total === 0 ? 'N/A — no applicable employees' : `${c.compliant}/${c.total}`}</TableCell>
-                    <TableCell>
-                      <Chip size="sm" variant="flat" color={isCompliant ? 'success' : 'warning'}>
-                        {isCompliant ? 'Compliant' : 'Attention Needed'}
-                      </Chip>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+          <div ref={laborCols.frameRef} style={laborCols.frameStyle}>
+            <Table aria-label="labor-checklist" removeWrapper classNames={deskResizableTableClassNames()}>
+              <TableHeader>
+                <TableColumn style={laborCols.style('item')}>Item</TableColumn>
+                <TableColumn style={laborCols.style('coverage')}>Coverage</TableColumn>
+                <TableColumn style={laborCols.style('status')}>Status</TableColumn>
+              </TableHeader>
+              <TableBody>
+                {checklist.map((c) => {
+                  const isCompliant = c.total === 0 || c.compliant === c.total;
+                  return (
+                    <TableRow key={c.id}>
+                      <TableCell>{c.label}</TableCell>
+                      <TableCell>{c.total === 0 ? 'N/A — no applicable employees' : `${c.compliant}/${c.total}`}</TableCell>
+                      <TableCell>
+                        <Chip size="sm" variant="flat" color={isCompliant ? 'success' : 'warning'}>
+                          {isCompliant ? 'Compliant' : 'Attention Needed'}
+                        </Chip>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
         </CardBody>
       </Card>
     </div>

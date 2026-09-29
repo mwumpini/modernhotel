@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import HeadingInfo from '../../components/HeadingInfo';
 import {
   Card,
@@ -28,9 +27,9 @@ import {
   Pagination,
   Switch
 } from "@heroui/react";
-import CustomizeViewControl, { HideCardButton } from '../../components/dashboard/CustomizeViewControl';
+import { HideCardButton } from '../../components/dashboard/CustomizeViewControl';
 import { worksheetTableClassNames } from '../../components/frontoffice/StayWorksheetTable';
-import { useDashboardVisibility, type DashboardSectionDef } from '../../lib/dashboard/useDashboardVisibility';
+import { FoDeskKpiCustomize, FO_SERVICE_CHARGES_KPI_SECTIONS, useFrontOfficeDeskVisibility } from '../../components/frontoffice/foDeskKpi';
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { useSettingsStore } from '../../lib/settings/store';
 import { useCurrentUserName } from '../../lib/auth/useCurrentUserName';
@@ -110,18 +109,12 @@ interface ServiceCharge {
   taxCategory?: string;
 }
 
-const SERVICE_CHARGES_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
-  { id: 'totalCharges', label: 'Total Charges (incl. tax)' },
-  { id: 'paidAmount', label: 'Paid Amount (incl. tax)' },
-  { id: 'outstanding', label: 'Outstanding (incl. tax)' },
-  { id: 'paidTotal', label: 'Paid/Total' },
-];
+const SERVICE_CHARGES_DASHBOARD_SECTIONS = FO_SERVICE_CHARGES_KPI_SECTIONS;
 
 export default function ServiceChargesPage() {
-  const router = useRouter();
   const currentUserName = useCurrentUserName();
-  const { isHidden, hide, toggle: toggleStatSection, showAll: showAllStats, hiddenCount: hiddenStatsCount } =
-    useDashboardVisibility('dashboard.hidden.serviceCharges', SERVICE_CHARGES_DASHBOARD_SECTIONS);
+  const { isHidden, hide, hiddenCount: hiddenStatsCount, isHosted } =
+    useFrontOfficeDeskVisibility(FO_SERVICE_CHARGES_KPI_SECTIONS);
   const { roomManagement } = useSettingsStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -586,13 +579,7 @@ export default function ServiceChargesPage() {
           <HeadingInfo label="About service charges">Manage additional charges for guests (swimming pool, laundry, spa, etc.)</HeadingInfo>
         </div>
         <div className="flex gap-2">
-          <CustomizeViewControl
-            sections={SERVICE_CHARGES_DASHBOARD_SECTIONS}
-            isHidden={isHidden}
-            toggle={toggleStatSection}
-            showAll={showAllStats}
-            hiddenCount={hiddenStatsCount}
-          />
+          {!isHosted && <FoDeskKpiCustomize sections={FO_SERVICE_CHARGES_KPI_SECTIONS} />}
           <Button
             color="primary"
             onClick={() => {
@@ -614,19 +601,6 @@ export default function ServiceChargesPage() {
             className="bg-ghana-gold text-white"
           >
             ➕ Add Service Charge
-          </Button>
-          <Button
-            color="secondary"
-            variant="flat"
-            onPress={() => {
-              try {
-                localStorage.setItem('nav.section', 'settings');
-                localStorage.setItem('rooms.tab', 'service-charges');
-              } catch {}
-              router.push('/?tab=rooms');
-            }}
-          >
-            ⚙️ Manage Pricing
           </Button>
         </div>
       </div>
@@ -700,11 +674,11 @@ export default function ServiceChargesPage() {
       {/* Payment Summary — totals reflect the active filter so cards match table rows */}
       {hiddenStatsCount < SERVICE_CHARGES_DASHBOARD_SECTIONS.length && (
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-        {!isHidden('totalCharges') && (
+        {!isHidden('svc.totalCharges') && (
         <Card className="relative border border-gray-200 shadow-none">
           <CardBody className="px-2 py-1.5 text-center">
             <div className="absolute right-1 top-0.5">
-              <HideCardButton onHide={() => hide('totalCharges')} label="Total Charges (incl. tax)" />
+              <HideCardButton onHide={() => hide('svc.totalCharges')} label="Total Charges (incl. tax)" />
             </div>
             <div className="text-base font-semibold tabular-nums text-blue-700">
               ₵{formatMoney(filteredCharges.reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge)), 0))}
@@ -713,11 +687,11 @@ export default function ServiceChargesPage() {
           </CardBody>
         </Card>
         )}
-        {!isHidden('paidAmount') && (
+        {!isHidden('svc.paidAmount') && (
         <Card className="relative border border-gray-200 shadow-none">
           <CardBody className="px-2 py-1.5 text-center">
             <div className="absolute right-1 top-0.5">
-              <HideCardButton onHide={() => hide('paidAmount')} label="Paid Amount (incl. tax)" />
+              <HideCardButton onHide={() => hide('svc.paidAmount')} label="Paid Amount (incl. tax)" />
             </div>
             <div className="text-base font-semibold tabular-nums text-green-700">
               ₵{formatMoney(filteredCharges.filter(c => c.status === 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge)), 0))}
@@ -726,11 +700,11 @@ export default function ServiceChargesPage() {
           </CardBody>
         </Card>
         )}
-        {!isHidden('outstanding') && (
+        {!isHidden('svc.outstanding') && (
         <Card className="relative border border-gray-200 shadow-none">
           <CardBody className="px-2 py-1.5 text-center">
             <div className="absolute right-1 top-0.5">
-              <HideCardButton onHide={() => hide('outstanding')} label="Outstanding (incl. tax)" />
+              <HideCardButton onHide={() => hide('svc.outstanding')} label="Outstanding (incl. tax)" />
             </div>
             <div className="text-base font-semibold tabular-nums text-orange-700">
               ₵{formatMoney(filteredCharges.filter(c => c.status !== 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge)), 0))}
@@ -739,11 +713,11 @@ export default function ServiceChargesPage() {
           </CardBody>
         </Card>
         )}
-        {!isHidden('paidTotal') && (
+        {!isHidden('svc.paidTotal') && (
         <Card className="relative border border-gray-200 shadow-none">
           <CardBody className="px-2 py-1.5 text-center">
             <div className="absolute right-1 top-0.5">
-              <HideCardButton onHide={() => hide('paidTotal')} label="Paid/Total" />
+              <HideCardButton onHide={() => hide('svc.paidTotal')} label="Paid/Total" />
             </div>
             <div className="text-base font-semibold tabular-nums text-purple-700">
               {filteredCharges.filter(c => c.status === 'paid').length}/{filteredCharges.length}

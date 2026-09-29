@@ -3,21 +3,27 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Button, Card, CardBody, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Spinner } from '@heroui/react';
 import { useSettingsStore } from '../../lib/settings/store';
+import { usePpeRegisterStore } from '../../lib/accounting/ppeStore';
 import { notifyError, notifySuccess } from '../../lib/notifications/notify';
 
 type Status = {
   loaded: boolean;
-  counts: { staff: number; departments: number; guests: number; reservations: number; stockItems: number; suppliers: number; housekeepingTasks: number; events: number; recipes: number };
+  counts: {
+    staff: number; departments: number; guests: number; reservations: number; stockItems: number; suppliers: number; housekeepingTasks: number; events: number; recipes: number;
+    restaurantOrders?: number; securityIncidents?: number; journalEntries?: number;
+  };
   notes?: string[];
   kept?: string[];
 };
 
 const INCLUDED: Array<[string, string]> = [
-  ['Front Office', '8 guests and 8 reservations — arriving today, in the house, upcoming and checked out — with folios whose charges and payments add up.'],
-  ['HR & Payroll', '5 departments, 9 positions and 10 staff on real salaries, plus leave requests, a week of attendance, this week’s roster, training and performance entries. Payroll is left for you to prepare.'],
-  ['Inventory & Kitchen', '4 suppliers, 16 stock items (three below their reorder level so alerts show), purchase orders, requisitions and 4 recipes.'],
-  ['Housekeeping, Maintenance & Events', 'Cleaning tasks, maintenance requests, 3 event halls, catering items and 3 event bookings.'],
-  ['Restaurant', '8 tables and 4 regular customers. Menu items are already there.'],
+  ['Front Office', '8 guests and 8 reservations — arriving today, in the house, upcoming and checked out — with folios whose charges and payments add up, the last three night audits, yesterday’s closed till, and guest service requests (airport pick-up, laundry, spa).'],
+  ['Restaurant & Bar', 'Live orders on the kitchen screen (new, cooking, ready), an open bar tab, paid bills from yesterday and this morning, tonight’s table bookings, 8 tables and 4 regular customers. A starter menu is added if you have none.'],
+  ['Accounting', 'Every sample sale and payment posted to the ledger, a corporate account with invoices in each aging bucket (one 45 days overdue), supplier bills (paid, open and overdue), expenses, a cash deposit, fixed assets and last month’s payroll — so the trial balance, P&L, balance sheet, cash book and AR/AP aging all have figures.'],
+  ['HR & Payroll', '5 departments, 9 positions and 11 staff on real salaries, plus leave requests, attendance, this week’s roster, training, reviews, a promotion, a staff loan, medical cover, a new hire mid-onboarding, and last month’s payroll paid. This month is left for you to run.'],
+  ['Inventory & Kitchen', '4 suppliers, 16 stock items (three below their reorder level so alerts show), purchase orders, requisitions, store transfers, goods issued to housekeeping, a stock count with variances and 4 recipes.'],
+  ['Housekeeping, Maintenance & Events', 'Cleaning tasks, room assignments per housekeeper, public cleaning areas, maintenance requests, 3 event halls, catering items and 3 event bookings.'],
+  ['Security', '4 guards, checkpoints and patrol routes, who is on duty now, patrols (one interrupted), incidents from minor to a live fire alarm, visitors (one overdue) and compliance deadlines (one overdue).'],
 ];
 
 export default function SampleDataPanel() {
@@ -51,6 +57,9 @@ export default function SampleDataPanel() {
         if (Array.isArray(guests)) storage.setItem('fo.guests', JSON.stringify(guests.filter((g) => !isSample(g))));
       } catch {}
     }
+    // The fixed-asset register keeps a browser copy too, and pushes it to a server that has none.
+    const ppe = usePpeRegisterStore.getState();
+    usePpeRegisterStore.setState({ assets: ppe.assets.filter((x) => !isSample(x)), categories: ppe.categories.filter((x) => !isSample(x)) });
   };
 
   // Every screen keeps its own copy of the data, so after a change the app reloads (and comes back to this tab)
@@ -87,10 +96,10 @@ export default function SampleDataPanel() {
 
   const c = status?.counts;
   return (
-    <div className="space-y-5 mt-4 max-w-4xl">
+    <div className="mt-2 max-w-4xl space-y-3">
       <div>
         <h3 className="text-lg font-semibold text-ghana-black">Sample data for testing</h3>
-        <p className="text-sm text-gray-600 mt-1">
+        <p className="mt-0.5 text-xs text-gray-600">
           Fill this hotel with realistic starter records so testers can try every screen straight away. Sample records are kept apart from
           anything you enter yourself: <strong>Remove sample data</strong> takes out exactly what was loaded and leaves your own data — and a clean slate — behind.
         </p>
@@ -104,7 +113,7 @@ export default function SampleDataPanel() {
               <li key={area} className="text-sm text-gray-700"><span className="font-semibold text-ghana-black">{area}:</span> {text}</li>
             ))}
           </ul>
-          <p className="text-xs text-gray-500">Loading again never duplicates anything. If this hotel has no rooms yet, a sample set of rooms is added too.</p>
+          <p className="text-xs text-gray-500">Loading again never duplicates anything. If this hotel has no rooms or menu yet, a sample set is added too. Dates are relative to today, so the data always looks current.</p>
         </CardBody>
       </Card>
 
@@ -115,7 +124,7 @@ export default function SampleDataPanel() {
               <p className="text-sm font-medium text-ghana-black">{status === null ? 'Checking…' : status.loaded ? 'Sample data is loaded' : 'No sample data loaded'}</p>
               {c && status?.loaded && (
                 <p className="text-xs text-gray-600 mt-1">
-                  {c.staff} staff · {c.guests} guests · {c.reservations} reservations · {c.stockItems} stock items · {c.suppliers} suppliers · {c.housekeepingTasks} housekeeping tasks · {c.events} events · {c.recipes} recipes
+                  {c.staff} staff · {c.guests} guests · {c.reservations} reservations · {c.restaurantOrders ?? 0} restaurant orders · {c.journalEntries ?? 0} ledger entries · {c.stockItems} stock items · {c.suppliers} suppliers · {c.housekeepingTasks} housekeeping tasks · {c.events} events · {c.securityIncidents ?? 0} security incidents · {c.recipes} recipes
                 </p>
               )}
             </div>
@@ -138,7 +147,7 @@ export default function SampleDataPanel() {
           <ModalHeader>Remove all sample data?</ModalHeader>
           <ModalBody className="space-y-2 text-sm text-gray-700">
             <p>This deletes every sample record listed above, together with anything added to them since — for example a payment or charge on a sample guest’s stay, or attendance for a sample staff member.</p>
-            <p>Records you created yourself stay. Sample payroll that was <strong>approved</strong> can’t be undone here: its ledger entries remain.</p>
+            <p>Records you created yourself stay, and the sample ledger entries are taken out with the rest. Anything <em>you</em> posted against sample records (for example a payroll you ran for sample staff, or depreciation on a sample asset) keeps its own ledger entries.</p>
             <p className="font-medium text-ghana-black">This can’t be undone, but you can load the sample data again any time.</p>
           </ModalBody>
           <ModalFooter>

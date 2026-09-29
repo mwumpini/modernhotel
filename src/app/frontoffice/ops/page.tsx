@@ -8,7 +8,7 @@ import FrontdeskDashboard from '../../components/FrontdeskDashboard';
 export default function FrontOfficeOpsPage() {
   return (
     <PageLayout>
-      <div className="p-6 pb-0">
+      <div className="px-3 pt-2 pb-0">
         <FrontOfficeBackButton />
       </div>
       <FrontdeskDashboard fullPage />

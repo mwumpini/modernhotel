@@ -34,8 +34,8 @@ import {
 import { InformationCircleIcon } from '@heroicons/react/24/outline';
 import { usePathname } from 'next/navigation';
 import FrontOfficeBackButton from '../../../components/FrontOfficeBackButton';
-import CustomizeViewControl, { HideCardButton } from '../../../components/dashboard/CustomizeViewControl';
-import { useDashboardVisibility, type DashboardSectionDef } from '../../../lib/dashboard/useDashboardVisibility';
+import { HideCardButton } from '../../../components/dashboard/CustomizeViewControl';
+import { FoDeskKpiCustomize, FO_INVOICES_KPI_SECTIONS, useFrontOfficeDeskVisibility } from '../../../components/frontoffice/foDeskKpi';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
 import { useSettingsStore } from '../../../lib/settings/store';
 import { useCurrentUserName } from '../../../lib/auth/useCurrentUserName';
@@ -106,12 +106,7 @@ interface Invoice {
   balance: number;
 }
 
-const INVOICES_PAYMENTS_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
-  { id: 'totalInvoices', label: 'Total Invoices' },
-  { id: 'collected', label: 'Collected' },
-  { id: 'outstanding', label: 'Outstanding' },
-  { id: 'overdue', label: 'Overdue' },
-];
+const INVOICES_PAYMENTS_DASHBOARD_SECTIONS = FO_INVOICES_KPI_SECTIONS;
 
 export default function InvoicesPaymentsPage() {
   const pathname = usePathname();
@@ -124,8 +119,8 @@ export default function InvoicesPaymentsPage() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
   const currentUserName = useCurrentUserName();
-  const { isHidden, hide, toggle: toggleStatSection, showAll: showAllStats, hiddenCount: hiddenStatsCount } =
-    useDashboardVisibility('dashboard.hidden.invoicesPayments', INVOICES_PAYMENTS_DASHBOARD_SECTIONS);
+  const { isHidden, hide, hiddenCount: hiddenStatsCount, isHosted } =
+    useFrontOfficeDeskVisibility(FO_INVOICES_KPI_SECTIONS);
   const [activeTab, setActiveTab] = useState('folios');
   const [companyFocus, setCompanyFocus] = useState<{ key: string; name: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -977,103 +972,73 @@ export default function InvoicesPaymentsPage() {
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-3 px-0 py-1 md:px-0">
       {inlineNotification && (
         <div className={`px-4 py-3 rounded-lg text-sm font-medium flex items-center gap-2 ${inlineNotification.type === 'success' ? 'bg-green-50 text-green-800 border border-green-200' : inlineNotification.type === 'warning' ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-red-50 text-red-800 border border-red-200'}`}>
           {inlineNotification.type === 'success' ? '✅' : inlineNotification.type === 'warning' ? '⚠️' : '❌'} {inlineNotification.message}
         </div>
       )}
-      <div className="flex justify-between items-center">
+      <div className="flex items-center justify-between gap-3">
         <div>
           {/* Only on the standalone route (e.g. "View Folio →" from a reservation). When embedded as a tab in Front Office Operations, that page already renders its own back button. */}
           {pathname?.startsWith('/guest-services/client-services/invoices-payments') && <FrontOfficeBackButton />}
           <div className="flex items-center gap-1.5">
-            <h1 className="text-3xl font-bold text-gray-900">Invoices & Payments</h1>
+            <h1 className="text-xl font-bold text-ghana-black">Invoices & Payments</h1>
             <HeadingInfo label="About invoices and payments">Manage guest billing and payment processing</HeadingInfo>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <CustomizeViewControl
-            sections={INVOICES_PAYMENTS_DASHBOARD_SECTIONS}
-            isHidden={isHidden}
-            toggle={toggleStatSection}
-            showAll={showAllStats}
-            hiddenCount={hiddenStatsCount}
-          />
-          <Button color="primary" onPress={onCreateOpen}>+ Create Invoice</Button>
+          {!isHosted && <FoDeskKpiCustomize sections={FO_INVOICES_KPI_SECTIONS} />}
+          <Button color="primary" size="sm" onPress={onCreateOpen}>+ Create Invoice</Button>
         </div>
       </div>
 
       {hiddenStatsCount < INVOICES_PAYMENTS_DASHBOARD_SECTIONS.length && (
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-        {!isHidden('totalInvoices') && (
-        <Card className="border border-gray-200 border-l-2 border-l-blue-500 shadow-none">
-          <CardBody className="px-2 py-1.5">
-            <div className="flex items-center justify-between gap-1">
-              <div className="min-w-0">
-                <p className="text-xs leading-tight text-gray-500">Total Invoices</p>
-                <p className="text-base font-semibold tabular-nums text-gray-900">{stats.totalInvoices}</p>
-                <p className="text-[11px] leading-tight text-gray-400">{invoices.length} total</p>
-              </div>
-              <div className="flex shrink-0 flex-col items-end">
-                <HideCardButton onHide={() => hide('totalInvoices')} label="Total Invoices" />
-                <div className="text-sm leading-none text-blue-500">📄</div>
-              </div>
+        {!isHidden('inv.totalInvoices') && (
+        <Card className="relative border border-gray-200 shadow-none">
+          <CardBody className="px-2 py-1.5 text-center">
+            <div className="absolute right-1 top-0.5">
+              <HideCardButton onHide={() => hide('inv.totalInvoices')} label="Total Invoices" />
             </div>
+            <div className="text-base font-semibold tabular-nums text-gray-900">{stats.totalInvoices}</div>
+            <div className="text-xs leading-tight text-gray-500">Total Invoices</div>
           </CardBody>
         </Card>
         )}
 
-        {!isHidden('collected') && (
-        <Card className="border border-gray-200 border-l-2 border-l-green-500 shadow-none">
-          <CardBody className="px-2 py-1.5">
-            <div className="flex items-center justify-between gap-1">
-              <div className="min-w-0">
-                <p className="text-xs leading-tight text-gray-500">Collected</p>
-                <p className="text-base font-semibold tabular-nums text-green-700">₵{formatMoney(stats.totalCollected)}</p>
-                <p className="text-[11px] leading-tight text-gray-400">{stats.collectionRate.toFixed(1)}% collection rate</p>
-              </div>
-              <div className="flex shrink-0 flex-col items-end">
-                <HideCardButton onHide={() => hide('collected')} label="Collected" />
-                <div className="text-sm leading-none">💰</div>
-              </div>
+        {!isHidden('inv.collected') && (
+        <Card className="relative border border-gray-200 shadow-none">
+          <CardBody className="px-2 py-1.5 text-center">
+            <div className="absolute right-1 top-0.5">
+              <HideCardButton onHide={() => hide('inv.collected')} label="Collected" />
             </div>
+            <div className="text-base font-semibold tabular-nums text-green-700">₵{formatMoney(stats.totalCollected)}</div>
+            <div className="text-xs leading-tight text-gray-500">Collected</div>
           </CardBody>
         </Card>
         )}
 
-        {!isHidden('outstanding') && (
-        <Card className="border border-gray-200 border-l-2 border-l-orange-500 shadow-none">
-          <CardBody className="px-2 py-1.5">
-            <div className="flex items-center justify-between gap-1">
-              <div className="min-w-0">
-                <p className="text-xs leading-tight text-gray-500">Outstanding</p>
-                <p className="text-base font-semibold tabular-nums text-orange-700">₵{formatMoney(stats.totalOutstanding)}</p>
-                <p className="text-[11px] leading-tight text-gray-400">To be collected</p>
-              </div>
-              <div className="flex shrink-0 flex-col items-end">
-                <HideCardButton onHide={() => hide('outstanding')} label="Outstanding" />
-                <div className="text-sm leading-none">⏰</div>
-              </div>
+        {!isHidden('inv.outstanding') && (
+        <Card className="relative border border-gray-200 shadow-none">
+          <CardBody className="px-2 py-1.5 text-center">
+            <div className="absolute right-1 top-0.5">
+              <HideCardButton onHide={() => hide('inv.outstanding')} label="Outstanding" />
             </div>
+            <div className="text-base font-semibold tabular-nums text-orange-700">₵{formatMoney(stats.totalOutstanding)}</div>
+            <div className="text-xs leading-tight text-gray-500">Outstanding</div>
           </CardBody>
         </Card>
         )}
 
-        {!isHidden('overdue') && (
-        <Card className="border border-gray-200 border-l-2 border-l-red-500 shadow-none">
-          <CardBody className="px-2 py-1.5">
-            <div className="flex items-center justify-between gap-1">
-              <div className="min-w-0">
-                <p className="text-xs leading-tight text-gray-500">Overdue</p>
-                <p className="text-base font-semibold tabular-nums text-red-700">₵{formatMoney(stats.overdueAmount)}</p>
-                <p className="text-[11px] leading-tight text-gray-400">{stats.overdueInvoices} invoices</p>
-              </div>
-              <div className="flex shrink-0 flex-col items-end">
-                <HideCardButton onHide={() => hide('overdue')} label="Overdue" />
-                <div className="text-sm leading-none">🚨</div>
-              </div>
+        {!isHidden('inv.overdue') && (
+        <Card className="relative border border-gray-200 shadow-none">
+          <CardBody className="px-2 py-1.5 text-center">
+            <div className="absolute right-1 top-0.5">
+              <HideCardButton onHide={() => hide('inv.overdue')} label="Overdue" />
             </div>
+            <div className="text-base font-semibold tabular-nums text-red-700">₵{formatMoney(stats.overdueAmount)}</div>
+            <div className="text-xs leading-tight text-gray-500">Overdue</div>
           </CardBody>
         </Card>
         )}
@@ -1404,7 +1369,7 @@ export default function InvoicesPaymentsPage() {
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
                   <h3 className="text-sm font-semibold text-ghana-black">Folios</h3>
-                  <p className="text-xs text-gray-500">Same stay figures as Desk. Open a row to take payment, print, or adjust.</p>
+                  <p className="text-xs text-gray-500">Open a row to take payment, print, or adjust.</p>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap justify-end">
                   <Input

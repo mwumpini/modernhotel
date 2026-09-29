@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Button, Card, CardBody, CardHeader, Chip, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, Textarea, Checkbox } from '@heroui/react';
+import { Button, Card, CardBody, CardHeader, Chip, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Pagination, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, Textarea, Checkbox } from '@heroui/react';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { useEmployeeChangesStore } from '@/app/lib/hr/employeeChangesStore';
 import { usePayrollStore } from '@/app/lib/hr/payrollStore';
@@ -11,7 +11,39 @@ import { categoryLabel, fmtScore, lastDaysFrom, summarize } from '@/app/lib/hr/p
 import ScoreChip from './ScoreChip';
 import { useComplianceStore } from '@/app/lib/compliance/store';
 import { useSettingsStore } from '@/app/lib/settings/store';
+import { formatMoney } from '@/app/lib/format/currency';
 import AttachmentUpload from '@/app/components/shared/AttachmentUpload';
+import { SortLabel, unifiedTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
+import { useDeskPagination } from '../dashboard/deskTableUi';
+import EmployeeProfileModal from './EmployeeProfileModal';
+
+type RecordSortKey =
+  | 'idNo' | 'staffNo' | 'name' | 'department' | 'position' | 'residencyClass' | 'status' | 'type'
+  | 'secondEmployment' | 'basicSalary' | 'socialSecurity' | 'tier2' | 'tier3' | 'allowances'
+  | 'vehicleBenefit' | 'housingBenefit' | 'otherNonCash' | 'incomeTax' | 'netSalary' | 'actions';
+
+const recordColumnWidths: Record<RecordSortKey, number> = {
+  idNo: 110,
+  staffNo: 110,
+  name: 160,
+  department: 130,
+  position: 130,
+  residencyClass: 150,
+  status: 100,
+  type: 110,
+  secondEmployment: 110,
+  basicSalary: 110,
+  socialSecurity: 110,
+  tier2: 100,
+  tier3: 100,
+  allowances: 110,
+  vehicleBenefit: 120,
+  housingBenefit: 120,
+  otherNonCash: 140,
+  incomeTax: 110,
+  netSalary: 110,
+  actions: 90,
+};
 
 export default function EmployeeRecordsPanel() {
   const employees = useEmployeeStore((s) => s.employees);
@@ -57,13 +89,17 @@ export default function EmployeeRecordsPanel() {
   const [isOpen, setIsOpen] = React.useState(false);
   const [isEditing, setIsEditing] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [viewingId, setViewingId] = React.useState<string | null>(null);
   const [step, setStep] = React.useState<number>(1); // 1: Basic, 2: Employment, 3: Docs
+  const [sortKey, setSortKey] = React.useState<RecordSortKey>('name');
+  const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('asc');
+  const cols = useResizableColumns<RecordSortKey>(recordColumnWidths);
 
   // Column visibility controls
-  const allColumnKeys = [
+  const allColumnKeys: RecordSortKey[] = [
   'idNo','staffNo','name','department','position','residencyClass','status','type',
   'secondEmployment','basicSalary','socialSecurity','tier2','tier3','allowances',
-  'vehicleBenefit','housingBenefit','otherNonCash','incomeTax','actions'
+  'vehicleBenefit','housingBenefit','otherNonCash','incomeTax','netSalary','actions'
   ];
   const [showColumns, setShowColumns] = React.useState<boolean>(false);
   const [visibleColumns, setVisibleColumns] = React.useState<Set<string>>(new Set(allColumnKeys));
@@ -74,6 +110,26 @@ export default function EmployeeRecordsPanel() {
       return next;
     });
   };
+
+  const onSort = (key: RecordSortKey) => {
+    if (key === 'actions') return;
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
+
+  const column = (key: RecordSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+    <TableColumn key={key} className={`relative ${visibleColumns.has(key) ? '' : 'hidden'}`} style={cols.style(key)}>
+      {key === 'actions' ? (
+        <span className="max-w-full truncate font-semibold text-ghana-black">{label}</span>
+      ) : (
+        <SortLabel active={sortKey === key} dir={sortDir} align={align} onPress={() => onSort(key)}>{label}</SortLabel>
+      )}
+      {cols.sizer(key, label)}
+    </TableColumn>
+  );
 
   const [form, setForm] = React.useState<any>({
     // Basic
@@ -135,13 +191,64 @@ export default function EmployeeRecordsPanel() {
 		otherNonCashBenefits: 0
   });
 
-  const filtered = employees.filter((e) => {
-    const statusOk = statusFilter === 'all' || e.status === statusFilter;
-    const deptOk = deptFilter === 'all' || e.departmentId === deptFilter;
-    return statusOk && deptOk;
-  });
+  const filtered = React.useMemo(() => {
+    const rows = employees.filter((e) => {
+      const statusOk = statusFilter === 'all' || e.status === statusFilter;
+      const deptOk = deptFilter === 'all' || e.departmentId === deptFilter;
+      return statusOk && deptOk;
+    });
+
+    const paidFor = (e: (typeof rows)[number], field: 'socialSecurity' | 'pension' | 'tier3' | 'tax' | 'net') => {
+      const latest = payrollRecords
+        .filter((r) => r.employeeId === e.id && r.status === 'paid')
+        .sort((a, b) => (b.paidAt?.getTime() || 0) - (a.paidAt?.getTime() || 0))[0];
+      if (!latest) return -1;
+      if (field === 'socialSecurity') return Number(latest.deductions?.socialSecurity || 0);
+      if (field === 'pension') return Number(latest.deductions?.pension || 0);
+      if (field === 'tier3') return Number((latest as any)?.deductions?.tier3 || 0);
+      if (field === 'net') return Number(latest.netPay || 0);
+      return Number(latest.deductions?.tax || 0);
+    };
+
+    const value = (e: (typeof rows)[number]): string | number => {
+      switch (sortKey) {
+        case 'idNo': return (e as any).governmentIds?.nationalId || '';
+        case 'staffNo': return e.employeeNumber || '';
+        case 'name': return `${e.firstName} ${e.lastName}`.trim().toLowerCase();
+        case 'department': return getDepartment(e.departmentId)?.name || '';
+        case 'position': return getPosition(e.positionId)?.title || '';
+        case 'residencyClass': return `${(e as any).residencyStatus || 'resident'} ${(e as any).employmentClass || 'regular'}`;
+        case 'status': return e.status || '';
+        case 'type': return e.employmentType || '';
+        case 'secondEmployment': return (e as any).secondEmployment ? 1 : 0;
+        case 'basicSalary': return Number((e as any).basicSalary ?? (e as any).salary ?? (e as any).baseSalary ?? 0);
+        case 'socialSecurity': return paidFor(e, 'socialSecurity');
+        case 'tier2': return paidFor(e, 'pension');
+        case 'tier3': return paidFor(e, 'tier3');
+        case 'allowances': return Number((e as any).allowances ?? 0);
+        case 'vehicleBenefit': return Number((e as any).vehicleBenefit ?? 0);
+        case 'housingBenefit': return Number((e as any).housingBenefit ?? 0);
+        case 'otherNonCash': return Number((e as any).otherNonCashBenefits ?? 0);
+        case 'incomeTax': return paidFor(e, 'tax');
+        case 'netSalary': return paidFor(e, 'net');
+        default: return '';
+      }
+    };
+
+    const sorted = [...rows].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      if (av < bv) return -1;
+      if (av > bv) return 1;
+      return 0;
+    });
+    return sortDir === 'asc' ? sorted : sorted.reverse();
+  }, [employees, statusFilter, deptFilter, sortKey, sortDir, getDepartment, getPosition, payrollRecords]);
+
+  const { page, setPage, pages, paged } = useDeskPagination(filtered, [statusFilter, deptFilter, sortKey, sortDir]);
 
   const openCreate = () => {
+    setViewingId(null);
     setIsEditing(false);
     setEditingId(null);
     setStep(1);
@@ -200,9 +307,14 @@ export default function EmployeeRecordsPanel() {
     setIsOpen(true);
   };
 
+  const openView = (id: string) => {
+    setViewingId(id);
+  };
+
   const openEdit = (id: string) => {
     const e = employees.find((x) => x.id === id);
     if (!e) return;
+    setViewingId(null);
     setIsEditing(true);
     setEditingId(id);
     setStep(1);
@@ -826,30 +938,41 @@ export default function EmployeeRecordsPanel() {
           </div>
         </CardHeader>
         <CardBody>
-          <Table aria-label="employees" className="overflow-x-auto">
+          <div ref={cols.frameRef} style={cols.frameStyle}>
+          <Table
+            aria-label="employees"
+            removeWrapper
+            classNames={{
+              ...unifiedTableClassNames,
+              table: 'table-fixed w-[var(--col-table-width)] min-w-[var(--col-table-width)] max-w-none',
+              th: `${unifiedTableClassNames.th} relative`,
+              td: `${unifiedTableClassNames.td} overflow-hidden`,
+            }}
+          >
             <TableHeader>
-              <TableColumn className={visibleColumns.has('idNo') ? '' : 'hidden'}>ID NO.</TableColumn>
-              <TableColumn className={visibleColumns.has('staffNo') ? '' : 'hidden'}>STAFF NO.</TableColumn>
-              <TableColumn className={visibleColumns.has('name') ? '' : 'hidden'}>NAME</TableColumn>
-              <TableColumn className={visibleColumns.has('department') ? '' : 'hidden'}>DEPARTMENT</TableColumn>
-              <TableColumn className={visibleColumns.has('position') ? '' : 'hidden'}>POSITION</TableColumn>
-              <TableColumn className={visibleColumns.has('residencyClass') ? '' : 'hidden'}>RESIDENCY / CLASS</TableColumn>
-              <TableColumn className={visibleColumns.has('status') ? '' : 'hidden'}>STATUS</TableColumn>
-              <TableColumn className={visibleColumns.has('type') ? '' : 'hidden'}>TYPE</TableColumn>
-              <TableColumn className={visibleColumns.has('secondEmployment') ? '' : 'hidden'}>SECOND EMPLOY</TableColumn>
-              <TableColumn className={visibleColumns.has('basicSalary') ? '' : 'hidden'}>BASIC SALARY</TableColumn>
-              <TableColumn className={visibleColumns.has('socialSecurity') ? '' : 'hidden'}>{tier1Label}</TableColumn>
-              <TableColumn className={visibleColumns.has('tier2') ? '' : 'hidden'}>{tier2Label}</TableColumn>
-              <TableColumn className={visibleColumns.has('tier3') ? '' : 'hidden'}>{tier3Label}</TableColumn>
-              <TableColumn className={visibleColumns.has('allowances') ? '' : 'hidden'}>ALLOWANCES</TableColumn>
-              <TableColumn className={visibleColumns.has('vehicleBenefit') ? '' : 'hidden'}>VEHICLE BENEFIT</TableColumn>
-              <TableColumn className={visibleColumns.has('housingBenefit') ? '' : 'hidden'}>HOUSING BENEFIT</TableColumn>
-              <TableColumn className={visibleColumns.has('otherNonCash') ? '' : 'hidden'}>OTHER NON-CASH BENEFITS</TableColumn>
-              <TableColumn className={visibleColumns.has('incomeTax') ? '' : 'hidden'}>INCOME TAX</TableColumn>
-              <TableColumn className={visibleColumns.has('actions') ? '' : 'hidden'}>ACTIONS</TableColumn>
+              {column('idNo', 'ID No.')}
+              {column('staffNo', 'Staff No.')}
+              {column('name', 'Name')}
+              {column('department', 'Department')}
+              {column('position', 'Position')}
+              {column('residencyClass', 'Residency / Class')}
+              {column('status', 'Status')}
+              {column('type', 'Type')}
+              {column('secondEmployment', 'Second Employ')}
+              {column('basicSalary', 'Basic Salary', 'right')}
+              {column('socialSecurity', tier1Label, 'right')}
+              {column('tier2', tier2Label, 'right')}
+              {column('tier3', tier3Label, 'right')}
+              {column('allowances', 'Allowances', 'right')}
+              {column('vehicleBenefit', 'Vehicle Benefit', 'right')}
+              {column('housingBenefit', 'Housing Benefit', 'right')}
+              {column('otherNonCash', 'Other Non-Cash', 'right')}
+              {column('incomeTax', 'Income Tax', 'right')}
+              {column('netSalary', 'Net Salary', 'right')}
+              {column('actions', 'Actions')}
             </TableHeader>
-            <TableBody>
-              {filtered.map((e) => {
+            <TableBody emptyContent="No employees match these filters.">
+              {paged.map((e) => {
                 const dept = getDepartment(e.departmentId);
                 const pos = getPosition(e.positionId);
                 const salary = (e as any).salary ?? (e as any).baseSalary ?? 0;
@@ -859,42 +982,66 @@ export default function EmployeeRecordsPanel() {
                   .filter(r => r.employeeId === e.id && r.status === 'paid')
                   .sort((a, b) => (b.paidAt?.getTime() || 0) - (a.paidAt?.getTime() || 0))[0];
                 
-                const fmtCurrency = (n: number) => new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS', minimumFractionDigits: 2 }).format(n || 0);
+                const fmtAmount = (n: number) => formatMoney(Number(n || 0));
                 const paidAmount = (value?: number) =>
-                  latestPayrollRecord ? fmtCurrency(Number(value || 0)) : '—';
+                  latestPayrollRecord ? fmtAmount(Number(value || 0)) : '—';
                 const storedBenefit = (value?: number) =>
-                  Number(value || 0) > 0 ? fmtCurrency(Number(value)) : '—';
+                  Number(value || 0) > 0 ? fmtAmount(Number(value)) : '—';
                 
                 return (
-                  <TableRow key={e.id}>
-                    <TableCell className={visibleColumns.has('idNo') ? '' : 'hidden'}>{(e as any).governmentIds?.nationalId || '-'}</TableCell>
-                    <TableCell className={visibleColumns.has('staffNo') ? '' : 'hidden'}>{e.employeeNumber}</TableCell>
-                    <TableCell className={visibleColumns.has('name') ? '' : 'hidden'}>{e.firstName} {e.lastName}</TableCell>
-                    <TableCell className={visibleColumns.has('department') ? '' : 'hidden'}>{dept?.name || '-'}</TableCell>
-                    <TableCell className={visibleColumns.has('position') ? '' : 'hidden'}>{pos?.title || '-'}</TableCell>
-                    <TableCell className={visibleColumns.has('residencyClass') ? '' : 'hidden'}>{((e as any).residencyStatus || 'resident').replace('_', ' ')} / {((e as any).employmentClass || 'regular').replace('_', ' ')}</TableCell>
+                  <TableRow
+                    key={e.id}
+                    className={rowClassNames(viewingId === e.id || (isOpen && editingId === e.id))}
+                    onClick={() => openView(e.id)}
+                  >
+                    <TableCell className={visibleColumns.has('idNo') ? 'text-gray-600' : 'hidden'}>{(e as any).governmentIds?.nationalId || '-'}</TableCell>
+                    <TableCell className={visibleColumns.has('staffNo') ? 'text-gray-600' : 'hidden'}>{e.employeeNumber}</TableCell>
+                    <TableCell className={visibleColumns.has('name') ? 'font-semibold text-ghana-black' : 'hidden'}>
+                      <span className="block truncate" title={`${e.firstName} ${e.lastName}`}>{e.firstName} {e.lastName}</span>
+                    </TableCell>
+                    <TableCell className={visibleColumns.has('department') ? '' : 'hidden'}>
+                      <span className="block truncate" title={dept?.name || '-'}>{dept?.name || '-'}</span>
+                    </TableCell>
+                    <TableCell className={visibleColumns.has('position') ? '' : 'hidden'}>
+                      <span className="block truncate" title={pos?.title || '-'}>{pos?.title || '-'}</span>
+                    </TableCell>
+                    <TableCell className={visibleColumns.has('residencyClass') ? '' : 'hidden'}>
+                      <span className="block truncate">{((e as any).residencyStatus || 'resident').replace('_', ' ')} / {((e as any).employmentClass || 'regular').replace('_', ' ')}</span>
+                    </TableCell>
                     <TableCell className={visibleColumns.has('status') ? '' : 'hidden'}><Chip size="sm" variant="flat" color={e.status === 'active' ? 'success' : e.status === 'on_leave' ? 'warning' : 'default'}>{e.status}</Chip></TableCell>
                     <TableCell className={visibleColumns.has('type') ? '' : 'hidden'}>{e.employmentType}</TableCell>
                     <TableCell className={visibleColumns.has('secondEmployment') ? '' : 'hidden'}>{(e as any).secondEmployment ? 'Y' : 'N'}</TableCell>
-                    <TableCell className={visibleColumns.has('basicSalary') ? '' : 'hidden'}>{(e as any).basicSalary ?? salary}</TableCell>
-                    <TableCell className={visibleColumns.has('socialSecurity') ? '' : 'hidden'}>{paidAmount(latestPayrollRecord?.deductions?.socialSecurity)}</TableCell>
-                    <TableCell className={visibleColumns.has('tier2') ? '' : 'hidden'}>{paidAmount(latestPayrollRecord?.deductions?.pension)}</TableCell>
-                    <TableCell className={visibleColumns.has('tier3') ? '' : 'hidden'}>{paidAmount((latestPayrollRecord as any)?.deductions?.tier3)}</TableCell>
-                    <TableCell className={visibleColumns.has('allowances') ? '' : 'hidden'}>{(e as any).allowances ?? 0}</TableCell>
-                    <TableCell className={visibleColumns.has('vehicleBenefit') ? '' : 'hidden'}>{storedBenefit((e as any).vehicleBenefit)}</TableCell>
-                    <TableCell className={visibleColumns.has('housingBenefit') ? '' : 'hidden'}>{storedBenefit((e as any).housingBenefit)}</TableCell>
-                    <TableCell className={visibleColumns.has('otherNonCash') ? '' : 'hidden'}>{storedBenefit((e as any).otherNonCashBenefits)}</TableCell>
-                    <TableCell className={visibleColumns.has('incomeTax') ? '' : 'hidden'}>{paidAmount(latestPayrollRecord?.deductions?.tax)}</TableCell>
-                    <TableCell className={visibleColumns.has('actions') ? '' : 'hidden'}>
-                      <Button size="sm" variant="flat" onPress={() => openEdit(e.id)}>Edit</Button>
+                    <TableCell className={visibleColumns.has('basicSalary') ? 'text-right tabular-nums' : 'hidden'}>{fmtAmount((e as any).basicSalary ?? salary)}</TableCell>
+                    <TableCell className={visibleColumns.has('socialSecurity') ? 'text-right tabular-nums' : 'hidden'}>{paidAmount(latestPayrollRecord?.deductions?.socialSecurity)}</TableCell>
+                    <TableCell className={visibleColumns.has('tier2') ? 'text-right tabular-nums' : 'hidden'}>{paidAmount(latestPayrollRecord?.deductions?.pension)}</TableCell>
+                    <TableCell className={visibleColumns.has('tier3') ? 'text-right tabular-nums' : 'hidden'}>{paidAmount((latestPayrollRecord as any)?.deductions?.tier3)}</TableCell>
+                    <TableCell className={visibleColumns.has('allowances') ? 'text-right tabular-nums' : 'hidden'}>{fmtAmount((e as any).allowances ?? 0)}</TableCell>
+                    <TableCell className={visibleColumns.has('vehicleBenefit') ? 'text-right tabular-nums' : 'hidden'}>{storedBenefit((e as any).vehicleBenefit)}</TableCell>
+                    <TableCell className={visibleColumns.has('housingBenefit') ? 'text-right tabular-nums' : 'hidden'}>{storedBenefit((e as any).housingBenefit)}</TableCell>
+                    <TableCell className={visibleColumns.has('otherNonCash') ? 'text-right tabular-nums' : 'hidden'}>{storedBenefit((e as any).otherNonCashBenefits)}</TableCell>
+                    <TableCell className={visibleColumns.has('incomeTax') ? 'text-right tabular-nums' : 'hidden'}>{paidAmount(latestPayrollRecord?.deductions?.tax)}</TableCell>
+                    <TableCell className={visibleColumns.has('netSalary') ? 'text-right tabular-nums font-semibold' : 'hidden'}>{paidAmount(latestPayrollRecord?.netPay)}</TableCell>
+                    <TableCell className={visibleColumns.has('actions') ? '' : 'hidden'} onClick={(ev) => ev.stopPropagation()}>
+                      <Button size="sm" variant="flat" onPress={() => openView(e.id)}>View</Button>
                     </TableCell>
                   </TableRow>
                 );
               })}
             </TableBody>
           </Table>
+          </div>
+          <div className="mt-3 flex justify-end">
+            <Pagination page={page} total={pages} onChange={setPage} showControls size="sm" />
+          </div>
         </CardBody>
       </Card>
+
+      <EmployeeProfileModal
+        employee={viewingId ? employees.find((e) => e.id === viewingId) || null : null}
+        isOpen={!!viewingId}
+        onClose={() => setViewingId(null)}
+        onEdit={(emp) => openEdit(emp.id)}
+      />
 
       {/* Column visibility modal */}
       <Modal isOpen={showColumns} onOpenChange={setShowColumns} size="lg">
@@ -923,6 +1070,7 @@ export default function EmployeeRecordsPanel() {
                     { key: 'housingBenefit', label: 'Housing Benefit' },
                     { key: 'otherNonCash', label: 'Other Non-Cash Benefits' },
                     { key: 'incomeTax', label: 'Income Tax' },
+                    { key: 'netSalary', label: 'Net Salary' },
                     { key: 'actions', label: 'Actions' },
                   ].map(col => (
                     <Checkbox

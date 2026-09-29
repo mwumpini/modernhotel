@@ -487,20 +487,17 @@ export default function ChartOfAccountsPage() {
   }
 
   return (
-    <div className="p-6 w-full">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-foreground">Chart of Accounts</h1>
-        <p className="text-default-500 text-sm mt-1">
-          Prebuilt Ghana hotel GL with coded main, sub, and detail accounts — keep, delete, or add your own.
-        </p>
+    <div className="px-3 pt-2 pb-3 md:px-4 md:pt-3 md:pb-4 w-full">
+      <div className="mb-2">
+        <h1 className="text-lg md:text-xl font-bold text-gray-800">Chart of Accounts</h1>
       </div>
 
       {error && (
         <Alert color="danger" className="mb-4">{error}</Alert>
       )}
 
-      <Card className="mb-4 w-full">
-        <CardBody className="gap-3">
+      <Card className="mb-3 w-full shadow-sm">
+        <CardBody className="gap-2 py-3 px-3">
           <div className="flex gap-2 items-center">
             <Input
               placeholder="Search by name or code…"
