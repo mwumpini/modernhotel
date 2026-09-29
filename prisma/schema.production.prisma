@@ -117,6 +117,8 @@ model Tenant {
   hrPerformanceLogs HrPerformanceLog[]
   hrEmployeeChanges HrEmployeeChange[]
   hrOnboardingChecklists HrOnboardingChecklist[]
+  hrStaffDebts HrStaffDebt[]
+  hrStaffDebtRepayments HrStaffDebtRepayment[]
   guestServices GuestService[]
   serviceRequests ServiceRequest[]
   conferenceHalls ConferenceHall[]
@@ -2428,6 +2430,49 @@ model HrOnboardingChecklist {
 
   @@unique([tenantId, employeeId])
   @@map("hr_onboarding_checklists")
+}
+
+// Staff owes the hotel — loan, IOU, or surcharge. Remaining balance is reduced when a
+// payroll line that carried the installment is marked paid (not when the month is prepared).
+model HrStaffDebt {
+  id                 String    @id @default(cuid())
+  tenantId           String
+  employeeId         String
+  type               String    // loan|iou|surcharge
+  originalAmount     Decimal
+  remainingBalance   Decimal
+  monthlyInstallment Decimal
+  /** Full calendar months after issue before payroll may take an installment (0 = from the issue month). */
+  graceMonths        Int       @default(0)
+  reason             String?
+  issuedDate         DateTime  @default(now())
+  status             String    @default("active") // active|cleared|written_off
+  notes              String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  tenant      Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  repayments  HrStaffDebtRepayment[]
+
+  @@index([tenantId, employeeId, status])
+  @@map("hr_staff_debts")
+}
+
+model HrStaffDebtRepayment {
+  id              String   @id @default(cuid())
+  tenantId        String
+  debtId          String
+  payrollRecordId String?
+  amount          Decimal
+  paidAt          DateTime @default(now())
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  tenant Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  debt   HrStaffDebt @relation(fields: [debtId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, debtId])
+  @@map("hr_staff_debt_repayments")
 }
 
 // ---------------------------------------------------------------------------
