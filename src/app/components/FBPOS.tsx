@@ -1223,6 +1223,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     try { localStorage.setItem('fbpos.detailsOpen', String(showOrderDetails)); } catch {}
   }, [showOrderDetails]);
   const [panelTab, setPanelTab] = useState<'current' | 'orders'>('current');
+  // Phones and small tablets: the order opens as a sheet over the menu instead of sitting below a long menu.
+  const [mobileOrderOpen, setMobileOrderOpen] = useState(false);
   const [ordersView, setOrdersView] = useState<'open' | 'paid'>('open');
   const [ordersScope, setOrdersScope] = useState<'table' | 'all'>('table');
   const panelOrders = useMemo(() => {
@@ -1670,10 +1672,17 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
 
           {/* Order panel */}
-          <aside id="pos-order-panel" className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white" aria-label="Order">
+          <aside
+            id="pos-order-panel"
+            className={`${mobileOrderOpen ? 'fixed inset-x-0 bottom-0 top-3 z-40 flex rounded-b-none shadow-2xl' : 'hidden'} min-h-0 flex-col rounded-2xl border border-slate-200 bg-white lg:static lg:z-auto lg:flex lg:rounded-2xl lg:shadow-none`}
+            aria-label="Order"
+          >
             {/* The order: table and customer at a glance, then the items get the rest of the height. */}
             <div className="flex items-center justify-between gap-2 px-3 pt-3 md:px-4">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <Button size="sm" variant="flat" className="bg-slate-100 lg:hidden" startContent={<ChevronDown size={16} aria-hidden />} onClick={() => setMobileOrderOpen(false)}>
+                  Menu
+                </Button>
                 <span className="text-lg font-bold text-ghana-black">{orderMode === 'Takeaway' ? 'Takeaway' : `Table ${tableNumber}`}</span>
                 <Chip size="sm" variant="flat" color={venue === 'Bar' ? 'primary' : 'success'}>{venue}</Chip>
                 {editingOrderId && <Chip size="sm" variant="flat" color="warning">Editing an order</Chip>}
@@ -1718,7 +1727,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                           {itemIcon(ci.route, 18)}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="truncate font-medium leading-snug text-ghana-black">{ci.name}</div>
+                          <div className="line-clamp-2 break-words font-medium leading-snug text-ghana-black" title={ci.name}>{ci.name}</div>
                           <div className="text-xs text-slate-500">GH₵ {ci.price.toFixed(2)} each</div>
                         </div>
                         <div className="flex items-center gap-1">
@@ -1794,7 +1803,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                       variant="flat"
                       className="h-12 border border-ghana-green bg-white font-semibold text-ghana-green"
                       startContent={<Send size={18} aria-hidden />}
-                      onClick={sendOrUpdate}
+                      onPress={sendOrUpdate}
                       isLoading={isSending}
                       isDisabled={isSending || cart.length === 0}
                     >
@@ -1830,7 +1839,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     className="h-14 w-full bg-ghana-green text-base font-semibold text-white"
                     startContent={<CreditCard size={20} aria-hidden />}
                     isDisabled={cart.length === 0 && !sentOrderData}
-                    onClick={openPayment}
+                    onPress={openPayment}
                   >
                     Process payment
                   </Button>
@@ -1906,17 +1915,19 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         </div>
       </div>
 
-      {/* Phones and tablets: the order panel sits below the menu, so keep the running total in reach. */}
-      {cart.length > 0 && (
+      {/* Phones and small tablets: the running total is always in reach; tapping it slides the order up over the menu. */}
+      {!mobileOrderOpen && (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 p-3 shadow-[0_-4px_16px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden">
           <Button
-            className="h-12 w-full bg-ghana-green font-semibold text-white"
+            className={`h-12 w-full font-semibold ${cart.length > 0 || sentOrderData ? 'bg-ghana-green text-white' : 'bg-slate-100 text-ghana-black'}`}
             onClick={() => {
-              setPanelTab('current');
-              document.getElementById('pos-order-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              setPanelTab(cart.length > 0 || sentOrderData ? 'current' : 'orders');
+              setMobileOrderOpen(true);
             }}
           >
-            View order · {cartCount} {cartCount === 1 ? 'item' : 'items'} · GH₵ {(total + taxAmount).toFixed(2)}
+            {cart.length > 0
+              ? `View order · ${cartCount} ${cartCount === 1 ? 'item' : 'items'} · GH₵ ${(total + taxAmount).toFixed(2)}`
+              : sentOrderData ? 'Sent to kitchen · Take payment' : 'Open orders'}
           </Button>
         </div>
       )}
