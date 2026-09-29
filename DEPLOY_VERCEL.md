@@ -27,7 +27,7 @@ Optional (email / OAuth if enabled):
 The repo includes:
 
 - `vercel.json` — Next.js framework, night-audit cron
-- `npm run vercel-build` — generates Prisma client, runs `db push` on production schema, then `next build`
+- `npm run vercel-build` — generates Prisma client, runs `db push` on production schema (refusing any change that would lose data — see below), then `next build`
 
 **Recommended Vercel project settings:**
 
@@ -36,6 +36,20 @@ The repo includes:
 - **Output Directory:** `.next` (default for Next.js)
 
 If you prefer migrations instead of `db push`, replace the build script with `prisma migrate deploy` and manage migrations in CI.
+
+### Schema changes and the live database
+
+Every production deploy runs `prisma db push` against the **live** database. It deliberately runs
+**without** `--accept-data-loss`: if a schema change would drop or empty a column or table (a
+rename, a removed field, a type change, a new unique constraint over existing rows), Prisma stops,
+the build fails, and the site stays on the previous deploy with its data untouched.
+
+Never add `--accept-data-loss` back to `vercel-build`. When a destructive change is really
+intended, back up the database first, then apply that one change on purpose (for example a
+hand-written SQL migration that copies data to the new column before dropping the old one), and
+only then deploy.
+
+Adding tables, adding optional columns and adding columns with a default go through without a stop.
 
 ## Deploy steps
 
