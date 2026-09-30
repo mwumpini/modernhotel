@@ -294,7 +294,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
       icon: '👨‍🍳',
       items: [
         { title: 'Kitchen Display', href: '#' },
-        { title: '📈 Reports & Analysis', href: '/kitchen/reports' },
+        { title: '📈 Reports & Analysis', href: '#' },
       ]
     },
     {
@@ -322,7 +322,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
       icon: '🚨',
       items: [
         { title: '📊 Operations', href: '#' },
-        { title: '📈 Reports & Analysis', href: '/security/reports' },
+        { title: '📈 Reports & Analysis', href: '#' },
         { title: '👁️ View Activities', href: '#' },
       ]
     },
@@ -341,6 +341,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
       icon: '🧾',
       items: [
         { title: 'Accounting Management', href: '#' },
+        { title: '📑 Financial Statements', href: '#' },
         { title: '📈 Reports & Analysis', href: '#' },
       ]
     },
@@ -436,7 +437,9 @@ export default function Navigation({ onLogout }: NavigationProps) {
         window.location.assign('/kitchen-display');
         return;
       } else if (itemTitle === '📈 Reports & Analysis') {
-        window.location.assign('/kitchen/reports');
+        try { localStorage.setItem('kitchen.tab', 'reports'); } catch {}
+        setActiveSection('kitchen');
+        try { window.dispatchEvent(new Event('kitchen-navigate')); } catch {}
         return;
       } else {
         setActiveSection('kitchen');
@@ -462,7 +465,9 @@ export default function Navigation({ onLogout }: NavigationProps) {
       if (itemTitle === '📊 Operations') {
         setActiveSection('security');
       } else if (itemTitle === '📈 Reports & Analysis') {
-        window.location.assign('/security/reports');
+        try { localStorage.setItem('security.tab', 'reports'); } catch {}
+        setActiveSection('security');
+        try { window.dispatchEvent(new Event('security-navigate')); } catch {}
         return;
       } else if (itemTitle === '👁️ View Activities') {
         setActiveSection('security-activities');
@@ -509,6 +514,10 @@ export default function Navigation({ onLogout }: NavigationProps) {
     } else if (sectionKey === 'accounting' && itemTitle) {
       if (itemTitle === 'View Activities') {
         setActiveSection('accounting-activities');
+      } else if (itemTitle === '📑 Financial Statements') {
+        try { localStorage.setItem('accounting.tab', 'statements'); } catch {}
+        setActiveSection('accounting-management');
+        try { window.dispatchEvent(new Event('accounting-navigate')); } catch {}
       } else if (itemTitle === '📈 Reports & Analysis') {
         try { localStorage.setItem('accounting.tab', 'reports'); } catch {}
         setActiveSection('accounting-management');
@@ -626,12 +635,10 @@ export default function Navigation({ onLogout }: NavigationProps) {
       case 'kitchen':
         return <Suspense fallback={<div className="p-6 text-center">Loading Kitchen Dashboard...</div>}><FoodBeverageKitchen /></Suspense>;
       case 'security':
+      case 'security-compliance':
         return <Suspense fallback={<div className="p-6 text-center">Loading Security Dashboard...</div>}><SecurityMainDashboard /></Suspense>;
       case 'security-analytics':
-        if (typeof window !== 'undefined') {
-          window.location.replace('/security/reports');
-        }
-        return <div className="p-6 text-center">Opening Reports & Analysis...</div>;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Security Dashboard...</div>}><SecurityMainDashboard initialTab="reports" /></Suspense>;
       case 'security-activities':
         return <Suspense fallback={<div className="p-6 text-center">Loading Security Activities...</div>}><DepartmentActivityLog area="security" title="Security - View Activities" /></Suspense>;
       case 'hr':
@@ -670,7 +677,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
   };
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-dvh max-w-[100vw] overflow-hidden">
       {narrow && !sidebarCollapsed && (
         <>
           {/* the open pane floats over the content: keep the rail's space, and dim the page behind it */}
@@ -679,7 +686,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
         </>
       )}
       {/* Sidebar */}
-      <nav className={`${sidebarCollapsed ? 'w-14' : 'w-80'} ${narrow && !sidebarCollapsed ? 'fixed inset-y-0 left-0 z-40 max-w-[85vw]' : ''} shrink-0 bg-white shadow-xl h-screen overflow-y-auto overflow-x-hidden transition-[width] duration-200`}>
+      <nav className={`${sidebarCollapsed ? 'w-14' : 'w-80'} ${narrow && !sidebarCollapsed ? 'fixed inset-y-0 left-0 z-40 max-w-[85vw]' : ''} shrink-0 bg-white shadow-xl h-dvh overflow-y-auto overflow-x-hidden transition-[width] duration-200`}>
         {sidebarCollapsed ? (
           <div className="flex flex-col items-center gap-1 py-3">
             <Tooltip content="Show side pane (Ctrl+B)" placement="right">
@@ -850,7 +857,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
       </nav>
 
       {/* Main Content Area */}
-      <div className="flex-1 min-w-0 bg-gray-50 overflow-y-auto">
+      <div className="work-pane flex-1 min-w-0 bg-gray-50 overflow-x-clip overflow-y-auto">
         {renderDashboardContent()}
       </div>
     </div>

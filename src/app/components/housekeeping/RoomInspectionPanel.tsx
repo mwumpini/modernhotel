@@ -254,12 +254,12 @@ export default function RoomInspectionPanel({
   return (
     <div className="space-y-3">
       {/* Header and Actions */}
-      <div className="mb-[18px] flex flex-nowrap items-center justify-between gap-2 overflow-x-auto">
+      <div className="mb-[18px] flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold text-ghana-black shrink-0">Room Inspections</h2>
         <Button
           size="sm"
           color="primary"
-          className="bg-ghana-green text-white"
+          className="min-h-10 bg-ghana-green text-white"
           onClick={handleCreateInspection}
         >
           + New Inspection
@@ -309,44 +309,49 @@ export default function RoomInspectionPanel({
         </div>
       )}
 
-      {/* Filters */}
-      <Card className="border-0 shadow-lg">
-        <CardBody className="p-4">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Input
-              placeholder="Search room numbers..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              startContent={<span className="text-gray-400">🔍</span>}
-            />
-            <Select
-              placeholder="Filter by status"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              <SelectItem key="all">All Statuses</SelectItem>
-              <SelectItem key="passed">✅ Passed</SelectItem>
-              <SelectItem key="partial">⚠️ Partial</SelectItem>
-              <SelectItem key="failed">❌ Failed</SelectItem>
-            </Select>
-            <Select
-              placeholder="Filter by inspector"
-              value={inspectorFilter}
-              onChange={(e) => setInspectorFilter(e.target.value)}
-            >
-              {[{ id: 'all', name: 'All Inspectors' }, ...staff.filter(s => s.role === 'inspector')].map((inspector) => (
-                <SelectItem key={inspector.id}>
-                  {inspector.name}
-                </SelectItem>
-              ))}
-            </Select>
-            <div className="flex items-center space-x-2">
-              <span className="text-sm text-gray-600">Filtered:</span>
-              <Badge color="primary" variant="flat">{filteredInspections.length}</Badge>
-            </div>
-          </div>
-        </CardBody>
-      </Card>
+      {/* Filters — wrap on phone / zoomed screens */}
+      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+        <Input
+          size="sm"
+          aria-label="Search room numbers"
+          placeholder="Search room numbers..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          startContent={<span className="text-gray-400">🔍</span>}
+          className="w-full max-w-full sm:w-52 sm:max-w-[13rem] shrink-0"
+        />
+        <Select
+          size="sm"
+          aria-label="Filter by status"
+          placeholder="Filter by status"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="w-full max-w-full sm:w-40 sm:max-w-[10rem] shrink-0"
+        >
+          <SelectItem key="all">All Statuses</SelectItem>
+          <SelectItem key="passed">✅ Passed</SelectItem>
+          <SelectItem key="partial">⚠️ Partial</SelectItem>
+          <SelectItem key="failed">❌ Failed</SelectItem>
+        </Select>
+        <Select
+          size="sm"
+          aria-label="Filter by inspector"
+          placeholder="Filter by inspector"
+          value={inspectorFilter}
+          onChange={(e) => setInspectorFilter(e.target.value)}
+          className="w-full max-w-full sm:w-48 sm:max-w-[12rem] shrink-0"
+        >
+          {[{ id: 'all', name: 'All Inspectors' }, ...staff.filter(s => s.role === 'inspector')].map((inspector) => (
+            <SelectItem key={inspector.id}>
+              {inspector.name}
+            </SelectItem>
+          ))}
+        </Select>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-sm text-gray-600">Filtered:</span>
+          <Badge color="primary" variant="flat">{filteredInspections.length}</Badge>
+        </div>
+      </div>
 
       {/* Inspections Table */}
       <Card className={deskTableCardClassName}>
@@ -425,7 +430,7 @@ export default function RoomInspectionPanel({
       </Card>
 
       {/* Inspection Modal */}
-      <Modal isOpen={inspectionModalOpen} onClose={() => setInspectionModalOpen(false)} size="2xl">
+      <Modal isOpen={inspectionModalOpen} onClose={() => setInspectionModalOpen(false)} size="2xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>
             {isCreatingInspection ? 'Conduct New Inspection' : 'Inspection Details'}
@@ -433,7 +438,7 @@ export default function RoomInspectionPanel({
           <ModalBody>
             <div className="space-y-4">
               {/* Room and Inspector Selection */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Room Number *</label>
                   <Select

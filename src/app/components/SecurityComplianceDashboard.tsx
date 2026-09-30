@@ -27,6 +27,7 @@ import DepartmentStaffTab from './hr/DepartmentStaffTab';
 import { SortLabel, unifiedTableClassNames, rowClassNames, useResizableColumns } from './frontoffice/columnResize';
 import { DetailGrid, DetailField } from './frontoffice/detailView';
 import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
+import SecurityReportsAnalysis from './SecurityReportsAnalysis';
 
 // Hideable summary cards for the whole Security module — the Recent
 // Activities/Notices cards that live outside this component, in
@@ -45,10 +46,14 @@ function securityHeaders(): HeadersInit {
 
 interface SecurityComplianceDashboardProps {
   fullPage?: boolean;
+  initialTab?: string;
+  onTabChange?: (tab: string) => void;
 }
 
 export default function SecurityComplianceDashboard({
   fullPage = false,
+  initialTab,
+  onTabChange,
 }: SecurityComplianceDashboardProps) {
   const { data: session } = useSession();
   const currentUserName = session?.user?.name || 'User';
@@ -65,7 +70,40 @@ export default function SecurityComplianceDashboard({
   const canManageCheckpoints = settings.hasPermission('security.manage-checkpoints') || canManagePatrols;
   const canManageRoutes = settings.hasPermission('security.manage-routes') || canManagePatrols;
 
-  const [selectedTab, setSelectedTab] = useState('patrols');
+  const [selectedTab, setSelectedTab] = useState(initialTab || 'patrols');
+
+  useEffect(() => {
+    if (initialTab) {
+      setSelectedTab(initialTab);
+      onTabChange?.(initialTab);
+    }
+  }, [initialTab]);
+
+  useEffect(() => {
+    try {
+      const wanted = localStorage.getItem('security.tab');
+      if (wanted) {
+        setSelectedTab(wanted);
+        onTabChange?.(wanted);
+        localStorage.removeItem('security.tab');
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    const onNavigate = () => {
+      try {
+        const wanted = localStorage.getItem('security.tab');
+        if (wanted) {
+          setSelectedTab(wanted);
+          onTabChange?.(wanted);
+          localStorage.removeItem('security.tab');
+        }
+      } catch {}
+    };
+    window.addEventListener('security-navigate', onNavigate);
+    return () => window.removeEventListener('security-navigate', onNavigate);
+  }, [onTabChange]);
   const [isIncidentModalOpen, setIsIncidentModalOpen] = useState(false);
   const [isVisitorModalOpen, setIsVisitorModalOpen] = useState(false);
   const [isPatrolModalOpen, setIsPatrolModalOpen] = useState(false);
@@ -968,7 +1006,11 @@ export default function SecurityComplianceDashboard({
         <CardBody className="p-0">
           <Tabs
             selectedKey={selectedTab}
-            onSelectionChange={(key) => setSelectedTab(key as string)}
+            onSelectionChange={(key) => {
+              const next = key as string;
+              setSelectedTab(next);
+              onTabChange?.(next);
+            }}
             className="w-full"
             size="sm"
             variant="solid"
@@ -980,6 +1022,7 @@ export default function SecurityComplianceDashboard({
             <Tab key="visitors" title="Visitor Management" />
             <Tab key="shifts" title="Shift Log" />
             <Tab key="staff" title="Staff Management" />
+            <Tab key="reports" title="📈 Reports & Analysis" />
           </Tabs>
 
           <div className={deskBookTabPanelClassName}>
@@ -988,6 +1031,7 @@ export default function SecurityComplianceDashboard({
             {selectedTab === 'visitors' && renderVisitorManagement()}
             {selectedTab === 'shifts' && renderShiftLog()}
             {selectedTab === 'staff' && renderStaffManagement()}
+            {selectedTab === 'reports' && <SecurityReportsAnalysis embedded />}
           </div>
         </CardBody>
       </Card>

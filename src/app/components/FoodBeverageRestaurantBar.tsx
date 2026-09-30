@@ -137,7 +137,8 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
   const reloadTables = () => {
     fetch('/api/fb/tables', { headers: fbHeaders() })
       .then((r) => (r.ok ? r.json() : { tables: [] }))
-      .then((data) => setTables(data.tables || []));
+      .then((data) => setTables(data.tables || []))
+      .catch(() => setTables([]));
   };
   useEffect(() => { reloadTables(); }, []);
 
@@ -176,7 +177,8 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
   const reloadReservations = () => {
     fetch('/api/fb/reservations', { headers: fbHeaders() })
       .then((r) => (r.ok ? r.json() : { reservations: [] }))
-      .then((data) => setReservations(data.reservations || []));
+      .then((data) => setReservations(data.reservations || []))
+      .catch(() => setReservations([]));
   };
   useEffect(() => { reloadReservations(); }, []);
 
@@ -233,7 +235,8 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
         preparationTime: i.prepMinutes,
         allergens: i.allergens ? i.allergens.split(',').map((a: string) => a.trim()).filter(Boolean) : [],
         usedCount: Number(i.usedCount || 0),
-      }))));
+      }))))
+      .catch(() => setMenuItems([]));
   };
   useEffect(() => { reloadMenu(); }, []);
 
@@ -514,7 +517,7 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
                     onValueChange={setTableQuery}
                     isClearable
                     onClear={() => setTableQuery('')}
-                    className="w-56 shrink-0"
+                    className="w-full max-w-full sm:w-56 sm:max-w-[14rem] shrink-0"
                   />
                   <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                     <DateFilterPills
@@ -527,7 +530,7 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
                       to={tableDates.to}
                       onTo={tableDates.setTo}
                     />
-                    <div className="flex rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+                    <div className="flex shrink-0 rounded-lg border border-gray-200 bg-gray-50 p-0.5">
                       <button
                         type="button"
                         className={`rounded-md px-3 min-h-8 text-sm ${tableLayout === 'cards' ? 'bg-white font-semibold text-ghana-black shadow-sm' : 'text-gray-600'}`}
@@ -636,7 +639,7 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
                     onValueChange={setReservationQuery}
                     isClearable
                     onClear={() => setReservationQuery('')}
-                    className="w-56 shrink-0"
+                    className="w-full max-w-full sm:w-56 sm:max-w-[14rem] shrink-0"
                   />
                   <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                     <DateFilterPills
@@ -803,7 +806,7 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
       </Card>
 
       {/* New Table Modal */}
-      <Modal isOpen={isNewTableModalOpen} onClose={() => setIsNewTableModalOpen(false)} size="lg">
+      <Modal isOpen={isNewTableModalOpen} onClose={() => setIsNewTableModalOpen(false)} size="lg" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>Add New Table</ModalHeader>
           <ModalBody>
@@ -827,7 +830,7 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
       </Modal>
 
       {/* New Reservation Modal */}
-      <Modal isOpen={!!openReservation} onClose={() => setViewingReservationId(null)} size="lg">
+      <Modal isOpen={!!openReservation} onClose={() => setViewingReservationId(null)} size="lg" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>Reservation</ModalHeader>
           <ModalBody>
@@ -858,7 +861,7 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
         </ModalContent>
       </Modal>
 
-      <Modal isOpen={isNewReservationModalOpen} onClose={() => setIsNewReservationModalOpen(false)} size="2xl">
+      <Modal isOpen={isNewReservationModalOpen} onClose={() => setIsNewReservationModalOpen(false)} size="2xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>Create New Reservation</ModalHeader>
           <ModalBody>

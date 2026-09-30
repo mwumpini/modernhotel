@@ -44,6 +44,7 @@ import { trackEvent } from '../../lib/analytics/trackEvent';
 import { salesTaxBreakdown } from '../../lib/tax/engine';
 import { getFolioDisplayTotals } from '../../lib/frontoffice/helpers/folio';
 import { formatMoney } from '../../lib/format/currency';
+import { DateFilterPills } from '../../components/fb/DateFilterPills';
 
 interface CheckOutData {
   id: string; // Reservation ID
@@ -648,90 +649,94 @@ export default function CheckOutsPage() {
           </div>
           )}
 
-          <Card className="mb-6">
-            <CardBody className="p-4">
-              <div className="flex flex-col sm:flex-row gap-4">
-                <Input
-                  placeholder="Search by guest name, room number, phone, or email..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="flex-1"
-                  startContent={<span className="text-gray-400">🔍</span>}
-                />
-                <Select
-                  placeholder="Filter by status"
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                  className="w-full sm:w-48"
-                >
-                  <SelectItem key="all">All Statuses</SelectItem>
-                  <SelectItem key="pending">Pending</SelectItem>
-                  <SelectItem key="processing">Processing</SelectItem>
-                  <SelectItem key="completed">Completed</SelectItem>
-                  <SelectItem key="extended">Extended</SelectItem>
-                </Select>
-                <Select
-                  placeholder="Settlement"
-                  value={quickSettlementMethod}
-                  onChange={(e) => setQuickSettlementMethod(e.target.value as any)}
-                  className="w-full sm:w-48"
-                >
-                  <SelectItem key="Cash">Cash</SelectItem>
-                  <SelectItem key="Card">Card</SelectItem>
-                  <SelectItem key="Mobile Money">Mobile Money</SelectItem>
-                  <SelectItem key="Credit">Credit</SelectItem>
-                  <SelectItem key="Corporate Account">Corporate Account</SelectItem>
-                  <SelectItem key="Bank Transfer">Bank Transfer</SelectItem>
-                </Select>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-                <Select placeholder="Balance" value={balanceFilter} onChange={(e)=> setBalanceFilter(e.target.value)}>
-                  <SelectItem key="all">All</SelectItem>
-                  <SelectItem key="zero">Zero</SelectItem>
-                  <SelectItem key="outstanding">Outstanding</SelectItem>
-                </Select>
-                <Select placeholder="Billing Type" value={billingFilter} onChange={(e)=> setBillingFilter(e.target.value)}>
-                  <SelectItem key="all">All</SelectItem>
-                  <SelectItem key="guest">Guest Pays</SelectItem>
-                  <SelectItem key="corporate">Corporate</SelectItem>
-                  <SelectItem key="credit">Credit</SelectItem>
-                </Select>
-                <Select
-                  placeholder="Source"
-                  selectedKeys={[sourceFilter]}
-                  onSelectionChange={(keys)=> setSourceFilter(Array.from(keys)[0] as string)}
-                  items={[{ key: 'all', label: 'All' }, ...((frontOfficeStore.marketCodes || []).map((mc: any) => ({ key: String(mc), label: String(mc) })))] as any}
-                >
-                  {(item: any) => (<SelectItem key={item.key}>{item.label}</SelectItem>)}
-                </Select>
-              </div>
-              {/* Date filter pills */}
-              <div className="flex flex-wrap items-center gap-2 mt-3">
-                <span className="text-sm font-medium text-gray-500 mr-1">📅 Check-out Date:</span>
-                {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
-                  const labels: Record<string, string> = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
-                  return (
-                    <button key={mode} onClick={() => setDateFilterMode(mode)}
-                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${dateFilterMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
-                    >{labels[mode]}</button>
-                  );
-                })}
-                {dateFilterMode === 'specific' && (
-                  <input type="date" value={dateFilterSingle} onChange={(e) => setDateFilterSingle(e.target.value)}
-                    className="ml-2 px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                )}
-                {dateFilterMode === 'range' && (
-                  <div className="flex items-center gap-2 ml-2">
-                    <input type="date" value={dateFilterFrom} onChange={(e) => setDateFilterFrom(e.target.value)}
-                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                    <span className="text-gray-400 text-sm">→</span>
-                    <input type="date" value={dateFilterTo} onChange={(e) => setDateFilterTo(e.target.value)}
-                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                  </div>
-                )}
-              </div>
-            </CardBody>
-          </Card>
+          <div className="mb-[18px] flex flex-wrap items-center gap-2">
+            <Input
+              size="sm"
+              aria-label="Search check-outs"
+              placeholder="Search by guest name, room number, phone, or email..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full max-w-full sm:min-w-[16rem] sm:flex-1 shrink-0"
+              startContent={<span className="text-gray-400">🔍</span>}
+            />
+            <Select
+              size="sm"
+              aria-label="Filter by status"
+              placeholder="Filter by status"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-full max-w-full sm:w-48 sm:max-w-[12rem] shrink-0"
+            >
+              <SelectItem key="all">All Statuses</SelectItem>
+              <SelectItem key="pending">Pending</SelectItem>
+              <SelectItem key="processing">Processing</SelectItem>
+              <SelectItem key="completed">Completed</SelectItem>
+              <SelectItem key="extended">Extended</SelectItem>
+            </Select>
+            <Select
+              size="sm"
+              aria-label="Settlement method"
+              placeholder="Settlement"
+              value={quickSettlementMethod}
+              onChange={(e) => setQuickSettlementMethod(e.target.value as any)}
+              className="w-full max-w-full sm:w-48 sm:max-w-[12rem] shrink-0"
+            >
+              <SelectItem key="Cash">Cash</SelectItem>
+              <SelectItem key="Card">Card</SelectItem>
+              <SelectItem key="Mobile Money">Mobile Money</SelectItem>
+              <SelectItem key="Credit">Credit</SelectItem>
+              <SelectItem key="Corporate Account">Corporate Account</SelectItem>
+              <SelectItem key="Bank Transfer">Bank Transfer</SelectItem>
+            </Select>
+            <Select
+              size="sm"
+              aria-label="Balance filter"
+              placeholder="Balance"
+              value={balanceFilter}
+              onChange={(e)=> setBalanceFilter(e.target.value)}
+              className="w-full max-w-full sm:w-36 sm:max-w-[9rem] shrink-0"
+            >
+              <SelectItem key="all">All</SelectItem>
+              <SelectItem key="zero">Zero</SelectItem>
+              <SelectItem key="outstanding">Outstanding</SelectItem>
+            </Select>
+            <Select
+              size="sm"
+              aria-label="Billing type"
+              placeholder="Billing Type"
+              value={billingFilter}
+              onChange={(e)=> setBillingFilter(e.target.value)}
+              className="w-full max-w-full sm:w-40 sm:max-w-[10rem] shrink-0"
+            >
+              <SelectItem key="all">All</SelectItem>
+              <SelectItem key="guest">Guest Pays</SelectItem>
+              <SelectItem key="corporate">Corporate</SelectItem>
+              <SelectItem key="credit">Credit</SelectItem>
+            </Select>
+            <Select
+              size="sm"
+              aria-label="Source filter"
+              placeholder="Source"
+              selectedKeys={[sourceFilter]}
+              onSelectionChange={(keys)=> setSourceFilter(Array.from(keys)[0] as string)}
+              items={[{ key: 'all', label: 'All' }, ...((frontOfficeStore.marketCodes || []).map((mc: any) => ({ key: String(mc), label: String(mc) })))] as any}
+              className="w-full max-w-full sm:w-36 sm:max-w-[9rem] shrink-0"
+            >
+              {(item: any) => (<SelectItem key={item.key}>{item.label}</SelectItem>)}
+            </Select>
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+              <DateFilterPills
+                mode={dateFilterMode}
+                onMode={setDateFilterMode}
+                single={dateFilterSingle}
+                onSingle={setDateFilterSingle}
+                from={dateFilterFrom}
+                onFrom={setDateFilterFrom}
+                to={dateFilterTo}
+                onTo={setDateFilterTo}
+              />
+            </div>
+          </div>
 
           <Table aria-label="Check-outs table" className="min-w-full">
             <TableHeader>

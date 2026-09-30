@@ -47,6 +47,7 @@ import { computeSalesTaxTotal, effectiveSalesTaxRate } from '../../../lib/tax/en
 import { formatMoney } from '../../../lib/format/currency';
 import { localStayDay, shortDay, sortStays, stayFigures, type StaySortKey } from '../../../lib/frontoffice/stayWorksheet';
 import StayWorksheetTable, { worksheetTableClassNames } from '../../../components/frontoffice/StayWorksheetTable';
+import { DateFilterPills } from '../../../components/fb/DateFilterPills';
 import CompanyAccounts, { CompanyStatement } from '../../../components/frontoffice/CompanyAccounts';
 import { companyAccounts } from '../../../lib/frontoffice/companyAccount';
 
@@ -1072,55 +1073,43 @@ export default function InvoicesPaymentsPage() {
 
           {activeTab === 'invoices' ? (
             <>
-            <div className="space-y-3 mb-3">
-              <div className="flex items-center gap-3">
-                <Input
-                  placeholder="Search guest or room..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-64"
-                  startContent={<span>🔎</span>}
+            <div className="mb-[18px] flex flex-wrap items-center gap-2">
+              <Input
+                size="sm"
+                aria-label="Search invoices"
+                placeholder="Search guest or room..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full max-w-full sm:w-64 sm:max-w-[16rem] shrink-0"
+                startContent={<span>🔎</span>}
+              />
+              <Select
+                size="sm"
+                selectedKeys={new Set([statusFilter])}
+                onSelectionChange={(keys) => setStatusFilter(Array.from(keys as Set<string>)[0] || 'all')}
+                className="w-full max-w-full sm:w-52 sm:max-w-[13rem] shrink-0"
+                aria-label="Filter status"
+              >
+                <SelectItem key="all">All statuses</SelectItem>
+                <SelectItem key="draft">Draft</SelectItem>
+                <SelectItem key="pending">Pending</SelectItem>
+                <SelectItem key="partially_paid">Partially Paid</SelectItem>
+                <SelectItem key="paid">Paid</SelectItem>
+                <SelectItem key="overdue">Overdue</SelectItem>
+                <SelectItem key="cancelled">Cancelled</SelectItem>
+                <SelectItem key="refunded">Refunded</SelectItem>
+              </Select>
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                <DateFilterPills
+                  mode={dateFilterMode}
+                  onMode={setDateFilterMode}
+                  single={dateFilterSingle}
+                  onSingle={setDateFilterSingle}
+                  from={dateFilterFrom}
+                  onFrom={setDateFilterFrom}
+                  to={dateFilterTo}
+                  onTo={setDateFilterTo}
                 />
-                <Select
-                  selectedKeys={new Set([statusFilter])}
-                  onSelectionChange={(keys) => setStatusFilter(Array.from(keys as Set<string>)[0] || 'all')}
-                  className="w-52"
-                  aria-label="Filter status"
-                >
-                  <SelectItem key="all">All statuses</SelectItem>
-                  <SelectItem key="draft">Draft</SelectItem>
-                  <SelectItem key="pending">Pending</SelectItem>
-                  <SelectItem key="partially_paid">Partially Paid</SelectItem>
-                  <SelectItem key="paid">Paid</SelectItem>
-                  <SelectItem key="overdue">Overdue</SelectItem>
-                  <SelectItem key="cancelled">Cancelled</SelectItem>
-                  <SelectItem key="refunded">Refunded</SelectItem>
-                </Select>
-              </div>
-              {/* Date filter pills */}
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium text-gray-500 mr-1">📅 Invoice Date:</span>
-                {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
-                  const labels: Record<string, string> = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
-                  return (
-                    <button key={mode} onClick={() => setDateFilterMode(mode)}
-                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${dateFilterMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
-                    >{labels[mode]}</button>
-                  );
-                })}
-                {dateFilterMode === 'specific' && (
-                  <input type="date" value={dateFilterSingle} onChange={(e) => setDateFilterSingle(e.target.value)}
-                    className="ml-2 px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                )}
-                {dateFilterMode === 'range' && (
-                  <div className="flex items-center gap-2 ml-2">
-                    <input type="date" value={dateFilterFrom} onChange={(e) => setDateFilterFrom(e.target.value)}
-                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                    <span className="text-gray-400 text-sm">→</span>
-                    <input type="date" value={dateFilterTo} onChange={(e) => setDateFilterTo(e.target.value)}
-                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                  </div>
-                )}
               </div>
             </div>
             <p className="mb-2 text-xs text-gray-500">Same amounts as the folio. Open a row to view, pay, or print.</p>
@@ -1201,29 +1190,17 @@ export default function InvoicesPaymentsPage() {
                 <h3 className="text-base font-semibold text-gray-800">Payment Ledger</h3>
                 <p className="text-sm text-gray-500">All recorded payment transactions across guest folios</p>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium text-gray-500">📅 Payment Date:</span>
-                {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
-                  const labels: Record<string, string> = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
-                  return (
-                    <button key={mode} onClick={() => { setPaymentDateFilterMode(mode); setPaymentPage(1); }}
-                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${paymentDateFilterMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
-                    >{labels[mode]}</button>
-                  );
-                })}
-                {paymentDateFilterMode === 'specific' && (
-                  <input type="date" value={paymentDateSingle} onChange={(e) => { setPaymentDateSingle(e.target.value); setPaymentPage(1); }}
-                    className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                )}
-                {paymentDateFilterMode === 'range' && (
-                  <div className="flex items-center gap-2">
-                    <input type="date" value={paymentDateFrom} onChange={(e) => { setPaymentDateFrom(e.target.value); setPaymentPage(1); }}
-                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                    <span className="text-gray-400 text-sm">→</span>
-                    <input type="date" value={paymentDateTo} onChange={(e) => { setPaymentDateTo(e.target.value); setPaymentPage(1); }}
-                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                  </div>
-                )}
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <DateFilterPills
+                  mode={paymentDateFilterMode}
+                  onMode={(mode) => { setPaymentDateFilterMode(mode); setPaymentPage(1); }}
+                  single={paymentDateSingle}
+                  onSingle={(v) => { setPaymentDateSingle(v); setPaymentPage(1); }}
+                  from={paymentDateFrom}
+                  onFrom={(v) => { setPaymentDateFrom(v); setPaymentPage(1); }}
+                  to={paymentDateTo}
+                  onTo={(v) => { setPaymentDateTo(v); setPaymentPage(1); }}
+                />
               </div>
             </div>
             <p className="mb-2 text-xs text-gray-500">Same stay columns as invoices. Open a row to see who the payment was for.</p>
@@ -1299,47 +1276,38 @@ export default function InvoicesPaymentsPage() {
                   </PopoverContent>
                 </Popover>
               </div>
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2">
                 <Input
+                  size="sm"
+                  aria-label="Search company accounts"
                   placeholder="Search company or guest..."
                   value={companySearch}
                   onChange={(e) => setCompanySearch(e.target.value)}
-                  className="w-64"
+                  className="w-full max-w-full sm:w-64 sm:max-w-[16rem] shrink-0"
                   startContent={<span>🔎</span>}
                 />
                 <Select
+                  size="sm"
                   selectedKeys={new Set([companyStanding])}
                   onSelectionChange={(keys) => setCompanyStatus(Array.from(keys as Set<string>)[0] || 'all')}
-                  className="w-40"
+                  className="w-full max-w-full sm:w-40 sm:max-w-[10rem] shrink-0"
                   aria-label="Filter company status"
                 >
                   <SelectItem key="all">All statuses</SelectItem>
                   <SelectItem key="pending">Pending</SelectItem>
                   <SelectItem key="paid">Paid</SelectItem>
                 </Select>
-              <div className="ml-auto flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium text-gray-500">📅 Check-in:</span>
-                {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
-                  const labels: Record<string, string> = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
-                  return (
-                    <button key={mode} onClick={() => setCompanyDateFilterMode(mode)}
-                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${companyDateFilterMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
-                    >{labels[mode]}</button>
-                  );
-                })}
-                {companyDateFilterMode === 'specific' && (
-                  <input type="date" value={companyDateSingle} onChange={(e) => setCompanyDateSingle(e.target.value)}
-                    className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                )}
-                {companyDateFilterMode === 'range' && (
-                  <div className="flex items-center gap-2">
-                    <input type="date" value={companyDateFrom} onChange={(e) => setCompanyDateFrom(e.target.value)}
-                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                    <span className="text-gray-400 text-sm">→</span>
-                    <input type="date" value={companyDateTo} onChange={(e) => setCompanyDateTo(e.target.value)}
-                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                  </div>
-                )}
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                <DateFilterPills
+                  mode={companyDateFilterMode}
+                  onMode={setCompanyDateFilterMode}
+                  single={companyDateSingle}
+                  onSingle={setCompanyDateSingle}
+                  from={companyDateFrom}
+                  onFrom={setCompanyDateFrom}
+                  to={companyDateTo}
+                  onTo={setCompanyDateTo}
+                />
               </div>
               </div>
             </div>
@@ -1417,30 +1385,17 @@ export default function InvoicesPaymentsPage() {
                 </div>
               </div>
 
-              {/* Row 3: date pills */}
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <span className="text-sm font-medium text-gray-500">📅 Check-in Date:</span>
-                {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
-                  const labels: Record<string, string> = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
-                  return (
-                    <button key={mode} onClick={() => setFolioDateFilterMode(mode)}
-                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${folioDateFilterMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
-                    >{labels[mode]}</button>
-                  );
-                })}
-                {folioDateFilterMode === 'specific' && (
-                  <input type="date" value={folioDateSingle} onChange={(e) => setFolioDateSingle(e.target.value)}
-                    className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                )}
-                {folioDateFilterMode === 'range' && (
-                  <div className="flex items-center gap-2">
-                    <input type="date" value={folioDateFrom} onChange={(e) => setFolioDateFrom(e.target.value)}
-                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                    <span className="text-gray-400 text-sm">→</span>
-                    <input type="date" value={folioDateTo} onChange={(e) => setFolioDateTo(e.target.value)}
-                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                  </div>
-                )}
+              <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                <DateFilterPills
+                  mode={folioDateFilterMode}
+                  onMode={setFolioDateFilterMode}
+                  single={folioDateSingle}
+                  onSingle={setFolioDateSingle}
+                  from={folioDateFrom}
+                  onFrom={setFolioDateFrom}
+                  to={folioDateTo}
+                  onTo={setFolioDateTo}
+                />
               </div>
             </div>
 

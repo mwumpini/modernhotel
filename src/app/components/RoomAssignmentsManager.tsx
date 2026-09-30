@@ -31,6 +31,8 @@ import {
   Switch
 } from "@heroui/react";
 import { worksheetTableClassNames } from './frontoffice/StayWorksheetTable';
+import { HideCardButton } from './dashboard/CustomizeViewControl';
+import { FoDeskKpiCustomize, FO_ROOMS_KPI_SECTIONS, useFrontOfficeDeskVisibility } from './frontoffice/foDeskKpi';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { shortDay } from '../lib/frontoffice/stayWorksheet';
@@ -54,7 +56,11 @@ interface RoomAssignment {
 
 const OPEN_ROOM = ['vacant', 'clean', 'inspected'];
 
+const ROOMS_STATUS_CARDS = FO_ROOMS_KPI_SECTIONS;
+
 export default function RoomAssignmentsManager({ onNewReservation }: { onNewReservation?: () => void }) {
+  const { isHidden, hide, hiddenCount: hiddenStatsCount, isHosted } =
+    useFrontOfficeDeskVisibility(FO_ROOMS_KPI_SECTIONS);
   const [assignments, setAssignments] = useState<RoomAssignment[]>([]);
   const [filteredAssignments, setFilteredAssignments] = useState<RoomAssignment[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -304,6 +310,7 @@ export default function RoomAssignmentsManager({ onNewReservation }: { onNewRese
           <HeadingInfo label="About room assignments">View and manage room assignments, status, and guest information</HeadingInfo>
         </div>
         <div className="flex items-center space-x-4">
+          {!isHosted && <FoDeskKpiCustomize sections={FO_ROOMS_KPI_SECTIONS} />}
           <div className="flex items-center space-x-2">
             <span className="text-sm text-gray-600">Table View</span>
             <Switch
@@ -325,117 +332,118 @@ export default function RoomAssignmentsManager({ onNewReservation }: { onNewRese
       </div>
 
       {/* Status Summary */}
-      <Card className="border border-gray-200 shadow-none">
-        <CardBody className="px-2 py-1.5">
-          <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4 lg:grid-cols-8">
-            <div className="text-center leading-tight">
-              <div className="text-sm font-semibold tabular-nums text-green-700">{statusCounts['occupied'] || 0}</div>
-              <div className="text-[11px] text-gray-500">🟢 Occupied</div>
-            </div>
-            <div className="text-center leading-tight">
-              <div className="text-sm font-semibold tabular-nums text-blue-700">{reservedCount}</div>
-              <div className="text-[11px] text-gray-500">📌 Reserved</div>
-            </div>
-            <div className="text-center leading-tight">
-              <div className="text-sm font-semibold tabular-nums text-gray-600">{statusCounts['vacant'] || 0}</div>
-              <div className="text-[11px] text-gray-500">⚪ Vacant</div>
-            </div>
-            <div className="text-center leading-tight">
-              <div className="text-sm font-semibold tabular-nums text-yellow-700">{statusCounts['dirty'] || 0}</div>
-              <div className="text-[11px] text-gray-500">🟡 Dirty</div>
-            </div>
-            <div className="text-center leading-tight">
-              <div className="text-sm font-semibold tabular-nums text-blue-700">{statusCounts['clean'] || 0}</div>
-              <div className="text-[11px] text-gray-500">🔵 Clean</div>
-            </div>
-            <div className="text-center leading-tight">
-              <div className="text-sm font-semibold tabular-nums text-purple-700">{statusCounts['inspected'] || 0}</div>
-              <div className="text-[11px] text-gray-500">🟣 Inspected</div>
-            </div>
-            <div className="text-center leading-tight">
-              <div className="text-sm font-semibold tabular-nums text-red-700">{statusCounts['out-of-order'] || 0}</div>
-              <div className="text-[11px] text-gray-500">🔴 Out of Order</div>
-            </div>
-            <div className="text-center leading-tight">
-              <div className="text-sm font-semibold tabular-nums text-orange-700">{statusCounts['maintenance'] || 0}</div>
-              <div className="text-[11px] text-gray-500">🟠 Maintenance</div>
-            </div>
-          </div>
-        </CardBody>
-      </Card>
+      {hiddenStatsCount < ROOMS_STATUS_CARDS.length && (
+        <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4 lg:grid-cols-8">
+          {([
+            ['rooms.occupied', statusCounts['occupied'] || 0, 'text-green-700', '🟢 Occupied'],
+            ['rooms.reserved', reservedCount, 'text-blue-700', '📌 Reserved'],
+            ['rooms.vacant', statusCounts['vacant'] || 0, 'text-gray-600', '⚪ Vacant'],
+            ['rooms.dirty', statusCounts['dirty'] || 0, 'text-yellow-700', '🟡 Dirty'],
+            ['rooms.clean', statusCounts['clean'] || 0, 'text-blue-700', '🔵 Clean'],
+            ['rooms.inspected', statusCounts['inspected'] || 0, 'text-purple-700', '🟣 Inspected'],
+            ['rooms.outOfOrder', statusCounts['out-of-order'] || 0, 'text-red-700', '🔴 Out of Order'],
+            ['rooms.maintenance', statusCounts['maintenance'] || 0, 'text-orange-700', '🟠 Maintenance'],
+          ] as const).map(([id, value, tone, chipLabel]) => {
+            if (isHidden(id)) return null;
+            const label = ROOMS_STATUS_CARDS.find((card) => card.id === id)?.label || id;
+            return (
+              <Card key={id} className="relative border border-gray-200 shadow-none">
+                <CardBody className="px-2 py-1.5 text-center">
+                  <div className="absolute right-1 top-0.5">
+                    <HideCardButton onHide={() => hide(id)} label={label} />
+                  </div>
+                  <div className={`text-sm font-semibold tabular-nums ${tone}`}>{value}</div>
+                  <div className="text-[11px] text-gray-500">{chipLabel}</div>
+                </CardBody>
+              </Card>
+            );
+          })}
+        </div>
+      )}
 
-      {/* Enhanced Filters */}
-      <Card className="border-0 shadow-lg">
-        <CardBody className="p-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
-            <Input
-              placeholder="Search rooms, guests, or room types..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              startContent={<span className="text-gray-400">🔍</span>}
-            />
-            <Select
-              aria-label="Filter by status"
-              placeholder="Filter by status"
-              selectionMode="multiple"
-              selectedKeys={new Set(statusFilters)}
-              onSelectionChange={(keys) => {
-                if (keys === 'all') return;
-                setStatusFilters(Array.from(keys as Set<string>));
-              }}
-            >
-              <SelectItem key="occupied">🟢 Occupied</SelectItem>
-              <SelectItem key="reserved">📌 Reserved</SelectItem>
-              <SelectItem key="vacant">⚪ Vacant</SelectItem>
-              <SelectItem key="dirty">🟡 Dirty</SelectItem>
-              <SelectItem key="clean">🔵 Clean</SelectItem>
-              <SelectItem key="inspected">🟣 Inspected</SelectItem>
-              <SelectItem key="out-of-order">🔴 Out of Order</SelectItem>
-              <SelectItem key="maintenance">🟠 Maintenance</SelectItem>
-            </Select>
-            <Select
-              placeholder="Filter by floor"
-              value={floorFilter}
-              onChange={(e) => setFloorFilter(e.target.value)}
-            >
-              {['all', ...uniqueFloors].map(floor => (
-                <SelectItem key={String(floor)}>{floor === 'all' ? 'All Floors' : `Floor ${floor}`}</SelectItem>
-              ))}
-            </Select>
-            <Select
-              placeholder="Filter by room type"
-              value={roomTypeFilter}
-              onChange={(e) => setRoomTypeFilter(e.target.value)}
-            >
-              {['all', ...uniqueRoomTypes].map(type => (
-                <SelectItem key={type}>{type === 'all' ? 'All Types' : type}</SelectItem>
-              ))}
-            </Select>
-            <Select
-              placeholder="Sort by"
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-            >
-              <SelectItem key="roomNumber">Room Number</SelectItem>
-              <SelectItem key="roomType">Room Type</SelectItem>
-              <SelectItem key="status">Status</SelectItem>
-              <SelectItem key="rate">Rate</SelectItem>
-              <SelectItem key="checkInDate">Check In Date</SelectItem>
-              <SelectItem key="checkOutDate">Check Out Date</SelectItem>
-            </Select>
-            <div className="flex items-center space-x-2">
-              <Button
-                size="sm"
-                variant="flat"
-                onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-              >
-                {sortOrder === 'asc' ? '↑' : '↓'} Sort
-              </Button>
-              <Badge color="primary" variant="flat">{filteredAssignments.length} rooms</Badge>
-            </div>
-          </div>
-        </CardBody>
-      </Card>
+      {/* Enhanced Filters — wrap on phone / zoom */}
+      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+        <Input
+          size="sm"
+          aria-label="Search rooms"
+          placeholder="Search rooms, guests, or room types..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          startContent={<span className="text-gray-400">🔍</span>}
+          className="w-full max-w-full sm:w-64 sm:max-w-[16rem] shrink-0"
+        />
+        <Select
+          size="sm"
+          aria-label="Filter by status"
+          placeholder="Filter by status"
+          selectionMode="multiple"
+          selectedKeys={new Set(statusFilters)}
+          onSelectionChange={(keys) => {
+            if (keys === 'all') return;
+            setStatusFilters(Array.from(keys as Set<string>));
+          }}
+          className="w-full max-w-full sm:w-48 sm:max-w-[12rem] shrink-0"
+        >
+          <SelectItem key="occupied">🟢 Occupied</SelectItem>
+          <SelectItem key="reserved">📌 Reserved</SelectItem>
+          <SelectItem key="vacant">⚪ Vacant</SelectItem>
+          <SelectItem key="dirty">🟡 Dirty</SelectItem>
+          <SelectItem key="clean">🔵 Clean</SelectItem>
+          <SelectItem key="inspected">🟣 Inspected</SelectItem>
+          <SelectItem key="out-of-order">🔴 Out of Order</SelectItem>
+          <SelectItem key="maintenance">🟠 Maintenance</SelectItem>
+        </Select>
+        <Select
+          size="sm"
+          aria-label="Filter by floor"
+          placeholder="Filter by floor"
+          value={floorFilter}
+          onChange={(e) => setFloorFilter(e.target.value)}
+          className="w-full max-w-full sm:w-36 sm:max-w-[9rem] shrink-0"
+        >
+          {['all', ...uniqueFloors].map(floor => (
+            <SelectItem key={String(floor)}>{floor === 'all' ? 'All Floors' : `Floor ${floor}`}</SelectItem>
+          ))}
+        </Select>
+        <Select
+          size="sm"
+          aria-label="Filter by room type"
+          placeholder="Filter by room type"
+          value={roomTypeFilter}
+          onChange={(e) => setRoomTypeFilter(e.target.value)}
+          className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
+        >
+          {['all', ...uniqueRoomTypes].map(type => (
+            <SelectItem key={type}>{type === 'all' ? 'All Types' : type}</SelectItem>
+          ))}
+        </Select>
+        <Select
+          size="sm"
+          aria-label="Sort by"
+          placeholder="Sort by"
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value)}
+          className="w-full max-w-full sm:w-40 sm:max-w-[10rem] shrink-0"
+        >
+          <SelectItem key="roomNumber">Room Number</SelectItem>
+          <SelectItem key="roomType">Room Type</SelectItem>
+          <SelectItem key="status">Status</SelectItem>
+          <SelectItem key="rate">Rate</SelectItem>
+          <SelectItem key="checkInDate">Check In Date</SelectItem>
+          <SelectItem key="checkOutDate">Check Out Date</SelectItem>
+        </Select>
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <Button
+            size="sm"
+            variant="flat"
+            className="min-h-9"
+            onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+          >
+            {sortOrder === 'asc' ? '↑' : '↓'} Sort
+          </Button>
+          <Badge color="primary" variant="flat">{filteredAssignments.length} rooms</Badge>
+        </div>
+      </div>
 
       {/* Room Assignments Display */}
       {viewMode === 'table' ? (

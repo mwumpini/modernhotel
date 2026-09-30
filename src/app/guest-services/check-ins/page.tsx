@@ -43,6 +43,7 @@ import { nextCalendarDate } from '../../lib/frontoffice/folioLedger';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import type { Reservation } from '../../lib/frontoffice/types';
 import { formatMoney } from '../../lib/format/currency';
+import { DateFilterPills } from '../../components/fb/DateFilterPills';
 import { useSettingsStore } from '../../lib/settings/store';
 import { useCurrentUserName } from '../../lib/auth/useCurrentUserName';
 import { openPrintPreview } from '../../lib/print/engine';
@@ -479,42 +480,48 @@ function CheckInsSection() {
         </div>
         )}
 
-      <Card className="mb-2"><CardBody className="p-4 space-y-3">
-        <div className="flex flex-col sm:flex-row gap-4">
-          <Input placeholder="Search by guest name, room number, phone, or email..." onChange={(e) => setSearchTerm(e.target.value)} className="flex-1" startContent={<span className="text-gray-400">🔍</span>} />
-          <Select placeholder="Filter by status" onChange={(e) => setStatusFilter(e.target.value)} className="w-full sm:w-48">
-            <SelectItem key="all">All Statuses</SelectItem>
-            <SelectItem key="checked-in">Checked In</SelectItem>
-            <SelectItem key="extended">Extended</SelectItem>
-            <SelectItem key="early-checkout">Early Checkout</SelectItem>
-          </Select>
-          <Button color="primary" className="bg-gradient-to-r from-blue-600 to-purple-600 text-white" onPress={() => setTransferModalOpen(true)}>🔄 Room Transfer</Button>
+      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+        <Input
+          size="sm"
+          aria-label="Search in-house guests"
+          placeholder="Search by guest name, room number, phone, or email..."
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="w-full max-w-full sm:min-w-[16rem] sm:flex-1 shrink-0"
+          startContent={<span className="text-gray-400">🔍</span>}
+        />
+        <Select
+          size="sm"
+          aria-label="Filter by status"
+          placeholder="Filter by status"
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="w-full max-w-full sm:w-48 sm:max-w-[12rem] shrink-0"
+        >
+          <SelectItem key="all">All Statuses</SelectItem>
+          <SelectItem key="checked-in">Checked In</SelectItem>
+          <SelectItem key="extended">Extended</SelectItem>
+          <SelectItem key="early-checkout">Early Checkout</SelectItem>
+        </Select>
+        <Button
+          size="sm"
+          color="primary"
+          className="min-h-9 bg-gradient-to-r from-blue-600 to-purple-600 text-white shrink-0"
+          onPress={() => setTransferModalOpen(true)}
+        >
+          🔄 Room Transfer
+        </Button>
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <DateFilterPills
+            mode={dateFilterMode}
+            onMode={setDateFilterMode}
+            single={dateFilterSingle}
+            onSingle={setDateFilterSingle}
+            from={dateFilterFrom}
+            onFrom={setDateFilterFrom}
+            to={dateFilterTo}
+            onTo={setDateFilterTo}
+          />
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium text-gray-500 mr-1">📅 Check-in Date:</span>
-          {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
-            const labels: Record<string, string> = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
-            return (
-              <button key={mode} onClick={() => setDateFilterMode(mode)}
-                className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${dateFilterMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
-              >{labels[mode]}</button>
-            );
-          })}
-          {dateFilterMode === 'specific' && (
-            <input type="date" value={dateFilterSingle} onChange={(e) => setDateFilterSingle(e.target.value)}
-              className="ml-2 px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-          )}
-          {dateFilterMode === 'range' && (
-            <div className="flex items-center gap-2 ml-2">
-              <input type="date" value={dateFilterFrom} onChange={(e) => setDateFilterFrom(e.target.value)}
-                className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-              <span className="text-gray-400 text-sm">→</span>
-              <input type="date" value={dateFilterTo} onChange={(e) => setDateFilterTo(e.target.value)}
-                className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-            </div>
-          )}
-        </div>
-      </CardBody></Card>
+      </div>
 
       <Card><CardBody>
         <Tabs selectedKey={activeTab} onSelectionChange={(k)=>setActiveTab(k as string)} className="mb-4"><Tab key="overview" title="📊 Overview" /><Tab key="analytics" title="📈 Analytics" /></Tabs>

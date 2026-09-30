@@ -14,7 +14,8 @@
     "stacking": "additive",
     "domain": "sales",
     "operation": "external",
-    "effect": "add"
+    "effect": "add",
+    "isRecoverable": false
   },
   {
     "id": "gh-getfund",
@@ -31,7 +32,8 @@
     "stacking": "additive",
     "domain": "sales",
     "operation": "external",
-    "effect": "add"
+    "effect": "add",
+    "isRecoverable": false
   },
   {
     "id": "gh-vat",
@@ -48,7 +50,8 @@
     "stacking": "compound",
     "domain": "sales",
     "operation": "external",
-    "effect": "add"
+    "effect": "add",
+    "isRecoverable": true
   },
   {
     "id": "gh-tourism",
@@ -65,7 +68,8 @@
     "stacking": "additive",
     "domain": "sales",
     "operation": "external",
-    "effect": "add"
+    "effect": "add",
+    "isRecoverable": false
   },
   {
     "id": "gh-wht-services",
@@ -82,7 +86,8 @@
     "stacking": "additive",
     "domain": "purchases",
     "operation": "internal",
-    "effect": "subtract"
+    "effect": "subtract",
+    "isRecoverable": false
   },
   {
     "id": "gh-wht-goods",
@@ -99,7 +104,8 @@
     "stacking": "additive",
     "domain": "purchases",
     "operation": "internal",
-    "effect": "subtract"
+    "effect": "subtract",
+    "isRecoverable": false
   },
   {
     "id": "gh-wht-works",
@@ -116,7 +122,8 @@
     "stacking": "additive",
     "domain": "purchases",
     "operation": "internal",
-    "effect": "subtract"
+    "effect": "subtract",
+    "isRecoverable": false
   },
   {
     "id": "gh-wht-rent",
@@ -133,7 +140,8 @@
     "stacking": "additive",
     "domain": "purchases",
     "operation": "internal",
-    "effect": "subtract"
+    "effect": "subtract",
+    "isRecoverable": false
   },
   {
     "id": "gh-paye",

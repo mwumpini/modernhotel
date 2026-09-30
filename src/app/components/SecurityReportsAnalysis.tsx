@@ -167,7 +167,7 @@ const REPORT_COLUMNS: Record<string, ReportColumnDefinition[]> = {
   ],
 };
 
-export default function SecurityReportsAnalysis() {
+export default function SecurityReportsAnalysis({ embedded = false }: { embedded?: boolean } = {}) {
   const [selectedTab, setSelectedTab] = useState<ReportGroupKey>('watch');
   const [selectedReport, setSelectedReport] = useState('incidents');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
@@ -504,7 +504,7 @@ export default function SecurityReportsAnalysis() {
   const rangeAllowed = RANGE_REPORT_KEYS.has(selectedReport);
 
   return (
-    <div className="min-h-screen bg-slate-50/70 p-4 md:p-6">
+    <div className={embedded ? 'p-2' : 'min-h-screen bg-slate-50/70 p-4 md:p-6'}>
       <div className="mx-auto max-w-[1600px] space-y-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>

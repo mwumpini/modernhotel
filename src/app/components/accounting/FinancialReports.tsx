@@ -1297,7 +1297,7 @@ export default function FinancialReportsPage() {
         <div className="border-b border-slate-200 px-3 md:px-4 py-2">
           <div className="flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
             <div className="shrink-0">
-              <h1 className="text-lg md:text-xl font-bold text-gray-800">📊 Financial Reports</h1>
+              <h1 className="text-lg md:text-xl font-bold text-gray-800">Financial Statements</h1>
               <p className="text-xs text-gray-500">{accountingAmountsLabel()}</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">{periodControls}</div>

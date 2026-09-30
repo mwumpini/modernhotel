@@ -28,7 +28,7 @@ import { housekeepingStore } from '../lib/housekeeping/store';
 import { autoAssignRoomsEnabled, useSettingsStore } from '../lib/settings/store';
 import { findMainFolio, getFolioDisplayTotals } from '../lib/frontoffice/helpers/folio';
 import { isPostedRoomCharge, nextCalendarDate, previousCalendarDate } from '../lib/frontoffice/folioLedger';
-import { postRoomChargeForDate } from '../lib/frontoffice/roomCharges';
+import { getRoomChargeDatesOnFolio, postRoomChargeForDate } from '../lib/frontoffice/roomCharges';
 import { isLateCheckoutNow } from '../lib/frontoffice/lateCheckout';
 import { isCorporateGuest } from '../lib/frontoffice/helpers/guests';
 import { calculateStayNights } from '../lib/frontoffice/helpers/rates';
@@ -43,6 +43,7 @@ import {
   type StaySortKey,
 } from '../lib/frontoffice/stayWorksheet';
 import StayWorksheetTable from './frontoffice/StayWorksheetTable';
+import { DateFilterPills, type DateMode } from './fb/DateFilterPills';
 import { CompanyStatement } from './frontoffice/CompanyAccounts';
 import {
   companyKeyOf,
@@ -62,6 +63,44 @@ const ReservationsBookingsManager = dynamic(() => import('./ReservationsBookings
 const DESK_SUMMARY_CARDS = FO_DESK_KPI_SECTIONS;
 type PayMethod = 'Cash' | 'Card' | 'Mobile Money' | 'Bank Transfer';
 type PrintChoice = 'registration-card' | 'invoice' | 'receipt';
+
+type DeskFocus = StaySortKey | 'purpose' | 'billing' | 'centre' | 'staff';
+
+const SORT_CHOICES: { key: DeskFocus; label: string }[] = [
+  { key: 'arrival', label: 'Check-in' },
+  { key: 'departure', label: 'Check-out' },
+  { key: 'purpose', label: 'Purpose' },
+  { key: 'billing', label: 'Billing' },
+  { key: 'centre', label: 'Centre' },
+  { key: 'staff', label: 'Staff' },
+  { key: 'guest', label: 'Guest' },
+  { key: 'status', label: 'Status' },
+  { key: 'room', label: 'Room' },
+  { key: 'nights', label: 'Nights' },
+  { key: 'rate', label: 'Rate' },
+  { key: 'amount', label: 'Amount' },
+  { key: 'paid', label: 'Paid' },
+  { key: 'balance', label: 'Balance' },
+  { key: 'discount', label: 'Discount' },
+  { key: 'other', label: 'Other charges' },
+  { key: 'id', label: 'ID' },
+];
+
+const PURPOSE_OPTIONS = [
+  ['personal', 'Personal'],
+  ['business', 'Business'],
+  ['corporate', 'Corporate'],
+  ['conference', 'Conference'],
+  ['training', 'Training'],
+  ['medical', 'Medical'],
+  ['tourism', 'Tourism'],
+  ['leisure', 'Leisure'],
+  ['other', 'Other'],
+] as const;
+
+function isColumnSort(focus: DeskFocus): focus is StaySortKey {
+  return focus !== 'purpose' && focus !== 'billing' && focus !== 'centre' && focus !== 'staff';
+}
 
 const PRINTS: { key: PrintChoice; label: string; fallback: string }[] = [
   { key: 'registration-card', label: 'Registration card', fallback: 'builtin-registration-card-standard' },
@@ -141,15 +180,12 @@ export default function FrontDeskCounter() {
   const [tick, setTick] = useState(0);
   const [query, setQuery] = useState('');
   const [view, setView] = useState<'all' | 'arriving' | 'leaving' | 'inhouse'>('all');
-  const [dateMode, setDateMode] = useState<'any' | 'today' | 'day' | 'range'>('today');
+  const [dateMode, setDateMode] = useState<'any' | 'today' | 'day' | 'range'>('any');
   const [specificDate, setSpecificDate] = useState('');
   const [rangeFrom, setRangeFrom] = useState('');
   const [rangeTo, setRangeTo] = useState('');
-  const [purpose, setPurpose] = useState('all');
-  const [billing, setBilling] = useState('all');
-  const [centre, setCentre] = useState('all');
-  const [staff, setStaff] = useState('all');
-  const [sortKey, setSortKey] = useState<StaySortKey>('arrival');
+  const [focus, setFocus] = useState<DeskFocus>('arrival');
+  const [narrow, setNarrow] = useState('all');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [chosenRoom, setChosenRoom] = useState('');
@@ -212,26 +248,13 @@ export default function FrontDeskCounter() {
         : view === 'leaving'
           ? departures
           : inHouse;
-    let from = '';
-    let to = '';
-    if (dateMode === 'today') {
-      from = today;
-      to = today;
-    } else if (dateMode === 'day' && specificDate) {
-      from = specificDate;
-      to = specificDate;
-    } else if (dateMode === 'range' && (rangeFrom || rangeTo)) {
-      from = rangeFrom || rangeTo;
-      to = rangeTo || rangeFrom;
-    }
-    const dated = !from || !to ? base : base.filter((stay) => stayTouches(stay, from, to));
     const q = query.trim().toLowerCase();
-    if (!q) return dated;
-    return dated.filter((stay) => {
+    if (!q) return base;
+    return base.filter((stay) => {
       const blob = [stay.guestName, stay.resId, stay.roomId, stay.guestPhone, centreOf(stay), stay.stayReason].join(' ').toLowerCase();
       return blob.includes(q);
     });
-  }, [query, view, everyone, arrivals, departures, inHouse, dateMode, specificDate, rangeFrom, rangeTo, today]);
+  }, [query, view, everyone, arrivals, departures, inHouse]);
 
   const centres = useMemo(() => {
     return Array.from(new Set(pool.map(centreOf).filter(Boolean))).sort((a, b) => a.localeCompare(b));
@@ -262,6 +285,9 @@ export default function FrontDeskCounter() {
 
   const folio = selected ? findMainFolio(frontOfficeStore.folios, selected.id) : null;
   const folioTotals = folio ? getFolioDisplayTotals(folio) : null;
+  const postedRoomDates = folio ? getRoomChargeDatesOnFolio(folio) : new Set<string>();
+  const postedThrough = Array.from(postedRoomDates).sort().at(-1) || '';
+  const businessDay = frontOfficeStore.businessDate || today;
   const otherCharges = (folio?.charges || []).filter((charge) => !isRoomLine(charge));
   const chargeGross = (charge: (typeof otherCharges)[number]) => charge.amount + (charge.serviceCharge || 0) - (charge.discountAmount || 0) + (charge.tax || 0);
   const otherPosted = otherCharges.reduce((sum, charge) => sum + chargeGross(charge), 0);
@@ -277,17 +303,42 @@ export default function FrontDeskCounter() {
   const openStay = (id: string) => setSelectedId(id);
 
   const filtered = [...pool].filter((stay) => {
-    if (purpose !== 'all' && stay.stayReason !== purpose) return false;
+    let from = '';
+    let to = '';
+    if (dateMode === 'today') {
+      from = today;
+      to = today;
+    } else if (dateMode === 'day' && specificDate) {
+      from = specificDate;
+      to = specificDate;
+    } else if (dateMode === 'range' && (rangeFrom || rangeTo)) {
+      from = rangeFrom || rangeTo;
+      to = rangeTo || rangeFrom;
+    }
+    if (from && to && !stayTouches(stay, from, to)) return false;
+    if (focus === 'purpose' && narrow !== 'all' && stay.stayReason !== narrow) return false;
     const billedOut = !!(stay.billingPersonId || stay.billingPersonName || stay.companyName);
-    if (billing === 'third_party' && !billedOut) return false;
-    if (billing === 'guest' && billedOut) return false;
-    if (centre !== 'all' && centreOf(stay) !== centre) return false;
+    if (focus === 'billing' && narrow === 'third_party' && !billedOut) return false;
+    if (focus === 'billing' && narrow === 'guest' && billedOut) return false;
+    if (focus === 'centre' && narrow !== 'all' && centreOf(stay) !== narrow) return false;
     const clerks = clerksOf(stay);
-    if (staff === 'none' && clerks.length > 0) return false;
-    if (staff !== 'all' && staff !== 'none' && !clerks.includes(staff)) return false;
+    if (focus === 'staff' && narrow === 'none' && clerks.length > 0) return false;
+    if (focus === 'staff' && narrow !== 'all' && narrow !== 'none' && !clerks.includes(narrow)) return false;
     return true;
   });
-  const shown = sortStays(filtered, sortKey, sortDir, today);
+  const shown = isColumnSort(focus)
+    ? sortStays(filtered, focus, sortDir, today)
+    : [...filtered].sort((a, b) => {
+        const label = (stay: Reservation) => {
+          if (focus === 'purpose') return stay.stayReason || '';
+          if (focus === 'billing') return (stay.billingPersonId || stay.billingPersonName || stay.companyName) ? 'Company pays' : 'Guest pays';
+          if (focus === 'centre') return centreOf(stay);
+          return clerksOf(stay).join(', ');
+        };
+        const order = label(a).localeCompare(label(b), undefined, { sensitivity: 'base' });
+        if (order !== 0) return order * (sortDir === 'asc' ? 1 : -1);
+        return a.guestName.localeCompare(b.guestName);
+      });
 
   const summary = shown.reduce(
     (sum, stay) => {
@@ -307,13 +358,38 @@ export default function FrontDeskCounter() {
     return value ? String(value) : fallback;
   };
 
-  const sortBy = (key: typeof sortKey) => {
-    if (sortKey === key) setSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'));
-    else {
-      setSortKey(key);
-      setSortDir('asc');
-    }
+  const chooseFocus = (next: DeskFocus) => {
+    if (next === focus) return;
+    setFocus(next);
+    setNarrow('all');
+    setSortDir('asc');
   };
+
+  const sortBy = (key: StaySortKey) => {
+    if (focus === key) setSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'));
+    else chooseFocus(key);
+  };
+  const sortStaff = () => {
+    if (focus === 'staff') setSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'));
+    else chooseFocus('staff');
+  };
+
+  const dateFilter = (
+    <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+      <DateFilterPills
+        mode={dateMode === 'any' ? 'all' : dateMode === 'day' ? 'specific' : dateMode}
+        onMode={(mode: DateMode) =>
+          setDateMode(mode === 'all' ? 'any' : mode === 'specific' ? 'day' : mode)
+        }
+        single={specificDate}
+        onSingle={setSpecificDate}
+        from={rangeFrom}
+        onFrom={setRangeFrom}
+        to={rangeTo}
+        onTo={setRangeTo}
+      />
+    </div>
+  );
 
   const checkIn = () => {
     if (!selected || busy) return;
@@ -528,7 +604,7 @@ export default function FrontDeskCounter() {
 
       <Card className="border-0 shadow-lg">
         <CardBody className="space-y-3 p-4">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <div className="flex flex-wrap items-end gap-3">
             <Input
               placeholder="Search name, room, or reservation..."
               value={query}
@@ -537,157 +613,110 @@ export default function FrontDeskCounter() {
               isClearable
               onClear={() => setQuery('')}
               aria-label="Search the desk"
+              className="min-w-[16rem] grow basis-[18rem]"
             />
             <Select
-              aria-label="Purpose"
-              placeholder="Purpose"
-              selectedKeys={[purpose]}
-              onSelectionChange={(keys) => setPurpose(pick(keys))}
+              label="Sort by"
+              labelPlacement="outside"
+              aria-label="Sort by"
+              className="w-44"
+              selectedKeys={[focus]}
+              onSelectionChange={(keys) => chooseFocus(pick(keys, 'arrival') as DeskFocus)}
             >
-              <SelectItem key="all">All purposes</SelectItem>
-              <SelectItem key="personal">Personal</SelectItem>
-              <SelectItem key="business">Business</SelectItem>
-              <SelectItem key="corporate">Corporate</SelectItem>
-              <SelectItem key="conference">Conference</SelectItem>
-              <SelectItem key="training">Training</SelectItem>
-              <SelectItem key="medical">Medical</SelectItem>
-              <SelectItem key="tourism">Tourism</SelectItem>
-              <SelectItem key="leisure">Leisure</SelectItem>
-              <SelectItem key="other">Other</SelectItem>
+              {SORT_CHOICES.map((choice) => (
+                <SelectItem key={choice.key}>{choice.label}</SelectItem>
+              ))}
             </Select>
-            <div className="flex items-center gap-2">
+            {focus === 'purpose' && (
               <Select
-                aria-label="Billing"
-                placeholder="Billing"
-                className="min-w-0 flex-1"
-                selectedKeys={[billing]}
-                onSelectionChange={(keys) => setBilling(pick(keys))}
+                label="Purpose"
+                labelPlacement="outside"
+                aria-label="Filter by purpose"
+                className="w-44"
+                selectedKeys={[narrow]}
+                onSelectionChange={(keys) => setNarrow(pick(keys))}
+              >
+                {[
+                  <SelectItem key="all">All purposes</SelectItem>,
+                  ...PURPOSE_OPTIONS.map(([key, label]) => <SelectItem key={key}>{label}</SelectItem>),
+                ]}
+              </Select>
+            )}
+            {focus === 'billing' && (
+              <Select
+                label="Billing"
+                labelPlacement="outside"
+                aria-label="Filter by billing"
+                className="w-44"
+                selectedKeys={[narrow]}
+                onSelectionChange={(keys) => setNarrow(pick(keys))}
               >
                 <SelectItem key="all">All billing</SelectItem>
                 <SelectItem key="guest">Guest pays</SelectItem>
                 <SelectItem key="third_party">Company pays</SelectItem>
               </Select>
-              <Button color="success" className="shrink-0 bg-green-600 text-white" onPress={() => setWalkOpen(true)}>
-                Walk-in
-              </Button>
-            </div>
-            <Select
-              aria-label="Centre"
-              placeholder="Centre"
-              selectedKeys={[centre]}
-              onSelectionChange={(keys) => setCentre(pick(keys))}
-            >
-              {[
-                <SelectItem key="all">All centres</SelectItem>,
-                ...centres.map((name) => <SelectItem key={name}>{name}</SelectItem>),
-              ]}
-            </Select>
-            <Select
-              aria-label="Staff"
-              placeholder="Staff"
-              selectedKeys={[staff]}
-              onSelectionChange={(keys) => setStaff(pick(keys))}
-            >
-              {[
-                <SelectItem key="all">All staff</SelectItem>,
-                <SelectItem key="none">No staff recorded</SelectItem>,
-                ...clerks.map((name) => <SelectItem key={name}>{name}</SelectItem>),
-              ]}
-            </Select>
-            <Select
-              aria-label="Sort"
-              placeholder="Sort"
-              selectedKeys={[sortKey]}
-              onSelectionChange={(keys) => {
-                const next = pick(keys, 'arrival') as typeof sortKey;
-                setSortKey(next);
-              }}
-            >
-              <SelectItem key="id">Sort by ID</SelectItem>
-              <SelectItem key="guest">Sort by guest</SelectItem>
-              <SelectItem key="status">Sort by status</SelectItem>
-              <SelectItem key="room">Sort by room</SelectItem>
-              <SelectItem key="arrival">Sort by check-in</SelectItem>
-              <SelectItem key="departure">Sort by check-out</SelectItem>
-              <SelectItem key="nights">Sort by nights</SelectItem>
-              <SelectItem key="rate">Sort by rate</SelectItem>
-              <SelectItem key="discount">Sort by discount</SelectItem>
-              <SelectItem key="other">Sort by other charges</SelectItem>
-              <SelectItem key="amount">Sort by amount</SelectItem>
-              <SelectItem key="balance">Sort by balance</SelectItem>
-            </Select>
+            )}
+            {focus === 'centre' && (
+              <Select
+                label="Centre"
+                labelPlacement="outside"
+                aria-label="Filter by centre"
+                className="w-52"
+                selectedKeys={[narrow]}
+                onSelectionChange={(keys) => setNarrow(pick(keys))}
+              >
+                {[
+                  <SelectItem key="all">All centres</SelectItem>,
+                  ...centres.map((name) => <SelectItem key={name}>{name}</SelectItem>),
+                ]}
+              </Select>
+            )}
+            {focus === 'staff' && (
+              <Select
+                label="Staff"
+                labelPlacement="outside"
+                aria-label="Filter by staff"
+                className="w-52"
+                selectedKeys={[narrow]}
+                onSelectionChange={(keys) => setNarrow(pick(keys))}
+              >
+                {[
+                  <SelectItem key="all">All staff</SelectItem>,
+                  <SelectItem key="none">No staff recorded</SelectItem>,
+                  ...clerks.map((name) => <SelectItem key={name}>{name}</SelectItem>),
+                ]}
+              </Select>
+            )}
+            {(focus === 'arrival' || focus === 'departure') && (
+              <div className="contents lg:hidden">{dateFilter}</div>
+            )}
+            <Button color="success" className="ml-auto shrink-0 bg-green-600 text-white" onPress={() => setWalkOpen(true)}>
+              Walk-in
+            </Button>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              {([
-                ['all', 'All'],
-                ['arriving', 'Check-in'],
-                ['inhouse', 'In-house'],
-                ['leaving', 'Check-out'],
-              ] as const).map(([key, label]) => (
-                <Button
-                  key={key}
-                  size="sm"
-                  color={view === key ? 'success' : 'default'}
-                  variant={view === key ? 'solid' : 'flat'}
-                  className={view === key ? 'bg-green-600 text-white' : ''}
-                  onPress={() => setView(key)}
-                >
-                  {label}
-                </Button>
-              ))}
-              <Button size="sm" variant="flat" onPress={() => setSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'))}>
-                {sortDir === 'asc' ? '↑ Ascending' : '↓ Descending'}
+          <div className="flex flex-wrap items-center gap-2">
+            {([
+              ['all', 'All'],
+              ['arriving', 'Check-in'],
+              ['inhouse', 'In-house'],
+              ['leaving', 'Check-out'],
+            ] as const).map(([key, label]) => (
+              <Button
+                key={key}
+                size="sm"
+                color={view === key ? 'success' : 'default'}
+                variant={view === key ? 'solid' : 'flat'}
+                className={view === key ? 'bg-green-600 text-white' : ''}
+                onPress={() => setView(key)}
+              >
+                {label}
               </Button>
-              <span className="text-sm text-gray-500">{shown.length === 1 ? '1 stay' : `${shown.length} stays`}</span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm text-gray-500">Dates</span>
-              {([
-                ['any', 'All dates'],
-                ['today', 'Today'],
-                ['day', 'Specific date'],
-                ['range', 'Date range'],
-              ] as const).map(([key, label]) => (
-                <Button
-                  key={key}
-                  size="sm"
-                  color={dateMode === key ? 'warning' : 'default'}
-                  variant={dateMode === key ? 'solid' : 'flat'}
-                  onPress={() => setDateMode(key)}
-                >
-                  {label}
-                </Button>
-              ))}
-              {dateMode === 'day' && (
-                <input
-                  type="date"
-                  aria-label="Specific date"
-                  value={specificDate}
-                  onChange={(event) => setSpecificDate(event.target.value)}
-                  className="rounded-lg border border-gray-300 px-2 py-1 text-sm"
-                />
-              )}
-              {dateMode === 'range' && (
-                <>
-                  <input
-                    type="date"
-                    aria-label="From date"
-                    value={rangeFrom}
-                    onChange={(event) => setRangeFrom(event.target.value)}
-                    className="rounded-lg border border-gray-300 px-2 py-1 text-sm"
-                  />
-                  <span className="text-sm text-gray-400">to</span>
-                  <input
-                    type="date"
-                    aria-label="To date"
-                    value={rangeTo}
-                    onChange={(event) => setRangeTo(event.target.value)}
-                    className="rounded-lg border border-gray-300 px-2 py-1 text-sm"
-                  />
-                </>
-              )}
-            </div>
+            ))}
+            <Button size="sm" variant="flat" onPress={() => setSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'))}>
+              {sortDir === 'asc' ? '↑ Ascending' : '↓ Descending'}
+            </Button>
+            <span className="text-sm text-gray-500">{shown.length === 1 ? '1 stay' : `${shown.length} stays`}</span>
+            <div className="hidden lg:contents">{dateFilter}</div>
           </div>
         </CardBody>
       </Card>
@@ -723,9 +752,11 @@ export default function FrontDeskCounter() {
             stays={shown}
             today={today}
             selectedId={selectedId}
-            sortKey={sortKey}
+            sortKey={focus}
             sortDir={sortDir}
             onSort={sortBy}
+            onStaffSort={sortStaff}
+            staffOf={(stay) => clerksOf(stay).join(', ')}
             onOpen={openStay}
           />
         </CardBody>
@@ -769,15 +800,31 @@ export default function FrontDeskCounter() {
                 {!!quote?.breakdown.length && (
                   <MoneyLines
                     title="Room rent"
-                    rows={quote.breakdown.map((night) => ({
-                      key: night.date,
-                      date: shortDay(night.date),
-                      description: night.roomId && hasRoom && night.roomId !== selected.roomId ? `Room ${night.roomId}` : '',
-                      rate: night.base || 0,
-                      tax: (night.total || 0) - (night.base || 0),
-                    }))}
+                    rows={(() => {
+                      const stayDays = quote.breakdown.map((night) => dayOf(night.date));
+                      const activeDay = postedThrough
+                        || (stayDays.includes(businessDay) ? businessDay : stayDays[0] || '');
+                      return quote.breakdown.map((night) => {
+                        const day = dayOf(night.date);
+                        const posted = postedRoomDates.has(day);
+                        return {
+                          key: night.date,
+                          date: shortDay(night.date),
+                          description: night.roomId && hasRoom && night.roomId !== selected.roomId ? `Room ${night.roomId}` : '',
+                          rate: night.base || 0,
+                          tax: (night.total || 0) - (night.base || 0),
+                          posted,
+                          active: day === activeDay,
+                        };
+                      });
+                    })()}
                     footerLabel="Stay total"
                     footerAmount={money(quote.grandTotal)}
+                    note={
+                      postedThrough
+                        ? `Total charges below include room rent through ${shortDay(postedThrough)}. Later nights post at night audit.`
+                        : 'Total charges below do not include room rent yet. The first night posts at check-in or night audit.'
+                    }
                   />
                 )}
                 {otherCharges.length > 0 && (
@@ -1054,11 +1101,21 @@ function MoneyLines({
   rows,
   footerLabel,
   footerAmount,
+  note,
 }: {
   title: string;
-  rows: { key: string; date: string; description?: string; rate: number; tax: number }[];
+  rows: {
+    key: string;
+    date: string;
+    description?: string;
+    rate: number;
+    tax: number;
+    posted?: boolean;
+    active?: boolean;
+  }[];
   footerLabel: string;
   footerAmount: string;
+  note?: string;
 }) {
   const described = rows.some((row) => row.description);
   const columns = described
@@ -1074,8 +1131,20 @@ function MoneyLines({
           <span className="text-right text-xs text-gray-500">Amount</span>
         </div>
         {rows.map((row) => (
-          <div key={row.key} className={`${columns} border-b border-gray-100 py-1.5 text-sm`}>
-            <span className="text-gray-600">{row.date}</span>
+          <div
+            key={row.key}
+            className={`${columns} border-b border-gray-100 py-1.5 text-sm ${
+              row.active
+                ? 'rounded-md bg-amber-50 font-semibold text-ghana-black dark:bg-amber-950/40'
+                : row.posted
+                  ? 'bg-blue-50/70 dark:bg-blue-950/30'
+                  : ''
+            }`}
+          >
+            <span className={row.active ? 'text-ghana-black' : 'text-gray-600'}>
+              {row.date}
+              {row.active && row.posted ? ' · on bill' : row.active ? ' · current' : row.posted ? ' · posted' : ''}
+            </span>
             {described && <span className="truncate text-ghana-black">{row.description}</span>}
             <span className="text-right tabular-nums">{money(row.rate)}</span>
             <span className="text-right tabular-nums">{money(row.tax)}</span>
@@ -1088,6 +1157,7 @@ function MoneyLines({
           <span />
           <span className="text-right tabular-nums">{footerAmount}</span>
         </div>
+        {note && <p className="mt-1 text-xs text-gray-500">{note}</p>}
       </CardBody>
     </Card>
   );

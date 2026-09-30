@@ -90,41 +90,41 @@ function PostToGlInfo({ type }: { type?: BankTransaction['type'] }) {
       content={
         <div className="space-y-2 text-sm leading-snug">
           <p>
-            <span className="font-semibold">General ledger (GL)</span> is the official accounting record
-            in your Chart of Accounts. It drives trial balance, financial reports, and audit.
+            <span className="font-semibold">The official books</span> are your Chart of Accounts —
+            what financial reports and audits use.
           </p>
           <p>
-            <span className="font-semibold">When checked:</span> saving creates a journal entry so the
-            books reflect this movement — not just the bank cashbook.
+            <span className="font-semibold">When checked:</span> saving also posts a journal so the
+            books match this bank movement — not only the cashbook.
           </p>
           <p>
             <span className="font-semibold">When unchecked:</span> only the bank register balance
-            changes. Use this if GL was already updated elsewhere (e.g. a receipt or payment posted
+            changes. Use this if the books were already updated elsewhere (e.g. a receipt or payment
             from Accounts Receivable / Payable).
           </p>
           {type === 'Transfer' ? (
             <p>
-              <span className="font-semibold">Transfer:</span> Dr destination bank / Cr source bank.
-              Hotel-wide cash total stays the same — money moved between accounts.
+              <span className="font-semibold">Transfer:</span> money moves between two of your accounts;
+              hotel-wide cash total stays the same.
             </p>
           ) : type === 'Deposit' ? (
-            <p><span className="font-semibold">Deposit:</span> Dr bank / Cr revenue (other income).</p>
+            <p><span className="font-semibold">Deposit:</span> money in — bank up, other income up.</p>
           ) : type === 'Withdrawal' ? (
-            <p><span className="font-semibold">Withdrawal:</span> Dr expense / Cr bank.</p>
+            <p><span className="font-semibold">Withdrawal:</span> money out — expense up, bank down.</p>
           ) : type === 'Charge' ? (
-            <p><span className="font-semibold">Bank charge:</span> Dr bank charges expense / Cr bank.</p>
+            <p><span className="font-semibold">Bank charge:</span> fee expense, bank down.</p>
           ) : type === 'Interest' ? (
-            <p><span className="font-semibold">Interest:</span> Dr bank / Cr interest income.</p>
+            <p><span className="font-semibold">Interest:</span> bank up, interest income up.</p>
           ) : null}
           <p className="text-default-500 text-xs">
-            Statement matching is done on the Reconciliation tab — separate from posting to GL.
+            Matching your bank statement is on the Match statement tab — separate from posting to the books.
           </p>
         </div>
       }
     >
       <button
         type="button"
-        aria-label="What does Post to GL mean?"
+        aria-label="What does Post to books mean?"
         className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-default-300 text-xs font-semibold text-default-600 hover:bg-default-100"
       >
         i
@@ -137,12 +137,14 @@ export default function BankCashManagementPage() {
   const {
     bankAccounts,
     bankTransactions,
+    payments,
     chartOfAccounts,
     isLoading,
     error,
     addBankAccount,
     updateBankAccount,
     deleteBankAccount,
+    restoreMissingDemoBankAccounts,
     createManualBankTransaction,
     deleteManualBankTransaction,
     markBankTransactionCleared,
@@ -310,12 +312,18 @@ export default function BankCashManagementPage() {
     });
   }, [isEditMode]);
 
-  // Seed demo data on first load
+  // Seed demo data on first load; restore sample banks if they were deleted
   useEffect(() => {
-    if (!bankAccounts.length && !bankTransactions.length) {
-      initializeAccounting().catch(() => {});
-    }
-  }, [bankAccounts.length, bankTransactions.length, initializeAccounting]);
+    const run = async () => {
+      if (!bankAccounts.length && !bankTransactions.length) {
+        try {
+          await initializeAccounting();
+        } catch {}
+      }
+      restoreMissingDemoBankAccounts();
+    };
+    void run();
+  }, [bankAccounts.length, bankTransactions.length, initializeAccounting, restoreMissingDemoBankAccounts]);
 
   useEffect(() => {
     try {
@@ -583,17 +591,19 @@ export default function BankCashManagementPage() {
   return (
     <div className="px-3 pt-2 pb-3 md:px-4 md:pt-3 md:pb-4">
       <div className="mb-2 flex items-center gap-1.5">
-        <h1 className="text-lg md:text-xl font-bold text-gray-800">🏦 Bank & Cash Management</h1>
-        <HeadingInfo label="About bank and cash">Manage bank accounts, cash positions, and liquidity</HeadingInfo>
+        <h1 className="text-lg md:text-xl font-bold text-gray-800">Bank & Cash</h1>
+        <HeadingInfo label="About bank and cash">
+          Your bank and cash registers, money in and out, and matching the bank statement.
+        </HeadingInfo>
       </div>
 
       {/* Summary Cards */}
       <DeskKpiStrip
         className="mb-3"
         items={[
-          { id: 'bank.totalBalance', label: 'Total Bank Balance', value: formatAmount(totalBankBalance), tone: 'text-green-700' },
-          { id: 'bank.totalCash', label: 'Total Cash', value: formatAmount(totalCash), tone: 'text-blue-700' },
-          { id: 'bank.netCashFlow', label: 'Net Cash Flow', value: formatAmount(totalCashFlow), tone: 'text-emerald-700' },
+          { id: 'bank.totalBalance', label: 'In the bank', value: formatAmount(totalBankBalance), tone: 'text-green-700' },
+          { id: 'bank.totalCash', label: 'Cash on hand', value: formatAmount(totalCash), tone: 'text-blue-700' },
+          { id: 'bank.netCashFlow', label: 'Net movement', value: formatAmount(totalCashFlow), tone: 'text-emerald-700' },
         ]}
       />
 
@@ -615,28 +625,26 @@ export default function BankCashManagementPage() {
             variant="solid"
             classNames={deskBookTabsClassNames}
           >
-            <Tab key="bank-accounts" title={`🏦 Bank Accounts (${filteredBankAccounts.length})`}>
+            <Tab key="bank-accounts" title={`Accounts (${filteredBankAccounts.length})`}>
               <div className={deskBookTabPanelClassName}>
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="text-sm font-semibold text-gray-800">Bank & Cash Accounts</h3>
-                  <div className="flex items-center gap-2">
+                <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-2">
+                  <h3 className="text-sm font-semibold text-gray-800 shrink-0 mr-auto">Bank & cash accounts</h3>
                     <Dropdown>
                       <DropdownTrigger>
-                        <Button variant="flat" size="sm">📥 Export</Button>
+                        <Button variant="flat" size="sm" className="shrink-0">📥 Export</Button>
                       </DropdownTrigger>
                       <DropdownMenu>
-                        <DropdownItem key="csv" onPress={exportBankAccountsCSV}>📄 Download CSV</DropdownItem>
+                        <DropdownItem key="csv" onPress={exportBankAccountsCSV}>CSV spreadsheet</DropdownItem>
                         <DropdownItem key="pdf" onPress={printBankAccountsTablePDF}>📑 Print PDF</DropdownItem>
                       </DropdownMenu>
                     </Dropdown>
-                    <Button color="primary" size="sm" startContent={<span>➕</span>} onPress={openNewBankAccount}>
-                      Add Account
+                    <Button color="primary" size="sm" className="shrink-0" onPress={openNewBankAccount}>
+                      Add account
                     </Button>
-                  </div>
                 </div>
 
-                <div className="flex flex-wrap items-end gap-3 mb-4">
-                  <Input label="Search" placeholder="Account name, bank, account #..." value={accountSearchTerm} onValueChange={setAccountSearchTerm} className="w-64" size="sm" />
+                <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-3">
+                  <Input aria-label="Search accounts" placeholder="Search account or bank" value={accountSearchTerm} onValueChange={setAccountSearchTerm} className="w-56 shrink-0" size="sm" />
                 </div>
 
                 <div ref={accountCols.frameRef} style={accountCols.frameStyle}>
@@ -644,7 +652,7 @@ export default function BankCashManagementPage() {
                     <TableHeader>
                       {accountColumn('account', 'Account')}
                       {accountColumn('bank', 'Bank')}
-                      {accountColumn('gl', 'GL Account')}
+                      {accountColumn('gl', 'Books account')}
                       {accountColumn('currency', 'Currency')}
                       {accountColumn('opening', 'Opening', 'right')}
                       {accountColumn('balance', 'Balance', 'right')}
@@ -687,46 +695,42 @@ export default function BankCashManagementPage() {
               </div>
             </Tab>
 
-            <Tab key="transactions" title={`🔁 Transactions (${filteredTransactions.length})`}>
+            <Tab key="transactions" title={`Transactions (${filteredTransactions.length})`}>
               <div className={deskBookTabPanelClassName}>
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="text-sm font-semibold text-gray-800">Bank Transactions</h3>
-                  <div className="flex items-center gap-2">
+                <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-2">
+                  <h3 className="text-sm font-semibold text-gray-800 shrink-0 mr-auto">Money in and out</h3>
                     <Dropdown>
                       <DropdownTrigger>
-                        <Button variant="flat" size="sm">📥 Export</Button>
+                        <Button variant="flat" size="sm" className="shrink-0">📥 Export</Button>
                       </DropdownTrigger>
                       <DropdownMenu>
-                        <DropdownItem key="csv" onPress={exportBankTransactionsCSV}>📄 Download CSV</DropdownItem>
+                        <DropdownItem key="csv" onPress={exportBankTransactionsCSV}>CSV spreadsheet</DropdownItem>
                         <DropdownItem key="pdf" onPress={printBankTransactionsTablePDF}>📑 Print PDF</DropdownItem>
                       </DropdownMenu>
                     </Dropdown>
-                    <Button color="primary" size="sm" startContent={<span>➕</span>} onPress={openNewTransaction}>
-                      Add Transaction
+                    <Button color="primary" size="sm" className="shrink-0" onPress={openNewTransaction}>
+                      Add transaction
                     </Button>
-                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                  <Input placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} startContent={<span className="text-gray-400">🔍</span>} />
-                  <Select placeholder="Filter by Status" selectedKeys={[filterStatus]} onSelectionChange={(keys) => setFilterStatus(Array.from(keys)[0] as string)}>
-                    <SelectItem key="all">All Statuses</SelectItem>
+                <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-3">
+                  <Input aria-label="Search transactions" placeholder="Search transactions" value={searchTerm} onValueChange={setSearchTerm} className="w-48 shrink-0" size="sm" />
+                  <Select aria-label="Status" className="w-36 shrink-0" size="sm" selectedKeys={[filterStatus]} disallowEmptySelection onSelectionChange={(keys) => setFilterStatus(Array.from(keys)[0] as string)}>
+                    <SelectItem key="all">All statuses</SelectItem>
                     <SelectItem key="Pending">Pending</SelectItem>
                     <SelectItem key="Cleared">Cleared</SelectItem>
                     <SelectItem key="Reconciled">Reconciled</SelectItem>
                   </Select>
-                  <Select placeholder="Filter by Type" selectedKeys={[filterType]} onSelectionChange={(keys) => setFilterType(Array.from(keys)[0] as string)}>
-                    <SelectItem key="all">All Types</SelectItem>
+                  <Select aria-label="Type" className="w-36 shrink-0" size="sm" selectedKeys={[filterType]} disallowEmptySelection onSelectionChange={(keys) => setFilterType(Array.from(keys)[0] as string)}>
+                    <SelectItem key="all">All types</SelectItem>
                     <SelectItem key="Deposit">Deposit</SelectItem>
                     <SelectItem key="Withdrawal">Withdrawal</SelectItem>
                     <SelectItem key="Transfer">Transfer</SelectItem>
                     <SelectItem key="Charge">Charge</SelectItem>
                     <SelectItem key="Interest">Interest</SelectItem>
                   </Select>
-                  <div className="flex gap-2">
-                    <Input type="date" value={dateRange.start} onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })} />
-                    <Input type="date" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })} />
-                  </div>
+                  <Input type="date" aria-label="From date" className="w-36 shrink-0" size="sm" value={dateRange.start} onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })} />
+                  <Input type="date" aria-label="To date" className="w-36 shrink-0" size="sm" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })} />
                 </div>
 
                 <div ref={txnCols.frameRef} style={txnCols.frameStyle}>
@@ -786,7 +790,7 @@ export default function BankCashManagementPage() {
               </div>
             </Tab>
 
-            <Tab key="reconciliation" title="🔄 Reconciliation">
+            <Tab key="reconciliation" title="Match statement">
               <div className={deskBookTabPanelClassName}>
                 <BankReconciliation embedded initialAccountId={reconAccountId || bankAccounts[0]?.id} />
               </div>
@@ -825,20 +829,20 @@ export default function BankCashManagementPage() {
                   <SelectItem key="USD">USD</SelectItem>
                 </Select>
                 <Autocomplete
-                  label="GL account (Chart of Accounts)"
+                  label="Books account (Chart of Accounts)"
                   selectedKey={editingItem?.glAccountCode || undefined}
                   onSelectionChange={(key) => patchBankForm({
                     glAccountCode: key ? String(key) : undefined,
                     createDedicatedGl: false,
                   })}
-                  placeholder="Select cash/bank GL account"
+                  placeholder="Select cash/bank books account"
                   isDisabled={editingItem?.accountKind === 'petty_cash' || (!!editingItem?.createDedicatedGl && !isEditMode)}
                   description={
                     editingItem?.accountKind === 'petty_cash'
-                      ? 'Petty cash maps to GL 1110 — Cash in Hand'
+                      ? 'Petty cash maps to account 1110 — Cash in Hand'
                       : editingItem?.createDedicatedGl && !isEditMode
-                        ? 'A dedicated GL account will be created under 1120 on save'
-                        : 'Link this register to a cash/bank GL account for journal posting and reconciliation'
+                        ? 'A dedicated books account will be created under 1120 on save'
+                        : 'Link this register to a cash/bank books account for posting and statement matching'
                   }
                 >
                   {bankGlOptions.map((acc) => (
@@ -860,7 +864,7 @@ export default function BankCashManagementPage() {
                       })}
                       isDisabled={isEditMode}
                     >
-                      Create dedicated GL account under Bank Accounts (1120)
+                      Create dedicated books account under Bank Accounts (1120)
                     </Checkbox>
                   </div>
                 )}
@@ -872,10 +876,10 @@ export default function BankCashManagementPage() {
                   }
                 >
                   <SelectItem key="period" textValue="Period / year opening">
-                    Period / year opening (register & reconciliation only)
+                    Period / year opening (register & statement match only)
                   </SelectItem>
                   <SelectItem key="go_live" textValue="Go-live import">
-                    Go-live import (posts Dr bank / Cr retained earnings)
+                    Go-live import (posts to books: bank / retained earnings)
                   </SelectItem>
                 </Select>
                 <Input
@@ -885,8 +889,8 @@ export default function BankCashManagementPage() {
                   onChange={(e) => patchBankForm({ openingBalance: parseFloat(e.target.value) || 0 })}
                   description={
                     editingItem?.openingBalanceType === 'go_live'
-                      ? 'One-time migration: posts Dr bank GL / Cr retained earnings (3200)'
-                      : 'Starting balance for this period — updates the cashbook only; GL comes from transactions'
+                      ? 'One-time migration: posts bank debit and retained earnings credit (3200)'
+                      : 'Starting balance for this period — updates the cashbook only; books update from transactions'
                   }
                 />
                 {isEditMode && (
@@ -985,13 +989,13 @@ export default function BankCashManagementPage() {
                     isSelected={txnForm?.postToGl !== false}
                     onValueChange={(checked) => setTxnForm({ ...(txnForm || {}), postToGl: checked })}
                   >
-                    Post to GL
+                    Post to books
                   </Checkbox>
                   <PostToGlInfo type={txnForm?.type} />
                 </div>
                 <p className="col-span-2 text-xs text-gray-500">
-                  Hover or tap <span className="font-semibold">i</span> next to Post to GL for a full explanation.
-                  Use the Reconciliation tab to match bank statements.
+                  Hover or tap <span className="font-semibold">i</span> next to Post to books for a full explanation.
+                  Use the Match statement tab to match bank statements.
                 </p>
               </div>
             )}
@@ -1125,8 +1129,55 @@ export default function BankCashManagementPage() {
                   <ModalFooter className="border-t bg-white">
                     <Button variant="flat" onPress={onClose}>Close</Button>
                     <Button variant="flat" color="primary" onPress={() => { closeView(); setReconAccountId(viewItem.id); setSelectedTab('reconciliation'); }}>Reconcile</Button>
-                    <Button color="danger" variant="flat" onPress={() => { deleteBankAccount(viewItem.id); closeView(); }}>🗑️ Delete</Button>
-                    <Button color="primary" onPress={() => { closeView(); openEditBankAccount(viewItem); }}>✏️ Edit</Button>
+                    {viewItem.isActive ? (
+                      <Button
+                        color="warning"
+                        variant="flat"
+                        onPress={() => {
+                          if (!window.confirm(`Deactivate "${viewItem.accountName}"? It will be hidden from payment pickers but history is kept.`)) return;
+                          updateBankAccount(viewItem.id, { isActive: false, updatedAt: new Date().toISOString() });
+                          closeView();
+                        }}
+                      >
+                        Deactivate
+                      </Button>
+                    ) : (
+                      <Button
+                        color="success"
+                        variant="flat"
+                        onPress={() => {
+                          updateBankAccount(viewItem.id, { isActive: true, updatedAt: new Date().toISOString() });
+                          closeView();
+                        }}
+                      >
+                        Reactivate
+                      </Button>
+                    )}
+                    <Button
+                      color="danger"
+                      variant="flat"
+                      onPress={() => {
+                        const txnCount = bankTransactions.filter((t) => t.bankAccountId === viewItem.id).length;
+                        const payCount = payments.filter((p) => p.bankAccountId === viewItem.id && p.status !== 'Void').length;
+                        const hasBalance = Math.abs(Number(viewItem.currentBalance || 0)) > 0.009;
+                        if (txnCount > 0 || payCount > 0 || hasBalance) {
+                          window.alert(
+                            `Cannot delete "${viewItem.accountName}" while it has history or a balance. Use Deactivate instead.`,
+                          );
+                          return;
+                        }
+                        if (!window.confirm(`Permanently delete bank account "${viewItem.accountName}"? This cannot be undone.`)) return;
+                        const result = deleteBankAccount(viewItem.id);
+                        if (!result.ok) {
+                          window.alert(result.reason);
+                          return;
+                        }
+                        closeView();
+                      }}
+                    >
+                      Delete
+                    </Button>
+                    <Button color="primary" onPress={() => { closeView(); openEditBankAccount(viewItem); }}>Edit</Button>
                   </ModalFooter>
                 </>
               );
@@ -1178,8 +1229,18 @@ export default function BankCashManagementPage() {
                   )}
                   {manual && viewItem.status !== 'Reconciled' && (
                     <>
-                      <Button color="danger" variant="flat" onPress={() => { deleteManualBankTransaction(viewItem.id); closeView(); }}>🗑️ Delete</Button>
-                      <Button color="primary" onPress={() => { closeView(); openEditTransaction(viewItem); }}>✏️ Edit</Button>
+                      <Button
+                        color="danger"
+                        variant="flat"
+                        onPress={() => {
+                          if (!window.confirm(`Delete bank transaction ${viewItem.reference || viewItem.id}? This cannot be undone.`)) return;
+                          deleteManualBankTransaction(viewItem.id);
+                          closeView();
+                        }}
+                      >
+                        Delete
+                      </Button>
+                      <Button color="primary" onPress={() => { closeView(); openEditTransaction(viewItem); }}>Edit</Button>
                     </>
                   )}
                 </ModalFooter>

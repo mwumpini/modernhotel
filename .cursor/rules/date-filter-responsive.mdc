@@ -1,0 +1,18 @@
+---
+description: Date filters — chip bar on desktop, Select on small/zoomed
+alwaysApply: true
+---
+
+# Date filter responsive pattern
+
+When building or updating date filters in module toolbars:
+
+- **Small screen or zoomed** (below `lg` / ~1024 CSS px): use a compact **Select** (e.g. “This month”) with the same modes.
+- **Standard PC ~13" @ 100%** (`lg` and up): use the Front Desk–style **chip bar**:
+  `📅 Date:` + rounded-full pills (`All Dates`, `Today`, …) with blue active state.
+
+Shared rules:
+
+- Same underlying modes/state for both UIs (one source of truth).
+- Specific date / date range inputs appear when those modes are selected.
+- Prefer implementing this once in a shared filter component (e.g. `EventsModuleFilters`) rather than duplicating per tab.

@@ -4,6 +4,30 @@ function parseDate(value: string | Date): Date {
   return value instanceof Date ? value : new Date(value);
 }
 
+function localYmd(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/** Depreciate up to the report date, or only up to disposal once that day has passed. */
+function depreciationEnd(asset: PpeAsset, reportDate: Date): Date {
+  const disposal = asset.disposalDate?.slice(0, 10);
+  if (disposal && disposal < localYmd(reportDate)) return parseDate(disposal);
+  return reportDate;
+}
+
+function onTheBooks(asset: PpeAsset): boolean {
+  return asset.capExp === 'Capitalise' || (asset.capExp === 'Disposed' && !!asset.disposalDate);
+}
+
+/** Still owned at the report date, so tax WDV and capital allowance still apply. */
+function stillOwned(asset: PpeAsset, reportDate: Date): boolean {
+  if (asset.capExp === 'Capitalise') return true;
+  if (asset.capExp !== 'Disposed' || !asset.disposalDate) return false;
+  return asset.disposalDate.slice(0, 10) > localYmd(reportDate);
+}
+
 export function monthsElapsed(purchaseDate: string | Date, targetDate: Date): number {
   const pd = parseDate(purchaseDate);
   return Math.max(
@@ -59,11 +83,9 @@ export function rbAccumDep(cost: number, residualPct: number, rate: number, mont
 }
 
 export function accumDep(asset: PpeAsset, category: PpeCategory, reportDate: Date): number {
-  if (asset.capExp === 'Expense') return 0;
-  if (asset.capExp !== 'Capitalise' && !asset.disposalDate) return 0;
+  if (!onTheBooks(asset)) return 0;
 
-  const targetDate = asset.disposalDate ? parseDate(asset.disposalDate) : reportDate;
-  const months = monthsElapsed(asset.purchaseDate, targetDate);
+  const months = monthsElapsed(asset.purchaseDate, depreciationEnd(asset, reportDate));
   const cost = assetTotalCost(asset);
 
   if (category.presentationGroup === 'Land') return 0;
@@ -75,10 +97,11 @@ export function accumDep(asset: PpeAsset, category: PpeCategory, reportDate: Dat
 }
 
 export function priorYearAccumDep(asset: PpeAsset, category: PpeCategory, reportDate: Date): number {
-  if (asset.capExp !== 'Capitalise') return 0;
+  if (!onTheBooks(asset)) return 0;
   if (category.presentationGroup === 'Land') return 0;
 
-  const months = monthsElapsedPriorYear(asset.purchaseDate, reportDate);
+  const priorYearEnd = new Date(reportDate.getFullYear() - 1, 11, 31);
+  const months = monthsElapsed(asset.purchaseDate, depreciationEnd(asset, priorYearEnd));
   const cost = assetTotalCost(asset);
 
   if (category.iasMethod === 'SL') {
@@ -94,15 +117,13 @@ export function nbv(asset: PpeAsset, category: PpeCategory, reportDate: Date): n
 }
 
 export function annualDepCharge(asset: PpeAsset, category: PpeCategory, reportDate: Date): number {
-  if (asset.capExp !== 'Capitalise') return 0;
-  if (asset.disposalDate) return 0;
+  if (!onTheBooks(asset)) return 0;
   if (category.presentationGroup === 'Land') return 0;
 
   // Charge for the year = closing accumulated depreciation − opening (prior year-end)
-  // accumulated depreciation. This is what makes depOpening + chargeForYear = depClosing hold
-  // by construction, and it automatically pro-rates for an asset bought mid-year (priorAccum
-  // is 0 for a same-year addition, so the charge is just however many months it's actually
-  // been owned) instead of always charging a full year's rate regardless of purchase date.
+  // accumulated depreciation. With no disposals, opening + charge = closing. A disposal
+  // removes its accumulated depreciation on its own line. A same-year purchase is pro-rated
+  // because its opening depreciation is zero.
   const priorAccum = priorYearAccumDep(asset, category, reportDate);
   const currentAccum = accumDep(asset, category, reportDate);
   return Math.max(0, currentAccum - priorAccum);
@@ -145,7 +166,7 @@ export function remainingLife(
 }
 
 export function graWDV(asset: PpeAsset, category: PpeCategory, reportDate: Date): number {
-  if (asset.capExp !== 'Capitalise') return 0;
+  if (!stillOwned(asset, reportDate)) return 0;
   const cost = assetTotalCost(asset);
   const yrs = graYearsElapsed(asset.purchaseDate, reportDate);
 
@@ -156,7 +177,8 @@ export function graWDV(asset: PpeAsset, category: PpeCategory, reportDate: Date)
 }
 
 export function graWDVPrior(asset: PpeAsset, category: PpeCategory, reportDate: Date): number {
-  if (asset.capExp !== 'Capitalise') return 0;
+  if (!stillOwned(asset, reportDate) && asset.capExp !== 'Disposed') return 0;
+  if (asset.capExp === 'Disposed' && asset.disposalDate && asset.disposalDate.slice(0, 10) <= localYmd(new Date(reportDate.getFullYear() - 1, 11, 31))) return 0;
   const cost = assetTotalCost(asset);
   const yrs = graYearsElapsedPrior(asset.purchaseDate, reportDate);
 
@@ -177,8 +199,7 @@ export function graCapitalAllowance(
   category: PpeCategory,
   reportDate: Date
 ): number {
-  if (asset.capExp !== 'Capitalise') return 0;
-  if (asset.disposalDate) return 0;
+  if (!stillOwned(asset, reportDate)) return 0;
 
   // Capital allowance for the year = opening WDV − closing WDV, for both RB and SL. This is
   // what makes openingWDV + additions − CA = closingWDV reconcile exactly (graWDV/graWDVPrior
@@ -220,6 +241,22 @@ export function computeAsset(
     presentationGroup: category.presentationGroup,
     graClass: category.graClass,
   };
+}
+
+function writtenDownValue(cost: number, category: PpeCategory, years: number): number {
+  if (category.graMethod === 'RB') return cost * Math.pow(1 - category.graRate, years);
+  return Math.max(0, cost * (1 - category.graRate * years));
+}
+
+/** Tax written-down value leaving the pool when an asset is disposed in the report year. */
+export function graDisposalRelease(asset: PpeAsset, category: PpeCategory, reportDate: Date): number {
+  if (asset.capExp !== 'Disposed' || !asset.disposalDate) return 0;
+  const disposalDay = asset.disposalDate.slice(0, 10);
+  if (disposalDay > localYmd(reportDate)) return 0;
+  if (parseDate(disposalDay).getFullYear() !== reportDate.getFullYear()) return 0;
+  const cost = assetTotalCost(asset);
+  if (parseDate(asset.purchaseDate).getFullYear() >= reportDate.getFullYear()) return cost;
+  return writtenDownValue(cost, category, graYearsElapsedPrior(asset.purchaseDate, reportDate));
 }
 
 export function reportDateFromInput(dateStr: string): Date {

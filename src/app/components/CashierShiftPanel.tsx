@@ -652,9 +652,9 @@ export default function CashierShiftPanel({
       </Card>
 
       <Card>
-        <CardHeader className="flex flex-wrap items-center justify-between gap-2">
+        <CardHeader className="flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
           <div className="font-medium">Shift History</div>
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <div className="flex w-full min-w-0 flex-wrap items-center gap-2 lg:ml-auto lg:w-auto lg:justify-end">
             <DateFilterPills
               mode={dateFilter.mode}
               onMode={dateFilter.setMode}
@@ -665,7 +665,7 @@ export default function CashierShiftPanel({
               to={dateFilter.to}
               onTo={dateFilter.setTo}
             />
-            <Button size="sm" color="primary" variant="flat" onPress={printHistory}>🖨️ Print</Button>
+            <Button size="sm" color="primary" variant="flat" className="shrink-0" onPress={printHistory}>🖨️ Print</Button>
           </div>
         </CardHeader>
         <CardBody>

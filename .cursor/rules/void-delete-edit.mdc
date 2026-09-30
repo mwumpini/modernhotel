@@ -1,0 +1,27 @@
+---
+description: Void / Delete / Edit document actions — meaning, effects, and confirm UX
+alwaysApply: true
+---
+
+# Void, Delete, Edit
+
+When the user asks to add **Void**, **Delete**, or **Edit** on a document (folio, receipt, invoice, etc.), use this model:
+
+## Meanings
+
+- **Void** — soft cancel. Keep the record on file with status `Void` for audit. Stop it from counting going forward (no further posts/edits that change balances). Reverse linked ledger effects (invoice balance, folio lines, etc.) when the document had posted money movement.
+- **Delete** — hard remove. Take the record out of the list permanently. Reverse linked effects first if not already voided. Prefer only when the user does not need history.
+- **Edit** — open the document (or its linked source) for changing details. For POS/activity tickets, Edit opens the **POS terminal** with that order loaded in the cart — not an inline qty-only tweak. Do **not** put Edit on every footer by default; add it only when asked. If a surface already has View / edit elsewhere, skip a redundant Edit unless requested.
+
+## Confirm before Void or Delete
+
+Never run Void or Delete on a single click. Always show an in-app **caution prompt** first:
+
+- Clear title (`Void this …?` / `Delete this …?`)
+- Short message: what stays vs what is lost / what gets reversed
+- **Keep as is** (cancel) and a confirm button labeled for the action (`Void receipt`, `Delete folio`, …)
+- Confirm button: warning color for Void, danger for Delete
+
+## Footer pattern
+
+Typical order when asked for these actions: **Delete**, **Void**, then Cancel/Close (and Edit only if requested). Disable Void when already voided; disable Delete/Void on create forms until a saved record exists.

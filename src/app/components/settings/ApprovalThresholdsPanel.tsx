@@ -97,7 +97,7 @@ export default function ApprovalThresholdsPanel() {
 
   return (
     <div className="mt-2 max-w-3xl space-y-3">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="text-lg font-semibold">Director Approval Thresholds</h3>
           <p className="text-xs text-gray-600">

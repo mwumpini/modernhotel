@@ -87,9 +87,11 @@ export interface AssetComputation {
 export interface FsGroupSummary {
   costOpening: number;
   additions: number;
+  costDisposals: number;
   costClosing: number;
   depOpening: number;
   chargeForYear: number;
+  depDisposals: number;
   depClosing: number;
   nbv: number;
 }
@@ -100,6 +102,7 @@ export interface GraClassRollforward {
   openingWDV: number;
   additions: number;
   caClaimed: number;
+  disposals: number;
   closingWDV: number;
 }
 
@@ -109,6 +112,8 @@ export interface DisposalRow {
   disposalDate: string;
   assetName: string;
   assetCode: string;
+  categoryId: string;
+  categoryName: string;
   cost: number;
   accumDep: number;
   nbvAtDisposal: number;

@@ -53,6 +53,8 @@ type PaymentMethod = 'Cash' | 'Card' | 'Mobile Money' | 'Room Charge';
 
 interface FBPOSProps {
   onClose: () => void;
+  /** When set, load this ordersStore order into the cart for editing. */
+  editOrderId?: string | null;
 }
 
 interface MenuItem {
@@ -98,7 +100,7 @@ interface PendingOrder {
   priority?: 'low' | 'medium' | 'high' | 'urgent';
 }
 
-export default function FBPOS({ onClose }: FBPOSProps) {
+export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
   const { data: session } = useSession();
   const cashierUserId = (session?.user as { id?: string } | undefined)?.id;
   const cashierName = session?.user?.name || session?.user?.email || undefined;
@@ -1173,6 +1175,33 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     try { setTimeout(() => cartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0); } catch {}
   };
 
+  React.useEffect(() => {
+    if (!editOrderId) return;
+    const order = ordersStore.all().find((entry) => entry.id === editOrderId);
+    if (!order) return;
+    loadOrderIntoCart({
+      id: order.id,
+      table: order.table,
+      waiterId: order.waiterId,
+      items: order.items.map((i) => ({
+        id: i.id,
+        name: i.name,
+        price: i.price,
+        qty: i.qty,
+        category: i.category || '',
+        route: i.route,
+      })),
+      status: order.status as PendingOrder['status'],
+      customerType: (order.customerType === 'In-house' ? 'In-house' : 'Walk-in') as CustomerType,
+      venue: order.venue as VenueMode,
+      notes: order.notes,
+      urgent: order.urgent,
+      priority: order.priority,
+    });
+    // Only when the parent hands us a new order to edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editOrderId]);
+
   const deleteOrder = (orderId: string) => {
     setPendingOrders(prev => prev.filter(o => o.id !== orderId));
     ordersStore.remove(orderId);
@@ -1469,7 +1498,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
           <div className="flex min-h-0 flex-col gap-3">
           <section className="rounded-2xl border border-slate-200 bg-white p-3" aria-label="Order set-up">
             <div className="flex flex-wrap items-start gap-2">
-              <div className="flex min-w-0 flex-1 basis-[22rem] items-start gap-2">
+              <div className="flex min-w-0 grow basis-[22rem] items-start gap-2">
                 <div className="inline-flex shrink-0 rounded-lg bg-slate-100 p-0.5" role="group" aria-label="Customer type">
                   {([['Walk-in', 'Walk-in'], ['In-house', 'In-house']] as const).map(([t, label]) => (
                     <button
@@ -1655,13 +1684,17 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                   {shownMenu.map(mi => (
                     <div key={mi.id} className="relative flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white transition hover:border-ghana-green/50 hover:shadow-md">
                       <button type="button" onClick={() => addToCart(mi)} className="flex flex-1 flex-col text-left" aria-label={`Add ${mi.name}, GH₵ ${mi.price.toFixed(2)}`}>
-                        <div className={`flex items-center justify-center overflow-hidden ${showMenuImages ? 'h-24 md:h-28' : 'h-16 md:h-20'} ${mi.route === 'bar' ? 'bg-sky-50 text-sky-500' : 'bg-amber-50 text-amber-600'}`}>
-                          {showMenuImages && mi.hasImage ? (
-                            // eslint-disable-next-line @next/next/no-img-element -- small cached API image
-                            <img src={menuImageSrc(mi.id, mi.imageVersion)} alt="" loading="lazy" className="h-full w-full object-cover" />
-                          ) : itemIcon(mi.route, 28)}
-                        </div>
-                        <div className="flex flex-1 flex-col gap-0.5 p-2.5">
+                        {showMenuImages && (
+                          <div className={`flex h-24 items-center justify-center overflow-hidden md:h-28 ${mi.route === 'bar' ? 'bg-sky-50 text-sky-500' : 'bg-amber-50 text-amber-600'}`}>
+                            {mi.hasImage ? (
+                              // eslint-disable-next-line @next/next/no-img-element -- small cached API image
+                              <img src={menuImageSrc(mi.id, mi.imageVersion)} alt="" loading="lazy" className="h-full w-full object-cover" />
+                            ) : (
+                              itemIcon(mi.route, 28)
+                            )}
+                          </div>
+                        )}
+                        <div className={`flex flex-1 flex-col gap-0.5 p-2.5 ${showMenuImages ? '' : 'pr-10'}`}>
                           <span className="line-clamp-2 text-sm font-semibold leading-snug text-ghana-black">{mi.name}</span>
                           <span className="truncate text-xs text-slate-500">{mi.category}</span>
                           <span className="mt-auto whitespace-nowrap pt-2 text-sm font-bold text-ghana-black">GH₵ {mi.price.toFixed(2)}</span>
@@ -1671,7 +1704,11 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                         type="button"
                         aria-label={mi.isPinned ? `Unpin ${mi.name}` : `Pin ${mi.name}`}
                         title={mi.isPinned ? 'Unpin' : 'Pin to the top'}
-                        className={`absolute right-1.5 top-1.5 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-lg leading-none shadow-sm ${mi.isPinned ? 'text-amber-500' : 'text-slate-300 hover:text-amber-400'}`}
+                        className={`absolute right-1.5 inline-flex h-8 w-8 items-center justify-center rounded-full text-lg leading-none ${
+                          showMenuImages
+                            ? 'top-1.5 bg-white/90 shadow-sm'
+                            : 'top-1.5 bg-slate-50 shadow-sm'
+                        } ${mi.isPinned ? 'text-amber-500' : 'text-slate-300 hover:text-amber-400'}`}
                         onClick={() => togglePin(mi)}
                       >
                         {mi.isPinned ? '★' : '☆'}

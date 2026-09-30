@@ -62,6 +62,12 @@ export interface TaxRule {
   domain?: 'sales' | 'payroll' | 'corporate' | 'purchases' | 'custom'; // selects rule group
   operation?: 'internal' | 'external' | 'both'; // applicable to operation type
   effect?: 'add' | 'subtract' | 'exclude_total' | 'informational'; // how to affect payable total
+  /**
+   * When true, tax paid on purchases can be claimed back (input tax) — e.g. Ghana VAT.
+   * When false, it is a cost on purchases (e.g. NHIL / GETFund / Tourism today).
+   * Undefined → accounting sync uses Ghana defaults by tax type until the rule is edited.
+   */
+  isRecoverable?: boolean;
   // Dual-sided contribution support (e.g. SSNIT: employee pays `rate`, employer pays
   // `employerRate`, both on the same base). Undefined on every non-payroll rule today —
   // purely additive, doesn't change existing sales/purchases tax behavior.

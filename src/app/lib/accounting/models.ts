@@ -261,6 +261,12 @@ export interface Invoice {
   // Tax scheme selection
   taxScheme?: 'GH_STANDARD' | 'FLAT' | 'NONE';
   flatRatePercent?: number;
+  /**
+   * Purchase invoices: when true (default for Ghana VAT), tax posts as reclaimable
+   * input VAT. When false, tax is treated as a cost on the bill (not claimable).
+   * Desk override — Compliance rule `isRecoverable` is the country default.
+   */
+  claimInputTax?: boolean;
   // WHT Tracking - for invoices where customer withholds tax
   whtExpected?: number; // Expected WHT amount (5% of subtotal)
   whtVatExpected?: number; // Expected WHT-VAT amount (7% of VAT)

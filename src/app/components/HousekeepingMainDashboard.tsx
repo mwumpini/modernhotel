@@ -204,11 +204,11 @@ export default function HousekeepingMainDashboard({
   return (
     <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
       {!fullPage && <DeptMessenger from="housekeeping" mode="drawer" />}
-      <div className={`flex items-center justify-between ${fullPage ? 'mb-2' : 'mb-6'}`}>
+      <div className={`flex flex-wrap items-center justify-between gap-2 ${fullPage ? 'mb-2' : 'mb-6'}`}>
         <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>
           {fullPage ? '🛏️ Housekeeping' : '🛏️ Housekeeping & Maintenance'}
         </h2>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <CustomizeViewControl
             sections={customizeSections}
             isHidden={customizeApi.isHidden}
@@ -333,22 +333,22 @@ export default function HousekeepingMainDashboard({
 
         {/* Today's Operations - Matching Front Desk */}
         {!isHidden('todayOps') && (
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
             <div className="flex items-center gap-2">
               <span className="text-lg">📅</span>
               <h4 className="text-lg font-semibold text-ghana-black">Today's Operations</h4>
             </div>
-            <div className="flex items-center gap-6 text-sm">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-green-600 font-medium">{todayCheckIns} Check-ins</span>
                 <span className="text-gray-500">Starting 2:00 PM</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-blue-600 font-medium">{checkingOutToday} Check-outs</span>
                 <span className="text-gray-500">By 12:00 PM</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-orange-600 font-medium">{pendingTasks.length} Pending Tasks</span>
                 <span className="text-gray-500">To be assigned</span>
               </div>

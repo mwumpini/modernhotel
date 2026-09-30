@@ -155,6 +155,135 @@ export function reconcilePpeToLedger(
   };
 }
 
+export interface PpeAssetGap {
+  assetId: string;
+  assetCode: string;
+  assetName: string;
+  registerCost: number;
+  booksCost: number;
+  registerDep: number;
+  booksDep: number;
+  whatHappened: string;
+  fix: string;
+}
+
+export interface PpeOtherLedgerEntry {
+  id: string;
+  date: string;
+  description: string;
+  cost: number;
+  depreciation: number;
+}
+
+function ppeNet(
+  journalEntries: JournalEntry[],
+  assetId: string,
+  accountCode: string
+): number {
+  let total = 0;
+  for (const entry of journalEntries) {
+    if (entry.status !== 'Posted' || entry.sourceTransactionId !== assetId) continue;
+    if (!(entry.sourceModule || '').startsWith('ppe_register')) continue;
+    for (const line of entry.lines || []) {
+      if (line.accountCode !== accountCode) continue;
+      total += (line.debit || 0) - (line.credit || 0);
+    }
+  }
+  return +total.toFixed(2);
+}
+
+function gapSentence(kind: 'cost' | 'depreciation', register: number, books: number): { happened: string; fix: string } | null {
+  const diff = +(books - register).toFixed(2);
+  if (Math.abs(diff) < 0.01) return null;
+  const label = kind === 'cost' ? 'Cost' : 'Depreciation';
+  if (diff > 0) {
+    return {
+      happened: `${label} on the books is higher than the list.`,
+      fix: `Fix removes the extra ${label.toLowerCase()}.`,
+    };
+  }
+  return {
+    happened: `${label} is on the list and not fully on the books.`,
+    fix: `Fix posts the missing ${label.toLowerCase()}.`,
+  };
+}
+
+/** Per-asset reason the register and accounts 1510/1520 disagree, plus ledger entries tied to no asset. */
+export function explainPpeLedgerGap(
+  assets: PpeAsset[],
+  categories: PpeCategory[],
+  journalEntries: JournalEntry[],
+  reportDateStr: string
+): { assets: PpeAssetGap[]; otherEntries: PpeOtherLedgerEntry[] } {
+  const reportDate = reportDateFromInput(reportDateStr);
+  const rows = computeAllAssets(assets, categories, reportDate);
+  const assetIds = new Set(assets.map((asset) => asset.id));
+  const gaps: PpeAssetGap[] = [];
+
+  for (const { asset, computed } of rows) {
+    if (asset.capExp === 'Expense') continue;
+    const held = asset.capExp === 'Capitalise';
+    const registerCost = held ? computed.totalCost : 0;
+    const registerDep = held ? computed.accumDep : 0;
+    const booksCost = ppeNet(journalEntries, asset.id, GL_COST);
+    const booksDep = +(-ppeNet(journalEntries, asset.id, GL_ACCUM_DEP)).toFixed(2);
+    if (!held) {
+      if (Math.abs(booksCost) < 0.01 && Math.abs(booksDep) < 0.01) continue;
+      gaps.push({
+        assetId: asset.id,
+        assetCode: asset.assetCode,
+        assetName: asset.assetName,
+        registerCost: 0,
+        booksCost,
+        registerDep: 0,
+        booksDep,
+        whatHappened: 'Disposed, so cost and depreciation on the books should be zero. The disposal removed one posting, and another posting of this asset is still there.',
+        fix: 'Fix removes the posting the disposal did not clear.',
+      });
+      continue;
+    }
+    const cost = gapSentence('cost', registerCost, booksCost);
+    const dep = gapSentence('depreciation', registerDep, booksDep);
+    if (!cost && !dep) continue;
+    gaps.push({
+      assetId: asset.id,
+      assetCode: asset.assetCode,
+      assetName: asset.assetName,
+      registerCost,
+      booksCost,
+      registerDep,
+      booksDep,
+      whatHappened: [cost?.happened, dep?.happened].filter(Boolean).join(' '),
+      fix: [cost?.fix, dep?.fix].filter(Boolean).join(' '),
+    });
+  }
+
+  const otherEntries: PpeOtherLedgerEntry[] = [];
+  for (const entry of journalEntries) {
+    if (entry.status !== 'Posted') continue;
+    const linked = !!entry.sourceTransactionId && assetIds.has(entry.sourceTransactionId) && (entry.sourceModule || '').startsWith('ppe_register');
+    if (linked) continue;
+    let cost = 0;
+    let depreciation = 0;
+    for (const line of entry.lines || []) {
+      if (line.accountCode === GL_COST) cost += (line.debit || 0) - (line.credit || 0);
+      if (line.accountCode === GL_ACCUM_DEP) depreciation += (line.credit || 0) - (line.debit || 0);
+    }
+    cost = +cost.toFixed(2);
+    depreciation = +depreciation.toFixed(2);
+    if (Math.abs(cost) < 0.01 && Math.abs(depreciation) < 0.01) continue;
+    otherEntries.push({
+      id: entry.id,
+      date: (entry.date || '').slice(0, 10),
+      description: entry.description || entry.reference || entry.entryNumber,
+      cost,
+      depreciation,
+    });
+  }
+
+  return { assets: gaps, otherEntries };
+}
+
 function lineId() {
   return `JEL-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -636,47 +765,117 @@ export function syncPpeRegisterToLedger(
 
   for (const asset of assets) {
     if (asset.capExp === 'Disposed') {
-      if (asset.disposalJournalEntryId) continue;
-      const category = categories.find((c) => c.id === asset.categoryId);
-      if (!category) {
-        errors.push(`Unknown category for ${asset.assetCode}`);
-        continue;
+      if (!asset.disposalJournalEntryId) {
+        const category = categories.find((c) => c.id === asset.categoryId);
+        if (!category) {
+          errors.push(`Unknown category for ${asset.assetCode}`);
+          continue;
+        }
+        const result = postPpeDisposalIfNeeded(asset, category, callbacks);
+        if (result && !result.ok) {
+          errors.push(result.error || `Failed to post disposal for ${asset.assetCode}`);
+          continue;
+        }
+        if (result?.ok) {
+          disposed += 1;
+          messages.push(`Disposed ${asset.assetCode}: gain/(loss) ${(result.gainLoss ?? 0).toFixed(2)}`);
+        }
       }
-      const result = postPpeDisposalIfNeeded(asset, category, callbacks);
-      if (!result) continue;
-      if (result.ok) {
-        disposed += 1;
-        messages.push(`Disposed ${asset.assetCode}: gain/(loss) ${(result.gainLoss ?? 0).toFixed(2)}`);
-      } else {
-        errors.push(result.error || `Failed to post disposal for ${asset.assetCode}`);
+      const journalsNow = useAccountingStore.getState().journalEntries;
+      const costLeft = ppeNet(journalsNow, asset.id, GL_COST);
+      const depLeft = +(-ppeNet(journalsNow, asset.id, GL_ACCUM_DEP)).toFixed(2);
+      if (costLeft > 0.01) {
+        const reversal = capturePpeCostAdjustment({
+          ppeAssetId: asset.id,
+          assetCode: asset.assetCode,
+          name: asset.assetName,
+          date: asset.disposalDate || reportDateStr,
+          delta: -costLeft,
+        });
+        if (reversal) messages.push(`${asset.assetCode} was disposed, so the remaining cost of ${costLeft.toFixed(2)} was removed`);
+        else errors.push(`Failed to clear remaining cost for disposed ${asset.assetCode}`);
+      }
+      if (Math.abs(depLeft) > 0.01) {
+        const depReversal = capturePpeBookDepreciation({
+          ppeAssetId: asset.id,
+          assetCode: asset.assetCode,
+          name: asset.assetName,
+          amount: -depLeft,
+          date: asset.disposalDate || reportDateStr,
+          period: (asset.disposalDate || reportDateStr).slice(0, 7),
+        });
+        if (depReversal) messages.push(`${asset.assetCode} was disposed, so the remaining depreciation of ${depLeft.toFixed(2)} was removed`);
+        else errors.push(`Failed to clear remaining depreciation for disposed ${asset.assetCode}`);
       }
       continue;
     }
 
     if (asset.capExp !== 'Capitalise') continue;
 
+    const journals = useAccountingStore.getState().journalEntries;
+    const postedForAsset = (sourceModules: string[]) =>
+      journals.filter(
+        (entry) =>
+          entry.status === 'Posted' &&
+          entry.sourceTransactionId === asset.id &&
+          sourceModules.includes(entry.sourceModule || '')
+      );
+    const netOn = (sourceModules: string[], accountCode: string) =>
+      +postedForAsset(sourceModules)
+        .reduce((sum, entry) => {
+          for (const line of entry.lines || []) {
+            if (line.accountCode !== accountCode) continue;
+            sum += (line.debit || 0) - (line.credit || 0);
+          }
+          return sum;
+        }, 0)
+        .toFixed(2);
+
+    const cost = assetTotalCost(asset);
     if (!asset.capitalizationJournalEntryId) {
-      const cost = assetTotalCost(asset);
-      const result = capturePpeCapitalization({
+      const already = postedForAsset(['ppe_register_capitalize']);
+      if (already.length) {
+        callbacks.setCapitalizationJournalId(asset.id, already[already.length - 1].id);
+        messages.push(`${asset.assetCode} is already on the books`);
+      } else {
+        const result = capturePpeCapitalization({
+          ppeAssetId: asset.id,
+          assetCode: asset.assetCode,
+          name: asset.assetName,
+          purchaseDate: asset.purchaseDate,
+          cost,
+        });
+        if (result) {
+          callbacks.setCapitalizationJournalId(asset.id, result.journalEntryId);
+          capitalized += 1;
+          messages.push(`Capitalized ${asset.assetCode} → GL ${GL_COST}`);
+        } else {
+          errors.push(`Failed to capitalize ${asset.assetCode}`);
+        }
+      }
+    }
+
+    const costOnBooks = netOn(
+      ['ppe_register_capitalize', 'ppe_register_cost_adjustment', 'ppe_register_disposal'],
+      GL_COST
+    );
+    const costExcess = +(costOnBooks - cost).toFixed(2);
+    if (costExcess > 0.01) {
+      const reversal = capturePpeCostAdjustment({
         ppeAssetId: asset.id,
         assetCode: asset.assetCode,
         name: asset.assetName,
-        purchaseDate: asset.purchaseDate,
-        cost,
+        date: reportDateStr,
+        delta: -costExcess,
       });
-      if (result) {
-        callbacks.setCapitalizationJournalId(asset.id, result.journalEntryId);
-        capitalized += 1;
-        messages.push(`Capitalized ${asset.assetCode} → GL ${GL_COST}`);
-      } else {
-        errors.push(`Failed to capitalize ${asset.assetCode}`);
-      }
+      if (reversal) messages.push(`Removed duplicate cost for ${asset.assetCode}: ${costExcess.toFixed(2)}`);
+      else errors.push(`Failed to remove duplicate cost for ${asset.assetCode}`);
     }
 
     const row = computeAllAssets([asset], categories, reportDate)[0];
     if (!row) continue;
     const targetAccum = row.computed.accumDep;
-    const postedAccum = asset.ledgerAccumDepPosted ?? 0;
+    const postedAccum = -netOn(['ppe_register_depreciation', 'ppe_register_disposal'], GL_ACCUM_DEP);
     const gap = +(targetAccum - postedAccum).toFixed(2);
     if (Math.abs(gap) > 0.01) {
       const period = reportDateStr.slice(0, 7);
@@ -698,6 +897,13 @@ export function syncPpeRegisterToLedger(
     }
   }
 
+  const cleared = clearAssetsNoLongerOnTheList(
+    new Set(assets.map((asset) => asset.id)),
+    reportDateStr
+  );
+  messages.push(...cleared.messages);
+  errors.push(...cleared.errors);
+
   return {
     ok: errors.length === 0,
     capitalized,
@@ -706,5 +912,112 @@ export function syncPpeRegisterToLedger(
     messages,
     errors,
   };
+}
+
+/** Posted PPE journals whose asset was removed from the list. Their net is taken off the books
+ *  so the register and the asset accounts agree without a trip to the Journal. */
+function clearAssetsNoLongerOnTheList(
+  assetIds: Set<string>,
+  reportDateStr: string
+): { messages: string[]; errors: string[] } {
+  const messages: string[] = [];
+  const errors: string[] = [];
+  const asOf = reportDateStr.slice(0, 10);
+  const groups = new Map<string, { name: string; nets: Map<string, number> }>();
+
+  for (const entry of useAccountingStore.getState().journalEntries) {
+    if (entry.status !== 'Posted') continue;
+    if (!(entry.sourceModule || '').startsWith('ppe_register')) continue;
+    const sourceId = entry.sourceTransactionId || '';
+    if (!sourceId || assetIds.has(sourceId)) continue;
+    if ((entry.date || '').slice(0, 10) > asOf) continue;
+
+    let group = groups.get(sourceId);
+    if (!group) {
+      const description = entry.description || '';
+      const named = description.includes('—') ? description.split('—').pop()?.trim() : '';
+      group = { name: named || entry.reference || 'Removed asset', nets: new Map() };
+      groups.set(sourceId, group);
+    }
+    for (const line of entry.lines || []) {
+      const next = (group.nets.get(line.accountCode) || 0) + (line.debit || 0) - (line.credit || 0);
+      group.nets.set(line.accountCode, next);
+    }
+  }
+
+  for (const [sourceId, group] of groups) {
+    const cost = group.nets.get(GL_COST) || 0;
+    const dep = group.nets.get(GL_ACCUM_DEP) || 0;
+    if (Math.abs(cost) < 0.01 && Math.abs(dep) < 0.01) continue;
+    if (postOffsetForRemovedAsset(sourceId, group.name, asOf, group.nets)) {
+      messages.push(`${group.name} is no longer on the list, so it was taken off the books`);
+    } else {
+      errors.push(`Could not take ${group.name} off the books`);
+    }
+  }
+
+  return { messages, errors };
+}
+
+function postOffsetForRemovedAsset(
+  sourceId: string,
+  name: string,
+  date: string,
+  nets: Map<string, number>
+): boolean {
+  const store = useAccountingStore.getState();
+  const periodCheck = assertPeriodNotClosed(store.journalEntries, date);
+  if (!periodCheck.ok) return false;
+
+  const pieces = [...nets.entries()]
+    .map(([accountCode, net]) => ({ accountCode, net: +net.toFixed(2) }))
+    .filter((piece) => Math.abs(piece.net) >= 0.01);
+  if (!pieces.length) return true;
+
+  const jeId = `JE-PPE-CLR-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
+  let totalDebit = 0;
+  let totalCredit = 0;
+  const lines: JournalEntryLine[] = pieces.map((piece) => {
+    const amount = Math.abs(piece.net);
+    const debit = piece.net < 0 ? amount : 0;
+    const credit = piece.net > 0 ? amount : 0;
+    totalDebit += debit;
+    totalCredit += credit;
+    return {
+      id: lineId(),
+      journalEntryId: jeId,
+      accountCode: piece.accountCode,
+      description: 'Removed because the asset is no longer on the list',
+      debit,
+      credit,
+      currency: 'GHS',
+    };
+  });
+  if (Math.abs(totalDebit - totalCredit) > 0.02) return false;
+
+  const now = new Date().toISOString();
+  try {
+    store.addJournalEntry({
+      id: jeId,
+      entryNumber: jeNumber(),
+      date,
+      reference: name,
+      description: `Removed from the books — ${name}`,
+      totalDebit,
+      totalCredit,
+      currency: 'GHS',
+      status: 'Posted',
+      postedBy: 'system',
+      postedAt: now,
+      createdAt: now,
+      updatedAt: now,
+      sourceModule: 'ppe_register_cost_adjustment',
+      sourceTransactionId: sourceId,
+      lines,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 

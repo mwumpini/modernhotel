@@ -18,6 +18,7 @@ export type StaySortKey =
   | 'discount'
   | 'other'
   | 'amount'
+  | 'paid'
   | 'balance';
 
 export function dayOf(iso?: string) {
@@ -123,6 +124,7 @@ function sortValue(stay: Reservation, sortKey: StaySortKey, today: string): stri
   if (sortKey === 'rate') return figures.rate;
   if (sortKey === 'discount') return figures.discount;
   if (sortKey === 'other') return figures.other;
+  if (sortKey === 'paid') return figures.paid;
   if (sortKey === 'balance') return figures.balance;
   return figures.amount;
 }

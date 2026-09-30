@@ -137,8 +137,8 @@ export default function DepartmentStaffTab({
       {section === 'list' && (
         <Card className={deskTableCardClassName}>
           <CardBody className={deskTableCardBodyClassName}>
-            <div className="mb-[18px] flex flex-nowrap items-center justify-end gap-2 overflow-x-auto">
-              <Button size="sm" variant="bordered" onPress={printStaffList}>Print</Button>
+            <div className="mb-[18px] flex flex-wrap items-center justify-end gap-2">
+              <Button size="sm" variant="bordered" className="shrink-0" onPress={printStaffList}>Print</Button>
             </div>
             <div ref={cols.frameRef} style={cols.frameStyle}>
             <Table aria-label="Department staff table" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>

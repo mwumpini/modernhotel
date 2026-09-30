@@ -48,6 +48,7 @@ import { canMarkNoShow } from '../lib/frontoffice/arrivals';
 import { localStayDay, sortStays, type StaySortKey } from '../lib/frontoffice/stayWorksheet';
 import StayWorksheetTable from './frontoffice/StayWorksheetTable';
 import { findMainFolio, getFolioDisplayTotals } from '../lib/frontoffice/helpers/folio';
+import { DateFilterPills } from './fb/DateFilterPills';
 import { openPrintPreview, renderPrint } from '../lib/print/engine';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
 import { notifySuccess } from '../lib/notifications/notify';
@@ -1394,113 +1395,80 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       </div>
       )}
 
-      {/* Filters */}
-      <Card className="border-0 shadow-lg">
-        <CardBody className="p-4 space-y-3">
-          {/* Row 1 — search + status + purpose + billing + count */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4">
-            <Input
-              placeholder="Search reservations, guests, or room numbers..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              startContent={<span className="text-gray-400">🔍</span>}
-            />
-            <Select
-              placeholder="Filter by status"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              <SelectItem key="all">All Statuses</SelectItem>
-              <SelectItem key="pending">⏳ Pending</SelectItem>
-              <SelectItem key="confirmed">✅ Confirmed</SelectItem>
-              <SelectItem key="checked-in">🔑 Checked In</SelectItem>
-              <SelectItem key="checked-out">🚪 Checked Out</SelectItem>
-              <SelectItem key="cancelled">❌ Cancelled</SelectItem>
-              <SelectItem key="no-show">👻 No Show</SelectItem>
-            </Select>
-            <Select
-              placeholder="Filter by purpose"
-              value={purposeFilter}
-              onChange={(e) => setPurposeFilter(e.target.value)}
-            >
-              <SelectItem key="all">All Purposes</SelectItem>
-              <SelectItem key="personal">👤 Personal</SelectItem>
-              <SelectItem key="business">💼 Business</SelectItem>
-              <SelectItem key="corporate">🏢 Corporate</SelectItem>
-              <SelectItem key="conference">🎤 Conference</SelectItem>
-              <SelectItem key="training">📚 Training</SelectItem>
-              <SelectItem key="medical">🏥 Medical</SelectItem>
-              <SelectItem key="tourism">🌍 Tourism</SelectItem>
-              <SelectItem key="other">📋 Other</SelectItem>
-            </Select>
-            <Select
-              placeholder="Filter by billing"
-              value={billingFilter}
-              onChange={(e) => setBillingFilter(e.target.value)}
-            >
-              <SelectItem key="all">All Billing Types</SelectItem>
-              <SelectItem key="guest">Guest Pays</SelectItem>
-              <SelectItem key="third_party">Third Party Pays</SelectItem>
-            </Select>
-            <div className="flex items-center space-x-2">
-              <span className="text-sm text-gray-600">Filtered:</span>
-              <Badge color="primary" variant="flat">{filteredReservations.length}</Badge>
-            </div>
-          </div>
-
-          {/* Row 2 — Date filter tab bar */}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium text-gray-500 mr-1">📅 Date:</span>
-            {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
-              const labels: Record<string, string> = {
-                all: 'All Dates',
-                today: 'Today',
-                specific: 'Specific Date',
-                range: 'Date Range',
-              };
-              return (
-                <button
-                  key={mode}
-                  onClick={() => setDateFilterMode(mode)}
-                  className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
-                    dateFilterMode === mode
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
-                  }`}
-                >
-                  {labels[mode]}
-                </button>
-              );
-            })}
-            {/* Conditional date inputs */}
-            {dateFilterMode === 'specific' && (
-              <input
-                type="date"
-                value={dateFilterSingle}
-                onChange={(e) => setDateFilterSingle(e.target.value)}
-                className="ml-2 px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-              />
-            )}
-            {dateFilterMode === 'range' && (
-              <div className="flex items-center gap-2 ml-2">
-                <input
-                  type="date"
-                  value={dateFilterFrom}
-                  onChange={(e) => setDateFilterFrom(e.target.value)}
-                  className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-                <span className="text-gray-400 text-sm">→</span>
-                <input
-                  type="date"
-                  value={dateFilterTo}
-                  onChange={(e) => setDateFilterTo(e.target.value)}
-                  className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-              </div>
-            )}
-          </div>
-        </CardBody>
-      </Card>
+      {/* Filters — wrap on phone / zoom; date chips → Select under lg */}
+      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+        <Input
+          size="sm"
+          aria-label="Search reservations"
+          placeholder="Search reservations, guests, or room numbers..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          startContent={<span className="text-gray-400">🔍</span>}
+          className="w-full max-w-full sm:w-64 sm:max-w-[16rem] shrink-0"
+        />
+        <Select
+          size="sm"
+          aria-label="Filter by status"
+          placeholder="Filter by status"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
+        >
+          <SelectItem key="all">All Statuses</SelectItem>
+          <SelectItem key="pending">⏳ Pending</SelectItem>
+          <SelectItem key="confirmed">✅ Confirmed</SelectItem>
+          <SelectItem key="checked-in">🔑 Checked In</SelectItem>
+          <SelectItem key="checked-out">🚪 Checked Out</SelectItem>
+          <SelectItem key="cancelled">❌ Cancelled</SelectItem>
+          <SelectItem key="no-show">👻 No Show</SelectItem>
+        </Select>
+        <Select
+          size="sm"
+          aria-label="Filter by purpose"
+          placeholder="Filter by purpose"
+          value={purposeFilter}
+          onChange={(e) => setPurposeFilter(e.target.value)}
+          className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
+        >
+          <SelectItem key="all">All Purposes</SelectItem>
+          <SelectItem key="personal">👤 Personal</SelectItem>
+          <SelectItem key="business">💼 Business</SelectItem>
+          <SelectItem key="corporate">🏢 Corporate</SelectItem>
+          <SelectItem key="conference">🎤 Conference</SelectItem>
+          <SelectItem key="training">📚 Training</SelectItem>
+          <SelectItem key="medical">🏥 Medical</SelectItem>
+          <SelectItem key="tourism">🌍 Tourism</SelectItem>
+          <SelectItem key="other">📋 Other</SelectItem>
+        </Select>
+        <Select
+          size="sm"
+          aria-label="Filter by billing"
+          placeholder="Filter by billing"
+          value={billingFilter}
+          onChange={(e) => setBillingFilter(e.target.value)}
+          className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
+        >
+          <SelectItem key="all">All Billing Types</SelectItem>
+          <SelectItem key="guest">Guest Pays</SelectItem>
+          <SelectItem key="third_party">Third Party Pays</SelectItem>
+        </Select>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-sm text-gray-600">Filtered:</span>
+          <Badge color="primary" variant="flat">{filteredReservations.length}</Badge>
+        </div>
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <DateFilterPills
+            mode={dateFilterMode}
+            onMode={setDateFilterMode}
+            single={dateFilterSingle}
+            onSingle={setDateFilterSingle}
+            from={dateFilterFrom}
+            onFrom={setDateFilterFrom}
+            to={dateFilterTo}
+            onTo={setDateFilterTo}
+          />
+        </div>
+      </div>
 
       {/* Reservations Table */}
       <Card className="border-0 shadow-lg">
@@ -1820,11 +1788,12 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       </div>
                       
                       {/* Guest Search for Bulk */}
-                      <div className="mb-4">
+                      <div className="mb-4 flex flex-wrap items-end gap-3">
+                        <div className="relative guest-search-container min-w-0 grow basis-0">
                             <label className="block text-sm font-medium text-gray-700 mb-2">
                           Search and Add Guests
                             </label>
-                            <div className="relative guest-search-container">
+                            <div className="relative">
                               <div className="flex">
                                 <Input
                                   value={guestSearchTerm}
@@ -1912,6 +1881,28 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                         </div>
                       )}
                     </div>
+                        </div>
+                        <div className="flex items-center space-x-2 shrink-0 px-1 py-2">
+                          <span className="text-sm text-gray-600 whitespace-nowrap">Guest Pays</span>
+                          <input
+                            type="checkbox"
+                            id="useBillingPerson"
+                            checked={useBillingPerson}
+                            onChange={(e) => {
+                              setUseBillingPerson(e.target.checked);
+                              if (e.target.checked) {
+                                setSelectedBillingPerson(null);
+                                setFormData(prev => ({
+                                  ...prev,
+                                  billingPersonId: undefined,
+                                  companyName: ''
+                                }));
+                              }
+                            }}
+                            className="rounded border-gray-300"
+                          />
+                          <span className="text-sm text-gray-600 whitespace-nowrap">Third Party Pays</span>
+                        </div>
                     </div>
                       
                       {/* Selected Guests List */}
@@ -1978,6 +1969,12 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                     value={bulkGuest.departure}
                                     onChange={(e) => updateBulkGuest(bulkGuest.id, 'departure', e.target.value)}
                         size="sm"
+                      />
+                      <Input
+                                    label="Nights"
+                                    value={String(calculateNights(bulkGuest.arrival, bulkGuest.departure))}
+                                    isReadOnly
+                                    size="sm"
                       />
                     </div>
 
@@ -2192,110 +2189,17 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                     )}
                   </div>
 
-                  {/* Tax Exemption Section */}
-                  <div className="bg-amber-50 p-4 rounded-lg border">
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="font-medium text-amber-900">Tax Exemption</h4>
-                      <div className="flex items-center space-x-2">
-                        <span className="text-sm text-gray-600">Tax Exempt</span>
-                        <Switch
-                          isSelected={!!formData.taxExempt}
-                          onValueChange={(val) => setFormData({...formData, taxExempt: val})}
-                        />
-                      </div>
-                    </div>
-                    {formData.taxExempt && (
-                      <div className="space-y-3">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Exemption Type</label>
-                            <Select
-                              value={formData.taxExemptionType || ''}
-                              onChange={(e) => setFormData({...formData, taxExemptionType: e.target.value as any})}
-                            >
-                              <SelectItem key="government">🏛️ Government</SelectItem>
-                              <SelectItem key="ngo">🤝 NGO</SelectItem>
-                              <SelectItem key="diplomatic">🌐 Diplomatic</SelectItem>
-                              <SelectItem key="other">📋 Other</SelectItem>
-                            </Select>
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Certificate Number</label>
-                            <Input
-                              value={formData.taxExemptionNumber || ''}
-                              onChange={(e) => setFormData({...formData, taxExemptionNumber: e.target.value})}
-                              placeholder="Exemption certificate number"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Issuing Authority</label>
-                            <Input
-                              value={formData.taxExemptionAuthority || ''}
-                              onChange={(e) => setFormData({...formData, taxExemptionAuthority: e.target.value})}
-                              placeholder="e.g. Ghana Revenue Authority"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Expiry Date</label>
-                            <Input
-                              type="date"
-                              value={formData.taxExemptionExpiry || ''}
-                              onChange={(e) => setFormData({...formData, taxExemptionExpiry: e.target.value})}
-                            />
-                          </div>
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                          <Textarea
-                            value={formData.taxExemptionNotes || ''}
-                            onChange={(e) => setFormData({...formData, taxExemptionNotes: e.target.value})}
-                            placeholder="Additional notes about this exemption"
-                          />
-                        </div>
-                        <AttachmentUpload
-                          label="Exemption Documents"
-                          attachments={formData.taxExemptionDocuments || []}
-                          onChange={(attachments) => setFormData({...formData, taxExemptionDocuments: attachments})}
-                        />
-                      </div>
-                    )}
-                  </div>
-
                   {/* Billing Person Section */}
+                  {useBillingPerson && (
                   <div className="bg-green-50 p-4 rounded-lg border">
                     <div className="flex items-center justify-between mb-3">
                       <h4 className="font-medium text-green-900">Billing Information</h4>
-                      <div className="flex items-center space-x-2">
-                        <span className="text-sm text-gray-600">Guest Pays</span>
-                        <input
-                          type="checkbox"
-                          id="useBillingPerson"
-                          checked={useBillingPerson}
-                          onChange={(e) => {
-                            setUseBillingPerson(e.target.checked);
-                            if (e.target.checked) {
-                              setSelectedBillingPerson(null);
-                              setFormData(prev => ({
-                                ...prev,
-                                billingPersonId: undefined,
-                                companyName: ''
-                              }));
-                            }
-                          }}
-                          className="rounded border-gray-300"
-                        />
-                        <span className="text-sm text-gray-600">Third Party Pays</span>
-                      </div>
                     </div>
                     
                     <p className="text-sm text-gray-600 mb-3">
-                      {useBillingPerson 
-                        ? "Select who will be responsible for payment (company, travel agent, etc.)"
-                        : "Guest will be responsible for their own payment."
-                      }
+                      Select who will be responsible for payment (company, travel agent, etc.)
                     </p>
                     
-                    {useBillingPerson && (
                       <div className="space-y-3">
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -2435,8 +2339,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           </Button>
                         </div>
                       </div>
-                    )}
                   </div>
+                  )}
 
                   {showNewBillingPersonModal && (
                     <Modal isOpen={showNewBillingPersonModal} onClose={() => setShowNewBillingPersonModal(false)}>
@@ -2483,13 +2387,15 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                   )}
 
                   {/* Source */}
-                  <div className="mb-4 p-3 bg-yellow-50 rounded-lg">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <div className="mb-4 p-3 bg-yellow-50 rounded-lg flex flex-wrap items-center gap-3">
+                    <label className="text-sm font-medium text-gray-700 shrink-0">
                       Source
                     </label>
+                    <div className="min-w-[12rem] grow basis-[12rem]">
                     <Select
                       value={formData.source}
                       onChange={(e) => setFormData(prev => ({ ...prev, source: e.target.value }))}
+                      aria-label="Source"
                     >
                       <SelectItem key="walkin">🚶 Walk-in</SelectItem>
                       <SelectItem key="online">🌐 Online</SelectItem>
@@ -2497,7 +2403,96 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       <SelectItem key="corporate">🏢 Corporate</SelectItem>
                       <SelectItem key="referral">👥 Referral</SelectItem>
                     </Select>
+                    </div>
+                    {!isCreatingNew && (
+                      <div className="flex items-center space-x-2 shrink-0">
+                        <span className="text-sm text-gray-600 whitespace-nowrap">Guest Pays</span>
+                        <input
+                          type="checkbox"
+                          id="useBillingPerson"
+                          checked={useBillingPerson}
+                          onChange={(e) => {
+                            setUseBillingPerson(e.target.checked);
+                            if (e.target.checked) {
+                              setSelectedBillingPerson(null);
+                              setFormData(prev => ({
+                                ...prev,
+                                billingPersonId: undefined,
+                                companyName: ''
+                              }));
+                            }
+                          }}
+                          className="rounded border-gray-300"
+                        />
+                        <span className="text-sm text-gray-600 whitespace-nowrap">Third Party Pays</span>
+                      </div>
+                    )}
+                    <div className="bg-amber-50 px-3 py-2 rounded-lg border flex items-center gap-3 shrink-0">
+                      <span className="font-medium text-amber-900 whitespace-nowrap">Tax Exemption</span>
+                      <span className="text-sm text-gray-600 whitespace-nowrap">Tax Exempt</span>
+                      <Switch
+                        isSelected={!!formData.taxExempt}
+                        onValueChange={(val) => setFormData({...formData, taxExempt: val})}
+                      />
+                    </div>
                   </div>
+                  {formData.taxExempt && (
+                    <div className="bg-amber-50 p-4 rounded-lg border mb-4">
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Exemption Type</label>
+                            <Select
+                              value={formData.taxExemptionType || ''}
+                              onChange={(e) => setFormData({...formData, taxExemptionType: e.target.value as any})}
+                            >
+                              <SelectItem key="government">🏛️ Government</SelectItem>
+                              <SelectItem key="ngo">🤝 NGO</SelectItem>
+                              <SelectItem key="diplomatic">🌐 Diplomatic</SelectItem>
+                              <SelectItem key="other">📋 Other</SelectItem>
+                            </Select>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Certificate Number</label>
+                            <Input
+                              value={formData.taxExemptionNumber || ''}
+                              onChange={(e) => setFormData({...formData, taxExemptionNumber: e.target.value})}
+                              placeholder="Exemption certificate number"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Issuing Authority</label>
+                            <Input
+                              value={formData.taxExemptionAuthority || ''}
+                              onChange={(e) => setFormData({...formData, taxExemptionAuthority: e.target.value})}
+                              placeholder="e.g. Ghana Revenue Authority"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Expiry Date</label>
+                            <Input
+                              type="date"
+                              value={formData.taxExemptionExpiry || ''}
+                              onChange={(e) => setFormData({...formData, taxExemptionExpiry: e.target.value})}
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                          <Textarea
+                            value={formData.taxExemptionNotes || ''}
+                            onChange={(e) => setFormData({...formData, taxExemptionNotes: e.target.value})}
+                            placeholder="Additional notes about this exemption"
+                          />
+                        </div>
+                        <AttachmentUpload
+                          label="Exemption Documents"
+                          attachments={formData.taxExemptionDocuments || []}
+                          onChange={(attachments) => setFormData({...formData, taxExemptionDocuments: attachments})}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </Tab>
               

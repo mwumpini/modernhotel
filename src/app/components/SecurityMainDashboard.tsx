@@ -12,13 +12,16 @@ import { useDashboardVisibility } from '../lib/dashboard/useDashboardVisibility'
 
 export default function SecurityMainDashboard({
   fullPage = false,
+  initialTab,
 }: {
   fullPage?: boolean;
+  initialTab?: string;
 } = {}) {
   // Controls the Recent Activities/Notices cards below — the only hideable
   // sections left in the Security module now that Overview (with its own
   // hideable stat/quick-action cards) has been removed.
   const { isHidden, hide, toggle, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.security', SECURITY_DASHBOARD_SECTIONS);
+  const [activeTab, setActiveTab] = React.useState(initialTab || 'patrols');
 
   return (
     <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
@@ -34,15 +37,19 @@ export default function SecurityMainDashboard({
           />
           {!fullPage && (
             <ModuleExpandButton
-              href="/security/ops"
-              label="Open security full page"
+              href={activeTab === 'reports' ? '/security/reports' : '/security/ops'}
+              label={activeTab === 'reports' ? 'Open reports full page' : 'Open security full page'}
             />
           )}
         </div>
       </div>
       {!fullPage && <DeptMessenger from="security" mode="drawer" />}
 
-      <SecurityComplianceDashboard fullPage={fullPage} />
+      <SecurityComplianceDashboard
+        fullPage={fullPage}
+        initialTab={initialTab}
+        onTabChange={setActiveTab}
+      />
 
       {!fullPage && (!isHidden('recentActivities') || !isHidden('notices')) && (
       <div className="mt-8">

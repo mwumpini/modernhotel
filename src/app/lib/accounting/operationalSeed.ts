@@ -12,7 +12,9 @@ import { getChartTemplate } from './chartOfAccountsTemplates';
 const REVENUE_GL_BY_COUNTRY: Record<string, Record<string, string>> = {
   GH: {
     rooms: '4100',
-    fb: '4200',
+    restaurant: '4210',
+    bar: '4220',
+    roomService: '4230',
     conference: '4320',
     service: '4400',
   },
@@ -44,9 +46,9 @@ export function buildOperationalAccountingSeed(countryCode?: string): Operationa
 
   const revenueCenters: RevenueCenter[] = [
     { id: 'RC-RM', code: 'RM', name: 'Room Revenue', description: 'Accommodation revenue', type: 'rooms', department: 'front_office', glAccountCode: revenueGl(cc, 'rooms'), budget: 0, actualRevenue: 0, isActive: true, createdAt: ts, updatedAt: ts },
-    { id: 'RC-REST', code: 'REST', name: 'Restaurant Revenue', description: 'Restaurant revenue', type: 'food_beverage', department: 'restaurant', glAccountCode: revenueGl(cc, 'fb'), budget: 0, actualRevenue: 0, isActive: true, createdAt: ts, updatedAt: ts },
-    { id: 'RC-BAR', code: 'BAR', name: 'Bar Revenue', description: 'Bar revenue', type: 'food_beverage', department: 'bar', glAccountCode: revenueGl(cc, 'fb'), budget: 0, actualRevenue: 0, isActive: true, createdAt: ts, updatedAt: ts },
-    { id: 'RC-RS', code: 'RS', name: 'Room Service', description: 'Room service revenue', type: 'services', department: 'room_service', glAccountCode: revenueGl(cc, 'fb'), budget: 0, actualRevenue: 0, isActive: true, createdAt: ts, updatedAt: ts },
+    { id: 'RC-REST', code: 'REST', name: 'Restaurant Revenue', description: 'Restaurant revenue', type: 'food_beverage', department: 'restaurant', glAccountCode: revenueGl(cc, 'restaurant'), budget: 0, actualRevenue: 0, isActive: true, createdAt: ts, updatedAt: ts },
+    { id: 'RC-BAR', code: 'BAR', name: 'Bar Revenue', description: 'Bar revenue', type: 'food_beverage', department: 'bar', glAccountCode: revenueGl(cc, 'bar'), budget: 0, actualRevenue: 0, isActive: true, createdAt: ts, updatedAt: ts },
+    { id: 'RC-RS', code: 'RS', name: 'Room Service', description: 'Room service revenue', type: 'services', department: 'room_service', glAccountCode: revenueGl(cc, 'roomService'), budget: 0, actualRevenue: 0, isActive: true, createdAt: ts, updatedAt: ts },
     { id: 'RC-CF', code: 'CF', name: 'Conference Revenue', description: 'Conference and events', type: 'conferences', department: 'conference', glAccountCode: revenueGl(cc, 'conference'), budget: 0, actualRevenue: 0, isActive: true, createdAt: ts, updatedAt: ts },
     { id: 'RC-SC', code: 'SC', name: 'Service Charges', description: 'Service charges', type: 'services', department: 'other', glAccountCode: revenueGl(cc, 'service'), budget: 0, actualRevenue: 0, isActive: true, createdAt: ts, updatedAt: ts },
   ];

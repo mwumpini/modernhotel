@@ -28,6 +28,25 @@ const periodMonthLabel = (periodNumber: string, startDate: Date | string) => {
     : new Date(startDate).toLocaleString('en-GB', { month: 'long', year: 'numeric' });
 };
 
+function SectionCardHeader({
+  title,
+  chipLabel,
+  chipColor,
+}: {
+  title: string;
+  chipLabel: string;
+  chipColor: 'warning' | 'default';
+}) {
+  return (
+    <CardHeader className="flex flex-wrap items-center justify-between gap-2">
+      <h3 className="font-semibold text-ghana-black">{title}</h3>
+      <Chip size="sm" variant="flat" color={chipColor}>
+        {chipLabel}
+      </Chip>
+    </CardHeader>
+  );
+}
+
 /**
  * Director/GM approval inbox — journal entries, payments, requisitions,
  * overtime, and (when Settings requires it) payroll months awaiting sign-off.
@@ -218,57 +237,62 @@ export default function ExecutiveApprovalsInbox() {
   const totalPending =
     pendingJournalEntries.length + pendingPayments.length + requisitions.length + pendingOvertime.length + pendingPayroll.length;
 
+  const approveBtnClass = 'min-h-11 shrink-0 sm:min-h-9';
+
   return (
-    <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-ghana-black">✅ Approvals</h1>
-        <p className="text-sm text-gray-600 mt-1">
-          {!Object.values(ready).every(Boolean)
-            ? 'Checking what is waiting on your sign-off…'
-            : totalPending === 0
-            ? 'Nothing is waiting on your sign-off right now.'
-            : `${totalPending} item${totalPending === 1 ? '' : 's'} waiting on director sign-off.`}
-        </p>
+    <div className="space-y-6 px-3 pt-3 pb-6 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold text-ghana-black">✅ Approvals</h1>
+          <p className="mt-1 text-sm text-gray-600">
+            {!Object.values(ready).every(Boolean)
+              ? 'Checking what is waiting on your sign-off…'
+              : totalPending === 0
+              ? 'Nothing is waiting on your sign-off right now.'
+              : `${totalPending} item${totalPending === 1 ? '' : 's'} waiting on director sign-off.`}
+          </p>
+        </div>
       </div>
 
       {canApproveJournalEntries && (
         <Card className="border-0 shadow-lg">
-          <CardHeader className="flex items-center justify-between">
-            <h3 className="font-semibold">Journal Entries</h3>
-            <Chip size="sm" variant="flat" color={pendingJournalEntries.length ? 'warning' : 'default'}>
-              {ready.accounting ? `${pendingJournalEntries.length} pending` : 'checking…'}
-            </Chip>
-          </CardHeader>
+          <SectionCardHeader
+            title="Journal Entries"
+            chipLabel={ready.accounting ? `${pendingJournalEntries.length} pending` : 'checking…'}
+            chipColor={pendingJournalEntries.length ? 'warning' : 'default'}
+          />
           <CardBody>
             {!ready.accounting ? (
               <div className="flex items-center gap-2 text-sm text-gray-500"><Spinner size="sm" /> Checking…</div>
             ) : pendingJournalEntries.length === 0 ? (
               <p className="text-sm text-gray-500">No journal entries pending approval.</p>
             ) : (
-              <Table removeWrapper aria-label="Pending journal entries">
-                <TableHeader>
-                  <TableColumn>ENTRY #</TableColumn>
-                  <TableColumn>DATE</TableColumn>
-                  <TableColumn>DESCRIPTION</TableColumn>
-                  <TableColumn className="text-right">AMOUNT</TableColumn>
-                  <TableColumn> </TableColumn>
-                </TableHeader>
-                <TableBody>
-                  {pendingJournalEntries.map(e => (
-                    <TableRow key={e.id}>
-                      <TableCell>{e.entryNumber}</TableCell>
-                      <TableCell>{new Date(e.date).toLocaleDateString()}</TableCell>
-                      <TableCell>{e.description}</TableCell>
-                      <TableCell className="text-right">{formatAccountingCurrency(e.totalDebit, e.currency)}</TableCell>
-                      <TableCell>
-                        <Button size="sm" color="success" variant="flat" isLoading={actingOn === e.id} onPress={() => approveJournalEntry(e.id)}>
-                          Approve &amp; Post
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <div className="overflow-x-auto">
+                <Table removeWrapper aria-label="Pending journal entries" className="min-w-[36rem]">
+                  <TableHeader>
+                    <TableColumn>ENTRY #</TableColumn>
+                    <TableColumn>DATE</TableColumn>
+                    <TableColumn>DESCRIPTION</TableColumn>
+                    <TableColumn className="text-right">AMOUNT</TableColumn>
+                    <TableColumn> </TableColumn>
+                  </TableHeader>
+                  <TableBody>
+                    {pendingJournalEntries.map(e => (
+                      <TableRow key={e.id}>
+                        <TableCell>{e.entryNumber}</TableCell>
+                        <TableCell>{new Date(e.date).toLocaleDateString()}</TableCell>
+                        <TableCell>{e.description}</TableCell>
+                        <TableCell className="text-right">{formatAccountingCurrency(e.totalDebit, e.currency)}</TableCell>
+                        <TableCell>
+                          <Button size="sm" color="success" variant="flat" className={approveBtnClass} isLoading={actingOn === e.id} onPress={() => approveJournalEntry(e.id)}>
+                            Approve &amp; Post
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </CardBody>
         </Card>
@@ -276,42 +300,43 @@ export default function ExecutiveApprovalsInbox() {
 
       {canApprovePayments && (
         <Card className="border-0 shadow-lg">
-          <CardHeader className="flex items-center justify-between">
-            <h3 className="font-semibold">Payments</h3>
-            <Chip size="sm" variant="flat" color={pendingPayments.length ? 'warning' : 'default'}>
-              {ready.accounting ? `${pendingPayments.length} pending` : 'checking…'}
-            </Chip>
-          </CardHeader>
+          <SectionCardHeader
+            title="Payments"
+            chipLabel={ready.accounting ? `${pendingPayments.length} pending` : 'checking…'}
+            chipColor={pendingPayments.length ? 'warning' : 'default'}
+          />
           <CardBody>
             {!ready.accounting ? (
               <div className="flex items-center gap-2 text-sm text-gray-500"><Spinner size="sm" /> Checking…</div>
             ) : pendingPayments.length === 0 ? (
               <p className="text-sm text-gray-500">No payments pending approval.</p>
             ) : (
-              <Table removeWrapper aria-label="Pending payments">
-                <TableHeader>
-                  <TableColumn>PAYMENT #</TableColumn>
-                  <TableColumn>DATE</TableColumn>
-                  <TableColumn>PAYEE</TableColumn>
-                  <TableColumn className="text-right">AMOUNT</TableColumn>
-                  <TableColumn> </TableColumn>
-                </TableHeader>
-                <TableBody>
-                  {pendingPayments.map(p => (
-                    <TableRow key={p.id}>
-                      <TableCell>{p.paymentNumber}</TableCell>
-                      <TableCell>{new Date(p.date).toLocaleDateString()}</TableCell>
-                      <TableCell>{partnerName(p.businessPartnerId)}</TableCell>
-                      <TableCell className="text-right">{formatAccountingCurrency(p.amount, p.currency)}</TableCell>
-                      <TableCell>
-                        <Button size="sm" color="success" variant="flat" isLoading={actingOn === p.id} onPress={() => approvePayment(p.id)}>
-                          Approve &amp; Post
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <div className="overflow-x-auto">
+                <Table removeWrapper aria-label="Pending payments" className="min-w-[36rem]">
+                  <TableHeader>
+                    <TableColumn>PAYMENT #</TableColumn>
+                    <TableColumn>DATE</TableColumn>
+                    <TableColumn>PAYEE</TableColumn>
+                    <TableColumn className="text-right">AMOUNT</TableColumn>
+                    <TableColumn> </TableColumn>
+                  </TableHeader>
+                  <TableBody>
+                    {pendingPayments.map(p => (
+                      <TableRow key={p.id}>
+                        <TableCell>{p.paymentNumber}</TableCell>
+                        <TableCell>{new Date(p.date).toLocaleDateString()}</TableCell>
+                        <TableCell>{partnerName(p.businessPartnerId)}</TableCell>
+                        <TableCell className="text-right">{formatAccountingCurrency(p.amount, p.currency)}</TableCell>
+                        <TableCell>
+                          <Button size="sm" color="success" variant="flat" className={approveBtnClass} isLoading={actingOn === p.id} onPress={() => approvePayment(p.id)}>
+                            Approve &amp; Post
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </CardBody>
         </Card>
@@ -319,42 +344,43 @@ export default function ExecutiveApprovalsInbox() {
 
       {canApproveRequisitions && (
         <Card className="border-0 shadow-lg">
-          <CardHeader className="flex items-center justify-between">
-            <h3 className="font-semibold">Requisitions</h3>
-            <Chip size="sm" variant="flat" color={requisitions.length ? 'warning' : 'default'}>
-              {ready.requisitions ? `${requisitions.length} pending` : 'checking…'}
-            </Chip>
-          </CardHeader>
+          <SectionCardHeader
+            title="Requisitions"
+            chipLabel={ready.requisitions ? `${requisitions.length} pending` : 'checking…'}
+            chipColor={requisitions.length ? 'warning' : 'default'}
+          />
           <CardBody>
             {!ready.requisitions ? (
               <div className="flex items-center gap-2 text-sm text-gray-500"><Spinner size="sm" /> Checking…</div>
             ) : requisitions.length === 0 ? (
               <p className="text-sm text-gray-500">No requisitions pending approval.</p>
             ) : (
-              <Table removeWrapper aria-label="Pending requisitions">
-                <TableHeader>
-                  <TableColumn>REQUISITION #</TableColumn>
-                  <TableColumn>DATE</TableColumn>
-                  <TableColumn>REQUESTED BY</TableColumn>
-                  <TableColumn className="text-right">TOTAL VALUE</TableColumn>
-                  <TableColumn> </TableColumn>
-                </TableHeader>
-                <TableBody>
-                  {requisitions.map(r => (
-                    <TableRow key={r.id}>
-                      <TableCell>{r.requisitionNumber}</TableCell>
-                      <TableCell>{new Date(r.requestedDate).toLocaleDateString()}</TableCell>
-                      <TableCell>{r.requestedBy}{r.department ? ` (${r.department})` : ''}</TableCell>
-                      <TableCell className="text-right">{formatAccountingCurrency(requisitionTotal(r))}</TableCell>
-                      <TableCell>
-                        <Button size="sm" color="success" variant="flat" isLoading={actingOn === r.id} onPress={() => approveRequisition(r)}>
-                          Approve
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <div className="overflow-x-auto">
+                <Table removeWrapper aria-label="Pending requisitions" className="min-w-[36rem]">
+                  <TableHeader>
+                    <TableColumn>REQUISITION #</TableColumn>
+                    <TableColumn>DATE</TableColumn>
+                    <TableColumn>REQUESTED BY</TableColumn>
+                    <TableColumn className="text-right">TOTAL VALUE</TableColumn>
+                    <TableColumn> </TableColumn>
+                  </TableHeader>
+                  <TableBody>
+                    {requisitions.map(r => (
+                      <TableRow key={r.id}>
+                        <TableCell>{r.requisitionNumber}</TableCell>
+                        <TableCell>{new Date(r.requestedDate).toLocaleDateString()}</TableCell>
+                        <TableCell>{r.requestedBy}{r.department ? ` (${r.department})` : ''}</TableCell>
+                        <TableCell className="text-right">{formatAccountingCurrency(requisitionTotal(r))}</TableCell>
+                        <TableCell>
+                          <Button size="sm" color="success" variant="flat" className={approveBtnClass} isLoading={actingOn === r.id} onPress={() => approveRequisition(r)}>
+                            Approve
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </CardBody>
         </Card>
@@ -362,40 +388,41 @@ export default function ExecutiveApprovalsInbox() {
 
       {canApproveOvertime && (
         <Card className="border-0 shadow-lg">
-          <CardHeader className="flex items-center justify-between">
-            <h3 className="font-semibold">Overtime</h3>
-            <Chip size="sm" variant="flat" color={pendingOvertime.length ? 'warning' : 'default'}>
-              {ready.overtime ? `${pendingOvertime.length} pending` : 'checking…'}
-            </Chip>
-          </CardHeader>
+          <SectionCardHeader
+            title="Overtime"
+            chipLabel={ready.overtime ? `${pendingOvertime.length} pending` : 'checking…'}
+            chipColor={pendingOvertime.length ? 'warning' : 'default'}
+          />
           <CardBody>
             {!ready.overtime ? (
               <div className="flex items-center gap-2 text-sm text-gray-500"><Spinner size="sm" /> Checking…</div>
             ) : pendingOvertime.length === 0 ? (
               <p className="text-sm text-gray-500">No overtime requests pending approval.</p>
             ) : (
-              <Table removeWrapper aria-label="Pending overtime">
-                <TableHeader>
-                  <TableColumn>EMPLOYEE</TableColumn>
-                  <TableColumn>DATE</TableColumn>
-                  <TableColumn className="text-right">HOURS</TableColumn>
-                  <TableColumn> </TableColumn>
-                </TableHeader>
-                <TableBody>
-                  {pendingOvertime.map(a => (
-                    <TableRow key={a.id}>
-                      <TableCell>{employeeName(a.employeeId)}</TableCell>
-                      <TableCell>{new Date(a.date).toLocaleDateString()}</TableCell>
-                      <TableCell className="text-right">{(a.overtimeHours || 0).toFixed(2)}</TableCell>
-                      <TableCell>
-                        <Button size="sm" color="success" variant="flat" isLoading={actingOn === a.id} onPress={() => approveOvertimeRequest(a.id)}>
-                          Approve
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <div className="overflow-x-auto">
+                <Table removeWrapper aria-label="Pending overtime" className="min-w-[28rem]">
+                  <TableHeader>
+                    <TableColumn>EMPLOYEE</TableColumn>
+                    <TableColumn>DATE</TableColumn>
+                    <TableColumn className="text-right">HOURS</TableColumn>
+                    <TableColumn> </TableColumn>
+                  </TableHeader>
+                  <TableBody>
+                    {pendingOvertime.map(a => (
+                      <TableRow key={a.id}>
+                        <TableCell>{employeeName(a.employeeId)}</TableCell>
+                        <TableCell>{new Date(a.date).toLocaleDateString()}</TableCell>
+                        <TableCell className="text-right">{(a.overtimeHours || 0).toFixed(2)}</TableCell>
+                        <TableCell>
+                          <Button size="sm" color="success" variant="flat" className={approveBtnClass} isLoading={actingOn === a.id} onPress={() => approveOvertimeRequest(a.id)}>
+                            Approve
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </CardBody>
         </Card>
@@ -403,59 +430,60 @@ export default function ExecutiveApprovalsInbox() {
 
       {canApprovePayroll && requirePayrollApproval && (
         <Card className="border-0 shadow-lg">
-          <CardHeader className="flex items-center justify-between">
-            <h3 className="font-semibold">Payroll</h3>
-            <Chip size="sm" variant="flat" color={pendingPayroll.length ? 'warning' : 'default'}>
-              {ready.payroll ? `${pendingPayroll.length} pending` : 'checking…'}
-            </Chip>
-          </CardHeader>
+          <SectionCardHeader
+            title="Payroll"
+            chipLabel={ready.payroll ? `${pendingPayroll.length} pending` : 'checking…'}
+            chipColor={pendingPayroll.length ? 'warning' : 'default'}
+          />
           <CardBody>
             {!ready.payroll ? (
               <div className="flex items-center gap-2 text-sm text-gray-500"><Spinner size="sm" /> Checking…</div>
             ) : pendingPayroll.length === 0 ? (
               <p className="text-sm text-gray-500">No payroll months pending approval.</p>
             ) : (
-              <Table removeWrapper aria-label="Pending payroll" selectionMode="none">
-                <TableHeader>
-                  <TableColumn>MONTH</TableColumn>
-                  <TableColumn>PREPARED BY</TableColumn>
-                  <TableColumn className="text-right">STAFF</TableColumn>
-                  <TableColumn className="text-right">NET PAY</TableColumn>
-                  <TableColumn> </TableColumn>
-                </TableHeader>
-                <TableBody>
-                  {pendingPayroll.map((p) => {
-                    const staffCount = payrollRecords.filter((r) => r.payrollPeriodId === p.id && r.status !== 'failed').length;
-                    return (
-                      <TableRow
-                        key={p.id}
-                        className="cursor-pointer hover:bg-gray-50"
-                        onClick={() => openPaymentAdvice(p.id)}
-                      >
-                        <TableCell>
-                          <span className="font-medium text-ghana-black">{periodMonthLabel(p.periodNumber, p.startDate)}</span>
-                          <span className="block text-xs text-gray-500">Open Payment Advice</span>
-                        </TableCell>
-                        <TableCell>{p.processedBy || '—'}</TableCell>
-                        <TableCell className="text-right">{staffCount || p.employeeCount || '—'}</TableCell>
-                        <TableCell className="text-right">{formatAccountingCurrency(p.totalNetPay || 0)}</TableCell>
-                        <TableCell>
-                          <div className="flex gap-2 justify-end" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} role="presentation">
-                            <Button size="sm" variant="flat" onPress={() => openPaymentAdvice(p.id)}>
-                              View advice
-                            </Button>
-                            <Button size="sm" color="success" variant="flat" isLoading={actingOn === p.id} onPress={() => approvePayrollMonth(p.id)}>
-                              Approve
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+              <div className="overflow-x-auto">
+                <Table removeWrapper aria-label="Pending payroll" selectionMode="none" className="min-w-[40rem]">
+                  <TableHeader>
+                    <TableColumn>MONTH</TableColumn>
+                    <TableColumn>PREPARED BY</TableColumn>
+                    <TableColumn className="text-right">STAFF</TableColumn>
+                    <TableColumn className="text-right">NET PAY</TableColumn>
+                    <TableColumn> </TableColumn>
+                  </TableHeader>
+                  <TableBody>
+                    {pendingPayroll.map((p) => {
+                      const staffCount = payrollRecords.filter((r) => r.payrollPeriodId === p.id && r.status !== 'failed').length;
+                      return (
+                        <TableRow
+                          key={p.id}
+                          className="cursor-pointer hover:bg-gray-50"
+                          onClick={() => openPaymentAdvice(p.id)}
+                        >
+                          <TableCell>
+                            <span className="font-medium text-ghana-black">{periodMonthLabel(p.periodNumber, p.startDate)}</span>
+                            <span className="block text-xs text-gray-500">Open Payment Advice</span>
+                          </TableCell>
+                          <TableCell>{p.processedBy || '—'}</TableCell>
+                          <TableCell className="text-right">{staffCount || p.employeeCount || '—'}</TableCell>
+                          <TableCell className="text-right">{formatAccountingCurrency(p.totalNetPay || 0)}</TableCell>
+                          <TableCell>
+                            <div className="flex flex-wrap gap-2 justify-end" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} role="presentation">
+                              <Button size="sm" variant="flat" className={approveBtnClass} onPress={() => openPaymentAdvice(p.id)}>
+                                View advice
+                              </Button>
+                              <Button size="sm" color="success" variant="flat" className={approveBtnClass} isLoading={actingOn === p.id} onPress={() => approvePayrollMonth(p.id)}>
+                                Approve
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
             )}
-            <p className="text-xs text-gray-500 mt-2">
+            <p className="mt-2 text-xs text-gray-500">
               Click a month (or View advice) to open the payee / channel summary. Approve here or on Payment Advice — then pay from Advice.
             </p>
           </CardBody>

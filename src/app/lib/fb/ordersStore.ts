@@ -15,7 +15,7 @@ export interface MenuItemRef {
 export interface OrderItem extends MenuItemRef {
   qty: number;
   category?: string;
-  status?: 'pending' | 'preparing' | 'ready' | 'served';
+  status?: 'pending' | 'preparing' | 'ready' | 'served' | 'cancelled';
   prepMinutes?: number;
   startedAt?: string;
   readyAt?: string;

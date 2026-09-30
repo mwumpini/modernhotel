@@ -19,6 +19,7 @@ export interface KitchenOpRecord {
   at: string;
   orderId: string;
   table: string;
+  /** Display name of the waiter / server (not a staff cuid). */
   waiterId?: string;
   itemId: string;
   itemName: string;
@@ -30,7 +31,12 @@ export interface KitchenOpRecord {
   preparedById?: string;
   preparedByName?: string;
   priority?: 'low' | 'medium' | 'high' | 'urgent' | 'normal';
+  /** Elapsed cook time in minutes (preparing → ready/served). */
   prepMinutes?: number;
+  /** When the order was first placed / sent to kitchen. */
+  orderedAt?: string;
+  /** When kitchen started cooking (status → preparing). */
+  cookingStartedAt?: string;
   notes?: string;
 }
 

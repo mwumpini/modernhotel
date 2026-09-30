@@ -63,7 +63,8 @@
           "roundTo": 0.01,
           "domain": "sales",
           "operation": "external",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": false
         },
         {
           "name": "GETFund Levy",
@@ -82,7 +83,8 @@
           "roundTo": 0.01,
           "domain": "sales",
           "operation": "external",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": false
         },
         {
           "name": "VAT (Standard Rate)",
@@ -101,7 +103,8 @@
           "roundTo": 0.01,
           "domain": "sales",
           "operation": "external",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": true
         },
         {
           "name": "Tourism Levy",
@@ -122,7 +125,8 @@
           "roundTo": 0.01,
           "domain": "sales",
           "operation": "external",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": false
         }
       ]
     },
@@ -151,7 +155,8 @@
           "roundTo": 0.01,
           "domain": "purchases",
           "operation": "internal",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": false
         },
         {
           "name": "GETFund Levy",
@@ -170,7 +175,8 @@
           "roundTo": 0.01,
           "domain": "purchases",
           "operation": "internal",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": false
         },
         {
           "name": "VAT (Standard Rate)",
@@ -189,7 +195,8 @@
           "roundTo": 0.01,
           "domain": "purchases",
           "operation": "internal",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": true
         }
       ]
     },
@@ -218,7 +225,8 @@
           "roundTo": 0.01,
           "domain": "purchases",
           "operation": "internal",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": true
         }
       ]
     },
@@ -247,7 +255,8 @@
           "roundTo": 0.01,
           "domain": "purchases",
           "operation": "internal",
-          "effect": "subtract"
+          "effect": "subtract",
+          "isRecoverable": false
         }
       ]
     },
@@ -276,7 +285,8 @@
           "roundTo": 0.01,
           "domain": "purchases",
           "operation": "internal",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": true
         }
       ]
     },
@@ -305,7 +315,8 @@
           "roundTo": 0.01,
           "domain": "payroll",
           "operation": "internal",
-          "effect": "subtract"
+          "effect": "subtract",
+          "isRecoverable": false
         }
       ]
     },
@@ -334,7 +345,8 @@
           "roundTo": 0.01,
           "domain": "sales",
           "operation": "external",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": false
         },
         {
           "name": "Local Sales Tax",
@@ -353,7 +365,8 @@
           "roundTo": 0.01,
           "domain": "sales",
           "operation": "external",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": false
         },
         {
           "name": "Hotel Occupancy Tax",
@@ -373,7 +386,8 @@
           "roundTo": 0.01,
           "domain": "sales",
           "operation": "external",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": false
         }
       ]
     },
@@ -402,7 +416,8 @@
           "roundTo": 0.01,
           "domain": "purchases",
           "operation": "internal",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": true
         }
       ]
     },
@@ -431,7 +446,8 @@
           "roundTo": 0.01,
           "domain": "payroll",
           "operation": "internal",
-          "effect": "subtract"
+          "effect": "subtract",
+          "isRecoverable": false
         }
       ]
     },
@@ -460,7 +476,8 @@
           "roundTo": 0.01,
           "domain": "sales",
           "operation": "external",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": true
         }
       ]
     },
@@ -489,7 +506,8 @@
           "roundTo": 0.01,
           "domain": "purchases",
           "operation": "internal",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": true
         }
       ]
     },
@@ -518,7 +536,8 @@
           "roundTo": 0.01,
           "domain": "payroll",
           "operation": "internal",
-          "effect": "subtract"
+          "effect": "subtract",
+          "isRecoverable": false
         }
       ]
     },
@@ -547,7 +566,8 @@
           "roundTo": 0.01,
           "domain": "sales",
           "operation": "external",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": true
         }
       ]
     },
@@ -576,7 +596,8 @@
           "roundTo": 0.01,
           "domain": "purchases",
           "operation": "internal",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": true
         }
       ]
     },
@@ -605,7 +626,8 @@
           "roundTo": 0.01,
           "domain": "payroll",
           "operation": "internal",
-          "effect": "subtract"
+          "effect": "subtract",
+          "isRecoverable": false
         }
       ]
     },
@@ -634,7 +656,8 @@
           "roundTo": 0.01,
           "domain": "sales",
           "operation": "external",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": true
         }
       ]
     },
@@ -663,7 +686,8 @@
           "roundTo": 0.01,
           "domain": "purchases",
           "operation": "internal",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": true
         }
       ]
     },
@@ -692,7 +716,8 @@
           "roundTo": 0.01,
           "domain": "payroll",
           "operation": "internal",
-          "effect": "subtract"
+          "effect": "subtract",
+          "isRecoverable": false
         }
       ]
     },
@@ -721,7 +746,8 @@
           "roundTo": 0.01,
           "domain": "sales",
           "operation": "external",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": true
         }
       ]
     },
@@ -750,7 +776,8 @@
           "roundTo": 0.01,
           "domain": "purchases",
           "operation": "internal",
-          "effect": "add"
+          "effect": "add",
+          "isRecoverable": true
         }
       ]
     },
@@ -779,7 +806,8 @@
           "roundTo": 0.01,
           "domain": "payroll",
           "operation": "internal",
-          "effect": "subtract"
+          "effect": "subtract",
+          "isRecoverable": false
         }
       ]
     }

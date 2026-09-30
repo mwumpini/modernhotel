@@ -76,9 +76,14 @@ export function applyDisplay(prefs: DisplayPrefs = {}): void {
   }
 
   if (card) {
-    root.style.setProperty('--card-background', card);
+    // Drives inset tiles (bg-gray-50 / bg-gray-100 metric boxes, tab bars, etc.)
+    // — the surfaces people mean by "cards" inside a section. Outer HeroUI
+    // panels stay on --card-background from the theme.
+    root.style.setProperty('--tile-background', card);
+    root.setAttribute('data-tiles', 'custom');
   } else {
-    root.style.removeProperty('--card-background');
+    root.style.removeProperty('--tile-background');
+    root.removeAttribute('data-tiles');
   }
 }
 

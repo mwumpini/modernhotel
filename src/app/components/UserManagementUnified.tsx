@@ -60,7 +60,8 @@ const DARK_BACKGROUNDS = [
 ];
 
 const LIGHT_CARD_COLORS = [
-  { id: '', label: 'White', color: '#ffffff' },
+  { id: '', label: 'Default', color: '#f3f4f6' },
+  { id: '#ffffff', label: 'White', color: '#ffffff' },
   { id: '#faf9f6', label: 'Ivory', color: '#faf9f6' },
   { id: '#f3f4f6', label: 'Pearl gray', color: '#f3f4f6' },
   { id: '#f0f7f2', label: 'Mint', color: '#f0f7f2' },
@@ -68,7 +69,8 @@ const LIGHT_CARD_COLORS = [
 ];
 
 const DARK_CARD_COLORS = [
-  { id: '', label: 'Charcoal', color: '#262d3a' },
+  { id: '', label: 'Default', color: '#1a1f29' },
+  { id: '#262d3a', label: 'Charcoal', color: '#262d3a' },
   { id: '#1f2937', label: 'Slate', color: '#1f2937' },
   { id: '#20291f', label: 'Forest', color: '#20291f' },
   { id: '#2a2230', label: 'Plum', color: '#2a2230' },
@@ -127,13 +129,13 @@ function BackgroundPicker({
       </div>
       <div className="space-y-4 border-t border-default-200 pt-4">
         <p className="text-sm text-default-500">
-          The color of the cards themselves — separate from the page color behind them.
+          Inset tiles inside a section — stats boxes, tab bars, metric panels — not the outer white card or the sidebar.
         </p>
         {showLight && (
-          <SwatchRow title="Light cards" presets={LIGHT_CARD_COLORS} value={cardLightValue} onChange={onCardLight} />
+          <SwatchRow title="Light tiles" presets={LIGHT_CARD_COLORS} value={cardLightValue} onChange={onCardLight} />
         )}
         {showDark && (
-          <SwatchRow title="Dark cards" presets={DARK_CARD_COLORS} value={cardDarkValue} onChange={onCardDark} />
+          <SwatchRow title="Dark tiles" presets={DARK_CARD_COLORS} value={cardDarkValue} onChange={onCardDark} />
         )}
       </div>
     </div>
@@ -151,10 +153,21 @@ function SwatchRow({
   value: string;
   onChange: (color: string) => void;
 }) {
+  const defaultPreset = presets.find((preset) => preset.id === '') || presets[0];
   const custom = value && !presets.some((preset) => preset.id === value);
+  const isDefault = !value;
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium">{title}</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-medium">{title}</p>
+        <button
+          type="button"
+          onClick={() => onChange('')}
+          className={`rounded-md border px-2 py-1 text-xs ${isDefault ? 'border-primary text-primary' : 'border-default-200 text-default-600 hover:border-default-400'}`}
+        >
+          Default
+        </button>
+      </div>
       <div className="flex flex-wrap gap-2">
         {presets.map((preset) => {
           const selected = value === preset.id;
@@ -176,7 +189,7 @@ function SwatchRow({
         <input
           type="color"
           aria-label={`${title} custom color`}
-          value={custom ? value : '#eef1f4'}
+          value={custom ? value : defaultPreset.color}
           onChange={(e) => onChange(e.target.value)}
           className="h-8 w-12 cursor-pointer rounded border border-default-200 bg-transparent"
         />

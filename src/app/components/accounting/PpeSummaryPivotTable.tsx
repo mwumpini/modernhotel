@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo, useState, useCallback } from 'react';
-import { Button, Chip, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Checkbox } from '@heroui/react';
+import { Button, Chip, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Checkbox, Input, Select, SelectItem } from '@heroui/react';
 import { openPrintPreview } from '@/app/lib/accounting/helpers/exportHelpers';
 
 // Plain number, no currency sign — the section label already carries "(₵)", matching how
@@ -62,6 +62,8 @@ type Props = {
   summaryChips?: SummaryChip[];
   /** When provided, renders ◀ ▶ buttons next to the report-date chip to step the report date a year at a time. */
   onNavigateYear?: (direction: 1 | -1) => void;
+  /** Row used when sorting groups by amount. Defaults to the last emphasised line. */
+  closingKey?: string;
 };
 
 function downloadPivotCsv(
@@ -154,45 +156,71 @@ export default function PpeSummaryPivotTable({
   hideZeroColumns = true,
   summaryChips = [],
   onNavigateYear,
+  closingKey,
 }: Props) {
   const [showAllColumns, setShowAllColumns] = useState(false);
+  const [lineQuery, setLineQuery] = useState('');
+  const [groupFilter, setGroupFilter] = useState('all');
+  const [colSort, setColSort] = useState<'statement' | 'nameAsc' | 'nameDesc' | 'amountDesc' | 'amountAsc'>('statement');
+
+  const shownRows = useMemo(() => {
+    const q = lineQuery.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((row) => {
+      const section = row.section ? SECTION_LABELS[row.section] : '';
+      return row.label.toLowerCase().includes(q) || section.toLowerCase().includes(q);
+    });
+  }, [rows, lineQuery]);
+
+  const amountKey = closingKey || [...rows].reverse().find((row) => row.emphasis)?.key || rows[rows.length - 1]?.key;
 
   const visibleColumns = useMemo(() => {
-    if (showAllColumns || !hideZeroColumns) return columns;
-    return columns.filter((col) => {
+    const active = columns.filter((col) => {
       if (col === totalKey) return true;
+      if (groupFilter !== 'all') return col === groupFilter;
+      if (showAllColumns || !hideZeroColumns) return true;
       return rows.some((row) => Math.abs(values[col]?.[row.key] ?? 0) >= 0.01);
     });
-  }, [columns, rows, totalKey, values, hideZeroColumns, showAllColumns]);
+    const total = active.filter((col) => col === totalKey);
+    const groups = active.filter((col) => col !== totalKey);
+    if (colSort === 'nameAsc' || colSort === 'nameDesc') {
+      groups.sort((a, b) => (columnLabels[a]?.full ?? a).localeCompare(columnLabels[b]?.full ?? b));
+      if (colSort === 'nameDesc') groups.reverse();
+    } else if ((colSort === 'amountDesc' || colSort === 'amountAsc') && amountKey) {
+      groups.sort((a, b) => (values[a]?.[amountKey] ?? 0) - (values[b]?.[amountKey] ?? 0));
+      if (colSort === 'amountDesc') groups.reverse();
+    }
+    return [...groups, ...total];
+  }, [columns, rows, totalKey, values, hideZeroColumns, showAllColumns, groupFilter, colSort, columnLabels, amountKey]);
 
   const sectionFirstRow = useMemo(() => {
     const seen = new Set<string>();
     const map = new Map<string, boolean>();
-    for (const row of rows) {
+    for (const row of shownRows) {
       if (row.section && !seen.has(row.section)) {
         seen.add(row.section);
         map.set(row.key, true);
       }
     }
     return map;
-  }, [rows]);
+  }, [shownRows]);
 
   const handleCsv = useCallback(() => {
     downloadPivotCsv(
       title,
       reportDate,
       rowLabelHeader,
-      rows,
-      columns,
+      shownRows,
+      visibleColumns,
       columnLabels,
       values,
       exportBasename
     );
-  }, [title, reportDate, rowLabelHeader, rows, columns, columnLabels, values, exportBasename]);
+  }, [title, reportDate, rowLabelHeader, shownRows, visibleColumns, columnLabels, values, exportBasename]);
 
   const handlePrint = useCallback(() => {
-    printPivotTable(title, reportDate, rowLabelHeader, rows, columns, columnLabels, values);
-  }, [title, reportDate, rowLabelHeader, rows, columns, columnLabels, values]);
+    printPivotTable(title, reportDate, rowLabelHeader, shownRows, visibleColumns, columnLabels, values);
+  }, [title, reportDate, rowLabelHeader, shownRows, visibleColumns, columnLabels, values]);
 
   const hiddenColumnCount = columns.length - visibleColumns.length;
 
@@ -249,33 +277,70 @@ export default function PpeSummaryPivotTable({
             );
           })}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {hideZeroColumns && (
-            <Checkbox
-              size="sm"
-              isSelected={showAllColumns}
-              onValueChange={setShowAllColumns}
-              classNames={{ label: 'text-xs text-gray-600' }}
-            >
-              Show all columns
-            </Checkbox>
-          )}
-          <Dropdown>
-            <DropdownTrigger>
-              <Button size="sm" variant="bordered" className="min-w-[100px]">
-                Download
-              </Button>
-            </DropdownTrigger>
-            <DropdownMenu aria-label="Export options">
-              <DropdownItem key="csv" onPress={handleCsv}>
-                CSV spreadsheet
-              </DropdownItem>
-              <DropdownItem key="print" onPress={handlePrint}>
-                Print / PDF
-              </DropdownItem>
-            </DropdownMenu>
-          </Dropdown>
-        </div>
+      </div>
+      <div className="flex flex-nowrap items-center gap-2 px-3 py-2 border-b border-slate-100 overflow-x-auto">
+        <Input
+          size="sm"
+          className="w-40 shrink-0"
+          placeholder="Search lines"
+          aria-label="Search lines"
+          value={lineQuery}
+          onValueChange={setLineQuery}
+        />
+        <Select
+          aria-label="Group"
+          size="sm"
+          className="w-40 shrink-0"
+          selectedKeys={[groupFilter]}
+          disallowEmptySelection
+          onSelectionChange={(k) => setGroupFilter(String(Array.from(k)[0] ?? 'all'))}
+        >
+          {[
+            { key: 'all', label: 'All groups' },
+            ...columns.filter((col) => col !== totalKey).map((col) => ({ key: col, label: columnLabels[col]?.full ?? col })),
+          ].map((opt) => (
+            <SelectItem key={opt.key}>{opt.label}</SelectItem>
+          ))}
+        </Select>
+        <Select
+          aria-label="Sort groups"
+          size="sm"
+          className="w-40 shrink-0"
+          selectedKeys={[colSort]}
+          disallowEmptySelection
+          onSelectionChange={(k) => setColSort((Array.from(k)[0] as typeof colSort) || 'statement')}
+        >
+          <SelectItem key="statement">Statement order</SelectItem>
+          <SelectItem key="nameAsc">Group name A–Z</SelectItem>
+          <SelectItem key="nameDesc">Group name Z–A</SelectItem>
+          <SelectItem key="amountDesc">Largest closing</SelectItem>
+          <SelectItem key="amountAsc">Smallest closing</SelectItem>
+        </Select>
+        <span className="text-xs text-gray-500 whitespace-nowrap ml-auto shrink-0">
+          {shownRows.length === rows.length
+            ? `${rows.length} ${rows.length === 1 ? 'line' : 'lines'}`
+            : `${shownRows.length} of ${rows.length} lines`}
+        </span>
+        {hideZeroColumns && (
+          <Checkbox
+            size="sm"
+            isSelected={showAllColumns}
+            onValueChange={setShowAllColumns}
+            className="shrink-0"
+            classNames={{ label: 'text-xs text-gray-600 whitespace-nowrap' }}
+          >
+            Show empty groups
+          </Checkbox>
+        )}
+        <Dropdown>
+          <DropdownTrigger>
+            <Button size="sm" variant="flat" className="shrink-0">Export</Button>
+          </DropdownTrigger>
+          <DropdownMenu aria-label="Export options">
+            <DropdownItem key="csv" onPress={handleCsv}>CSV</DropdownItem>
+            <DropdownItem key="print" onPress={handlePrint}>Print</DropdownItem>
+          </DropdownMenu>
+        </Dropdown>
       </div>
 
       <div className="overflow-x-auto">
@@ -306,7 +371,13 @@ export default function PpeSummaryPivotTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, idx) => {
+            {shownRows.length === 0 ? (
+              <tr>
+                <td colSpan={visibleColumns.length + 1} className="py-12 text-center text-sm text-slate-400">
+                  No lines match this search.
+                </td>
+              </tr>
+            ) : shownRows.map((row, idx) => {
               const isSectionStart = sectionFirstRow.get(row.key);
               const section = row.section;
               const borderClass = section ? SECTION_BORDER[section] : 'border-l-transparent';
@@ -377,9 +448,11 @@ export default function PpeSummaryPivotTable({
 export const FS_PIVOT_ROWS: PivotRow[] = [
   { key: 'costOpening', label: 'Opening balance', section: 'cost' },
   { key: 'additions', label: 'Additions', section: 'cost' },
+  { key: 'costDisposals', label: 'Disposals', section: 'cost' },
   { key: 'costClosing', label: 'Closing balance', section: 'cost', emphasis: true },
   { key: 'depOpening', label: 'Opening balance', section: 'dep', dividerBefore: true },
   { key: 'chargeForYear', label: 'Charge for the year', section: 'dep' },
+  { key: 'depDisposals', label: 'Disposals', section: 'dep' },
   { key: 'depClosing', label: 'Closing balance', section: 'dep', emphasis: true },
   { key: 'nbv', label: 'At report date', section: 'nbv', emphasis: true, dividerBefore: true },
 ];
@@ -388,6 +461,7 @@ export const GRA_PIVOT_ROWS: PivotRow[] = [
   { key: 'openingWDV', label: 'Opening WDV', section: 'gra' },
   { key: 'additions', label: 'Additions', section: 'gra' },
   { key: 'caClaimed', label: 'Allowance claimed', section: 'gra' },
+  { key: 'disposals', label: 'Disposals', section: 'gra' },
   { key: 'closingWDV', label: 'Closing WDV', section: 'gra', emphasis: true, dividerBefore: true },
 ];
 

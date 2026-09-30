@@ -167,13 +167,13 @@ export default function CleaningAreasPanel() {
 
   return (
     <div className="space-y-3">
-      <div className="mb-[18px] flex flex-nowrap items-center justify-between gap-2 overflow-x-auto">
+      <div className="mb-[18px] flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-base font-semibold text-ghana-black shrink-0">Cleaning areas</h3>
-        <div className="flex flex-nowrap items-center gap-2">
-          <Button size="sm" variant="flat" onPress={() => setShowInactive((v) => !v)}>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button size="sm" variant="flat" className="min-h-10" onPress={() => setShowInactive((v) => !v)}>
             {showInactive ? 'Hide inactive' : 'Show inactive'}
           </Button>
-          <Button size="sm" color="primary" className="bg-ghana-green text-white" onPress={openCreate}>
+          <Button size="sm" color="primary" className="min-h-10 bg-ghana-green text-white" onPress={openCreate}>
             + Add area
           </Button>
         </div>

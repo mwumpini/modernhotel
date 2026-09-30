@@ -243,11 +243,11 @@ export default function RoomResponsibilitiesPanel({ staff }: { staff: Department
           Set who is <span className="font-medium text-slate-700">responsible for</span> which rooms on
           each shift.
         </p>
-        <div className="flex flex-nowrap items-center justify-end gap-2 overflow-x-auto shrink-0">
+        <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
           <Select
             aria-label="Filter by shift"
             size="sm"
-            className="w-40 shrink-0"
+            className="w-full max-w-full sm:w-40 sm:max-w-[10rem] shrink-0"
             selectedKeys={[shiftFilter]}
             onSelectionChange={(keys) => setShiftFilter((Array.from(keys)[0] as string) || 'all')}
           >
@@ -258,7 +258,7 @@ export default function RoomResponsibilitiesPanel({ staff }: { staff: Department
               )),
             ]}
           </Select>
-          <Button size="sm" color="primary" onPress={openCreate} isDisabled={staff.length === 0}>
+          <Button size="sm" color="primary" className="min-h-10" onPress={openCreate} isDisabled={staff.length === 0}>
             Assign rooms
           </Button>
         </div>

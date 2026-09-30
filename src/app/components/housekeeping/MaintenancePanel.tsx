@@ -262,12 +262,12 @@ export default function MaintenancePanel({
   return (
     <div className="space-y-3">
       {/* Header and Actions */}
-      <div className="mb-[18px] flex flex-nowrap items-center justify-between gap-2 overflow-x-auto">
+      <div className="mb-[18px] flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold text-ghana-black shrink-0">Maintenance</h2>
         <Button
           size="sm"
           color="primary"
-          className="bg-ghana-green text-white"
+          className="min-h-10 bg-ghana-green text-white"
           onClick={handleCreateRequest}
         >
           + New Maintenance Request
@@ -313,60 +313,68 @@ export default function MaintenancePanel({
         </div>
       )}
 
-      {/* Filters */}
-      <Card className="border-0 shadow-lg">
-        <CardBody className="p-4">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-            <Input
-              placeholder="Search room numbers..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              startContent={<span className="text-gray-400">🔍</span>}
-            />
-            <Select
-              placeholder="Filter by status"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              <SelectItem key="all">All Statuses</SelectItem>
-              <SelectItem key="reported">📝 Reported</SelectItem>
-              <SelectItem key="assigned">👥 Assigned</SelectItem>
-              <SelectItem key="in-progress">🔄 In Progress</SelectItem>
-              <SelectItem key="completed">✅ Completed</SelectItem>
-              <SelectItem key="verified">🔍 Verified</SelectItem>
-            </Select>
-            <Select
-              placeholder="Filter by priority"
-              value={priorityFilter}
-              onChange={(e) => setPriorityFilter(e.target.value)}
-            >
-              <SelectItem key="all">All Priorities</SelectItem>
-              <SelectItem key="low">Low</SelectItem>
-              <SelectItem key="medium">Medium</SelectItem>
-              <SelectItem key="high">High</SelectItem>
-              <SelectItem key="urgent">Urgent</SelectItem>
-            </Select>
-            <Select
-              placeholder="Filter by category"
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-            >
-              <SelectItem key="all">All Categories</SelectItem>
-              <SelectItem key="plumbing">🚰 Plumbing</SelectItem>
-              <SelectItem key="electrical">⚡ Electrical</SelectItem>
-              <SelectItem key="hvac">❄️ HVAC</SelectItem>
-              <SelectItem key="furniture">🪑 Furniture</SelectItem>
-              <SelectItem key="appliances">🔌 Appliances</SelectItem>
-              <SelectItem key="structural">🏗️ Structural</SelectItem>
-              <SelectItem key="other">🔧 Other</SelectItem>
-            </Select>
-            <div className="flex items-center space-x-2">
-              <span className="text-sm text-gray-600">Filtered:</span>
-              <Badge color="primary" variant="flat">{filteredRequests.length}</Badge>
-            </div>
-          </div>
-        </CardBody>
-      </Card>
+      {/* Filters — wrap on phone / zoomed screens */}
+      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+        <Input
+          size="sm"
+          aria-label="Search room numbers"
+          placeholder="Search room numbers..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          startContent={<span className="text-gray-400">🔍</span>}
+          className="w-full max-w-full sm:w-52 sm:max-w-[13rem] shrink-0"
+        />
+        <Select
+          size="sm"
+          aria-label="Filter by status"
+          placeholder="Filter by status"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
+        >
+          <SelectItem key="all">All Statuses</SelectItem>
+          <SelectItem key="reported">📝 Reported</SelectItem>
+          <SelectItem key="assigned">👥 Assigned</SelectItem>
+          <SelectItem key="in-progress">🔄 In Progress</SelectItem>
+          <SelectItem key="completed">✅ Completed</SelectItem>
+          <SelectItem key="verified">🔍 Verified</SelectItem>
+        </Select>
+        <Select
+          size="sm"
+          aria-label="Filter by priority"
+          placeholder="Filter by priority"
+          value={priorityFilter}
+          onChange={(e) => setPriorityFilter(e.target.value)}
+          className="w-full max-w-full sm:w-40 sm:max-w-[10rem] shrink-0"
+        >
+          <SelectItem key="all">All Priorities</SelectItem>
+          <SelectItem key="low">Low</SelectItem>
+          <SelectItem key="medium">Medium</SelectItem>
+          <SelectItem key="high">High</SelectItem>
+          <SelectItem key="urgent">Urgent</SelectItem>
+        </Select>
+        <Select
+          size="sm"
+          aria-label="Filter by category"
+          placeholder="Filter by category"
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value)}
+          className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
+        >
+          <SelectItem key="all">All Categories</SelectItem>
+          <SelectItem key="plumbing">🚰 Plumbing</SelectItem>
+          <SelectItem key="electrical">⚡ Electrical</SelectItem>
+          <SelectItem key="hvac">❄️ HVAC</SelectItem>
+          <SelectItem key="furniture">🪑 Furniture</SelectItem>
+          <SelectItem key="appliances">🔌 Appliances</SelectItem>
+          <SelectItem key="structural">🏗️ Structural</SelectItem>
+          <SelectItem key="other">🔧 Other</SelectItem>
+        </Select>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-sm text-gray-600">Filtered:</span>
+          <Badge color="primary" variant="flat">{filteredRequests.length}</Badge>
+        </div>
+      </div>
 
       {/* Maintenance Requests Table */}
       <Card className={deskTableCardClassName}>
@@ -459,7 +467,7 @@ export default function MaintenancePanel({
       </Card>
 
       {/* Maintenance Request Modal */}
-      <Modal isOpen={maintenanceModalOpen} onClose={() => setMaintenanceModalOpen(false)} size="2xl">
+      <Modal isOpen={maintenanceModalOpen} onClose={() => setMaintenanceModalOpen(false)} size="2xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>
             {isCreatingRequest ? 'Create Maintenance Request' : 'Maintenance Request Details'}
@@ -484,7 +492,7 @@ export default function MaintenancePanel({
               </div>
 
               {/* Category and Priority */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Category *</label>
                   <Select
@@ -531,7 +539,7 @@ export default function MaintenancePanel({
               </div>
 
               {/* Cost and Assignment */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Estimated Cost</label>
                   <Input

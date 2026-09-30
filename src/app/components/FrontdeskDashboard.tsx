@@ -131,11 +131,11 @@ export default function FrontdeskDashboard({
     <FrontOfficeDeskVisibilityProvider value={deskVisibility}>
     <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
       {!fullPage && <DeptMessenger from="frontdesk" mode="drawer" />}
-      <div className={`flex items-center justify-between ${fullPage ? 'mb-2' : 'mb-6'}`}>
+      <div className={`flex flex-wrap items-center justify-between gap-2 ${fullPage ? 'mb-2' : 'mb-6'}`}>
         <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>
           {fullPage ? '🏨 Front Office' : '🏨 Front Office Operations'}
         </h2>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <FoDeskKpiCustomize sections={customizeSections} />
           {!fullPage && (
             <ModuleExpandButton
@@ -248,22 +248,22 @@ export default function FrontdeskDashboard({
 
         {/* Today's Room Operations */}
         {!isHidden('todayOps') && (
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <div className="flex items-center gap-2">
               <span className="text-lg">📅</span>
               <h4 className="text-lg font-semibold text-ghana-black">Today's Room Operations</h4>
             </div>
-            <div className="flex items-center gap-6 text-sm">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-green-600 font-medium">{todayCheckIns} Check-ins</span>
                 <span className="text-gray-500">Starting 2:00 PM</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-blue-600 font-medium">{todayCheckOuts} Check-outs</span>
                 <span className="text-gray-500">By 12:00 PM</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-orange-600 font-medium">{maintenanceOpen} Maintenance</span>
                 <span className="text-gray-500">Scheduled</span>
               </div>

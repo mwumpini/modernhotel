@@ -33,10 +33,10 @@ export const BANK_KPI_SECTIONS: DashboardSectionDef[] = [
 
 export const PPE_KPI_SECTIONS: DashboardSectionDef[] = [
   { id: 'ppe.totalCost', label: 'Total cost' },
-  { id: 'ppe.accumDep', label: 'Accum. dep (IAS)' },
-  { id: 'ppe.nbv', label: 'Net book value' },
-  { id: 'ppe.graWdv', label: 'GRA closing WDV' },
-  { id: 'ppe.graCa', label: 'GRA CA this year' },
+  { id: 'ppe.accumDep', label: 'Depreciation so far' },
+  { id: 'ppe.nbv', label: 'Book value' },
+  { id: 'ppe.graWdv', label: 'GRA written-down value' },
+  { id: 'ppe.graCa', label: 'GRA allowance this year' },
 ];
 
 export const TAX_KPI_SECTIONS: DashboardSectionDef[] = [
@@ -48,10 +48,29 @@ export const TAX_KPI_SECTIONS: DashboardSectionDef[] = [
   { id: 'tax.net', label: 'Net Tax Position' },
 ];
 
+export const CRC_KPI_SECTIONS: DashboardSectionDef[] = [
+  { id: 'crc.spendBudget', label: 'Spending budget' },
+  { id: 'crc.spent', label: 'Spent so far' },
+  { id: 'crc.incomeTarget', label: 'Income target' },
+  { id: 'crc.earned', label: 'Earned so far' },
+];
+
+export const COA_KPI_SECTIONS: DashboardSectionDef[] = [
+  { id: 'coa.main', label: 'Main accounts' },
+  { id: 'coa.all', label: 'All accounts' },
+  { id: 'coa.withBalance', label: 'With a balance' },
+];
+
+export const JOURNAL_KPI_SECTIONS: DashboardSectionDef[] = [
+  { id: 'journal.entries', label: 'Entries' },
+  { id: 'journal.debits', label: 'Debits' },
+  { id: 'journal.credits', label: 'Credits' },
+];
+
 export const AUDIT_KPI_SECTIONS: DashboardSectionDef[] = [
-  { id: 'audit.total', label: 'Total Audit Entries' },
-  { id: 'audit.create', label: 'Create Operations' },
-  { id: 'audit.update', label: 'Update Operations' },
+  { id: 'audit.total', label: 'Entries' },
+  { id: 'audit.create', label: 'Added' },
+  { id: 'audit.update', label: 'Changed' },
 ];
 
 export const ALL_BOOKS_KPI_SECTIONS: DashboardSectionDef[] = [
@@ -60,6 +79,9 @@ export const ALL_BOOKS_KPI_SECTIONS: DashboardSectionDef[] = [
   ...BANK_KPI_SECTIONS,
   ...PPE_KPI_SECTIONS,
   ...TAX_KPI_SECTIONS,
+  ...CRC_KPI_SECTIONS,
+  ...COA_KPI_SECTIONS,
+  ...JOURNAL_KPI_SECTIONS,
   ...AUDIT_KPI_SECTIONS,
 ];
 
@@ -69,6 +91,9 @@ export const BOOK_KPI_SECTIONS_BY_TAB: Record<string, DashboardSectionDef[]> = {
   banking: BANK_KPI_SECTIONS,
   assets: PPE_KPI_SECTIONS,
   taxes: TAX_KPI_SECTIONS,
+  'cost-centers': CRC_KPI_SECTIONS,
+  accounts: COA_KPI_SECTIONS,
+  journal: JOURNAL_KPI_SECTIONS,
   audit: AUDIT_KPI_SECTIONS,
 };
 

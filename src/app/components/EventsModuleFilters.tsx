@@ -140,7 +140,7 @@ export default function EventsModuleFilters({
   statusOptions,
   statusPlaceholder = 'Status',
   showDateFilter = true,
-  dateFilterMode = 'all',
+  dateFilterMode = 'thisMonth',
   onDateFilterModeChange,
   dateFilterSingle = '',
   onDateFilterSingleChange,
@@ -151,6 +151,7 @@ export default function EventsModuleFilters({
   extraFilters,
   singleRow = false,
 }: EventsModuleFiltersProps) {
+  void singleRow; // kept for callers; layout always wraps for tablet
   const showStatus = Boolean(onStatusChange && statusOptions && statusOptions.length > 0);
   const showDatePicker =
     showDateFilter &&
@@ -159,16 +160,15 @@ export default function EventsModuleFilters({
 
   return (
     <div className="rounded-lg border border-gray-200 bg-gray-50/80 px-3 py-2">
-      <div className={singleRow
-        ? 'flex flex-nowrap items-center gap-2 overflow-x-auto'
-        : 'flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-center'
-      }>
+      {/* Wrap from tablet up so search + selects share a row instead of stacking
+          full-width until lg (work pane is often ~600–768 with the side nav open). */}
+      <div className="flex flex-wrap items-center gap-2">
         <Input
           size="sm"
           placeholder={searchPlaceholder}
           value={searchTerm}
           onValueChange={onSearchChange}
-          className={singleRow ? 'min-w-[140px] flex-1' : 'w-full lg:flex-1 lg:min-w-[180px]'}
+          className="min-w-[min(100%,11rem)] flex-1 basis-[min(100%,14rem)]"
           aria-label={searchPlaceholder}
         />
 
@@ -178,7 +178,7 @@ export default function EventsModuleFilters({
             aria-label={statusPlaceholder}
             placeholder={statusPlaceholder}
             selectedKeys={[statusFilter || 'all']}
-            className={singleRow ? 'w-36 shrink-0' : 'w-full lg:w-40'}
+            className="min-w-[min(100%,9rem)] flex-1 basis-[9rem] max-w-full sm:max-w-[12rem]"
             disallowEmptySelection
             onSelectionChange={(keys) => {
               const value = Array.from(keys)[0] as string;
@@ -191,12 +191,14 @@ export default function EventsModuleFilters({
           </Select>
         )}
 
+        {extraFilters}
+
         {showDateFilter && onDateFilterModeChange && (
           <Select
             size="sm"
             aria-label="Date filter"
             selectedKeys={[dateFilterMode]}
-            className={singleRow ? 'w-36 shrink-0' : 'w-full lg:w-44'}
+            className="ml-auto min-w-[min(100%,9rem)] w-full basis-[9rem] max-w-full sm:w-auto sm:max-w-[13rem]"
             disallowEmptySelection
             renderValue={() => (
               <span className="text-sm">
@@ -219,18 +221,18 @@ export default function EventsModuleFilters({
             type="date"
             value={dateFilterSingle}
             onChange={(e) => onDateFilterSingleChange(e.target.value)}
-            className="h-8 px-2 rounded-lg border border-gray-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            className="h-8 min-w-[min(100%,10rem)] flex-1 basis-[10rem] max-w-full sm:max-w-[12rem] px-2 rounded-lg border border-gray-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
             aria-label="Specific date"
           />
         )}
 
         {showDatePicker && dateFilterMode === 'range' && onDateFilterFromChange && onDateFilterToChange && (
-          <div className="flex items-center gap-1.5">
+          <div className="flex min-w-[min(100%,14rem)] flex-1 basis-[14rem] max-w-full flex-wrap items-center gap-1.5 sm:max-w-none">
             <input
               type="date"
               value={dateFilterFrom}
               onChange={(e) => onDateFilterFromChange(e.target.value)}
-              className="h-8 px-2 rounded-lg border border-gray-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              className="h-8 min-w-0 flex-1 px-2 rounded-lg border border-gray-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
               aria-label="Date from"
             />
             <span className="text-gray-400 text-xs">→</span>
@@ -238,15 +240,9 @@ export default function EventsModuleFilters({
               type="date"
               value={dateFilterTo}
               onChange={(e) => onDateFilterToChange(e.target.value)}
-              className="h-8 px-2 rounded-lg border border-gray-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              className="h-8 min-w-0 flex-1 px-2 rounded-lg border border-gray-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
               aria-label="Date to"
             />
-          </div>
-        )}
-
-        {extraFilters && (
-          <div className={singleRow ? 'contents' : 'w-full lg:w-auto lg:min-w-[200px] lg:flex-1'}>
-            {extraFilters}
           </div>
         )}
       </div>

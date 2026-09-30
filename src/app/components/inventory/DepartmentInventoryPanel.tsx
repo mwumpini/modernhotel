@@ -318,40 +318,38 @@ export default function DepartmentInventoryPanel({
         </div>
       )}
 
-      <div className="mb-[18px] flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-center">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <Input
-            aria-label="Search inventory"
-            placeholder="Search inventory"
-            size="sm"
-            value={query}
-            onValueChange={setQuery}
-            isClearable
-            onClear={() => setQuery('')}
-            className="w-full min-w-[12rem] sm:w-56 sm:shrink-0"
-          />
-          <Select
-            aria-label="Filter by status"
-            placeholder="All items"
-            size="sm"
-            selectedKeys={[statusFilter]}
-            onSelectionChange={(keys) => {
-              const next = Array.from(keys)[0] as string;
-              if (next) setStatusFilter(next);
-            }}
-            className="w-full sm:w-44 sm:shrink-0"
-          >
-            <SelectItem key="all">All items</SelectItem>
-            <SelectItem key="active">Active</SelectItem>
-            <SelectItem key="inactive">Inactive</SelectItem>
-            <SelectItem key="low">Low / out of stock</SelectItem>
-          </Select>
-          <p className="text-sm text-gray-500">
-            Catalog {items.length} · Showing {filtered.length}
-            {loading ? ' · Loading…' : ''}
-          </p>
-        </div>
-        <div className="w-full min-w-0 lg:ml-auto lg:w-auto">
+      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+        <Input
+          aria-label="Search inventory"
+          placeholder="Search inventory"
+          size="sm"
+          value={query}
+          onValueChange={setQuery}
+          isClearable
+          onClear={() => setQuery('')}
+          className="w-full max-w-full sm:w-56 sm:max-w-[14rem] shrink-0"
+        />
+        <Select
+          aria-label="Filter by status"
+          placeholder="All items"
+          size="sm"
+          selectedKeys={[statusFilter]}
+          onSelectionChange={(keys) => {
+            const next = Array.from(keys)[0] as string;
+            if (next) setStatusFilter(next);
+          }}
+          className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
+        >
+          <SelectItem key="all">All items</SelectItem>
+          <SelectItem key="active">Active</SelectItem>
+          <SelectItem key="inactive">Inactive</SelectItem>
+          <SelectItem key="low">Low / out of stock</SelectItem>
+        </Select>
+        <p className="text-sm text-gray-500 shrink-0">
+          Catalog {items.length} · Showing {filtered.length}
+          {loading ? ' · Loading…' : ''}
+        </p>
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           <DateFilterPills
             mode={dates.mode}
             onMode={dates.setMode}

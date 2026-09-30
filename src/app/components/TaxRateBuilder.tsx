@@ -87,14 +87,30 @@ interface TaxRuleForm {
   effectiveFrom?: string;
   effectiveTo?: string;
   tags?: string[];
-  domain?: 'sales' | 'payroll' | 'corporate' | 'custom';
+  domain?: 'sales' | 'purchases' | 'payroll' | 'corporate' | 'custom';
   operation?: 'internal' | 'external' | 'both';
   effect?: 'add' | 'subtract' | 'exclude_total' | 'informational';
+  /** Claimable as input tax on purchases (e.g. Ghana VAT). */
+  isRecoverable?: boolean;
   // Dual-sided contribution + base clamping (e.g. SSNIT: employee `rate`, employer
   // `employerRate`, both applied to the same base after floor/ceiling clamping).
   employerRate?: number;
   ceiling?: number;
   floor?: number;
+}
+
+/** Sensible Ghana defaults when a rule has never set claimability. */
+function defaultClaimableOnPurchases(name: string, domain?: string): boolean {
+  const n = (name || '').toLowerCase();
+  if (n.includes('withholding')) return false;
+  if (n.includes('nhil') || n.includes('getfund') || n.includes('get fund') || n.includes('tourism')) return false;
+  if (n.includes('vat')) return true;
+  return domain === 'purchases';
+}
+
+function ruleIsClaimable(rule: TaxRule): boolean {
+  if (typeof rule.isRecoverable === 'boolean') return rule.isRecoverable;
+  return defaultClaimableOnPurchases(rule.name, rule.domain);
 }
 
 export default function TaxRateBuilder() {
@@ -242,7 +258,8 @@ export default function TaxRateBuilder() {
     rounding: 'none',
     roundTo: 0.01,
     domain: 'sales',
-    operation: 'both'
+    operation: 'both',
+    isRecoverable: false,
   });
 
   useEffect(() => {
@@ -327,6 +344,9 @@ export default function TaxRateBuilder() {
         domain: (rule as any).domain || 'sales',
         operation: (rule as any).operation || 'both',
         effect: (rule as any).effect || 'add',
+        isRecoverable: typeof rule.isRecoverable === 'boolean'
+          ? rule.isRecoverable
+          : defaultClaimableOnPurchases(rule.name, (rule as any).domain),
         tags: rule.tags || [],
         employerRate: (rule as any).employerRate,
         ceiling: (rule as any).ceiling,
@@ -355,7 +375,8 @@ export default function TaxRateBuilder() {
         roundTo: 0.01,
         domain: 'sales',
         operation: 'both',
-        effect: 'add'
+        effect: 'add',
+        isRecoverable: false,
       });
       setIsEditMode(false);
     }
@@ -398,6 +419,7 @@ export default function TaxRateBuilder() {
         domain: formData.domain,
         operation: deriveOperation(formData.domain),
         effect: formData.effect,
+        isRecoverable: Boolean(formData.isRecoverable),
         tags: formData.tags,
         employerRate: formData.employerRate,
         ceiling: formData.ceiling,
@@ -973,6 +995,7 @@ export default function TaxRateBuilder() {
                   <TableColumn>TYPE</TableColumn>
                   <TableColumn>RATE</TableColumn>
                   <TableColumn>GL</TableColumn>
+                  <TableColumn>INPUT TAX</TableColumn>
                   <TableColumn>PRIORITY</TableColumn>
                   <TableColumn>ACTIONS</TableColumn>
                 </TableHeader>
@@ -991,6 +1014,15 @@ export default function TaxRateBuilder() {
                       </TableCell>
                       <TableCell>
                         <code className="bg-gray-100 px-2 py-0.5 rounded text-xs">{rule.glCode}</code>
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          color={ruleIsClaimable(rule) ? 'primary' : 'default'}
+                          variant="flat"
+                          size="sm"
+                        >
+                          {ruleIsClaimable(rule) ? 'Claimable' : 'Not claimable'}
+                        </Chip>
                       </TableCell>
                       <TableCell>
                         <Chip variant="flat" size="sm">{rule.priority ?? 100}</Chip>
@@ -1679,6 +1711,17 @@ export default function TaxRateBuilder() {
                     <SelectItem key="exclude_total">Exclude from Total</SelectItem>
                     <SelectItem key="informational">Informational Only</SelectItem>
                   </Select>
+                </div>
+                <div className="sm:col-span-2">
+                  <Switch
+                    isSelected={Boolean(formData.isRecoverable)}
+                    onValueChange={(v) => setFormData((prev) => ({ ...prev, isRecoverable: v }))}
+                  >
+                    Claimable on purchases (input tax)
+                  </Switch>
+                  <p className="text-xs text-gray-500 mt-1">
+                    On for Ghana VAT today. Off for NHIL, GETFund, Tourism, and withholding. Turn on later if the law lets you reclaim that levy on purchases; turn off if VAT stops being claimable.
+                  </p>
                 </div>
                 <div>
                   <label className="text-sm font-medium">Effective From</label>

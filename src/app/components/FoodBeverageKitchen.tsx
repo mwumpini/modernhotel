@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardBody, Button, Input, Textarea, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Badge, Progress, Tabs, Tab } from "@heroui/react";
 import { kitchenOpsStore, type KitchenAction, type KitchenOpRecord } from '../lib/fb/kitchenOpsStore';
+import { kitchenCookMinutes } from '../lib/fb/kitchenEvents';
 import { fetchFbOrders, openKitchenDisplay, type FbOrderDto } from '../lib/fb/api';
 import { buildLiveStationBoard, kitchenStats, type LiveStationView } from '../lib/fb/kitchenStations';
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
@@ -22,6 +23,7 @@ import { sizedTableClassNames, useResizableColumns } from './frontoffice/columnR
 import { DateFilterPills, matchesDateFilter, useDateFilter } from './fb/DateFilterPills';
 import SubViewPills from './dashboard/SubViewPills';
 import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
+import KitchenReportsAnalysis from './KitchenReportsAnalysis';
 
 type SuppliesView = 'inventory' | 'stock-count' | 'requisitions';
 const SUPPLIES_VIEWS: { key: SuppliesView; label: string }[] = [
@@ -108,6 +110,7 @@ interface Recipe {
   difficulty: 'easy' | 'medium' | 'hard';
   allergens: string[];
   menuItemId?: string | null;
+  isActive?: boolean;
 }
 
 interface Requisition {
@@ -122,10 +125,12 @@ interface Requisition {
 
 export default function FoodBeverageKitchen({
   fullPage = false,
+  initialTab,
 }: {
   fullPage?: boolean;
+  initialTab?: string;
 } = {}) {
-  const [selectedTab, setSelectedTab] = useState('kds');
+  const [selectedTab, setSelectedTab] = useState(initialTab || 'kds');
   const [suppliesView, setSuppliesView] = useState<SuppliesView>('inventory');
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.kitchen', KITCHEN_DASHBOARD_SECTIONS);
   const stockVisibility = useDashboardVisibility(deptInventoryVisibilityKey('kitchen'), STOCK_KPI_SECTIONS);
@@ -136,6 +141,34 @@ export default function FoodBeverageKitchen({
   const [viewingRecipe, setViewingRecipe] = useState<Recipe | null>(null);
   const [liveOrders, setLiveOrders] = useState<FbOrderDto[]>([]);
   const [ordersError, setOrdersError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialTab) setSelectedTab(initialTab);
+  }, [initialTab]);
+
+  useEffect(() => {
+    try {
+      const wanted = localStorage.getItem('kitchen.tab');
+      if (wanted) {
+        setSelectedTab(wanted);
+        localStorage.removeItem('kitchen.tab');
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    const onNavigate = () => {
+      try {
+        const wanted = localStorage.getItem('kitchen.tab');
+        if (wanted) {
+          setSelectedTab(wanted);
+          localStorage.removeItem('kitchen.tab');
+        }
+      } catch {}
+    };
+    window.addEventListener('kitchen-navigate', onNavigate);
+    return () => window.removeEventListener('kitchen-navigate', onNavigate);
+  }, []);
 
   const refreshLiveOrders = useCallback(async () => {
     try {
@@ -167,7 +200,8 @@ export default function FoodBeverageKitchen({
         defaultCost: Number(i.defaultCost || 0),
         sellingPrice: Number(i.sellingPrice || 0),
         isActive: i.isActive,
-      }))));
+      }))))
+      .catch(() => setInventoryItems([]));
   }, []);
 
   const [requisitions, setRequisitions] = useState<Requisition[]>([]);
@@ -191,7 +225,8 @@ export default function FoodBeverageKitchen({
         status: req.status,
         notes: req.notes || '',
         items: (req.items || []).map((it: any) => ({ itemName: it.itemName, quantity: Number(it.quantity) })),
-      }))));
+      }))))
+      .catch(() => setRequisitions([]));
   };
   useEffect(() => { reloadRequisitions(); }, []);
 
@@ -231,7 +266,9 @@ export default function FoodBeverageKitchen({
         difficulty: r.difficulty,
         allergens: r.allergens || [],
         menuItemId: r.menuItemId || null,
-      }))));
+        isActive: r.isActive !== false,
+      }))))
+      .catch(() => setRecipes([]));
   };
   const reloadKitchenMenu = () => {
     fetch('/api/fb/menu', { headers: fbHeaders() })
@@ -242,7 +279,8 @@ export default function FoodBeverageKitchen({
             .filter((i: any) => (i.route || 'kitchen') === 'kitchen' && i.isAvailable !== false)
             .map((i: any) => ({ id: i.id, name: i.name, code: i.code })),
         ),
-      );
+      )
+      .catch(() => setKitchenMenuItems([]));
   };
   useEffect(() => { reloadRecipes(); reloadKitchenMenu(); }, []);
 
@@ -271,10 +309,39 @@ export default function FoodBeverageKitchen({
     });
   };
 
+  const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null);
+
   const openRecipeForm = () => {
+    setEditingRecipeId(null);
     setRecipeForm({ name: '', category: 'main-course', prepTime: '30', difficulty: 'medium', allergens: '', instructions: '', menuItemId: '' });
     setIngredientRows([{ name: '', quantity: 0, unit: '', inventoryItemId: '' }]);
     reloadKitchenMenu();
+    setIsRecipeModalOpen(true);
+  };
+
+  const openEditRecipe = (recipe: Recipe) => {
+    setEditingRecipeId(recipe.id);
+    setRecipeForm({
+      name: recipe.name,
+      category: recipe.category || 'main-course',
+      prepTime: String(recipe.preparationTime || 30),
+      difficulty: recipe.difficulty || 'medium',
+      allergens: (recipe.allergens || []).filter((a) => a && a !== 'None').join(', '),
+      instructions: (recipe.instructions || []).join('\n'),
+      menuItemId: recipe.menuItemId || '',
+    });
+    setIngredientRows(
+      recipe.ingredients?.length
+        ? recipe.ingredients.map((ing) => ({
+            name: ing.name || '',
+            quantity: Number(ing.quantity) || 0,
+            unit: ing.unit || '',
+            inventoryItemId: ing.inventoryItemId || '',
+          }))
+        : [{ name: '', quantity: 0, unit: '', inventoryItemId: '' }],
+    );
+    reloadKitchenMenu();
+    setViewingRecipe(null);
     setIsRecipeModalOpen(true);
   };
 
@@ -293,7 +360,7 @@ export default function FoodBeverageKitchen({
       method: 'POST',
       headers: fbHeaders(),
       body: JSON.stringify({
-        id: `recipe-${Date.now()}`,
+        id: editingRecipeId || `recipe-${Date.now()}`,
         name: recipeForm.name,
         category: recipeForm.category,
         preparationTime: Number(recipeForm.prepTime) || 0,
@@ -302,9 +369,11 @@ export default function FoodBeverageKitchen({
         menuItemId: recipeForm.menuItemId || null,
         ingredients,
         instructions,
+        isActive: true,
       }),
     });
     if (res.ok) {
+      setEditingRecipeId(null);
       setRecipeForm({ name: '', category: 'main-course', prepTime: '30', difficulty: 'medium', allergens: '', instructions: '', menuItemId: '' });
       setIngredientRows([{ name: '', quantity: 0, unit: '', inventoryItemId: '' }]);
       setIsRecipeModalOpen(false);
@@ -312,8 +381,93 @@ export default function FoodBeverageKitchen({
     }
   };
   const deleteRecipeById = async (id: string) => {
+    if (!confirm('Delete this recipe? This cannot be undone.')) return;
     await fetch(`/api/fb/recipes?id=${id}`, { method: 'DELETE', headers: fbHeaders() });
+    setViewingRecipe(null);
     reloadRecipes();
+  };
+
+  const setRecipeActive = async (recipe: Recipe, isActive: boolean) => {
+    const res = await fetch('/api/fb/recipes', {
+      method: 'POST',
+      headers: fbHeaders(),
+      body: JSON.stringify({
+        id: recipe.id,
+        name: recipe.name,
+        category: recipe.category,
+        preparationTime: recipe.preparationTime,
+        difficulty: recipe.difficulty,
+        allergens: (recipe.allergens || []).join(', ') || undefined,
+        menuItemId: recipe.menuItemId || null,
+        ingredients: recipe.ingredients,
+        instructions: recipe.instructions,
+        isActive,
+      }),
+    });
+    if (res.ok) {
+      setViewingRecipe((prev) => (prev && prev.id === recipe.id ? { ...prev, isActive } : prev));
+      reloadRecipes();
+    }
+  };
+
+  const printRecipe = (recipe: Recipe) => {
+    const escapeHtml = (value: string) =>
+      value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    const menuName = kitchenMenuItems.find((m) => m.id === recipe.menuItemId)?.name;
+    const ingredients = recipe.ingredients
+      .map((ing) => `<li>${escapeHtml(String(ing.quantity))} ${escapeHtml(ing.unit)} ${escapeHtml(ing.name)}${ing.inventoryItemId ? ' (stock)' : ''}</li>`)
+      .join('');
+    const steps = recipe.instructions.map((step) => `<li>${escapeHtml(step)}</li>`).join('');
+    const allergens = (recipe.allergens || []).filter((a) => a && a !== 'None').map(escapeHtml).join(', ') || 'None';
+    const html = `<!DOCTYPE html><html><head><title>${escapeHtml(recipe.name)}</title>
+      <style>
+        body{font-family:Segoe UI,Arial,sans-serif;padding:24px;color:#111}
+        h1{margin:0 0 8px;font-size:22px}
+        .meta{color:#555;font-size:13px;margin-bottom:16px}
+        h2{font-size:14px;margin:18px 0 6px}
+        ul,ol{margin:0;padding-left:18px;font-size:13px;line-height:1.5}
+      </style></head><body>
+      <h1>${escapeHtml(recipe.name)}</h1>
+      <div class="meta">${escapeHtml(recipe.category)} · ${escapeHtml(recipe.difficulty)} · ${recipe.preparationTime} min
+        ${menuName ? ` · Menu: ${escapeHtml(menuName)}` : ''} · ${recipe.isActive === false ? 'Inactive' : 'Active'}</div>
+      <h2>Ingredients</h2><ul>${ingredients || '<li>None</li>'}</ul>
+      <h2>Instructions</h2><ol>${steps || '<li>None</li>'}</ol>
+      <h2>Allergens</h2><p>${allergens}</p>
+      </body></html>`;
+
+    // Hidden iframe avoids popup blockers and the blank-tab bug from
+    // window.open(..., 'noopener') which returns null and can't be written to.
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('title', `Print ${recipe.name}`);
+    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none';
+    document.body.appendChild(iframe);
+    const frameWindow = iframe.contentWindow;
+    const frameDoc = frameWindow?.document;
+    if (!frameWindow || !frameDoc) {
+      iframe.remove();
+      window.alert('Unable to prepare the print view.');
+      return;
+    }
+    frameDoc.open();
+    frameDoc.write(html);
+    frameDoc.close();
+    const cleanup = () => {
+      try { iframe.remove(); } catch { /* ignore */ }
+    };
+    const triggerPrint = () => {
+      try {
+        frameWindow.focus();
+        frameWindow.print();
+      } finally {
+        setTimeout(cleanup, 1000);
+      }
+    };
+    if (frameDoc.readyState === 'complete') triggerPrint();
+    else iframe.onload = () => triggerPrint();
   };
 
   const getStationStatusColor = (status: string) => {
@@ -349,8 +503,8 @@ export default function FoodBeverageKitchen({
           />
           {!fullPage && (
             <ModuleExpandButton
-              href="/kitchen/ops"
-              label="Open kitchen full page"
+              href={selectedTab === 'reports' ? '/kitchen/reports' : '/kitchen/ops'}
+              label={selectedTab === 'reports' ? 'Open reports full page' : 'Open kitchen full page'}
             />
           )}
         </div>
@@ -360,71 +514,79 @@ export default function FoodBeverageKitchen({
       {!fullPage && (!isHidden('activeOrders') || !isHidden('avgPrepTime') || !isHidden('kitchenEfficiency') || !isHidden('recipesOnFile')) && (
       <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
         {!isHidden('activeOrders') && (
-        <Card
-          isPressable
-          className="relative cursor-pointer border border-gray-200 shadow-none"
-          onPress={() => { setSelectedTab('kds'); openKitchenDisplay(); }}
-        >
-          <CardBody className="px-4 py-3 text-center">
-            <div className="absolute right-1.5 top-1 z-10" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+        <Card className="relative border border-gray-200 shadow-none">
+          <CardBody className="relative px-4 py-3 text-center">
+            <div className="absolute right-1.5 top-1 z-10">
               <HideCardButton onHide={() => hide('activeOrders')} label="Active Orders" />
             </div>
-            <div className="text-2xl font-semibold tabular-nums text-ghana-black">{stats.activeCount}</div>
-            <div className="text-sm leading-tight text-gray-500">Active Orders</div>
-            {stats.urgent > 0 && (
-              <div className="text-xs leading-tight text-blue-600">{stats.urgent} urgent</div>
-            )}
+            <button
+              type="button"
+              className="w-full cursor-pointer text-center"
+              onClick={() => { setSelectedTab('kds'); openKitchenDisplay(); }}
+            >
+              <div className="text-2xl font-semibold tabular-nums text-ghana-black">{stats.activeCount}</div>
+              <div className="text-sm leading-tight text-gray-500">Active Orders</div>
+              {stats.urgent > 0 && (
+                <div className="text-xs leading-tight text-blue-600">{stats.urgent} urgent</div>
+              )}
+            </button>
           </CardBody>
         </Card>
         )}
 
         {!isHidden('avgPrepTime') && (
-        <Card
-          isPressable
-          className="relative cursor-pointer border border-gray-200 shadow-none"
-          onPress={() => setSelectedTab('kds')}
-        >
-          <CardBody className="px-4 py-3 text-center">
-            <div className="absolute right-1.5 top-1 z-10" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+        <Card className="relative border border-gray-200 shadow-none">
+          <CardBody className="relative px-4 py-3 text-center">
+            <div className="absolute right-1.5 top-1 z-10">
               <HideCardButton onHide={() => hide('avgPrepTime')} label="Avg Prep Time" />
             </div>
-            <div className="text-2xl font-semibold tabular-nums text-ghana-black">{stats.avgPrep > 0 ? `${stats.avgPrep}min` : '—'}</div>
-            <div className="text-sm leading-tight text-gray-500">Avg Prep Time</div>
-            <div className="text-xs leading-tight text-green-600">{stats.servedToday} served today</div>
+            <button
+              type="button"
+              className="w-full cursor-pointer text-center"
+              onClick={() => setSelectedTab('kds')}
+            >
+              <div className="text-2xl font-semibold tabular-nums text-ghana-black">{stats.avgPrep > 0 ? `${stats.avgPrep}min` : '—'}</div>
+              <div className="text-sm leading-tight text-gray-500">Avg Prep Time</div>
+              <div className="text-xs leading-tight text-green-600">{stats.servedToday} served today</div>
+            </button>
           </CardBody>
         </Card>
         )}
 
         {!isHidden('kitchenEfficiency') && (
-        <Card
-          isPressable
-          className="relative cursor-pointer border border-gray-200 shadow-none"
-          onPress={() => setSelectedTab('stations')}
-        >
-          <CardBody className="px-4 py-3 text-center">
-            <div className="absolute right-1.5 top-1 z-10" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+        <Card className="relative border border-gray-200 shadow-none">
+          <CardBody className="relative px-4 py-3 text-center">
+            <div className="absolute right-1.5 top-1 z-10">
               <HideCardButton onHide={() => hide('kitchenEfficiency')} label="Kitchen Efficiency" />
             </div>
-            <div className="text-2xl font-semibold tabular-nums text-ghana-black">{avgEfficiency > 0 ? `${avgEfficiency}%` : '—'}</div>
-            <div className="text-sm leading-tight text-gray-500">Kitchen Efficiency</div>
-            <div className="text-xs leading-tight text-green-600">Live station load</div>
+            <button
+              type="button"
+              className="w-full cursor-pointer text-center"
+              onClick={() => setSelectedTab('stations')}
+            >
+              <div className="text-2xl font-semibold tabular-nums text-ghana-black">{avgEfficiency > 0 ? `${avgEfficiency}%` : '—'}</div>
+              <div className="text-sm leading-tight text-gray-500">Kitchen Efficiency</div>
+              <div className="text-xs leading-tight text-green-600">Live station load</div>
+            </button>
           </CardBody>
         </Card>
         )}
 
         {!isHidden('recipesOnFile') && (
-        <Card
-          isPressable
-          className="relative cursor-pointer border border-gray-200 shadow-none"
-          onPress={() => setSelectedTab('recipes')}
-        >
-          <CardBody className="px-4 py-3 text-center">
-            <div className="absolute right-1.5 top-1 z-10" onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+        <Card className="relative border border-gray-200 shadow-none">
+          <CardBody className="relative px-4 py-3 text-center">
+            <div className="absolute right-1.5 top-1 z-10">
               <HideCardButton onHide={() => hide('recipesOnFile')} label="Recipes on File" />
             </div>
-            <div className="text-2xl font-semibold tabular-nums text-ghana-black">{recipes.length}</div>
-            <div className="text-sm leading-tight text-gray-500">Recipes on File</div>
-            <div className="text-xs leading-tight text-gray-500">{inventoryItems.length} catalog items</div>
+            <button
+              type="button"
+              className="w-full cursor-pointer text-center"
+              onClick={() => setSelectedTab('recipes')}
+            >
+              <div className="text-2xl font-semibold tabular-nums text-ghana-black">{recipes.length}</div>
+              <div className="text-sm leading-tight text-gray-500">Recipes on File</div>
+              <div className="text-xs leading-tight text-gray-500">{inventoryItems.length} catalog items</div>
+            </button>
           </CardBody>
         </Card>
         )}
@@ -461,6 +623,7 @@ export default function FoodBeverageKitchen({
             <Tab key="supplies" title="📦 Supplies" />
             <Tab key="recipes" title="📖 Recipe Management" />
             <Tab key="staff" title="👥 Staff Management" />
+            <Tab key="reports" title="📈 Reports & Analysis" />
           </Tabs>
 
           <div className={deskBookTabPanelClassName}>
@@ -470,7 +633,7 @@ export default function FoodBeverageKitchen({
               </div>
             )}
 
-            {selectedTab === 'log' && <KitchenOpsLog />}
+            {selectedTab === 'log' && <KitchenOpsLog orders={liveOrders} />}
 
             {selectedTab === 'stations' && (
               <div className="space-y-4">
@@ -548,18 +711,12 @@ export default function FoodBeverageKitchen({
                 {suppliesView === 'stock-count' && <DepartmentStockCountPanel department="kitchen" />}
                 {suppliesView === 'requisitions' && (
                   <div className="space-y-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <h3 className="text-lg font-semibold text-ghana-black">Requisitions</h3>
-                      <Button color="success" className="bg-blue-500 text-white" onClick={() => setIsNewRequisitionModalOpen(true)}>
-                        + Request Stock
-                      </Button>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="mb-[18px] flex flex-wrap items-center gap-2">
                       <Select
                         aria-label="Filter requisitions by status"
                         placeholder="All statuses"
                         size="sm"
-                        className="w-44 shrink-0"
+                        className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
                         selectedKeys={[requisitionStatusFilter]}
                         onSelectionChange={(keys) => {
                           const next = Array.from(keys)[0] as string;
@@ -572,6 +729,11 @@ export default function FoodBeverageKitchen({
                         <SelectItem key="ready">Ready</SelectItem>
                         <SelectItem key="rejected">Rejected</SelectItem>
                       </Select>
+                      <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                        <Button size="sm" color="success" className="shrink-0 bg-blue-500 text-white" onClick={() => setIsNewRequisitionModalOpen(true)}>
+                          + Request Stock
+                        </Button>
+                      </div>
                     </div>
                     <div ref={requisitionCols.frameRef} style={requisitionCols.frameStyle}>
                       <Table aria-label="Kitchen requisitions table" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
@@ -635,84 +797,67 @@ export default function FoodBeverageKitchen({
 
             {selectedTab === 'recipes' && (
               <div className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="mb-[18px] flex flex-wrap items-center gap-2">
                   <h3 className="text-lg font-semibold text-ghana-black">Recipe Management</h3>
-                  <Button
-                    color="secondary"
-                    className="bg-ghana-gold text-white"
-                    onClick={openRecipeForm}
-                  >
-                    + Add Recipe
-                  </Button>
+                  <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                    <Button
+                      size="sm"
+                      color="secondary"
+                      className="shrink-0 bg-ghana-gold text-white"
+                      onClick={openRecipeForm}
+                    >
+                      + Add Recipe
+                    </Button>
+                  </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
                   {recipes.map((recipe) => (
-                    <Card key={recipe.id} className="border border-gray-200 hover:border-ghana-green transition-colors">
-                      <CardBody className="p-4">
-                        <div className="flex items-center justify-between mb-3">
-                          <h4 className="font-semibold text-ghana-black">{recipe.name}</h4>
-                          <Chip color={getDifficultyColor(recipe.difficulty)} size="sm">
-                            {recipe.difficulty.charAt(0).toUpperCase() + recipe.difficulty.slice(1)}
+                    <Card
+                      key={recipe.id}
+                      isPressable
+                      onPress={() => setViewingRecipe(recipe)}
+                      className={`cursor-pointer border transition-colors ${
+                        recipe.isActive === false
+                          ? 'border-dashed border-gray-300 opacity-70 hover:border-gray-400'
+                          : 'border-gray-200 hover:border-ghana-green'
+                      }`}
+                    >
+                      <CardBody className="gap-1.5 p-2.5">
+                        <div className="flex items-start justify-between gap-1">
+                          <h4 className="min-w-0 truncate text-sm font-semibold leading-tight text-ghana-black" title={recipe.name}>
+                            {recipe.name}
+                          </h4>
+                          <Chip
+                            color={recipe.isActive === false ? 'default' : getDifficultyColor(recipe.difficulty)}
+                            size="sm"
+                            className="h-5 shrink-0 text-[10px]"
+                          >
+                            {recipe.isActive === false ? 'Off' : recipe.difficulty.charAt(0).toUpperCase() + recipe.difficulty.slice(1)}
                           </Chip>
                         </div>
-                        <p className="text-sm text-gray-600 mb-3">{recipe.category}</p>
+                        <p className="truncate text-xs text-gray-500">{recipe.category}</p>
                         {recipe.menuItemId && (
-                          <p className="text-xs text-ghana-green mb-2">
-                            Deducts stock when{' '}
-                            {kitchenMenuItems.find((m) => m.id === recipe.menuItemId)?.name || 'linked dish'} is billed
+                          <p className="truncate text-[10px] leading-snug text-ghana-green" title={`Deducts stock when ${kitchenMenuItems.find((m) => m.id === recipe.menuItemId)?.name || 'linked dish'} is billed`}>
+                            Bills → {kitchenMenuItems.find((m) => m.id === recipe.menuItemId)?.name || 'linked dish'}
                           </p>
                         )}
-
-                        <div className="space-y-2 mb-3">
-                          <div className="flex items-center justify-between text-sm">
-                            <span>Prep Time:</span>
-                            <span className="font-medium">⏱️ {recipe.preparationTime}min</span>
-                          </div>
-                          <div className="flex items-center justify-between text-sm">
-                            <span>Ingredients:</span>
-                            <span className="font-medium">{recipe.ingredients.length} items</span>
-                          </div>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-gray-600">
+                          <span>⏱️ {recipe.preparationTime}m</span>
+                          <span>·</span>
+                          <span>{recipe.ingredients.length} ing.</span>
                         </div>
-
-                        <div className="mb-3">
-                          <p className="text-sm font-medium text-gray-700 mb-1">Key Ingredients:</p>
-                          <div className="flex flex-wrap gap-1">
-                            {recipe.ingredients.slice(0, 3).map((ingredient, index) => (
-                              <Chip key={index} size="sm" variant="flat" color="secondary">
-                                {ingredient.name}
-                              </Chip>
-                            ))}
-                            {recipe.ingredients.length > 3 && (
-                              <Chip size="sm" variant="flat" color="default">
-                                +{recipe.ingredients.length - 3} more
-                              </Chip>
-                            )}
-                          </div>
-                        </div>
-
-                        {recipe.allergens.length > 0 && recipe.allergens[0] !== 'None' && (
-                          <div className="mb-3">
-                            <p className="text-sm font-medium text-gray-700 mb-1">Allergens:</p>
-                            <div className="flex flex-wrap gap-1">
-                              {recipe.allergens.map((allergen, index) => (
-                                <Chip key={index} size="sm" variant="flat" color="warning">
-                                  {allergen}
-                                </Chip>
-                              ))}
-                            </div>
-                          </div>
+                        {recipe.ingredients.length > 0 && (
+                          <p className="truncate text-[10px] text-gray-500" title={recipe.ingredients.map((i) => i.name).join(', ')}>
+                            {recipe.ingredients.slice(0, 2).map((i) => i.name).join(', ')}
+                            {recipe.ingredients.length > 2 ? ` +${recipe.ingredients.length - 2}` : ''}
+                          </p>
                         )}
-
-                        <div className="flex gap-2">
-                          <Button size="sm" color="primary" variant="flat" onClick={() => setViewingRecipe(recipe)}>View Recipe</Button>
-                          <Button size="sm" color="danger" variant="flat" onClick={() => deleteRecipeById(recipe.id)}>Delete</Button>
-                        </div>
                       </CardBody>
                     </Card>
                   ))}
                   {recipes.length === 0 && (
-                    <div className="col-span-full text-center py-8">
-                      <p className="text-gray-500 mb-3">No recipes yet.</p>
+                    <div className="col-span-full py-8 text-center">
+                      <p className="mb-3 text-gray-500">No recipes yet.</p>
                     </div>
                   )}
                 </div>
@@ -727,14 +872,16 @@ export default function FoodBeverageKitchen({
                 helperText="HR staff in a Kitchen department. Restaurant & Bar has its own tab. Names come from the HR file — this tab does not invent staff."
               />
             )}
+
+            {selectedTab === 'reports' && <KitchenReportsAnalysis embedded />}
           </div>
         </CardBody>
       </Card>
 
       {/* New Recipe Modal */}
-      <Modal isOpen={isRecipeModalOpen} onClose={() => setIsRecipeModalOpen(false)} size="3xl" scrollBehavior="inside">
+      <Modal isOpen={isRecipeModalOpen} onClose={() => { setIsRecipeModalOpen(false); setEditingRecipeId(null); }} size="3xl" scrollBehavior="inside">
         <ModalContent>
-          <ModalHeader>Add New Recipe</ModalHeader>
+          <ModalHeader>{editingRecipeId ? 'Edit Recipe' : 'Add New Recipe'}</ModalHeader>
           <ModalBody>
             <p className="text-sm text-gray-500 -mt-1">
               Link a kitchen menu dish and pick stock SKUs for ingredients. When that dish is billed, linked ingredients deduct from Kitchen inventory (qty × portions sold).
@@ -822,11 +969,11 @@ export default function FoodBeverageKitchen({
             </div>
           </ModalBody>
           <ModalFooter>
-            <Button color="danger" variant="light" onPress={() => setIsRecipeModalOpen(false)}>
+            <Button color="danger" variant="light" onPress={() => { setIsRecipeModalOpen(false); setEditingRecipeId(null); }}>
               Cancel
             </Button>
             <Button color="primary" className="bg-ghana-green text-white" onPress={submitRecipe}>
-              Add Recipe
+              {editingRecipeId ? 'Save Changes' : 'Add Recipe'}
             </Button>
           </ModalFooter>
         </ModalContent>
@@ -842,65 +989,119 @@ export default function FoodBeverageKitchen({
       />
 
       {/* View Recipe Modal */}
-      <Modal isOpen={!!viewingRecipe} onClose={() => setViewingRecipe(null)} size="2xl">
+      <Modal isOpen={!!viewingRecipe} onClose={() => setViewingRecipe(null)} size="2xl" scrollBehavior="inside">
         <ModalContent>
-          <ModalHeader>{viewingRecipe?.name}</ModalHeader>
-          <ModalBody className="pb-6">
-            {viewingRecipe && (
-              <div className="space-y-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <Chip color={getDifficultyColor(viewingRecipe.difficulty)} size="sm">
-                    {viewingRecipe.difficulty.charAt(0).toUpperCase() + viewingRecipe.difficulty.slice(1)}
-                  </Chip>
-                  <span className="text-sm text-gray-600">{viewingRecipe.category}</span>
-                  <span className="text-sm text-gray-600">⏱️ {viewingRecipe.preparationTime}min</span>
-                  {viewingRecipe.menuItemId && (
-                    <Chip size="sm" variant="flat" color="primary">
-                      Menu:{' '}
-                      {kitchenMenuItems.find((m) => m.id === viewingRecipe.menuItemId)?.name
-                        || viewingRecipe.menuItemId}
-                    </Chip>
-                  )}
-                </div>
-                <div>
-                  <p className="font-medium text-ghana-black mb-1">Ingredients</p>
-                  <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
-                    {viewingRecipe.ingredients.map((ing, i) => (
-                      <li key={i}>
-                        {ing.quantity} {ing.unit} {ing.name}
-                        {ing.inventoryItemId ? ' · stock linked' : ''}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <p className="font-medium text-ghana-black mb-1">Instructions</p>
-                  <ol className="list-decimal list-inside text-sm text-gray-700 space-y-1">
-                    {viewingRecipe.instructions.map((step, i) => (
-                      <li key={i}>{step}</li>
-                    ))}
-                  </ol>
-                </div>
-                {viewingRecipe.allergens.length > 0 && (
-                  <div>
-                    <p className="font-medium text-ghana-black mb-1">Allergens</p>
-                    <div className="flex flex-wrap gap-1">
-                      {viewingRecipe.allergens.map((a, i) => (
-                        <Chip key={i} size="sm" variant="flat" color="warning">{a}</Chip>
-                      ))}
+          {(onClose) => (
+            <>
+              <ModalHeader className="flex flex-col gap-1">
+                <span>{viewingRecipe?.name}</span>
+                {viewingRecipe?.isActive === false && (
+                  <span className="text-xs font-normal text-warning">Deactivated — not used for new stock deducts</span>
+                )}
+              </ModalHeader>
+              <ModalBody className="pb-2">
+                {viewingRecipe && (
+                  <div className="space-y-4">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Chip color={getDifficultyColor(viewingRecipe.difficulty)} size="sm">
+                        {viewingRecipe.difficulty.charAt(0).toUpperCase() + viewingRecipe.difficulty.slice(1)}
+                      </Chip>
+                      <span className="text-sm text-gray-600">{viewingRecipe.category}</span>
+                      <span className="text-sm text-gray-600">⏱️ {viewingRecipe.preparationTime}min</span>
+                      {viewingRecipe.menuItemId && (
+                        <Chip size="sm" variant="flat" color="primary">
+                          Menu:{' '}
+                          {kitchenMenuItems.find((m) => m.id === viewingRecipe.menuItemId)?.name
+                            || viewingRecipe.menuItemId}
+                        </Chip>
+                      )}
                     </div>
+                    <div>
+                      <p className="font-medium text-ghana-black mb-1">Ingredients</p>
+                      <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+                        {viewingRecipe.ingredients.map((ing, i) => (
+                          <li key={i}>
+                            {ing.quantity} {ing.unit} {ing.name}
+                            {ing.inventoryItemId ? ' · stock linked' : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div>
+                      <p className="font-medium text-ghana-black mb-1">Instructions</p>
+                      <ol className="list-decimal list-inside text-sm text-gray-700 space-y-1">
+                        {viewingRecipe.instructions.map((step, i) => (
+                          <li key={i}>{step}</li>
+                        ))}
+                      </ol>
+                    </div>
+                    {viewingRecipe.allergens.length > 0 && (
+                      <div>
+                        <p className="font-medium text-ghana-black mb-1">Allergens</p>
+                        <div className="flex flex-wrap gap-1">
+                          {viewingRecipe.allergens.map((a, i) => (
+                            <Chip key={i} size="sm" variant="flat" color="warning">{a}</Chip>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
-            )}
-          </ModalBody>
+              </ModalBody>
+              <ModalFooter className="flex flex-wrap gap-2">
+                <Button size="sm" variant="light" onPress={onClose}>Close</Button>
+                <div className="flex flex-1 flex-wrap justify-end gap-2">
+                  <Button
+                    size="sm"
+                    variant="flat"
+                    onPress={() => viewingRecipe && printRecipe(viewingRecipe)}
+                  >
+                    Print
+                  </Button>
+                  <Button
+                    size="sm"
+                    color="primary"
+                    variant="flat"
+                    onPress={() => viewingRecipe && openEditRecipe(viewingRecipe)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    size="sm"
+                    color="warning"
+                    variant="flat"
+                    onPress={() => viewingRecipe && setRecipeActive(viewingRecipe, viewingRecipe.isActive === false)}
+                  >
+                    {viewingRecipe?.isActive === false ? 'Activate' : 'Deactivate'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    color="danger"
+                    variant="flat"
+                    onPress={() => viewingRecipe && deleteRecipeById(viewingRecipe.id)}
+                  >
+                    Delete
+                  </Button>
+                </div>
+              </ModalFooter>
+            </>
+          )}
         </ModalContent>
       </Modal>
     </div>
   );
 }
 
-function KitchenOpsLog() {
+function formatCookDuration(minutes?: number | null) {
+  if (minutes == null || !Number.isFinite(minutes)) return null;
+  const mins = Math.max(0, Math.round(minutes));
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function KitchenOpsLog({ orders = [] }: { orders?: FbOrderDto[] }) {
   const [rows, setRows] = React.useState<KitchenOpRecord[]>([]);
   const [query, setQuery] = React.useState('');
   const [actionFilter, setActionFilter] = React.useState<'all' | KitchenAction>('all');
@@ -926,6 +1127,12 @@ function KitchenOpsLog() {
     return kitchenOpsStore.subscribe(sync);
   }, []);
 
+  const findOrder = React.useCallback(
+    (row: KitchenOpRecord) =>
+      orders.find((o) => o.orderNumber === row.orderId || o.id === row.itemId || o.id === row.orderId),
+    [orders],
+  );
+
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     return rows.filter((r) => {
@@ -942,9 +1149,9 @@ function KitchenOpsLog() {
         r.toStatus,
         r.assignedToName,
         r.preparedByName,
+        r.waiterId,
         r.priority,
         r.notes,
-        r.id,
       ]
         .filter(Boolean)
         .join(' ')
@@ -1014,7 +1221,7 @@ function KitchenOpsLog() {
         </div>
       </div>
 
-      <div className="flex flex-nowrap items-center gap-2 overflow-x-auto">
+      <div className="mb-[18px] flex flex-wrap items-center gap-2">
         <Input
           aria-label="Search kitchen log"
           placeholder="Search order, item, cook…"
@@ -1023,13 +1230,13 @@ function KitchenOpsLog() {
           onValueChange={setQuery}
           isClearable
           onClear={() => setQuery('')}
-          className="w-56 shrink-0"
+          className="w-full max-w-full sm:w-56 sm:max-w-[14rem] shrink-0"
         />
         <Select
           aria-label="Filter by action"
           placeholder="All actions"
           size="sm"
-          className="w-40 shrink-0"
+          className="w-full max-w-full sm:w-40 sm:max-w-[10rem] shrink-0"
           selectedKeys={[actionFilter]}
           onSelectionChange={(keys) => {
             const next = Array.from(keys)[0] as string;
@@ -1045,7 +1252,7 @@ function KitchenOpsLog() {
           aria-label="Filter by priority"
           placeholder="All priorities"
           size="sm"
-          className="w-40 shrink-0"
+          className="w-full max-w-full sm:w-40 sm:max-w-[10rem] shrink-0"
           selectedKeys={[priorityFilter]}
           onSelectionChange={(keys) => {
             const next = Array.from(keys)[0] as string;
@@ -1150,6 +1357,39 @@ function KitchenOpsLog() {
                 </div>
               </ModalHeader>
               <ModalBody className="gap-4 py-4 overflow-x-hidden">
+                {(() => {
+                  const live = findOrder(selected);
+                  const orderedAt = selected.orderedAt || live?.createdAt || undefined;
+                  const cookingStartedAt =
+                    selected.cookingStartedAt || live?.preparingAt || undefined;
+                  const cookMins =
+                    selected.prepMinutes ??
+                    (live
+                      ? kitchenCookMinutes(live, selected.toStatus || live.status, selected.at)
+                      : undefined) ??
+                    (() => {
+                      const same = rows.filter((r) => r.orderId === selected.orderId);
+                      const startAt =
+                        cookingStartedAt ||
+                        same.find((r) => r.toStatus === 'preparing')?.at ||
+                        same.find((r) => r.action === 'assigned')?.at ||
+                        orderedAt;
+                      const endAt =
+                        selected.toStatus === 'ready' || selected.toStatus === 'served'
+                          ? selected.at
+                          : same.find((r) => r.toStatus === 'ready' || r.toStatus === 'served')?.at;
+                      if (!startAt || !endAt) return undefined;
+                      const ms = new Date(endAt).getTime() - new Date(startAt).getTime();
+                      if (!Number.isFinite(ms) || ms < 0) return undefined;
+                      return Math.round(ms / 60_000);
+                    })();
+                  const cookLabel = formatCookDuration(cookMins);
+                  const waiterName =
+                    selected.waiterId && !/^c[a-z0-9]{20,}$/i.test(selected.waiterId)
+                      ? selected.waiterId
+                      : live?.serverName || selected.waiterId || undefined;
+
+                  return (
                 <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-4">
                   <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
                     <div className="min-w-0">
@@ -1161,6 +1401,23 @@ function KitchenOpsLog() {
                     <div className="min-w-0">
                       <p className="text-xs text-gray-500">Table</p>
                       <p className="font-semibold text-ghana-black">{selected.table || '—'}</p>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs text-gray-500">Order came</p>
+                      <p className="font-medium text-ghana-black">
+                        {orderedAt ? new Date(orderedAt).toLocaleString() : '—'}
+                      </p>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs text-gray-500">Cook time</p>
+                      <p className="font-medium text-ghana-black">
+                        {cookLabel || '—'}
+                        {cookingStartedAt && !cookLabel ? (
+                          <span className="block text-[11px] font-normal text-gray-500">
+                            Started {new Date(cookingStartedAt).toLocaleTimeString()}
+                          </span>
+                        ) : null}
+                      </p>
                     </div>
                     {(selected.fromStatus || selected.toStatus) && (
                       <div className="min-w-0 col-span-2">
@@ -1196,22 +1453,18 @@ function KitchenOpsLog() {
                         </p>
                       </div>
                     )}
-                    {selected.waiterId && (
+                    {waiterName && (
                       <div className="min-w-0">
                         <p className="text-xs text-gray-500">Waiter</p>
-                        <p className="font-medium text-ghana-black truncate" title={selected.waiterId}>
-                          {selected.waiterId}
+                        <p className="font-medium text-ghana-black truncate" title={waiterName}>
+                          {waiterName}
                         </p>
-                      </div>
-                    )}
-                    {typeof selected.prepMinutes === 'number' && (
-                      <div className="min-w-0">
-                        <p className="text-xs text-gray-500">Prep time</p>
-                        <p className="font-medium text-ghana-black">{selected.prepMinutes} min</p>
                       </div>
                     )}
                   </div>
                 </div>
+                  );
+                })()}
 
                 {selected.notes ? (
                   <div>
@@ -1223,12 +1476,16 @@ function KitchenOpsLog() {
                 ) : null}
 
                 <details className="text-xs text-gray-500">
-                  <summary className="cursor-pointer select-none hover:text-ghana-black">Technical refs</summary>
-                  <div className="mt-2 space-y-1.5 rounded-lg border border-gray-100 bg-white p-3 font-mono break-all">
-                    <p><span className="text-gray-400">Log</span> {selected.id}</p>
-                    {selected.itemId ? <p><span className="text-gray-400">Item</span> {selected.itemId}</p> : null}
-                    {selected.assignedToId ? <p><span className="text-gray-400">Assignee id</span> {selected.assignedToId}</p> : null}
-                    {selected.preparedById ? <p><span className="text-gray-400">Prepared id</span> {selected.preparedById}</p> : null}
+                  <summary className="cursor-pointer select-none hover:text-ghana-black">More details</summary>
+                  <div className="mt-2 space-y-1.5 rounded-lg border border-gray-100 bg-white p-3 break-words">
+                    <p><span className="text-gray-400">Dish</span> {selected.itemName}</p>
+                    {selected.assignedToName ? (
+                      <p><span className="text-gray-400">Cook</span> {selected.assignedToName}</p>
+                    ) : null}
+                    {selected.preparedByName ? (
+                      <p><span className="text-gray-400">Finished by</span> {selected.preparedByName}</p>
+                    ) : null}
+                    <p><span className="text-gray-400">Event</span> {new Date(selected.at).toLocaleString()}</p>
                   </div>
                 </details>
               </ModalBody>

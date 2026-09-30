@@ -21,7 +21,7 @@ const ROWS: Array<{ key: keyof PosPolicy; title: string; help: React.ReactNode }
   {
     key: 'showMenuImages',
     title: 'POS: show menu photos',
-    help: <>Menu cards on the POS show the item&rsquo;s photo, where one was added in Menu &amp; Inventory. Off: every card shows a simple food or drink icon.</>,
+    help: <>Menu cards on the POS show the item&rsquo;s photo, where one was added in Menu &amp; Inventory. Off: cards show only name, category, and price.</>,
   },
 ];
 

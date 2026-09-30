@@ -27,7 +27,7 @@ export default function SubViewPills<T extends string>({
           role="tab"
           aria-selected={selected === view.key}
           onClick={() => onSelect(view.key)}
-          className={`min-h-9 flex-shrink-0 whitespace-nowrap rounded-md px-3 text-sm transition-colors ${
+          className={`min-h-11 flex-shrink-0 whitespace-nowrap rounded-md px-3 text-sm transition-colors ${
             selected === view.key
               ? 'bg-white font-semibold text-ghana-black shadow-sm'
               : 'text-gray-600 hover:bg-white/60 hover:text-ghana-black'

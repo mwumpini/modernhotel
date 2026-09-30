@@ -2,9 +2,11 @@
 
 /**
  * Shared client-side export helpers for the Accounting UI: CSV download and
- * print/PDF-preview popups. Previously copy-pasted verbatim across several
+ * print/PDF-preview. Previously copy-pasted verbatim across several
  * accounting components.
  */
+
+import { openHtmlPrintWindow } from '../../print/engine';
 
 /** Downloads `data` as a CSV file named `${filename}_<today>.csv`. */
 export function downloadCSV(
@@ -83,19 +85,10 @@ export function generatePdfHtml(title: string, content: string, footer?: string)
 }
 
 /**
- * Opens `html` in a new tab and triggers the print dialog once it loads.
- * If the popup is blocked (window.open returns null), alerts the user
- * instead of silently failing.
+ * Triggers the browser print dialog for `html` via a hidden iframe (same path
+ * as customer receipts). Avoids window.open pop-up blockers that made Print PDF
+ * look like a no-op when opened from nested modals.
  */
 export function openPrintPreview(html: string): void {
-  const win = window.open('', '_blank');
-  if (!win) {
-    if (typeof window !== 'undefined') {
-      window.alert('Pop-up blocked. Please allow pop-ups for this site to print or preview this document.');
-    }
-    return;
-  }
-  win.document.write(html);
-  win.document.close();
-  setTimeout(() => win.print(), 500);
+  openHtmlPrintWindow(html);
 }

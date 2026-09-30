@@ -93,6 +93,7 @@
 
 html {
   font-size: 15px;
+  overflow-x: clip;
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
@@ -147,12 +148,19 @@ html[data-font="serif"] body {
   color: var(--foreground);
 }
 
-/* HeroUI cards and shared surfaces */
+/* HeroUI outer panels (section cards) */
+.bg-content1,
 .card,
 [class*="Card"] {
-  background: var(--card-background);
+  background-color: var(--card-background);
   border-color: var(--card-border);
   color: var(--text-primary);
+}
+
+/* Inset tiles / metric boxes / tab strips — controlled by Theme → Light/Dark tiles */
+html[data-tiles="custom"] .bg-gray-50:not(.flex-1),
+html[data-tiles="custom"] .bg-gray-100 {
+  background-color: var(--tile-background);
 }
 
 .text-primary {
@@ -323,6 +331,25 @@ html[data-font="serif"] body {
   color: var(--text-primary);
 }
 
+.dark input::placeholder,
+.dark textarea::placeholder,
+[data-theme="dark"] input::placeholder,
+[data-theme="dark"] textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+/* Flat danger buttons (Remove on an invoice line) used a dim red on a
+   faint red wash, and disabled ones were also faded to half opacity. */
+.dark button[class~="bg-danger/20"],
+[data-theme="dark"] button[class~="bg-danger/20"] {
+  color: #f9a8d4;
+}
+.dark button[data-disabled="true"][class~="bg-danger/20"],
+[data-theme="dark"] button[data-disabled="true"][class~="bg-danger/20"] {
+  opacity: 1;
+}
+
 .dark .hover\:bg-gray-50:hover,
 .dark .hover\:bg-gray-100:hover,
 .dark .hover\:bg-slate-50:hover,
@@ -338,11 +365,95 @@ html[data-font="serif"] body {
 .dark .bg-green-50,
 .dark .bg-yellow-50,
 .dark .bg-red-50,
+.dark .bg-purple-50,
+.dark .bg-orange-50,
+.dark .bg-indigo-50,
+.dark .bg-amber-50,
 [data-theme="dark"] .bg-blue-50,
 [data-theme="dark"] .bg-green-50,
 [data-theme="dark"] .bg-yellow-50,
-[data-theme="dark"] .bg-red-50 {
-  background-color: color-mix(in srgb, var(--surface-elevated) 85%, currentColor 15%);
+[data-theme="dark"] .bg-red-50,
+[data-theme="dark"] .bg-purple-50,
+[data-theme="dark"] .bg-orange-50,
+[data-theme="dark"] .bg-indigo-50,
+[data-theme="dark"] .bg-amber-50 {
+  background-color: color-mix(in srgb, var(--surface-elevated) 82%, currentColor 18%);
+}
+
+/* Headings on those tinted panels were written for a light background
+   (purple-900 on purple-50). In dark mode the panel goes dark, so the
+   heading has to go light or it disappears. */
+.dark .text-purple-900,
+.dark .text-purple-800,
+[data-theme="dark"] .text-purple-900,
+[data-theme="dark"] .text-purple-800 {
+  color: #e9d5ff;
+}
+.dark .text-purple-700,
+[data-theme="dark"] .text-purple-700 {
+  color: #d8b4fe;
+}
+.dark .text-blue-900,
+.dark .text-blue-800,
+[data-theme="dark"] .text-blue-900,
+[data-theme="dark"] .text-blue-800 {
+  color: #dbeafe;
+}
+.dark .text-blue-700,
+[data-theme="dark"] .text-blue-700 {
+  color: #bfdbfe;
+}
+.dark .text-green-900,
+.dark .text-green-800,
+[data-theme="dark"] .text-green-900,
+[data-theme="dark"] .text-green-800 {
+  color: #d1fae5;
+}
+.dark .text-green-700,
+[data-theme="dark"] .text-green-700 {
+  color: #a7f3d0;
+}
+.dark .text-orange-700,
+[data-theme="dark"] .text-orange-700 {
+  color: #fed7aa;
+}
+.dark .text-yellow-700,
+[data-theme="dark"] .text-yellow-700 {
+  color: #fde68a;
+}
+.dark .text-indigo-700,
+[data-theme="dark"] .text-indigo-700 {
+  color: #c7d2fe;
+}
+.dark .text-amber-900,
+.dark .text-amber-800,
+[data-theme="dark"] .text-amber-900,
+[data-theme="dark"] .text-amber-800 {
+  color: #fde68a;
+}
+.dark .text-amber-700,
+.dark .text-amber-600,
+[data-theme="dark"] .text-amber-700,
+[data-theme="dark"] .text-amber-600 {
+  color: #fcd34d;
+}
+.dark .border-purple-200,
+[data-theme="dark"] .border-purple-200 {
+  border-color: #5a4570;
+}
+.dark .border-blue-200,
+[data-theme="dark"] .border-blue-200 {
+  border-color: #2d4d73;
+}
+.dark .border-green-200,
+[data-theme="dark"] .border-green-200 {
+  border-color: #2f6a48;
+}
+.dark .border-amber-200,
+.dark .border-amber-100,
+[data-theme="dark"] .border-amber-200,
+[data-theme="dark"] .border-amber-100 {
+  border-color: #7a5522;
 }
 
 /* Status tiles use bg-*-100, which stayed pale while the labels were lightened
@@ -370,6 +481,17 @@ html[data-font="serif"] body {
 .dark .bg-orange-100,
 [data-theme="dark"] .bg-orange-100 {
   background-color: #3a2a16;
+}
+.dark .bg-amber-100,
+[data-theme="dark"] .bg-amber-100 {
+  background-color: #3a2e16;
+}
+
+/* Switch knobs use bg-white. That remap turns the knob the same dark
+   gray as the track, so the off state disappears. */
+.dark span.z-10.bg-white.rounded-full.shadow-small,
+[data-theme="dark"] span.z-10.bg-white.rounded-full.shadow-small {
+  background-color: #f4f6f8;
 }
 
 .dark .border-green-300,
@@ -533,6 +655,131 @@ html[data-font="serif"] body {
 
   [data-theme="auto"] .hover\:bg-gray-100:hover {
     background-color: color-mix(in srgb, var(--surface-elevated) 80%, white 20%);
+  }
+}
+
+/* Narrow screens and browser zoom.
+   The work pane clips sideways overflow. Wide pieces (tables, tab strips,
+   filter rows) scroll inside their own box. Dialogs fit the screen and
+   scroll inside; under 640px they take the whole screen. Form grids that
+   are hard-coded to several columns stack until tablet width. */
+.work-pane,
+.work-pane * {
+  max-width: 100%;
+}
+.work-pane table,
+.work-pane table *,
+.work-pane .min-w-max,
+.work-pane .min-w-fit,
+.work-pane .overflow-x-auto > *,
+.work-pane .overflow-x-scroll > *,
+.work-pane .overflow-auto > * {
+  max-width: none;
+}
+.work-pane *:has(> table) {
+  overflow-x: auto;
+}
+.work-pane [data-slot="base"]:has(> [data-slot="tabList"]) {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+}
+.work-pane [data-slot="tabList"],
+.work-pane [role="tablist"] {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+@media (max-width: 1023px) {
+  .work-pane .flex.justify-between:has(h1, h2, h3, h4):not(.flex-nowrap):not(.flex-col) {
+    flex-wrap: wrap;
+    row-gap: 0.5rem;
+  }
+}
+
+@media (max-width: 767px) {
+  .work-pane .flex.items-center:has(input, textarea, select, [data-slot="trigger"]):not(.flex-nowrap):not(.flex-col) {
+    flex-wrap: wrap;
+    row-gap: 0.5rem;
+  }
+}
+
+/* Search and filter fields share the row and wrap to the pane, not the
+   browser width. The side pane makes the work area narrower than the window. */
+.work-pane .grid:not(.keep-cols):is(
+  :has(> .group [data-slot="input-wrapper"]),
+  :has(> .group [data-slot="trigger"]),
+  :has(> * > input),
+  :has(> * > select),
+  :has(> * > textarea)
+) {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12.5rem), 1fr));
+}
+
+.work-pane .flex:is(.flex-wrap, .sm\:flex-row):has([data-slot="input-wrapper"], [data-slot="trigger"]) {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+.work-pane .flex:is(.flex-wrap, .sm\:flex-row):has([data-slot="input-wrapper"], [data-slot="trigger"]) > :is(
+  .w-32, .w-36, .w-40, .w-44, .w-48, .w-56, .w-64, .w-full, .flex-1, .sm\:w-40, .sm\:w-44, .sm\:w-48, .sm\:w-56
+) {
+  flex: 1 1 9rem;
+  width: auto;
+  min-width: min(100%, 9rem);
+  max-width: 18rem;
+}
+
+/* Dialogs keep their own size, but never wider than the screen. Fields inside
+   share the row and wrap the same way page filters do. */
+[data-slot="wrapper"]:has(> [role="dialog"]) {
+  box-sizing: border-box;
+  padding-inline: 0.75rem;
+}
+[data-slot="wrapper"] > [role="dialog"] {
+  margin: 0.75rem 0;
+  max-height: calc(100dvh - 1.5rem);
+  overflow-y: auto;
+}
+[role="dialog"] > header {
+  flex-wrap: wrap;
+  row-gap: 0.35rem;
+  height: auto;
+}
+[role="dialog"] .grid:not(.keep-cols):is(
+  :has(> .group [data-slot="input-wrapper"]),
+  :has(> .group [data-slot="trigger"]),
+  :has(> * > input),
+  :has(> * > select),
+  :has(> * > textarea)
+) {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12.5rem), 1fr));
+}
+[role="dialog"] .flex:is(.flex-wrap, .sm\:flex-row, .md\:flex-row):has([data-slot="input-wrapper"], [data-slot="trigger"]) {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+[role="dialog"] .flex:is(.flex-wrap, .sm\:flex-row, .md\:flex-row):has([data-slot="input-wrapper"], [data-slot="trigger"]) > :is(
+  .w-32, .w-36, .w-40, .w-44, .w-48, .w-56, .w-64, .w-full, .flex-1, .sm\:w-40, .sm\:w-44, .sm\:w-48, .sm\:w-56
+) {
+  flex: 1 1 9rem;
+  width: auto;
+  min-width: min(100%, 9rem);
+  max-width: 18rem;
+}
+
+@media (max-width: 639px) {
+  [data-slot="wrapper"]:has(> [role="dialog"]) {
+    align-items: stretch;
+    justify-content: flex-start;
+    overflow: hidden;
+  }
+  [data-slot="wrapper"] > [role="dialog"] {
+    margin: 0;
+    max-width: 100%;
+    width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
   }
 }
 

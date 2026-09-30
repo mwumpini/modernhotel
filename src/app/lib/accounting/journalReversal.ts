@@ -21,9 +21,46 @@ export function hasReversalForEntry(journalEntries: JournalEntry[], originalEntr
   );
 }
 
+export const JOURNAL_REVERSAL_SOURCE = 'journal_reversal';
+
+export function findJournalReversal(journalEntries: JournalEntry[], originalEntryId: string): JournalEntry | undefined {
+  return journalEntries.find(
+    (entry) =>
+      entry.status === 'Posted' &&
+      entry.sourceModule === JOURNAL_REVERSAL_SOURCE &&
+      entry.sourceTransactionId === originalEntryId,
+  );
+}
+
+/** Post the opposite entry and leave the original posted, so the net is zero and the history stays. */
+export function postJournalReversal(
+  originalEntryId: string,
+  journalEntries: JournalEntry[],
+  addJournalEntry: (entry: JournalEntry) => void,
+  reason?: string,
+): { ok: true; reversal: JournalEntry } | { ok: false; error: string } {
+  const original = journalEntries.find((entry) => entry.id === originalEntryId);
+  if (!original) return { ok: false, error: 'Journal entry not found' };
+  if (original.status !== 'Posted') return { ok: false, error: 'Only a posted entry can be reversed' };
+  if (findJournalReversal(journalEntries, originalEntryId)) {
+    return { ok: false, error: 'This entry is already reversed' };
+  }
+  const periodCheck = assertPeriodNotClosed(journalEntries, new Date().toISOString());
+  if (!periodCheck.ok) return { ok: false, error: periodCheck.error };
+
+  const reversal = buildReversalJournalEntry(original, {
+    journalSeq: journalEntries.length,
+    reason: reason || `Reversal — ${original.description}`,
+    sourceModule: JOURNAL_REVERSAL_SOURCE,
+  });
+  if (!reversal) return { ok: false, error: 'Could not build reversal entry' };
+  addJournalEntry(reversal);
+  return { ok: true, reversal };
+}
+
 export function buildReversalJournalEntry(
   original: JournalEntry,
-  opts: { journalSeq: number; postedBy?: string; reason?: string },
+  opts: { journalSeq: number; postedBy?: string; reason?: string; sourceModule?: string },
 ): JournalEntry | null {
   if (original.status !== 'Posted') return null;
   if (hasReversalForEntry([], original.id)) {
@@ -60,7 +97,7 @@ export function buildReversalJournalEntry(
     createdAt: ts,
     updatedAt: ts,
     lines,
-    sourceModule: AR_AP_REVERSAL_SOURCE,
+    sourceModule: opts.sourceModule || AR_AP_REVERSAL_SOURCE,
     sourceTransactionId: original.id,
   };
 }

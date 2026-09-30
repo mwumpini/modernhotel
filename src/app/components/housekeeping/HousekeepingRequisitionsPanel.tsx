@@ -16,6 +16,7 @@ import {
 } from '@heroui/react';
 import { getClientTenantSubdomain } from '../../lib/api/clientTenant';
 import DepartmentRequisitionModal from '../inventory/DepartmentRequisitionModal';
+import { DateFilterPills, matchesDateFilter, useDateFilter } from '../fb/DateFilterPills';
 
 function hkHeaders() {
   return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
@@ -57,47 +58,56 @@ export default function HousekeepingRequisitionsPanel() {
   const [requisitions, setRequisitions] = useState<RequisitionRow[]>([]);
   const [statusFilter, setStatusFilter] = useState('all');
   const [open, setOpen] = useState(false);
+  const dates = useDateFilter();
 
   const reload = () => {
     fetch('/api/inventory/requisitions?department=housekeeping', { headers: hkHeaders() })
       .then((r) => (r.ok ? r.json() : { requisitions: [] }))
-      .then((data) => setRequisitions((data.requisitions || []).map((req: any) => ({
-        id: req.id,
-        requisitionNumber: req.requisitionNumber,
-        requestedBy: req.requestedBy,
-        requestedDate: new Date(req.requestedDate || req.createdAt),
-        status: req.status,
-        items: (req.items || []).map((it: any) => ({ itemName: it.itemName, quantity: Number(it.quantity) })),
-      }))));
+      .then((data) => {
+        setRequisitions((data.requisitions || []).map((req: any) => ({
+          id: req.id,
+          requisitionNumber: req.requisitionNumber,
+          requestedBy: req.requestedBy,
+          requestedDate: new Date(req.requestedDate || req.createdAt),
+          status: req.status,
+          items: (req.items || []).map((it: any) => ({ itemName: it.itemName, quantity: Number(it.quantity) })),
+        })));
+      })
+      .catch(() => setRequisitions([]));
   };
 
   useEffect(() => {
     fetch('/api/inventory/items', { headers: hkHeaders() })
       .then((r) => (r.ok ? r.json() : { items: [] }))
-      .then((data) => setCatalog((data.items || []).map((i: any) => ({
-        id: i.id,
-        code: i.code,
-        name: i.name,
-        defaultCost: Number(i.defaultCost || 0),
-      }))));
+      .then((data) => {
+        setCatalog((data.items || []).map((i: any) => ({
+          id: i.id,
+          code: i.code,
+          name: i.name,
+          defaultCost: Number(i.defaultCost || 0),
+        })));
+      })
+      .catch(() => setCatalog([]));
     reload();
   }, []);
 
   const visible = useMemo(() => {
-    const rows = statusFilter === 'all'
-      ? requisitions
-      : requisitions.filter((req) => req.status === statusFilter);
+    const rows = requisitions.filter((req) => {
+      if (statusFilter !== 'all' && req.status !== statusFilter) return false;
+      if (!matchesDateFilter(req.requestedDate, dates.mode, dates.single, dates.from, dates.to)) return false;
+      return true;
+    });
     return [...rows].sort((a, b) => b.requestedDate.getTime() - a.requestedDate.getTime());
-  }, [requisitions, statusFilter]);
+  }, [requisitions, statusFilter, dates.mode, dates.single, dates.from, dates.to]);
 
   return (
     <div className="space-y-3">
-      <div className="mb-[18px] flex flex-nowrap items-center justify-between gap-2 overflow-x-auto">
+      <div className="mb-[18px] flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-base font-semibold text-ghana-black shrink-0">Requisitions</h3>
-        <Button size="sm" color="primary" onPress={() => setOpen(true)} className="shrink-0">+ Request Stock</Button>
+        <Button size="sm" color="primary" onPress={() => setOpen(true)} className="min-h-10 shrink-0">+ Request Stock</Button>
       </div>
 
-      <div className="mb-[18px] flex flex-nowrap items-center gap-2 overflow-x-auto">
+      <div className="mb-[18px] flex flex-wrap items-center gap-2">
         <Select
           size="sm"
           placeholder="Filter by status"
@@ -106,7 +116,7 @@ export default function HousekeepingRequisitionsPanel() {
             const next = Array.from(keys)[0] as string;
             if (next) setStatusFilter(next);
           }}
-          className="w-44 shrink-0"
+          className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
         >
           <SelectItem key="all">🔍 All Statuses</SelectItem>
           <SelectItem key="pending">⏳ Pending</SelectItem>
@@ -117,6 +127,18 @@ export default function HousekeepingRequisitionsPanel() {
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-sm text-gray-600">Filtered:</span>
           <Badge color="primary" variant="flat">{visible.length}</Badge>
+        </div>
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <DateFilterPills
+            mode={dates.mode}
+            onMode={dates.setMode}
+            single={dates.single}
+            onSingle={dates.setSingle}
+            from={dates.from}
+            onFrom={dates.setFrom}
+            to={dates.to}
+            onTo={dates.setTo}
+          />
         </div>
       </div>
 

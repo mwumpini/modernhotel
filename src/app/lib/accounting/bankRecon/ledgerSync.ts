@@ -300,14 +300,14 @@ export const RECON_ITEM_TYPES: {
   effect: 'add' | 'deduct';
   hint: string;
 }[] = [
-  { type: 'DEPOSIT_IN_TRANSIT', label: 'Deposit in transit', side: 'bank', effect: 'add', hint: 'In books, not yet on statement' },
-  { type: 'OUTSTANDING_CHEQUE', label: 'Outstanding cheque', side: 'bank', effect: 'deduct', hint: 'Issued, not yet cleared' },
-  { type: 'BANK_ERROR_ADD', label: 'Bank error (add)', side: 'bank', effect: 'add', hint: 'Bank understated balance' },
-  { type: 'BANK_ERROR_DEDUCT', label: 'Bank error (deduct)', side: 'bank', effect: 'deduct', hint: 'Bank overstated balance' },
-  { type: 'BANK_CREDIT_NOT_IN_BOOK', label: 'Bank credit not in cashbook', side: 'book', effect: 'add', hint: 'Interest, direct credit — posts to GL' },
-  { type: 'BANK_CHARGE_NOT_IN_BOOK', label: 'Bank charge not in cashbook', side: 'book', effect: 'deduct', hint: 'Fees — posts to GL' },
-  { type: 'BOOK_ERROR_ADD', label: 'Cashbook error (add)', side: 'book', effect: 'add', hint: 'Understated receipt — posts to GL' },
-  { type: 'BOOK_ERROR_DEDUCT', label: 'Cashbook error (deduct)', side: 'book', effect: 'deduct', hint: 'Overstated receipt — posts to GL' },
+  { type: 'DEPOSIT_IN_TRANSIT', label: 'Deposit not yet on statement', side: 'bank', effect: 'add', hint: 'You recorded it; the bank has not shown it yet' },
+  { type: 'OUTSTANDING_CHEQUE', label: 'Cheque not yet cleared', side: 'bank', effect: 'deduct', hint: 'You issued it; the bank has not cleared it yet' },
+  { type: 'BANK_ERROR_ADD', label: 'Bank mistake (add)', side: 'bank', effect: 'add', hint: 'Bank statement is too low' },
+  { type: 'BANK_ERROR_DEDUCT', label: 'Bank mistake (subtract)', side: 'bank', effect: 'deduct', hint: 'Bank statement is too high' },
+  { type: 'BANK_CREDIT_NOT_IN_BOOK', label: 'Bank credit not in books', side: 'book', effect: 'add', hint: 'Interest or direct credit on the statement — will post to GL' },
+  { type: 'BANK_CHARGE_NOT_IN_BOOK', label: 'Bank fee not in books', side: 'book', effect: 'deduct', hint: 'Fee on the statement — will post to GL' },
+  { type: 'BOOK_ERROR_ADD', label: 'Book mistake (add)', side: 'book', effect: 'add', hint: 'Books understated a receipt — will post to GL' },
+  { type: 'BOOK_ERROR_DEDUCT', label: 'Book mistake (subtract)', side: 'book', effect: 'deduct', hint: 'Books overstated a receipt — will post to GL' },
 ];
 
 export const BANK_SIDE_TYPES = RECON_ITEM_TYPES.filter((t) => t.side === 'bank');

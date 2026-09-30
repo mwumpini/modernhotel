@@ -29,6 +29,7 @@ import BooksTaxes from './accounting/BooksTaxes';
 import AccountsReceivable from './accounting/AccountsReceivable';
 import InventoryFixedAssets from './accounting/InventoryFixedAssets';
 import FinancialReports from './accounting/FinancialReports';
+import ReportsAnalysis from './accounting/ReportsAnalysis';
 import JournalRegister from './accounting/JournalRegister';
 import AuditControls from './accounting/AuditControls';
 import CostRevenueCenters from './accounting/CostRevenueCenters';
@@ -208,7 +209,7 @@ export default function AccountingMainDashboard({
     [payments, todayStr]
   );
   // Tabs hidden entirely when leanMode is on (see the `!leanMode && <Tab .../>` guards below).
-  const LEAN_HIDDEN_TABS = new Set(['accounts', 'banking', 'assets', 'reports', 'audit', 'cost-centers']);
+  const LEAN_HIDDEN_TABS = new Set(['accounts', 'banking', 'assets', 'statements', 'reports', 'audit', 'cost-centers']);
   const goToTab = (key: string) => setSelectedTab(leanMode && LEAN_HIDDEN_TABS.has(key) ? 'receivables' : key);
 
   const handleQuickAction = (action: string) => {
@@ -222,7 +223,7 @@ export default function AccountingMainDashboard({
         goToTab('receivables');
         break;
       case 'run_reports':
-        goToTab('reports');
+        goToTab('statements');
         break;
       case 'audit_check':
         goToTab('audit');
@@ -267,7 +268,7 @@ export default function AccountingMainDashboard({
                     <HideCardButton onHide={() => hide('cashBank')} label="Cash & Bank Position" />
                   </div>
                 </div>
-                <div className="text-3xl font-bold text-blue-600 mb-3">{fmt(totalBankCash)}</div>
+                <div className="mb-3 whitespace-nowrap text-2xl font-bold tabular-nums text-blue-600 xl:text-3xl">{fmt(totalBankCash)}</div>
                 <div className="space-y-1 text-sm text-gray-600">
                   <div className="flex justify-between">
                     <span>Total Bank &amp; Cash</span>
@@ -300,7 +301,7 @@ export default function AccountingMainDashboard({
                     <HideCardButton onHide={() => hide('profitability')} label="Profitability" />
                   </div>
                 </div>
-                <div className={`text-3xl font-bold mb-3 ${netIncome >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmt(netIncome)}</div>
+                <div className={`mb-3 whitespace-nowrap text-2xl font-bold tabular-nums xl:text-3xl ${netIncome >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmt(netIncome)}</div>
                 <div className="space-y-1 text-sm text-gray-600">
                   <div className="flex justify-between">
                     <span>Revenue</span>
@@ -416,9 +417,9 @@ export default function AccountingMainDashboard({
                   className="h-24 flex flex-col items-center justify-center gap-2 p-4"
                   onClick={() => handleQuickAction('run_reports')}
                 >
-                  <span className="text-2xl">📊</span>
-                  <span className="font-medium">Run Reports</span>
-                  <span className="text-xs text-center opacity-80">Generate financial reports</span>
+                  <span className="text-2xl">📑</span>
+                  <span className="font-medium">Statements</span>
+                  <span className="text-xs text-center opacity-80">P&L, balance sheet, cash flow</span>
                 </Button>
               </div>
             </CardBody>
@@ -453,7 +454,7 @@ export default function AccountingMainDashboard({
                 )}
 
                 {!leanMode && (
-                <Tab key="assets" title="🏗️ PPE & Assets">
+                <Tab key="assets" title="PPE & Assets">
                   <InventoryFixedAssets />
                 </Tab>
                 )}
@@ -462,30 +463,36 @@ export default function AccountingMainDashboard({
                   <BooksTaxes />
                 </Tab>
 
-                <Tab key="journal" title="📒 Journal">
+                <Tab key="journal" title="Journal">
                   <JournalRegister />
                 </Tab>
 
                 {!leanMode && (
-                <Tab key="reports" title="📈 Reports & Analysis">
+                <Tab key="statements" title="Statements">
                   <FinancialReports />
                 </Tab>
                 )}
 
                 {!leanMode && (
-                <Tab key="audit" title="🔍 Audit Controls">
+                <Tab key="reports" title="Reports">
+                  <ReportsAnalysis />
+                </Tab>
+                )}
+
+                {!leanMode && (
+                <Tab key="audit" title="Activity log">
                   <AuditControls />
                 </Tab>
                 )}
 
                 {!leanMode && (
-                <Tab key="accounts" title="📊 Chart of Accounts">
+                <Tab key="accounts" title="Books">
                   <ChartOfAccounts />
                 </Tab>
                 )}
 
                 {!leanMode && (
-                <Tab key="cost-centers" title="🏷️ Cost & Revenue Centers">
+                <Tab key="cost-centers" title="Cost & Income">
                   <CostRevenueCenters />
                 </Tab>
                 )}

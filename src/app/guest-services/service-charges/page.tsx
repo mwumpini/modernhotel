@@ -40,6 +40,7 @@ import { buildOrgProfile } from '../../lib/print/buildOrgProfile';
 import { computeChargeTax } from '../../lib/frontoffice/helpers/folio';
 import { formatMoney } from '../../lib/format/currency';
 import { localStayDay } from '../../lib/frontoffice/stayWorksheet';
+import { DateFilterPills } from '../../components/fb/DateFilterPills';
 const SERVICE_TAX_CATEGORIES = [
   { key: 'SERVICE', label: 'Standard sales tax' },
   { key: 'FOOD', label: 'Food & beverage' },
@@ -605,71 +606,59 @@ export default function ServiceChargesPage() {
         </div>
       </div>
 
-      {/* Filters */}
-      <Card>
-        <CardBody>
-          <div className="flex flex-wrap items-center gap-3">
-            <Input
-              placeholder="Search guest, room, or charge..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-64"
-              startContent={<span className="text-gray-400">🔍</span>}
-            />
-            <Select
-              aria-label="Filter by status"
-              selectedKeys={new Set([statusFilter])}
-              onSelectionChange={(keys) => setStatusFilter(Array.from(keys as Set<string>)[0] || 'all')}
-              className="w-40"
-            >
-              <SelectItem key="all">All Statuses</SelectItem>
-              <SelectItem key="pending">Pending</SelectItem>
-              <SelectItem key="approved">Approved</SelectItem>
-              <SelectItem key="billed">Billed</SelectItem>
-              <SelectItem key="paid">Paid</SelectItem>
-            </Select>
-            <Select
-              aria-label="Filter by category"
-              selectedKeys={new Set([categoryFilter])}
-              onSelectionChange={(keys) => setCategoryFilter(Array.from(keys as Set<string>)[0] || 'all')}
-              className="w-44"
-            >
-              {[
-                <SelectItem key="all">All Categories</SelectItem>,
-                ...categories.map(category =>
-                  <SelectItem key={category} textValue={category}>
-                    {category}
-                  </SelectItem>
-                ),
-              ]}
-            </Select>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium text-gray-500">📅 Charge Date:</span>
-            {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
-              const labels: Record<string, string> = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
-              return (
-                <button key={mode} onClick={() => setDateFilterMode(mode)}
-                  className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${dateFilterMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
-                >{labels[mode]}</button>
-              );
-            })}
-            {dateFilterMode === 'specific' && (
-              <input type="date" value={dateFilterSingle} onChange={(e) => setDateFilterSingle(e.target.value)}
-                className="ml-2 px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-            )}
-            {dateFilterMode === 'range' && (
-              <div className="flex items-center gap-2 ml-2">
-                <input type="date" value={dateFilterFrom} onChange={(e) => setDateFilterFrom(e.target.value)}
-                  className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                <span className="text-gray-400 text-sm">→</span>
-                <input type="date" value={dateFilterTo} onChange={(e) => setDateFilterTo(e.target.value)}
-                  className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-              </div>
-            )}
-          </div>
-          </div>
-        </CardBody>
-      </Card>
+      {/* Filters — wrap on phone / zoom; date → Select under lg */}
+      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+        <Input
+          size="sm"
+          aria-label="Search service charges"
+          placeholder="Search guest, room, or charge..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="w-full max-w-full sm:w-64 sm:max-w-[16rem] shrink-0"
+          startContent={<span className="text-gray-400">🔍</span>}
+        />
+        <Select
+          size="sm"
+          aria-label="Filter by status"
+          selectedKeys={new Set([statusFilter])}
+          onSelectionChange={(keys) => setStatusFilter(Array.from(keys as Set<string>)[0] || 'all')}
+          className="w-full max-w-full sm:w-40 sm:max-w-[10rem] shrink-0"
+        >
+          <SelectItem key="all">All Statuses</SelectItem>
+          <SelectItem key="pending">Pending</SelectItem>
+          <SelectItem key="approved">Approved</SelectItem>
+          <SelectItem key="billed">Billed</SelectItem>
+          <SelectItem key="paid">Paid</SelectItem>
+        </Select>
+        <Select
+          size="sm"
+          aria-label="Filter by category"
+          selectedKeys={new Set([categoryFilter])}
+          onSelectionChange={(keys) => setCategoryFilter(Array.from(keys as Set<string>)[0] || 'all')}
+          className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
+        >
+          {[
+            <SelectItem key="all">All Categories</SelectItem>,
+            ...categories.map(category =>
+              <SelectItem key={category} textValue={category}>
+                {category}
+              </SelectItem>
+            ),
+          ]}
+        </Select>
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <DateFilterPills
+            mode={dateFilterMode}
+            onMode={setDateFilterMode}
+            single={dateFilterSingle}
+            onSingle={setDateFilterSingle}
+            from={dateFilterFrom}
+            onFrom={setDateFilterFrom}
+            to={dateFilterTo}
+            onTo={setDateFilterTo}
+          />
+        </div>
+      </div>
 
       {/* Payment Summary — totals reflect the active filter so cards match table rows */}
       {hiddenStatsCount < SERVICE_CHARGES_DASHBOARD_SECTIONS.length && (
@@ -731,7 +720,7 @@ export default function ServiceChargesPage() {
 
       {/* Service Charges Table */}
       <Card className="min-w-0 overflow-hidden border-0 shadow-lg">
-        <CardBody className="overflow-x-hidden px-2 py-3">
+        <CardBody className="px-2 py-3">
           <Table
             aria-label="Service charges table"
             removeWrapper

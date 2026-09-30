@@ -26,6 +26,17 @@ export const FO_RESERVATIONS_KPI_SECTIONS: DashboardSectionDef[] = [
   { id: 'res.pending', label: 'Pending' },
 ];
 
+export const FO_ROOMS_KPI_SECTIONS: DashboardSectionDef[] = [
+  { id: 'rooms.occupied', label: 'Occupied' },
+  { id: 'rooms.reserved', label: 'Reserved' },
+  { id: 'rooms.vacant', label: 'Vacant' },
+  { id: 'rooms.dirty', label: 'Dirty' },
+  { id: 'rooms.clean', label: 'Clean' },
+  { id: 'rooms.inspected', label: 'Inspected' },
+  { id: 'rooms.outOfOrder', label: 'Out of Order' },
+  { id: 'rooms.maintenance', label: 'Maintenance' },
+];
+
 export const FO_DESK_KPI_SECTIONS: DashboardSectionDef[] = [
   { id: 'desk.totalCharges', label: 'Total Charges (incl. tax)' },
   { id: 'desk.paidAmount', label: 'Paid Amount (incl. tax)' },
@@ -50,6 +61,7 @@ export const FO_INVOICES_KPI_SECTIONS: DashboardSectionDef[] = [
 export const ALL_FO_DESK_SECTIONS: DashboardSectionDef[] = [
   ...FO_OVERVIEW_SECTIONS,
   ...FO_RESERVATIONS_KPI_SECTIONS,
+  ...FO_ROOMS_KPI_SECTIONS,
   ...FO_DESK_KPI_SECTIONS,
   ...FO_SERVICE_CHARGES_KPI_SECTIONS,
   ...FO_INVOICES_KPI_SECTIONS,
@@ -57,6 +69,7 @@ export const ALL_FO_DESK_SECTIONS: DashboardSectionDef[] = [
 
 export const FO_KPI_SECTIONS_BY_TAB: Record<string, DashboardSectionDef[]> = {
   reservations: FO_RESERVATIONS_KPI_SECTIONS,
+  rooms: FO_ROOMS_KPI_SECTIONS,
   desk: FO_DESK_KPI_SECTIONS,
   servicecharges: FO_SERVICE_CHARGES_KPI_SECTIONS,
   billing: FO_INVOICES_KPI_SECTIONS,

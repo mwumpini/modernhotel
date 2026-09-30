@@ -221,16 +221,33 @@ export function buildPurchaseInvoiceJournalEntry(
   }
 
   if (tax > 0.005) {
-    lines.push({
-      id: jl(),
-      journalEntryId: entryId,
-      accountCode: GL.VAT,
-      description: `Input VAT — ${invoice.invoiceNumber}`,
-      debit: tax,
-      credit: 0,
-      currency: invoice.currency || 'GHS',
-      reference: invoice.invoiceNumber,
-    });
+    const claimInput = invoice.claimInputTax !== false;
+    if (claimInput) {
+      lines.push({
+        id: jl(),
+        journalEntryId: entryId,
+        accountCode: GL.VAT,
+        description: `Input VAT — ${invoice.invoiceNumber}`,
+        debit: tax,
+        credit: 0,
+        currency: invoice.currency || 'GHS',
+        reference: invoice.invoiceNumber,
+      });
+    } else {
+      // Non-claimable purchase tax — cost of the bill, not input VAT to reclaim.
+      const costGl = expenseLines[0]?.glAccountCode || GL.EXPENSE;
+      lines.push({
+        id: jl(),
+        journalEntryId: entryId,
+        accountCode: costGl,
+        description: `Non-claimable tax — ${invoice.invoiceNumber}`,
+        debit: tax,
+        credit: 0,
+        currency: invoice.currency || 'GHS',
+        reference: invoice.invoiceNumber,
+        costCenter: expenseLines[0]?.costCenter,
+      });
+    }
   }
 
   lines.push({

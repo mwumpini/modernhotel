@@ -6,6 +6,7 @@ import { worksheetTableClassNames } from './frontoffice/StayWorksheetTable';
 import { sizedTableClassNames, useResizableColumns } from './frontoffice/columnResize';
 import { ordersStore, type FBOrder, type OrderItem } from '../lib/fb/ordersStore';
 import { lineTicket, parseTicketTag } from '../lib/fb/ticketTag';
+import { DateFilterPills, type DateMode } from './fb/DateFilterPills';
 
 const deskTableClassNames = {
   ...worksheetTableClassNames,
@@ -15,7 +16,6 @@ const deskTableClassNames = {
 
 type ColumnSort = { column: string; direction: 'asc' | 'desc' };
 type ActivityQueue = 'all' | 'pending-kot' | 'pending-bot' | 'unpaid' | 'billed' | 'cancelled';
-type DateMode = 'all' | 'today' | 'specific' | 'range';
 
 type ActivityRow = { order: FBOrder; item: OrderItem };
 
@@ -74,7 +74,7 @@ function lineStatus(order: FBOrder, item: OrderItem) {
 }
 
 function lineOpen(status: string) {
-  return status !== 'served' && status !== 'billed' && status !== 'paid' && status !== 'cancelled';
+  return status !== 'served' && status !== 'billed' && status !== 'paid' && status !== 'cancelled' && status !== 'void';
 }
 
 function inQueue(queue: ActivityQueue, order: FBOrder, item: OrderItem) {
@@ -85,7 +85,7 @@ function inQueue(queue: ActivityQueue, order: FBOrder, item: OrderItem) {
   if (queue === 'pending-bot') return route === 'bar' && lineOpen(status);
   if (queue === 'unpaid') return status === 'served' || status === 'ready';
   if (queue === 'billed') return status === 'billed' || status === 'paid';
-  return status === 'cancelled';
+  return status === 'cancelled' || status === 'void';
 }
 
 function statusColor(status: string): 'warning' | 'primary' | 'success' | 'danger' | 'default' | 'secondary' {
@@ -93,12 +93,13 @@ function statusColor(status: string): 'warning' | 'primary' | 'success' | 'dange
   if (status === 'preparing') return 'primary';
   if (status === 'ready') return 'secondary';
   if (status === 'served' || status === 'billed' || status === 'paid') return 'success';
-  if (status === 'cancelled') return 'danger';
+  if (status === 'cancelled' || status === 'void') return 'danger';
   return 'default';
 }
 
 function statusLabel(status: string) {
   if (!status) return '—';
+  if (status === 'cancelled') return 'Void';
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
@@ -115,7 +116,11 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 
-export default function FoodBeveragePosActivity() {
+export default function FoodBeveragePosActivity({
+  onEditInPos,
+}: {
+  onEditInPos?: (orderId: string) => void;
+} = {}) {
   const [query, setQuery] = useState('');
   const [queue, setQueue] = useState<ActivityQueue>('all');
   const [staff, setStaff] = useState('everyone');
@@ -207,8 +212,7 @@ export default function FoodBeveragePosActivity() {
     <div className="px-2 pb-2">
       <Card className="border-0 shadow-lg">
         <CardBody className="px-2 py-3">
-          <div className="mb-[18px] flex w-full items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="mb-[18px] flex flex-wrap items-center gap-2">
             <Input
               aria-label="Search transactions"
               placeholder="Search ticket, item, table"
@@ -223,7 +227,7 @@ export default function FoodBeveragePosActivity() {
                 setQuery('');
                 setPage(1);
               }}
-              className="w-56 shrink-0"
+              className="w-full max-w-full sm:w-56 sm:max-w-[14rem] shrink-0"
             />
             <Select
               aria-label="Queue"
@@ -237,14 +241,14 @@ export default function FoodBeveragePosActivity() {
                   setPage(1);
                 }
               }}
-              className="w-44 shrink-0"
+              className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
             >
               <SelectItem key="all">All activity</SelectItem>
               <SelectItem key="pending-kot">Pending KOT</SelectItem>
               <SelectItem key="pending-bot">Pending BOT</SelectItem>
               <SelectItem key="unpaid">Unpaid</SelectItem>
               <SelectItem key="billed">Billed</SelectItem>
-              <SelectItem key="cancelled">Cancelled</SelectItem>
+              <SelectItem key="cancelled">Voided</SelectItem>
             </Select>
             <Select
               aria-label="Staff"
@@ -258,7 +262,7 @@ export default function FoodBeveragePosActivity() {
                   setPage(1);
                 }
               }}
-              className="w-44 shrink-0"
+              className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
             >
               {[
                 <SelectItem key="everyone">All staff</SelectItem>,
@@ -267,71 +271,29 @@ export default function FoodBeveragePosActivity() {
                 )),
               ]}
             </Select>
-            </div>
-            <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
-              <span className="text-sm font-medium text-gray-500 mr-1">📅 Date:</span>
-              {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
-                const labels: Record<DateMode, string> = {
-                  all: 'All Dates',
-                  today: 'Today',
-                  specific: 'Specific Date',
-                  range: 'Date Range',
-                };
-                return (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => {
-                      setDateMode(mode);
-                      setPage(1);
-                    }}
-                    className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
-                      dateMode === mode
-                        ? 'bg-blue-600 text-white border-blue-600'
-                        : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
-                    }`}
-                  >
-                    {labels[mode]}
-                  </button>
-                );
-              })}
-              {dateMode === 'specific' && (
-                <input
-                  type="date"
-                  aria-label="Specific date"
-                  value={dateSingle}
-                  onChange={(event) => {
-                    setDateSingle(event.target.value);
-                    setPage(1);
-                  }}
-                  className="ml-2 px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-              )}
-              {dateMode === 'range' && (
-                <div className="flex items-center gap-2 ml-2">
-                  <input
-                    type="date"
-                    aria-label="From date"
-                    value={dateFrom}
-                    onChange={(event) => {
-                      setDateFrom(event.target.value);
-                      setPage(1);
-                    }}
-                    className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
-                  <span className="text-gray-400 text-sm">→</span>
-                  <input
-                    type="date"
-                    aria-label="To date"
-                    value={dateTo}
-                    onChange={(event) => {
-                      setDateTo(event.target.value);
-                      setPage(1);
-                    }}
-                    className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
-                </div>
-              )}
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+              <DateFilterPills
+                mode={dateMode}
+                onMode={(next) => {
+                  setDateMode(next);
+                  setPage(1);
+                }}
+                single={dateSingle}
+                onSingle={(value) => {
+                  setDateSingle(value);
+                  setPage(1);
+                }}
+                from={dateFrom}
+                onFrom={(value) => {
+                  setDateFrom(value);
+                  setPage(1);
+                }}
+                to={dateTo}
+                onTo={(value) => {
+                  setDateTo(value);
+                  setPage(1);
+                }}
+              />
             </div>
           </div>
           <div ref={activityCols.frameRef} style={activityCols.frameStyle}>
@@ -393,7 +355,11 @@ export default function FoodBeveragePosActivity() {
           </div>
         </CardBody>
       </Card>
-      <TransactionDialog opened={opened} onClose={() => setOpenLine(null)} />
+      <TransactionDialog
+        opened={opened}
+        onClose={() => setOpenLine(null)}
+        onEditInPos={onEditInPos}
+      />
     </div>
   );
 }
@@ -401,9 +367,11 @@ export default function FoodBeveragePosActivity() {
 function TransactionDialog({
   opened,
   onClose,
+  onEditInPos,
 }: {
   opened: { order: FBOrder; item: OrderItem } | null;
   onClose: () => void;
+  onEditInPos?: (orderId: string) => void;
 }) {
   const order = opened?.order;
   const item = opened?.item;
@@ -414,87 +382,215 @@ function TransactionDialog({
   const orderTotal = order
     ? order.items.reduce((sum, line) => sum + (line.price || 0) * (line.qty || 0), 0)
     : 0;
+  const lineState = order && item ? lineStatus(order, item) : '';
+  const isVoided = lineState === 'cancelled' || lineState === 'void';
+  const isBilled = lineState === 'billed' || lineState === 'paid';
+
+  const [caution, setCaution] = useState<null | {
+    kind: 'void' | 'delete';
+    title: string;
+    message: string;
+    confirmLabel: string;
+  }>(null);
+
+  React.useEffect(() => {
+    if (!opened) setCaution(null);
+  }, [opened?.order.id, opened?.item.id]);
+
+  const persistOrderCancel = async (orderId: string, reason: string) => {
+    try {
+      const { getClientTenantSubdomain } = await import('../lib/api/clientTenant');
+      const tenant = getClientTenantSubdomain();
+      if (!tenant) return;
+      await fetch(`/api/fb/orders/${orderId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-tenant-subdomain': tenant },
+        body: JSON.stringify({ status: 'cancelled', cancelReason: reason }),
+      });
+    } catch {
+      /* local store already updated */
+    }
+  };
+
+  const startEditInPos = () => {
+    if (!order || isVoided || isBilled) return;
+    onClose();
+    onEditInPos?.(order.id);
+  };
+
+  const askVoid = () => {
+    if (!order || !item || isVoided) return;
+    setCaution({
+      kind: 'void',
+      title: 'Void this line?',
+      message: `${item.name} on ${ticket || order.orderNumber || order.id} stays on file as Void. It will no longer count toward sales.`,
+      confirmLabel: 'Void line',
+    });
+  };
+
+  const askDelete = () => {
+    if (!order || !item) return;
+    setCaution({
+      kind: 'delete',
+      title: 'Delete this line?',
+      message: `${item.name} on ${ticket || order.orderNumber || order.id} will be permanently removed. This cannot be undone.`,
+      confirmLabel: 'Delete line',
+    });
+  };
+
+  const confirmCaution = () => {
+    if (!caution || !order || !item) return;
+    const kind = caution.kind;
+    setCaution(null);
+
+    if (kind === 'void') {
+      ordersStore.updateItem(order.id, item.id, { status: 'cancelled' });
+      const refreshed = ordersStore.all().find((entry) => entry.id === order.id);
+      const stillOpen = (refreshed?.items || []).some((line) => {
+        const status = String(line.status || refreshed?.status || '').toLowerCase();
+        return status !== 'cancelled' && status !== 'void';
+      });
+      if (!stillOpen) {
+        ordersStore.updateOrder(order.id, { status: 'cancelled' });
+        void persistOrderCancel(order.id, `Voided line ${item.name}`);
+      }
+      onClose();
+      return;
+    }
+
+    if (kind === 'delete') {
+      const onlyLine = order.items.length <= 1;
+      if (onlyLine) {
+        ordersStore.remove(order.id);
+      } else {
+        ordersStore.removeItem(order.id, item.id);
+      }
+      onClose();
+    }
+  };
 
   return (
-    <Modal
-      isOpen={!!opened}
-      onClose={onClose}
-      size="3xl"
-      scrollBehavior="inside"
-      classNames={{ base: 'sm:!max-w-[52rem]', closeButton: 'text-white hover:bg-white/20' }}
-    >
-      <ModalContent>
-        {order && item && (
-          <>
-            <ModalHeader className="bg-gradient-to-r from-blue-600 to-purple-600 pr-12 text-white">
-              <div>
-                <h2 className="text-xl font-bold">{item.name}</h2>
-                <p className="text-sm font-normal text-blue-100">
-                  {ticket} • {place} • {when.date} {when.time}
-                </p>
-              </div>
-            </ModalHeader>
-            <ModalBody className="gap-4">
-              <Card shadow="sm" className="shrink-0">
-                <CardHeader className="pb-0">
-                  <h4 className="text-base font-semibold text-ghana-black">Transaction</h4>
-                </CardHeader>
-                <CardBody>
-                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-                    <Fact label="Status" value={statusLabel(lineStatus(order, item))} />
-                    <Fact label="Customer" value={order.guestName || order.customerType || '—'} />
-                    <Fact label="Staff" value={order.waiterId || '—'} />
-                    <Fact label="Room" value={order.roomNumber || '—'} />
-                    <Fact label="Table" value={order.table || '—'} />
-                    <Fact label="Venue" value={order.venue || '—'} />
-                    <Fact label="Qty" value={String(item.qty || 0)} />
-                    <Fact label="Amount" value={money((item.price || 0) * (item.qty || 0))} />
-                    <Fact label="Ticket" value={ticket || '—'} />
-                  </div>
-                  {notes && <p className="mt-3 text-sm text-gray-600">{notes}</p>}
-                </CardBody>
-              </Card>
-              <Card shadow="sm" className="shrink-0">
-                <CardHeader className="pb-0">
-                  <h4 className="text-base font-semibold text-ghana-black">Ticket</h4>
-                </CardHeader>
-                <CardBody className="px-3 py-2">
-                  <div className="grid grid-cols-[minmax(0,1fr)_4rem_6.5rem_6.5rem] gap-x-3 border-b border-gray-200 pb-1 text-xs text-gray-500">
-                    <span className="text-sm font-semibold text-ghana-black">Item</span>
-                    <span className="text-right">Qty</span>
-                    <span className="text-right">Amount</span>
-                    <span>Status</span>
-                  </div>
-                  {order.items.map((line) => {
-                    const lineAmount = (line.price || 0) * (line.qty || 0);
-                    const current = line.id === item.id;
-                    return (
-                      <div
-                        key={line.id}
-                        className={`grid grid-cols-[minmax(0,1fr)_4rem_6.5rem_6.5rem] items-center gap-x-3 border-b border-gray-100 py-1.5 text-sm ${current ? 'bg-green-50' : ''}`}
-                      >
-                        <span className="truncate font-medium text-ghana-black">{line.name}</span>
-                        <span className="text-right tabular-nums">{line.qty}</span>
-                        <span className="text-right tabular-nums">{money(lineAmount)}</span>
-                        <Chip size="sm" variant="flat" color={statusColor(lineStatus(order, line))}>{statusLabel(lineStatus(order, line))}</Chip>
-                      </div>
-                    );
-                  })}
-                  <div className="grid grid-cols-[minmax(0,1fr)_4rem_6.5rem_6.5rem] gap-x-3 pt-2 text-sm font-semibold text-ghana-black">
-                    <span>Ticket total</span>
-                    <span />
-                    <span className="text-right tabular-nums">{money(orderTotal)}</span>
-                    <span />
-                  </div>
-                </CardBody>
-              </Card>
-            </ModalBody>
-            <ModalFooter>
-              <Button variant="light" onPress={onClose}>Close</Button>
-            </ModalFooter>
-          </>
-        )}
-      </ModalContent>
-    </Modal>
+    <>
+      <Modal
+        isOpen={!!opened}
+        onClose={onClose}
+        size="3xl"
+        scrollBehavior="inside"
+        classNames={{ base: 'sm:!max-w-[52rem]', closeButton: 'text-white hover:bg-white/20' }}
+      >
+        <ModalContent>
+          {order && item && (
+            <>
+              <ModalHeader className="bg-gradient-to-r from-blue-600 to-purple-600 pr-12 text-white">
+                <div>
+                  <h2 className="text-xl font-bold">{item.name}</h2>
+                  <p className="text-sm font-normal text-blue-100">
+                    {ticket} • {place} • {when.date} {when.time}
+                    {isVoided ? ' · Void' : ''}
+                  </p>
+                </div>
+              </ModalHeader>
+              <ModalBody className="gap-4">
+                <Card shadow="sm" className="shrink-0">
+                  <CardHeader className="pb-0">
+                    <h4 className="text-base font-semibold text-ghana-black">Transaction</h4>
+                  </CardHeader>
+                  <CardBody>
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                      <Fact label="Status" value={statusLabel(lineState)} />
+                      <Fact label="Customer" value={order.guestName || order.customerType || '—'} />
+                      <Fact label="Staff" value={order.waiterId || '—'} />
+                      <Fact label="Room" value={order.roomNumber || '—'} />
+                      <Fact label="Table" value={order.table || '—'} />
+                      <Fact label="Venue" value={order.venue || '—'} />
+                      <Fact label="Qty" value={String(item.qty || 0)} />
+                      <Fact label="Amount" value={money((item.price || 0) * (item.qty || 0))} />
+                      <Fact label="Ticket" value={ticket || '—'} />
+                    </div>
+                    {notes && <p className="mt-3 text-sm text-gray-600">{notes}</p>}
+                  </CardBody>
+                </Card>
+                <Card shadow="sm" className="shrink-0">
+                  <CardHeader className="pb-0">
+                    <h4 className="text-base font-semibold text-ghana-black">Ticket</h4>
+                  </CardHeader>
+                  <CardBody className="px-3 py-2">
+                    <div className="grid grid-cols-[minmax(0,1fr)_4rem_6.5rem_6.5rem] gap-x-3 border-b border-gray-200 pb-1 text-xs text-gray-500">
+                      <span className="text-sm font-semibold text-ghana-black">Item</span>
+                      <span className="text-right">Qty</span>
+                      <span className="text-right">Amount</span>
+                      <span>Status</span>
+                    </div>
+                    {order.items.map((line) => {
+                      const lineAmount = (line.price || 0) * (line.qty || 0);
+                      const current = line.id === item.id;
+                      return (
+                        <div
+                          key={line.id}
+                          className={`grid grid-cols-[minmax(0,1fr)_4rem_6.5rem_6.5rem] items-center gap-x-3 border-b border-gray-100 py-1.5 text-sm ${current ? 'bg-green-50' : ''}`}
+                        >
+                          <span className="truncate font-medium text-ghana-black">{line.name}</span>
+                          <span className="text-right tabular-nums">{line.qty}</span>
+                          <span className="text-right tabular-nums">{money(lineAmount)}</span>
+                          <Chip size="sm" variant="flat" color={statusColor(lineStatus(order, line))}>
+                            {statusLabel(lineStatus(order, line))}
+                          </Chip>
+                        </div>
+                      );
+                    })}
+                    <div className="grid grid-cols-[minmax(0,1fr)_4rem_6.5rem_6.5rem] gap-x-3 pt-2 text-sm font-semibold text-ghana-black">
+                      <span>Ticket total</span>
+                      <span />
+                      <span className="text-right tabular-nums">{money(orderTotal)}</span>
+                      <span />
+                    </div>
+                  </CardBody>
+                </Card>
+              </ModalBody>
+              <ModalFooter>
+                <Button color="danger" variant="flat" onPress={askDelete}>
+                  Delete
+                </Button>
+                <Button color="warning" variant="flat" isDisabled={isVoided} onPress={askVoid}>
+                  Void
+                </Button>
+                <Button
+                  color="primary"
+                  variant="flat"
+                  isDisabled={isVoided || isBilled || !onEditInPos}
+                  onPress={startEditInPos}
+                >
+                  Edit in POS
+                </Button>
+                <Button variant="light" onPress={onClose}>
+                  Close
+                </Button>
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={Boolean(caution)} onClose={() => setCaution(null)} size="sm">
+        <ModalContent>
+          <ModalHeader>{caution?.title || 'Please confirm'}</ModalHeader>
+          <ModalBody>
+            <p className="text-sm text-slate-600">{caution?.message}</p>
+          </ModalBody>
+          <ModalFooter>
+            <Button size="sm" variant="flat" onPress={() => setCaution(null)}>
+              Keep as is
+            </Button>
+            <Button
+              size="sm"
+              color={caution?.kind === 'delete' ? 'danger' : 'warning'}
+              onPress={confirmCaution}
+            >
+              {caution?.confirmLabel || 'Confirm'}
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+    </>
   );
 }

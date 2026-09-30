@@ -34,6 +34,7 @@ import { useMenuCatalogStore } from '../lib/fb/menuCatalogStore';
 import { useSettingsStore } from '../lib/settings/store';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
 import { ReportOutput, ReportDateControl, TransactionFilters, type ReportDateMode } from './reports/ReportBasics';
+import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 
 const REPORT_LABELS: Record<string, string> = {
   'daily-sales': 'Daily Sales Report',
@@ -189,15 +190,6 @@ export default function FoodBeverageAnalyticsDashboard() {
     [selectedReport, startDate, endDate, categoryFilter, staffFilter, itemFilter, customerTypeFilter, dataTick]
   );
 
-  // Independent of which report is open — the 4 top-row KPI tiles, computed once
-  // per date-range/data change (see generateSummaryKPIs for why Pending Orders
-  // ignores the date range).
-  const kpis = useMemo(
-    () => reportingStore.generateSummaryKPIs(startDate, endDate),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [startDate, endDate, dataTick]
-  );
-
   const handleExportReport = async (format: 'pdf' | 'excel' | 'csv') => {
     setIsGenerating(true);
     try {
@@ -327,34 +319,6 @@ export default function FoodBeverageAnalyticsDashboard() {
         <p className="text-gray-600">Sales, product mix, staff performance and customer analytics for Restaurant & Bar</p>
       </div>
 
-      {/* KPI summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <Card className="border-0 shadow-sm">
-          <CardBody className="text-center py-4">
-            <div className="text-xl font-bold text-ghana-black">₵{kpis.totalRevenue.toFixed(2)}</div>
-            <div className="text-xs text-gray-500">Total Revenue</div>
-          </CardBody>
-        </Card>
-        <Card className="border-0 shadow-sm">
-          <CardBody className="text-center py-4">
-            <div className="text-xl font-bold text-orange-600">₵{kpis.totalDiscounts.toFixed(2)}</div>
-            <div className="text-xs text-gray-500">Total Discounts</div>
-          </CardBody>
-        </Card>
-        <Card className="border-0 shadow-sm">
-          <CardBody className="text-center py-4">
-            <div className="text-xl font-bold text-red-600">{kpis.totalVoids}</div>
-            <div className="text-xs text-gray-500">Total Voids</div>
-          </CardBody>
-        </Card>
-        <Card className="border-0 shadow-sm">
-          <CardBody className="text-center py-4">
-            <div className="text-xl font-bold text-blue-600">{kpis.pendingOrders}</div>
-            <div className="text-xs text-gray-500">Pending Orders (now)</div>
-          </CardBody>
-        </Card>
-      </div>
-
       {/* Date and Export selection — global across whichever category/report tab is
           active, same top-row position as Front Office Reports & Analysis. */}
       <div className="flex items-end justify-between gap-4 mb-6 flex-wrap">
@@ -403,7 +367,8 @@ export default function FoodBeverageAnalyticsDashboard() {
       <Tabs
         selectedKey={selectedCategory}
         onSelectionChange={(key) => setSelectedCategory(key as string)}
-        className="mb-6"
+        className="mb-6 w-full"
+        classNames={deskBookTabsClassNames}
       >
         {REPORT_CATEGORIES.map((c) => (
           <Tab key={c.key} title={`${c.icon} ${c.label}`}>

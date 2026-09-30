@@ -99,6 +99,7 @@ export default function FoodBeverageMainDashboard({
   const [selectedTab, setSelectedTab] = useState(resolveFbTab(initialTab || null) || 'tables');
   const [suppliesView, setSuppliesView] = useState<SuppliesView>(() => resolveSuppliesView(initialTab));
   const [showPOS, setShowPOS] = useState(false);
+  const [posEditOrderId, setPosEditOrderId] = useState<string | null>(null);
 
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.restaurantBar', FB_DASHBOARD_SECTIONS);
   const stockVisibility = useDashboardVisibility(deptInventoryVisibilityKey('restaurant'), STOCK_KPI_SECTIONS);
@@ -150,7 +151,15 @@ export default function FoodBeverageMainDashboard({
   const todayRevenue = todayOrders.reduce((sum, order) => sum + (order.total || 0), 0);
 
   if (showPOS) {
-    return <FBPOS onClose={() => setShowPOS(false)} />;
+    return (
+      <FBPOS
+        editOrderId={posEditOrderId}
+        onClose={() => {
+          setShowPOS(false);
+          setPosEditOrderId(null);
+        }}
+      />
+    );
   }
 
   return (
@@ -164,7 +173,10 @@ export default function FoodBeverageMainDashboard({
               color="success"
               size="sm"
               className="bg-green-600 text-white"
-              onClick={() => setShowPOS(true)}
+              onClick={() => {
+                setPosEditOrderId(null);
+                setShowPOS(true);
+              }}
             >
               Open POS
             </Button>
@@ -314,14 +326,6 @@ export default function FoodBeverageMainDashboard({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              color="success"
-              size="sm"
-              className="bg-green-600 text-white"
-              onClick={() => setShowPOS(true)}
-            >
-              💳 Open POS
-            </Button>
             <HideCardButton onHide={() => hide('todayOps')} label="Today's Operations" />
           </div>
         </div>
@@ -336,7 +340,10 @@ export default function FoodBeverageMainDashboard({
               color="success"
               size="sm"
               className="bg-green-600 text-white"
-              onClick={() => setShowPOS(true)}
+              onClick={() => {
+                setPosEditOrderId(null);
+                setShowPOS(true);
+              }}
             >
               Open POS
             </Button>
@@ -357,7 +364,14 @@ export default function FoodBeverageMainDashboard({
             ))}
           </Tabs>
           <div className={deskBookTabPanelClassName}>
-            {selectedTab === 'activity' && <FoodBeveragePosActivity />}
+            {selectedTab === 'activity' && (
+              <FoodBeveragePosActivity
+                onEditInPos={(orderId) => {
+                  setPosEditOrderId(orderId);
+                  setShowPOS(true);
+                }}
+              />
+            )}
             {selectedTab === 'tables' && <FoodBeverageRestaurantBar panel="tables" />}
             {selectedTab === 'reservations' && <FoodBeverageRestaurantBar panel="reservations" />}
             {selectedTab === 'menu' && <FoodBeverageMenuInventory panel="menu" />}

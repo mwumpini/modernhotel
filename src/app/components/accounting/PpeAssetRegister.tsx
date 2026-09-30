@@ -71,6 +71,13 @@ import { accountingAmountsLabel, formatAccountingCurrency } from '@/app/lib/acco
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { useDeskPagination } from '../dashboard/deskTableUi';
 import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName } from './DeskKpiStrip';
+import HeadingInfo from '../HeadingInfo';
+
+function statusLabel(capExp: CapExpStatus): string {
+  if (capExp === 'Capitalise') return 'On the books';
+  if (capExp === 'Expense') return 'Expensed';
+  return 'Disposed';
+}
 
 // formatAccountingCurrency always shows a magnitude, so the sign (disposal gain/loss
 // can be negative) is reattached in front of it here.
@@ -80,10 +87,46 @@ const fmtNum = (n: number) => (n < 0 ? '-' : '') + Math.abs(n).toLocaleString(un
 
 type PpeSortKey = 'code' | 'name' | 'category' | 'capExp' | 'cost' | 'accumDep' | 'nbv' | 'graWdv' | 'graCa' | 'remaining';
 type CatSortKey = 'name' | 'fsGroup' | 'gra' | 'graRate' | 'ias' | 'life' | 'residual' | 'assets';
+type DisposalSortKey = 'date' | 'asset' | 'cost' | 'accumDep' | 'nbv' | 'proceeds' | 'gainLoss';
 type PpeViewKind = 'asset' | 'category' | null;
 // Shifts only the year of a YYYY-MM-DD report date, keeping month/day — so jumping to a prior
 // year for a rollforward comparison doesn't clobber a specific day the user picked. Falls back
 // a day for Feb 29 landing on a non-leap year.
+function disposalTimingNote(
+  category: PpeCategory | undefined,
+  remaining: { years: number; months: number; display: string } | null | undefined,
+  nbv: number
+): { color: 'warning' | 'default'; text: string } {
+  if (category?.presentationGroup === 'Land' || remaining?.display === 'Not depreciated') {
+    return {
+      color: 'default',
+      text: `Land is not depreciated. Disposal removes its cost and records any proceeds against the net book value of ${fmt(nbv)}.`,
+    };
+  }
+  if (remaining && (remaining.years > 0 || remaining.months > 0)) {
+    return {
+      color: 'warning',
+      text: `This asset still has ${remaining.display} of useful life left. Disposing it now is before that life ends. The books record a gain or loss against the net book value of ${fmt(nbv)}.`,
+    };
+  }
+  return {
+    color: 'default',
+    text: `This asset has reached the end of its useful life. Disposal removes the remaining cost and accumulated depreciation. Proceeds above the net book value of ${fmt(nbv)} are a gain.`,
+  };
+}
+
+/** Once disposal day has passed, the asset is off the books: cost, depreciation, and NBV are zero. */
+function carryingAtReportDate(
+  asset: PpeAsset,
+  computed: { totalCost: number; accumDep: number; nbv: number },
+  reportDate: string
+): { cost: number; dep: number; nbv: number; removed: boolean } {
+  const disposal = asset.disposalDate?.slice(0, 10);
+  const removed = asset.capExp === 'Disposed' && !!disposal && disposal <= reportDate.slice(0, 10);
+  if (!removed) return { cost: computed.totalCost, dep: computed.accumDep, nbv: computed.nbv, removed: false };
+  return { cost: 0, dep: 0, nbv: 0, removed: true };
+}
+
 function shiftReportDateYear(dateStr: string, delta: number): string {
   const [y, m, d] = dateStr.split('-').map(Number);
   if (!y || !m || !d) return dateStr;
@@ -162,6 +205,8 @@ export default function PpeAssetRegisterPage() {
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [viewKind, setViewKind] = useState<PpeViewKind>(null);
   const [viewItem, setViewItem] = useState<any>(null);
+  const [deletePrompt, setDeletePrompt] = useState<{ message: string; canConfirm: boolean } | null>(null);
+  const [disposeMode, setDisposeMode] = useState(false);
   const isViewOpen = viewKind != null && viewItem != null;
   const [notice, setNotice] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -172,8 +217,21 @@ export default function PpeAssetRegisterPage() {
   const [assetCodeTouched, setAssetCodeTouched] = useState(false);
   const [ppeSortKey, setPpeSortKey] = useState<PpeSortKey>('code');
   const [ppeSortDir, setPpeSortDir] = useState<'asc' | 'desc'>('asc');
+  const [assetQuery, setAssetQuery] = useState('');
+  const [assetFromDate, setAssetFromDate] = useState('');
+  const [assetToDate, setAssetToDate] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | CapExpStatus>('all');
   const [catSortKey, setCatSortKey] = useState<CatSortKey>('name');
   const [catSortDir, setCatSortDir] = useState<'asc' | 'desc'>('asc');
+  const [categoryQuery, setCategoryQuery] = useState('');
+  const [categoryGroup, setCategoryGroup] = useState('all');
+  const [disposalQuery, setDisposalQuery] = useState('');
+  const [disposalFromDate, setDisposalFromDate] = useState('');
+  const [disposalToDate, setDisposalToDate] = useState('');
+  const [disposalCategory, setDisposalCategory] = useState('all');
+  const [disposalSortKey, setDisposalSortKey] = useState<DisposalSortKey>('date');
+  const [disposalSortDir, setDisposalSortDir] = useState<'asc' | 'desc'>('desc');
   const ppeCols = useResizableColumns<PpeSortKey>({
     code: 88, name: 152, category: 120, capExp: 96, cost: 100, accumDep: 110, nbv: 100, graWdv: 108, graCa: 112, remaining: 100,
   });
@@ -207,37 +265,71 @@ export default function PpeAssetRegisterPage() {
     [assets, categories, reportDateObj]
   );
 
+  const filteredComputedRows = useMemo(() => {
+    const q = assetQuery.trim().toLowerCase();
+    return computedRows.filter(({ asset, category }) => {
+      if (categoryFilter !== 'all' && asset.categoryId !== categoryFilter) return false;
+      if (statusFilter !== 'all' && asset.capExp !== statusFilter) return false;
+      const purchased = asset.purchaseDate.slice(0, 10);
+      if (assetFromDate && purchased < assetFromDate) return false;
+      if (assetToDate && purchased > assetToDate) return false;
+      if (!q) return true;
+      return (
+        asset.assetCode.toLowerCase().includes(q) ||
+        asset.assetName.toLowerCase().includes(q) ||
+        category.name.toLowerCase().includes(q)
+      );
+    });
+  }, [computedRows, assetQuery, assetFromDate, assetToDate, categoryFilter, statusFilter]);
+
   const sortedComputedRows = useMemo(() => {
     const value = (row: (typeof computedRows)[0]): string | number => {
+      const carrying = carryingAtReportDate(row.asset, row.computed, reportDate);
       switch (ppeSortKey) {
         case 'code': return row.asset.assetCode.toLowerCase();
         case 'name': return row.asset.assetName.toLowerCase();
         case 'category': return row.category.name.toLowerCase();
         case 'capExp': return row.asset.capExp;
-        case 'cost': return row.computed.totalCost;
-        case 'accumDep': return row.computed.accumDep;
-        case 'nbv': return row.computed.nbv;
+        case 'cost': return carrying.cost;
+        case 'accumDep': return carrying.dep;
+        case 'nbv': return carrying.nbv;
         case 'graWdv': return row.computed.graWdvCurrent;
         case 'graCa': return row.computed.graCaThisYear;
-        case 'remaining': return row.computed.remainingLife?.display || '';
+        case 'remaining': {
+          const life = row.computed.remainingLife;
+          return life ? life.years * 12 + life.months : -1;
+        }
         default: return '';
       }
     };
-    const sorted = [...computedRows].sort((a, b) => {
+    const sorted = [...filteredComputedRows].sort((a, b) => {
       const av = value(a);
       const bv = value(b);
       if (typeof av === 'number' && typeof bv === 'number') return av - bv;
       return String(av).localeCompare(String(bv));
     });
     return ppeSortDir === 'asc' ? sorted : sorted.reverse();
-  }, [computedRows, ppeSortKey, ppeSortDir]);
+  }, [filteredComputedRows, ppeSortKey, ppeSortDir, reportDate]);
 
   const {
     page: ppePage,
     setPage: setPpePage,
     pages: ppePages,
     paged: pagedPpe,
-  } = useDeskPagination(sortedComputedRows, [ppeSortKey, ppeSortDir, reportDate]);
+  } = useDeskPagination(sortedComputedRows, [ppeSortKey, ppeSortDir, reportDate, assetQuery, assetFromDate, assetToDate, categoryFilter, statusFilter]);
+
+  const filteredCategories = useMemo(() => {
+    const q = categoryQuery.trim().toLowerCase();
+    return categories.filter((c) => {
+      if (categoryGroup !== 'all' && c.presentationGroup !== categoryGroup) return false;
+      if (!q) return true;
+      return (
+        c.name.toLowerCase().includes(q) ||
+        c.presentationGroup.toLowerCase().includes(q) ||
+        c.graClass.toLowerCase().includes(q)
+      );
+    });
+  }, [categories, categoryQuery, categoryGroup]);
 
   const sortedCategories = useMemo(() => {
     const countMap = new Map<string, number>();
@@ -255,21 +347,21 @@ export default function PpeAssetRegisterPage() {
         default: return '';
       }
     };
-    const sorted = [...categories].sort((a, b) => {
+    const sorted = [...filteredCategories].sort((a, b) => {
       const av = value(a);
       const bv = value(b);
       if (typeof av === 'number' && typeof bv === 'number') return av - bv;
       return String(av).localeCompare(String(bv));
     });
     return catSortDir === 'asc' ? sorted : sorted.reverse();
-  }, [categories, assets, catSortKey, catSortDir]);
+  }, [filteredCategories, assets, catSortKey, catSortDir]);
 
   const {
     page: catPage,
     setPage: setCatPage,
     pages: catPages,
     paged: pagedCats,
-  } = useDeskPagination(sortedCategories, [catSortKey, catSortDir]);
+  } = useDeskPagination(sortedCategories, [catSortKey, catSortDir, categoryQuery, categoryGroup]);
 
   const onPpeSort = (key: PpeSortKey) => {
     if (ppeSortKey === key) setPpeSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -316,10 +408,53 @@ export default function PpeAssetRegisterPage() {
     [assets, categories, reportDateObj]
   );
 
+  const visibleDisposals = useMemo(() => {
+    const q = disposalQuery.trim().toLowerCase();
+    const filtered = disposals.filter((d) => {
+      if (disposalCategory !== 'all' && d.categoryId !== disposalCategory) return false;
+      const sold = d.disposalDate.slice(0, 10);
+      if (disposalFromDate && sold < disposalFromDate) return false;
+      if (disposalToDate && sold > disposalToDate) return false;
+      if (!q) return true;
+      return (
+        d.assetCode.toLowerCase().includes(q) ||
+        d.assetName.toLowerCase().includes(q) ||
+        d.categoryName.toLowerCase().includes(q)
+      );
+    });
+    const value = (d: (typeof disposals)[0]): string | number => {
+      switch (disposalSortKey) {
+        case 'date': return d.disposalDate;
+        case 'asset': return d.assetName.toLowerCase();
+        case 'cost': return d.cost;
+        case 'accumDep': return d.accumDep;
+        case 'nbv': return d.nbvAtDisposal;
+        case 'proceeds': return d.proceeds;
+        case 'gainLoss': return d.gainLoss ?? 0;
+        default: return '';
+      }
+    };
+    const sorted = [...filtered].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+      return String(av).localeCompare(String(bv));
+    });
+    return disposalSortDir === 'asc' ? sorted : sorted.reverse();
+  }, [disposals, disposalQuery, disposalFromDate, disposalToDate, disposalCategory, disposalSortKey, disposalSortDir]);
+
   const disposalsGainLossTotal = useMemo(
-    () => disposals.reduce((s, d) => s + (d.gainLoss ?? 0), 0),
-    [disposals]
+    () => visibleDisposals.reduce((s, d) => s + (d.gainLoss ?? 0), 0),
+    [visibleDisposals]
   );
+
+  const onDisposalSort = (key: DisposalSortKey) => {
+    if (disposalSortKey === key) setDisposalSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setDisposalSortKey(key);
+      setDisposalSortDir(key === 'date' || key === 'asset' ? 'asc' : 'desc');
+    }
+  };
 
   const totals = useMemo(() => {
     const capitalised = computedRows.filter((r) => r.asset.capExp === 'Capitalise');
@@ -338,6 +473,7 @@ export default function PpeAssetRegisterPage() {
     setAssetCodeTouched(false);
     setFormError(null);
     setFieldErrors({});
+    setDisposeMode(false);
     onOpen();
   };
 
@@ -361,22 +497,91 @@ export default function PpeAssetRegisterPage() {
     setAssetCodeTouched(true);
     setFormError(null);
     setFieldErrors({});
+    setDisposeMode(false);
+    onOpen();
+  };
+
+  const openDispose = (asset: PpeAsset) => {
+    setEditingId(asset.id);
+    setForm({
+      purchaseDate: asset.purchaseDate.slice(0, 10),
+      assetCode: asset.assetCode,
+      assetName: asset.assetName,
+      categoryId: asset.categoryId,
+      quantity: asset.quantity,
+      unitPrice: asset.unitPrice,
+      capExp: 'Disposed',
+      disposalDate: new Date().toISOString().slice(0, 10),
+      disposalProceeds: '',
+      disposalProceedsBankAccountId: activeBankAccounts[0]?.id || '',
+      postToLedger: false,
+      paymentGlCode: '2205',
+      attachments: asset.attachments || [],
+    });
+    setAssetCodeTouched(true);
+    setFormError(null);
+    setFieldErrors({});
+    setDisposeMode(true);
+    setDeletePrompt(null);
+    closeView();
     onOpen();
   };
 
   const closeView = () => {
     setViewKind(null);
     setViewItem(null);
+    setDeletePrompt(null);
   };
 
   const openAssetView = (row: { asset: PpeAsset; category: PpeCategory; computed: any }) => {
+    setDeletePrompt(null);
     setViewKind('asset');
     setViewItem(row);
   };
 
   const openCategoryView = (c: PpeCategory) => {
+    setDeletePrompt(null);
     setViewKind('category');
     setViewItem(c);
+  };
+
+  const askDeleteAsset = (asset: PpeAsset) => {
+    if (asset.capExp === 'Disposed' && (asset.disposalJournalEntryId || asset.capitalizationJournalEntryId)) {
+      setDeletePrompt({
+        canConfirm: false,
+        message: `"${asset.assetName}" is already disposed and on the ledger, so it cannot be deleted.`,
+      });
+      return;
+    }
+    if (asset.capitalizationJournalEntryId || asset.disposalJournalEntryId) {
+      setDeletePrompt({
+        canConfirm: false,
+        message: `"${asset.assetName}" is on the ledger, so it cannot be deleted. Use Dispose. That removes the cost and depreciation and records any gain or loss.`,
+      });
+      return;
+    }
+    setDeletePrompt({
+      canConfirm: true,
+      message: `Delete "${asset.assetName}" (${asset.assetCode})? It is not on the ledger. This only removes it from the register and cannot be undone.`,
+    });
+  };
+
+  const askDeleteCategory = (category: PpeCategory, count: number) => {
+    if (count > 0) {
+      setDeletePrompt({
+        canConfirm: false,
+        message: `"${category.name}" still has ${count} asset${count === 1 ? '' : 's'}, so it cannot be deleted.`,
+      });
+      return;
+    }
+    if (categories.length <= 1) {
+      setDeletePrompt({ canConfirm: false, message: 'At least one category must remain.' });
+      return;
+    }
+    setDeletePrompt({
+      canConfirm: true,
+      message: `Delete category "${category.name}"? This cannot be undone.`,
+    });
   };
 
   const validateAssetForm = (f: typeof form) => {
@@ -566,12 +771,6 @@ export default function PpeAssetRegisterPage() {
     }
   };
 
-  const handleDeleteCategory = (category: PpeCategory) => {
-    if (deleteCategory(category.id)) {
-      setNotice(`Category "${category.name}" deleted.`);
-    }
-  };
-
   const fsPivotValues = useMemo(() => {
     const out: Record<string, Record<string, number>> = {};
     for (const col of [...PRESENTATION_GROUPS, 'TOTAL']) {
@@ -598,19 +797,19 @@ export default function PpeAssetRegisterPage() {
     [assets, categories, journalEntries, chartOfAccounts, reportDate]
   );
 
-  const handleSyncToLedger = () => {
+  const handleSyncToLedger = async () => {
+    await initializeAccounting();
     const result = usePpeRegisterStore.getState().syncToLedger();
-    void initializeAccounting();
     setSyncResult(result);
   };
 
   const exportAssetsCSV = () => {
     downloadCSV(
-      computedRows.map(({ asset, category, computed }) => ({
+      sortedComputedRows.map(({ asset, category, computed }) => ({
         code: asset.assetCode,
         name: asset.assetName,
         category: category.name,
-        capExp: asset.capExp,
+        status: statusLabel(asset.capExp),
         cost: computed.totalCost.toFixed(2),
         accumDep: computed.accumDep.toFixed(2),
         nbv: computed.nbv.toFixed(2),
@@ -623,51 +822,51 @@ export default function PpeAssetRegisterPage() {
         { key: 'code', label: 'Code' },
         { key: 'name', label: 'Name' },
         { key: 'category', label: 'Category' },
-        { key: 'capExp', label: 'Cap/Exp' },
+        { key: 'status', label: 'Status' },
         { key: 'cost', label: 'Cost' },
-        { key: 'accumDep', label: 'Accum Dep' },
-        { key: 'nbv', label: 'NBV' },
+        { key: 'accumDep', label: 'Depreciation' },
+        { key: 'nbv', label: 'Book value' },
         { key: 'graWdv', label: 'GRA WDV' },
-        { key: 'graCaYr', label: 'GRA CA Yr' },
-        { key: 'remaining', label: 'Remaining Life' },
+        { key: 'graCaYr', label: 'GRA allowance' },
+        { key: 'remaining', label: 'Life left' },
       ]
     );
   };
 
   const printAssetsPDF = () => {
-    const rows = computedRows.map(({ asset, category, computed }) => `<tr>
+    const rows = sortedComputedRows.map(({ asset, category, computed }) => `<tr>
       <td>${asset.assetCode}</td>
       <td>${asset.assetName}</td>
       <td>${category.name}</td>
-      <td><span class="badge ${asset.capExp === 'Capitalise' ? 'badge-success' : asset.capExp === 'Expense' ? 'badge-info' : 'badge-warning'}">${asset.capExp}</span></td>
+      <td><span class="badge ${asset.capExp === 'Capitalise' ? 'badge-success' : asset.capExp === 'Expense' ? 'badge-info' : 'badge-warning'}">${statusLabel(asset.capExp)}</span></td>
       <td class="amount">${fmt(computed.totalCost)}</td>
       <td class="amount">${fmt(computed.accumDep)}</td>
       <td class="amount">${fmt(computed.nbv)}</td>
       <td class="amount">${fmt(computed.graWdvCurrent)}</td>
       <td class="amount">${fmt(computed.graCaThisYear)}</td>
     </tr>`).join('');
-    const html = generatePdfHtml('PPE Asset Register', `
+    const html = generatePdfHtml('PPE & Assets', `
       <div class="header">
-        <h1>🏗️ PPE Asset Register</h1>
+        <h1>PPE & Assets</h1>
         <div class="subtitle">As at ${reportDate} — Generated on ${new Date().toLocaleString()}</div>
       </div>
       <div class="meta">
-        <div class="meta-item"><div class="meta-label">Total Cost</div><div class="meta-value">${fmt(totals.cost)}</div></div>
-        <div class="meta-item"><div class="meta-label">Accum. Dep</div><div class="meta-value">${fmt(totals.dep)}</div></div>
-        <div class="meta-item"><div class="meta-label">Net Book Value</div><div class="meta-value">${fmt(totals.nbv)}</div></div>
-        <div class="meta-item"><div class="meta-label">GRA Closing WDV</div><div class="meta-value">${fmt(totals.graWdv)}</div></div>
+        <div class="meta-item"><div class="meta-label">Total cost</div><div class="meta-value">${fmt(totals.cost)}</div></div>
+        <div class="meta-item"><div class="meta-label">Depreciation so far</div><div class="meta-value">${fmt(totals.dep)}</div></div>
+        <div class="meta-item"><div class="meta-label">Book value</div><div class="meta-value">${fmt(totals.nbv)}</div></div>
+        <div class="meta-item"><div class="meta-label">GRA written-down value</div><div class="meta-value">${fmt(totals.graWdv)}</div></div>
       </div>
       <table>
-        <thead><tr><th>Code</th><th>Name</th><th>Category</th><th>Cap/Exp</th><th>Cost</th><th>Accum Dep</th><th>NBV</th><th>GRA WDV</th><th>GRA CA Yr</th></tr></thead>
+        <thead><tr><th>Code</th><th>Name</th><th>Category</th><th>Status</th><th>Cost</th><th>Depreciation</th><th>Book value</th><th>GRA WDV</th><th>GRA allowance</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
-    `, 'PPE Asset Register');
+    `, 'PPE & Assets');
     openPrintPreview(html);
   };
 
   const exportDisposalsCSV = () => {
     downloadCSV(
-      disposals.map((d) => ({
+      visibleDisposals.map((d) => ({
         date: d.disposalDate.slice(0, 10),
         code: d.assetCode,
         name: d.assetName,
@@ -683,16 +882,16 @@ export default function PpeAssetRegisterPage() {
         { key: 'code', label: 'Code' },
         { key: 'name', label: 'Name' },
         { key: 'cost', label: 'Cost' },
-        { key: 'accumDep', label: 'Accum Dep' },
-        { key: 'nbv', label: 'NBV' },
+        { key: 'accumDep', label: 'Depreciation' },
+        { key: 'nbv', label: 'Book value' },
         { key: 'proceeds', label: 'Proceeds' },
-        { key: 'gainLoss', label: 'Gain/(Loss)' },
+        { key: 'gainLoss', label: 'Gain / (loss)' },
       ]
     );
   };
 
   const printDisposalsPDF = () => {
-    const rows = disposals.map((d) => `<tr>
+    const rows = visibleDisposals.map((d) => `<tr>
       <td>${d.disposalDate.slice(0, 10)}</td>
       <td>${d.assetName}<div style="font-size:10px;color:#888">${d.assetCode}</div></td>
       <td class="amount">${fmt(d.cost)}</td>
@@ -701,22 +900,22 @@ export default function PpeAssetRegisterPage() {
       <td class="amount">${fmt(d.proceeds)}</td>
       <td class="amount">${d.gainLoss != null ? fmt(d.gainLoss) : '—'}</td>
     </tr>`).join('');
-    const html = generatePdfHtml('PPE Disposals', `
+    const html = generatePdfHtml('Asset disposals', `
       <div class="header">
-        <h1>🏗️ PPE Disposals — ${reportDateObj.getFullYear()}</h1>
+        <h1>Asset disposals — ${reportDateObj.getFullYear()}</h1>
         <div class="subtitle">Generated on ${new Date().toLocaleString()}</div>
       </div>
       <table>
-        <thead><tr><th>Date</th><th>Asset</th><th>Cost</th><th>Accum Dep</th><th>NBV</th><th>Proceeds</th><th>Gain/(Loss)</th></tr></thead>
+        <thead><tr><th>Date</th><th>Asset</th><th>Cost</th><th>Depreciation</th><th>Book value</th><th>Proceeds</th><th>Gain/(Loss)</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
-    `, 'PPE Asset Register');
+    `, 'PPE & Assets');
     openPrintPreview(html);
   };
 
   const exportCategoriesCSV = () => {
     downloadCSV(
-      categories.map((c) => ({
+      sortedCategories.map((c) => ({
         name: c.name,
         fsGroup: c.presentationGroup,
         graClass: c.graClass,
@@ -729,11 +928,11 @@ export default function PpeAssetRegisterPage() {
       'ppe_categories',
       [
         { key: 'name', label: 'Name' },
-        { key: 'fsGroup', label: 'FS Group' },
-        { key: 'graClass', label: 'GRA Class' },
-        { key: 'graRate', label: 'GRA Rate' },
-        { key: 'iasMethod', label: 'IAS Method' },
-        { key: 'life', label: 'Life (Yrs)' },
+        { key: 'fsGroup', label: 'Books group' },
+        { key: 'graClass', label: 'GRA class' },
+        { key: 'graRate', label: 'GRA rate' },
+        { key: 'iasMethod', label: 'Books method' },
+        { key: 'life', label: 'Life (years)' },
         { key: 'residual', label: 'Residual' },
         { key: 'assets', label: 'Assets' },
       ]
@@ -741,7 +940,7 @@ export default function PpeAssetRegisterPage() {
   };
 
   const printCategoriesPDF = () => {
-    const rows = categories.map((c) => `<tr>
+    const rows = sortedCategories.map((c) => `<tr>
       <td>${c.name}</td>
       <td>${c.presentationGroup}</td>
       <td>${c.graClass}</td>
@@ -751,21 +950,21 @@ export default function PpeAssetRegisterPage() {
       <td>${(c.residualPct * 100).toFixed(0)}%</td>
       <td class="amount">${assetCountByCategory.get(c.id) ?? 0}</td>
     </tr>`).join('');
-    const html = generatePdfHtml('PPE Categories', `
+    const html = generatePdfHtml('Asset categories', `
       <div class="header">
-        <h1>🏗️ PPE Categories</h1>
+        <h1>Asset categories</h1>
         <div class="subtitle">Generated on ${new Date().toLocaleString()}</div>
       </div>
       <table>
-        <thead><tr><th>Name</th><th>FS Group</th><th>GRA Class</th><th>GRA Rate</th><th>IAS</th><th>Life (Yrs)</th><th>Residual</th><th>Assets</th></tr></thead>
+        <thead><tr><th>Name</th><th>Books group</th><th>GRA class</th><th>GRA rate</th><th>Books method</th><th>Life (years)</th><th>Residual</th><th>Assets</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
-    `, 'PPE Asset Register');
+    `, 'PPE & Assets');
     openPrintPreview(html);
   };
 
   return (
-    <div className="p-3 md:p-5 max-w-7xl mx-auto">
+    <div className="px-3 pt-2 pb-3 md:px-4 md:pt-3 md:pb-4">
       {(notice || error) && (
         <Alert
           color={error ? 'danger' : 'success'}
@@ -786,91 +985,81 @@ export default function PpeAssetRegisterPage() {
           onClose={() => setSyncResult(null)}
         >
           {syncResult.errors.length
-            ? `${syncResult.messages.length} posted, ${syncResult.errors.length} failed: ${syncResult.errors.join('; ')}`
-            : syncResult.messages.length
-              ? syncResult.messages.join(' · ')
-              : 'Already in sync with the ledger — nothing to post.'}
+            ? syncResult.errors.join(' ')
+            : glRecon.inSync
+              ? 'The books now match this list.'
+              : 'This list is up to date. A journal posted outside this screen is still on the asset accounts.'}
         </Alert>
       )}
 
-      <Card className="shadow-sm">
-        <div className="border-b border-slate-200 px-3 md:px-4 py-2.5">
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-            <div className="shrink-0">
-              <h1 className="text-lg md:text-xl font-bold text-gray-800">PPE Asset Register</h1>
-              <p className="text-xs text-gray-500">{accountingAmountsLabel()}</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1">
-                <Button
-                  isIconOnly
-                  size="sm"
-                  variant="flat"
-                  aria-label="Previous year"
-                  title="Previous year"
-                  className="min-w-7 w-7 h-7"
-                  onPress={() => setReportDate(shiftReportDateYear(reportDate, -1))}
-                >
-                  ◀
-                </Button>
-                <Input
-                  type="date"
-                  aria-label="Report date"
-                  size="sm"
-                  className="w-40"
-                  classNames={{ inputWrapper: 'h-8 min-h-8' }}
-                  value={reportDate}
-                  onValueChange={setReportDate}
-                />
-                <Button
-                  isIconOnly
-                  size="sm"
-                  variant="flat"
-                  aria-label="Next year"
-                  title="Next year"
-                  className="min-w-7 w-7 h-7"
-                  onPress={() => setReportDate(shiftReportDateYear(reportDate, 1))}
-                >
-                  ▶
-                </Button>
-              </div>
-              <Button color="primary" size="sm" onPress={openAdd}>
-                Add asset
-              </Button>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 mt-2 text-xs">
-            <Chip size="sm" variant="flat" color={glRecon.inSync ? 'success' : 'warning'}>
-              GL 1510/1520 {glRecon.inSync ? 'in sync' : `gap ₵${Math.abs(glRecon.costGap).toFixed(2)} cost / ₵${Math.abs(glRecon.accumDepGap).toFixed(2)} dep`}
-            </Chip>
-            {glRecon.uncapitalizedCount > 0 && (
-              <Chip size="sm" variant="flat" color="warning">{glRecon.uncapitalizedCount} not yet capitalized</Chip>
-            )}
-            {glRecon.pendingDisposalCount > 0 && (
-              <Chip size="sm" variant="flat" color="warning">{glRecon.pendingDisposalCount} disposal(s) pending GL post</Chip>
-            )}
-            {glRecon.depPostingGap > 0.01 && (
-              <Chip size="sm" variant="flat" color="warning">₵{glRecon.depPostingGap.toFixed(2)} depreciation not yet posted</Chip>
-            )}
-            {!glRecon.inSync && (
-              <Button size="sm" variant="bordered" onPress={handleSyncToLedger}>🔄 Sync to ledger</Button>
-            )}
-          </div>
-        </div>
+      <div className="mb-0 flex items-center gap-1.5">
+        <h1 className="text-lg md:text-xl font-bold text-gray-800">PPE & Assets</h1>
+        <HeadingInfo label="About PPE and assets">
+          Buildings, furniture, equipment, and other long-life items. Track cost, depreciation, tax allowances, and disposals.
+        </HeadingInfo>
+      </div>
+      <p className="text-xs text-gray-500 -mt-2">{accountingAmountsLabel()}</p>
 
-        <div className="px-3 md:px-4 pt-3 pb-2 border-b border-slate-200 bg-white">
-          <DeskKpiStrip
-            className="mb-0"
-            items={[
-              { id: 'ppe.totalCost', label: 'Total cost', value: fmt(totals.cost), tone: 'text-slate-700' },
-              { id: 'ppe.accumDep', label: 'Accum. dep (IAS)', value: fmt(totals.dep), tone: 'text-slate-700' },
-              { id: 'ppe.nbv', label: 'Net book value', value: fmt(totals.nbv), tone: 'text-slate-700' },
-              { id: 'ppe.graWdv', label: 'GRA closing WDV', value: fmt(totals.graWdv), tone: 'text-slate-700' },
-              { id: 'ppe.graCa', label: 'GRA CA this year', value: fmt(totals.graCa), tone: 'text-slate-700' },
-            ]}
+      <DeskKpiStrip
+        className="mb-1"
+        items={[
+          { id: 'ppe.totalCost', label: 'Total cost', value: fmt(totals.cost), tone: 'text-slate-700' },
+          { id: 'ppe.accumDep', label: 'Depreciation so far', value: fmt(totals.dep), tone: 'text-slate-700' },
+          { id: 'ppe.nbv', label: 'Book value', value: fmt(totals.nbv), tone: 'text-slate-700' },
+          { id: 'ppe.graWdv', label: 'GRA written-down value', value: fmt(totals.graWdv), tone: 'text-slate-700' },
+          { id: 'ppe.graCa', label: 'GRA allowance this year', value: fmt(totals.graCa), tone: 'text-slate-700' },
+        ]}
+      />
+
+      <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-2">
+        <div className="flex items-center gap-1 shrink-0">
+          <Button
+            isIconOnly
+            size="sm"
+            variant="flat"
+            aria-label="Previous year"
+            title="Previous year"
+            className="min-w-7 w-7 h-7"
+            onPress={() => setReportDate(shiftReportDateYear(reportDate, -1))}
+          >
+            ◀
+          </Button>
+          <Input
+            type="date"
+            aria-label="Report date"
+            size="sm"
+            className="w-40"
+            classNames={{ inputWrapper: 'h-8 min-h-8' }}
+            value={reportDate}
+            onValueChange={setReportDate}
           />
+          <Button
+            isIconOnly
+            size="sm"
+            variant="flat"
+            aria-label="Next year"
+            title="Next year"
+            className="min-w-7 w-7 h-7"
+            onPress={() => setReportDate(shiftReportDateYear(reportDate, 1))}
+          >
+            ▶
+          </Button>
         </div>
+        {glRecon.inSync ? (
+          <span className="text-xs text-emerald-700 shrink-0">Books match this list.</span>
+        ) : (
+          <>
+            <span className="text-xs text-amber-800 shrink-0">The books don’t match this list yet.</span>
+            <Button size="sm" variant="flat" className="shrink-0" onPress={handleSyncToLedger}>Update the books</Button>
+          </>
+        )}
+        <div className="flex-1 min-w-2" />
+        <Button color="primary" size="sm" className="shrink-0" onPress={openAdd}>
+          Add asset
+        </Button>
+      </div>
 
+      <Card className="shadow-sm">
         <CardBody className="p-0">
           <Tabs
             selectedKey={selectedTab}
@@ -880,54 +1069,117 @@ export default function PpeAssetRegisterPage() {
             variant="solid"
             classNames={deskBookTabsClassNames}
           >
-            <Tab key="register" title="Asset register">
+            <Tab key="register" title="Assets">
               <div className={`${deskBookTabPanelClassName} overflow-x-auto`}>
-                <div className="flex justify-end mb-2">
+                <div className="flex flex-nowrap items-center gap-2 mb-2 overflow-x-auto">
+                  <Input
+                    aria-label="From date"
+                    type="date"
+                    size="sm"
+                    className="w-36 shrink-0"
+                    value={assetFromDate}
+                    onValueChange={setAssetFromDate}
+                  />
+                  <Input
+                    aria-label="To date"
+                    type="date"
+                    size="sm"
+                    className="w-36 shrink-0"
+                    value={assetToDate}
+                    onValueChange={setAssetToDate}
+                  />
+                  <Input
+                    size="sm"
+                    className="w-44 shrink-0"
+                    placeholder="Search code or name"
+                    aria-label="Search assets"
+                    value={assetQuery}
+                    onValueChange={setAssetQuery}
+                  />
+                  <Select
+                    aria-label="Category"
+                    size="sm"
+                    className="w-40 shrink-0"
+                    selectedKeys={[categoryFilter]}
+                    disallowEmptySelection
+                    onSelectionChange={(k) => setCategoryFilter(String(Array.from(k)[0] ?? 'all'))}
+                  >
+                    {[{ id: 'all', name: 'All categories' }, ...categories].map((c) => <SelectItem key={c.id}>{c.name}</SelectItem>)}
+                  </Select>
+                  <Select
+                    aria-label="Status"
+                    size="sm"
+                    className="w-36 shrink-0"
+                    selectedKeys={[statusFilter]}
+                    disallowEmptySelection
+                    onSelectionChange={(k) => setStatusFilter((Array.from(k)[0] as 'all' | CapExpStatus) || 'all')}
+                  >
+                    <SelectItem key="all">All statuses</SelectItem>
+                    <SelectItem key="Capitalise">On the books</SelectItem>
+                    <SelectItem key="Disposed">Disposed</SelectItem>
+                    <SelectItem key="Expense">Expensed</SelectItem>
+                  </Select>
+                  <span className="text-xs text-gray-500 whitespace-nowrap ml-auto shrink-0">
+                    {sortedComputedRows.length === computedRows.length
+                      ? `${computedRows.length} ${computedRows.length === 1 ? 'asset' : 'assets'}`
+                      : `${sortedComputedRows.length} of ${computedRows.length} assets`}
+                  </span>
                   <Dropdown>
                     <DropdownTrigger>
-                      <Button size="sm" variant="flat">📥 Export</Button>
+                      <Button size="sm" variant="flat" className="shrink-0">Export</Button>
                     </DropdownTrigger>
                     <DropdownMenu>
-                      <DropdownItem key="csv" onPress={exportAssetsCSV}>CSV spreadsheet</DropdownItem>
-                      <DropdownItem key="pdf" onPress={printAssetsPDF}>📑 Print PDF</DropdownItem>
+                      <DropdownItem key="csv" onPress={exportAssetsCSV}>CSV</DropdownItem>
+                      <DropdownItem key="pdf" onPress={printAssetsPDF}>Print</DropdownItem>
                     </DropdownMenu>
                   </Dropdown>
                 </div>
                 <div ref={ppeCols.frameRef} style={ppeCols.frameStyle}>
-                <Table aria-label="PPE register" removeWrapper classNames={deskResizableTableClassNames()}>
+                <Table aria-label="Asset register" removeWrapper classNames={deskResizableTableClassNames()}>
                   <TableHeader>
                     {ppeColumn('code', 'Code')}
                     {ppeColumn('name', 'Name')}
                     {ppeColumn('category', 'Category')}
-                    {ppeColumn('capExp', 'Cap/Exp')}
-                    {ppeColumn('cost', 'Cost (₵)', 'right')}
-                    {ppeColumn('accumDep', 'Accum Dep (₵)', 'right')}
-                    {ppeColumn('nbv', 'NBV (₵)', 'right')}
-                    {ppeColumn('graWdv', 'GRA WDV (₵)', 'right')}
-                    {ppeColumn('graCa', 'GRA CA Yr (₵)', 'right')}
-                    {ppeColumn('remaining', 'Remaining')}
+                    {ppeColumn('capExp', 'Status')}
+                    {ppeColumn('cost', 'Cost', 'right')}
+                    {ppeColumn('accumDep', 'Depreciation', 'right')}
+                    {ppeColumn('nbv', 'Book value', 'right')}
+                    {ppeColumn('graWdv', 'GRA WDV', 'right')}
+                    {ppeColumn('graCa', 'GRA allowance', 'right')}
+                    {ppeColumn('remaining', 'Life left')}
                   </TableHeader>
-                  <TableBody emptyContent="No assets — add your first PPE item.">
-                    {pagedPpe.map(({ asset, category, computed }) => (
+                  <TableBody emptyContent={computedRows.length === 0 ? 'No assets yet — add your first item.' : 'No assets match this search.'}>
+                    {pagedPpe.map(({ asset, category, computed }) => {
+                      const carrying = carryingAtReportDate(asset, computed, reportDate);
+                      return (
                       <TableRow key={asset.id} className={rowClassNames(viewItem?.asset?.id === asset.id && viewKind === 'asset')} onClick={() => openAssetView({ asset, category, computed })}>
                         <TableCell><span className="font-mono text-xs text-blue-600 hover:underline">{asset.assetCode}</span></TableCell>
                         <TableCell>
                           <div className="font-medium text-sm inline-flex items-center gap-1 truncate">
                             {asset.assetName}
-                            {!!asset.attachments?.length && <span title={`${asset.attachments.length} attachment(s)`}>📎</span>}
+                            {!!asset.attachments?.length && (
+                              <span className="text-[10px] text-gray-400 shrink-0" title={`${asset.attachments.length} attachment(s)`}>
+                                file
+                              </span>
+                            )}
                           </div>
                           <div className="text-xs text-gray-400">{asset.purchaseDate.slice(0, 10)}</div>
                         </TableCell>
                         <TableCell><div className="text-xs truncate">{category.name}</div><div className="text-[10px] text-gray-400">{category.graClass}</div></TableCell>
-                        <TableCell><Chip size="sm" variant="flat" color={asset.capExp === 'Capitalise' ? 'success' : asset.capExp === 'Expense' ? 'default' : 'warning'}>{asset.capExp}</Chip></TableCell>
-                        <TableCell className="text-right tabular-nums text-sm">{fmtNum(computed.totalCost)}</TableCell>
-                        <TableCell className="text-right tabular-nums text-sm">{fmtNum(computed.accumDep)}</TableCell>
-                        <TableCell className="text-right tabular-nums text-sm">{fmtNum(computed.nbv)}</TableCell>
+                        <TableCell>
+                          <Chip size="sm" variant="flat" color={asset.capExp === 'Capitalise' ? 'success' : asset.capExp === 'Expense' ? 'default' : 'warning'}>
+                            {statusLabel(asset.capExp)}
+                          </Chip>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">{fmtNum(carrying.cost)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">{fmtNum(carrying.dep)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">{fmtNum(carrying.nbv)}</TableCell>
                         <TableCell className="text-right tabular-nums text-sm">{fmtNum(computed.graWdvCurrent)}</TableCell>
                         <TableCell className="text-right tabular-nums text-sm">{fmtNum(computed.graCaThisYear)}</TableCell>
                         <TableCell className="text-xs">{computed.remainingLife?.display || '—'}</TableCell>
                       </TableRow>
-                    ))}
+                      );
+                    })}
                   </TableBody>
                 </Table>
                 </div>
@@ -937,10 +1189,10 @@ export default function PpeAssetRegisterPage() {
               </div>
             </Tab>
 
-            <Tab key="fs" title="FS Summary §4">
+            <Tab key="fs" title="Books summary">
               <div className={deskBookTabPanelClassName}>
                 <PpeSummaryPivotTable
-                  title="FS Summary — Section 4 (PPE)"
+                  title="Books summary — fixed assets"
                   reportDate={reportDate}
                   exportBasename="ppe_fs_summary"
                   rowLabelHeader="Line"
@@ -949,6 +1201,7 @@ export default function PpeAssetRegisterPage() {
                   columnLabels={FS_COLUMN_LABELS}
                   totalKey="TOTAL"
                   values={fsPivotValues}
+                  closingKey="nbv"
                   summaryChips={[
                     { label: 'Additions', value: fsPivotValues.TOTAL?.additions ?? 0, color: 'primary' },
                     { label: 'Depreciation charge', value: fsPivotValues.TOTAL?.chargeForYear ?? 0, color: 'default' },
@@ -958,7 +1211,7 @@ export default function PpeAssetRegisterPage() {
               </div>
             </Tab>
 
-            <Tab key="gra" title="GRA rollforward">
+            <Tab key="gra" title="GRA allowances">
               <div className={deskBookTabPanelClassName}>
                 <PpeSummaryPivotTable
                   title="GRA capital allowance rollforward"
@@ -970,6 +1223,7 @@ export default function PpeAssetRegisterPage() {
                   columnLabels={GRA_COLUMN_LABELS}
                   totalKey="TOTAL"
                   values={graPivotValues}
+                  closingKey="closingWDV"
                   summaryChips={[
                     { label: 'Additions', value: graPivotValues.TOTAL?.additions ?? 0, color: 'primary' },
                     { label: 'Allowance claimed', value: graPivotValues.TOTAL?.caClaimed ?? 0, color: 'default' },
@@ -982,79 +1236,134 @@ export default function PpeAssetRegisterPage() {
             <Tab key="disposals" title="Disposals">
               <div className={deskBookTabPanelClassName}>
                 <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-3 py-2 bg-gradient-to-r from-slate-50 to-white border-b border-slate-200">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-sm font-semibold text-gray-900">Disposals</h3>
-                      <Button
-                        isIconOnly
+                  <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-gradient-to-r from-slate-50 to-white border-b border-slate-200">
+                    <h3 className="text-sm font-semibold text-gray-900">Disposals</h3>
+                    <Button
+                      isIconOnly
+                      size="sm"
+                      variant="flat"
+                      aria-label="Previous year"
+                      title="Previous year"
+                      className="min-w-6 w-6 h-6"
+                      onPress={() => setReportDate(shiftReportDateYear(reportDate, -1))}
+                    >
+                      ◀
+                    </Button>
+                    <Chip size="sm" variant="flat" color="default" className="text-xs">
+                      {reportDateObj.getFullYear()}
+                    </Chip>
+                    <Button
+                      isIconOnly
+                      size="sm"
+                      variant="flat"
+                      aria-label="Next year"
+                      title="Next year"
+                      className="min-w-6 w-6 h-6"
+                      onPress={() => setReportDate(shiftReportDateYear(reportDate, 1))}
+                    >
+                      ▶
+                    </Button>
+                    {visibleDisposals.length > 0 && (
+                      <Chip
                         size="sm"
                         variant="flat"
-                        aria-label="Previous year"
-                        title="Previous year"
-                        className="min-w-6 w-6 h-6"
-                        onPress={() => setReportDate(shiftReportDateYear(reportDate, -1))}
+                        color={disposalsGainLossTotal >= 0 ? 'success' : 'danger'}
+                        className="text-xs font-mono"
                       >
-                        ◀
-                      </Button>
-                      <Chip size="sm" variant="flat" color="default" className="text-xs">
-                        {reportDateObj.getFullYear()}
+                        Net {disposalsGainLossTotal >= 0 ? 'gain' : 'loss'}: {fmtNum(Math.abs(disposalsGainLossTotal))}
                       </Chip>
-                      <Button
-                        isIconOnly
-                        size="sm"
-                        variant="flat"
-                        aria-label="Next year"
-                        title="Next year"
-                        className="min-w-6 w-6 h-6"
-                        onPress={() => setReportDate(shiftReportDateYear(reportDate, 1))}
-                      >
-                        ▶
-                      </Button>
-                      <Chip size="sm" variant="flat" color="primary" className="text-xs">
-                        {disposals.length} {disposals.length === 1 ? 'disposal' : 'disposals'}
-                      </Chip>
-                      {disposals.length > 0 && (
-                        <Chip
-                          size="sm"
-                          variant="flat"
-                          color={disposalsGainLossTotal >= 0 ? 'success' : 'danger'}
-                          className="text-xs font-mono"
-                        >
-                          Net {disposalsGainLossTotal >= 0 ? 'gain' : 'loss'}: {fmtNum(Math.abs(disposalsGainLossTotal))}
-                        </Chip>
-                      )}
-                    </div>
+                    )}
+                  </div>
+                  <div className="flex flex-nowrap items-center gap-2 px-3 py-2 border-b border-slate-100 overflow-x-auto">
+                    <Input
+                      aria-label="From date"
+                      type="date"
+                      size="sm"
+                      className="w-36 shrink-0"
+                      value={disposalFromDate}
+                      onValueChange={setDisposalFromDate}
+                    />
+                    <Input
+                      aria-label="To date"
+                      type="date"
+                      size="sm"
+                      className="w-36 shrink-0"
+                      value={disposalToDate}
+                      onValueChange={setDisposalToDate}
+                    />
+                    <Input
+                      size="sm"
+                      className="w-44 shrink-0"
+                      placeholder="Search code or name"
+                      aria-label="Search disposals"
+                      value={disposalQuery}
+                      onValueChange={setDisposalQuery}
+                    />
+                    <Select
+                      aria-label="Category"
+                      size="sm"
+                      className="w-40 shrink-0"
+                      selectedKeys={[disposalCategory]}
+                      disallowEmptySelection
+                      onSelectionChange={(k) => setDisposalCategory(String(Array.from(k)[0] ?? 'all'))}
+                    >
+                      {[{ id: 'all', name: 'All categories' }, ...categories].map((c) => <SelectItem key={c.id}>{c.name}</SelectItem>)}
+                    </Select>
+                    <span className="text-xs text-gray-500 whitespace-nowrap ml-auto shrink-0">
+                      {visibleDisposals.length === disposals.length
+                        ? `${disposals.length} ${disposals.length === 1 ? 'disposal' : 'disposals'}`
+                        : `${visibleDisposals.length} of ${disposals.length} disposals`}
+                    </span>
                     <Dropdown>
                       <DropdownTrigger>
-                        <Button size="sm" variant="bordered" className="min-w-[100px]">Download</Button>
+                        <Button size="sm" variant="flat" className="shrink-0">Export</Button>
                       </DropdownTrigger>
                       <DropdownMenu aria-label="Export options">
-                        <DropdownItem key="csv" onPress={exportDisposalsCSV}>CSV spreadsheet</DropdownItem>
-                        <DropdownItem key="pdf" onPress={printDisposalsPDF}>Print / PDF</DropdownItem>
+                        <DropdownItem key="csv" onPress={exportDisposalsCSV}>CSV</DropdownItem>
+                        <DropdownItem key="pdf" onPress={printDisposalsPDF}>Print</DropdownItem>
                       </DropdownMenu>
                     </Dropdown>
                   </div>
 
-                  {disposals.length === 0 ? (
-                    <div className="py-12 text-center text-sm text-slate-400">
-                      No disposals in {reportDateObj.getFullYear()}.
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[640px] text-sm border-collapse">
-                        <thead>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[640px] text-sm border-collapse">
+                      <thead>
+                        <tr>
+                          {([
+                            ['date', 'Date', 'left'],
+                            ['asset', 'Asset', 'left'],
+                            ['cost', 'Cost', 'right'],
+                            ['accumDep', 'Depreciation', 'right'],
+                            ['nbv', 'Book value', 'right'],
+                            ['proceeds', 'Proceeds', 'right'],
+                            ['gainLoss', 'Gain / (loss)', 'right'],
+                          ] as const).map(([key, label, align]) => (
+                            <th
+                              key={key}
+                              className={`${align === 'right' ? 'text-right' : 'text-left'} py-3 px-3 font-semibold text-[11px] uppercase tracking-wider text-slate-500 bg-slate-100/90 border-b border-slate-200`}
+                            >
+                              <SortLabel
+                                active={disposalSortKey === key}
+                                dir={disposalSortDir}
+                                align={align}
+                                onPress={() => onDisposalSort(key)}
+                              >
+                                {label}
+                              </SortLabel>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visibleDisposals.length === 0 ? (
                           <tr>
-                            <th className="text-left py-3 px-4 font-semibold text-[11px] uppercase tracking-wider text-slate-500 bg-slate-100/90 border-b border-slate-200">Date</th>
-                            <th className="text-left py-3 px-4 font-semibold text-[11px] uppercase tracking-wider text-slate-500 bg-slate-100/90 border-b border-slate-200">Asset</th>
-                            <th className="text-right py-3 px-3 font-semibold text-[11px] uppercase tracking-wider text-slate-500 bg-slate-100/90 border-b border-slate-200">Cost (₵)</th>
-                            <th className="text-right py-3 px-3 font-semibold text-[11px] uppercase tracking-wider text-slate-500 bg-slate-100/90 border-b border-slate-200">Accum dep (₵)</th>
-                            <th className="text-right py-3 px-3 font-semibold text-[11px] uppercase tracking-wider text-slate-500 bg-slate-100/90 border-b border-slate-200">NBV (₵)</th>
-                            <th className="text-right py-3 px-3 font-semibold text-[11px] uppercase tracking-wider text-slate-500 bg-slate-100/90 border-b border-slate-200">Proceeds (₵)</th>
-                            <th className="text-right py-3 px-4 font-semibold text-[11px] uppercase tracking-wider text-slate-500 bg-slate-100/90 border-b border-slate-200">Gain / (loss) (₵)</th>
+                            <td colSpan={7} className="py-12 text-center text-sm text-slate-400">
+                              {disposals.length === 0
+                                ? `No disposals in ${reportDateObj.getFullYear()}.`
+                                : 'No disposals match this search.'}
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          {disposals.map((d, i) => (
+                        ) : visibleDisposals.map((d, i) => (
                             <tr
                               key={`${d.assetCode}-${i}`}
                               className={`border-t border-slate-100 hover:bg-blue-50/40 transition-colors ${i % 2 === 1 ? 'bg-slate-50/40' : 'bg-white'}`}
@@ -1076,24 +1385,46 @@ export default function PpeAssetRegisterPage() {
                         </tbody>
                       </table>
                     </div>
-                  )}
                 </div>
               </div>
             </Tab>
 
             <Tab key="categories" title="Categories">
               <div className={`${deskBookTabPanelClassName} overflow-x-auto`}>
-                <div className="flex justify-end gap-2 mb-2">
+                <div className="flex flex-nowrap items-center gap-2 mb-2 overflow-x-auto">
+                  <Input
+                    size="sm"
+                    className="w-44 shrink-0"
+                    placeholder="Search name or group"
+                    aria-label="Search categories"
+                    value={categoryQuery}
+                    onValueChange={setCategoryQuery}
+                  />
+                  <Select
+                    aria-label="Group"
+                    size="sm"
+                    className="w-40 shrink-0"
+                    selectedKeys={[categoryGroup]}
+                    disallowEmptySelection
+                    onSelectionChange={(k) => setCategoryGroup(String(Array.from(k)[0] ?? 'all'))}
+                  >
+                    {['all', ...PRESENTATION_GROUPS].map((g) => <SelectItem key={g}>{g === 'all' ? 'All groups' : g}</SelectItem>)}
+                  </Select>
+                  <span className="text-xs text-gray-500 whitespace-nowrap ml-auto shrink-0">
+                    {sortedCategories.length === categories.length
+                      ? `${categories.length} ${categories.length === 1 ? 'category' : 'categories'}`
+                      : `${sortedCategories.length} of ${categories.length} categories`}
+                  </span>
                   <Dropdown>
                     <DropdownTrigger>
-                      <Button size="sm" variant="flat">📥 Export</Button>
+                      <Button size="sm" variant="flat" className="shrink-0">Export</Button>
                     </DropdownTrigger>
                     <DropdownMenu>
-                      <DropdownItem key="csv" onPress={exportCategoriesCSV}>CSV spreadsheet</DropdownItem>
-                      <DropdownItem key="pdf" onPress={printCategoriesPDF}>📑 Print PDF</DropdownItem>
+                      <DropdownItem key="csv" onPress={exportCategoriesCSV}>CSV</DropdownItem>
+                      <DropdownItem key="pdf" onPress={printCategoriesPDF}>Print</DropdownItem>
                     </DropdownMenu>
                   </Dropdown>
-                  <Button size="sm" color="primary" onPress={openAddCategory}>
+                  <Button size="sm" color="primary" className="shrink-0" onPress={openAddCategory}>
                     Add category
                   </Button>
                 </div>
@@ -1101,15 +1432,15 @@ export default function PpeAssetRegisterPage() {
                 <Table aria-label="Categories" removeWrapper classNames={deskResizableTableClassNames()}>
                   <TableHeader>
                     {catColumn('name', 'Name')}
-                    {catColumn('fsGroup', 'FS Group')}
+                    {catColumn('fsGroup', 'Books group')}
                     {catColumn('gra', 'GRA')}
-                    {catColumn('graRate', 'GRA Rate')}
-                    {catColumn('ias', 'IAS')}
-                    {catColumn('life', 'Life (Yrs)')}
+                    {catColumn('graRate', 'GRA rate')}
+                    {catColumn('ias', 'Books method')}
+                    {catColumn('life', 'Life (years)')}
                     {catColumn('residual', 'Residual')}
                     {catColumn('assets', 'Assets', 'center')}
                   </TableHeader>
-                  <TableBody>
+                  <TableBody emptyContent={categories.length === 0 ? 'No categories yet.' : 'No categories match this search.'}>
                     {pagedCats.map((c: PpeCategory) => (
                       <TableRow key={c.id} className={rowClassNames(viewItem?.id === c.id && viewKind === 'category')} onClick={() => openCategoryView(c)}>
                         <TableCell className="font-medium text-sm truncate text-blue-600 hover:underline">{c.name}</TableCell>
@@ -1136,7 +1467,7 @@ export default function PpeAssetRegisterPage() {
 
       <Modal isOpen={isOpen} onClose={onClose} size="2xl">
         <ModalContent>
-          <ModalHeader>{editingId ? 'Edit asset' : 'Add asset'}</ModalHeader>
+          <ModalHeader>{disposeMode ? 'Dispose asset' : editingId ? 'Edit asset' : 'Add asset'}</ModalHeader>
           <ModalBody>
             {formError && <Alert color="warning" className="mb-3">{formError}</Alert>}
             <div className="grid grid-cols-2 gap-3">
@@ -1189,11 +1520,21 @@ export default function PpeAssetRegisterPage() {
                 <Input type="number" min="0" step="0.01" label="Unit price (GHS)" isRequired isInvalid={!!fieldErrors.unitPrice} value={String(form.unitPrice)} onValueChange={(v) => setForm({ ...form, unitPrice: Number(v) || 0 })} />
                 {fieldErrors.unitPrice && <div className="text-xs text-danger mt-1">{fieldErrors.unitPrice}</div>}
               </div>
-              <Select label="Capitalise / Expense" selectedKeys={[form.capExp]} onSelectionChange={(k) => setForm({ ...form, capExp: Array.from(k)[0] as CapExpStatus })}>
-                {CAP_EXP_OPTIONS.map((o) => <SelectItem key={o}>{o}</SelectItem>)}
+              <Select label="Status" selectedKeys={[form.capExp]} onSelectionChange={(k) => setForm({ ...form, capExp: Array.from(k)[0] as CapExpStatus })}>
+                {CAP_EXP_OPTIONS.map((o) => <SelectItem key={o}>{statusLabel(o)}</SelectItem>)}
               </Select>
               {form.capExp === 'Disposed' && (
                 <>
+                  {editingId && (() => {
+                    const row = computedRows.find((r) => r.asset.id === editingId);
+                    if (!row || row.asset.capExp === 'Expense') return null;
+                    const note = disposalTimingNote(row.category, row.computed.remainingLife, row.computed.nbv);
+                    return (
+                      <div className="col-span-2">
+                        <Alert color={note.color}>{note.text}</Alert>
+                      </div>
+                    );
+                  })()}
                   <div>
                     <Input type="date" label="Disposal date" isRequired isInvalid={!!fieldErrors.disposalDate} value={form.disposalDate} onValueChange={(v) => setForm({ ...form, disposalDate: v })} />
                     {fieldErrors.disposalDate && <div className="text-xs text-danger mt-1">{fieldErrors.disposalDate}</div>}
@@ -1228,7 +1569,7 @@ export default function PpeAssetRegisterPage() {
                     description="Which account settles this purchase — posts the withdrawal there too, or leaves it on account payable"
                   >
                     {[
-                      <SelectItem key="2205">📋 On account (2205 — Trade Accounts Payable)</SelectItem>,
+                      <SelectItem key="2205">On account (2205 — Trade payables)</SelectItem>,
                       ...activeBankAccounts.map((b) => (
                         <SelectItem key={b.id} textValue={b.accountName}>
                           <BankAccountOptionLabel account={b} />
@@ -1238,7 +1579,7 @@ export default function PpeAssetRegisterPage() {
                   </Select>
                   <div className="col-span-2">
                     <Checkbox isSelected={form.postToLedger} onValueChange={(v) => setForm({ ...form, postToLedger: v })}>
-                      Post to ledger (Dr 1510 / Cr selected account) — {fmt(form.quantity * form.unitPrice)}
+                      Post to the books — {fmt(form.quantity * form.unitPrice)}
                     </Checkbox>
                   </div>
                 </>
@@ -1269,7 +1610,7 @@ export default function PpeAssetRegisterPage() {
           </ModalBody>
           <ModalFooter>
             <Button variant="bordered" onPress={onClose}>Cancel</Button>
-            <Button color="primary" onPress={handleSave}>{editingId ? 'Save' : 'Save asset'}</Button>
+            <Button color="primary" onPress={handleSave}>{disposeMode ? 'Dispose asset' : editingId ? 'Save' : 'Save asset'}</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>
@@ -1299,7 +1640,7 @@ export default function PpeAssetRegisterPage() {
                 description={`New assets in this category auto-suggest "${(categoryForm.codePrefix.trim() || PRESENTATION_GROUP_PREFIX[categoryForm.presentationGroup] || 'CA')}-001", "-002"... Leave blank to use the default for ${categoryForm.presentationGroup}.`}
               />
               <Select
-                label="FS presentation group"
+                label="Books group"
                 className="col-span-2"
                 selectedKeys={[categoryForm.presentationGroup]}
                 onSelectionChange={(k) =>
@@ -1346,7 +1687,7 @@ export default function PpeAssetRegisterPage() {
                 ))}
               </Select>
               <Select
-                label="IAS method"
+                label="Books method"
                 selectedKeys={[categoryForm.iasMethod]}
                 onSelectionChange={(k) =>
                   setCategoryForm({ ...categoryForm, iasMethod: Array.from(k)[0] as IasMethod })
@@ -1362,7 +1703,7 @@ export default function PpeAssetRegisterPage() {
                     type="number"
                     min="0"
                     max="100"
-                    label="IAS rate (%)"
+                    label="Books rate (%)"
                     isRequired
                     isInvalid={!!categoryFieldErrors.iasRatePct}
                     value={categoryForm.iasRatePct}
@@ -1446,20 +1787,21 @@ export default function PpeAssetRegisterPage() {
             if (!viewItem || !viewKind) return null;
             if (viewKind === 'asset') {
               const { asset, category, computed } = viewItem;
+              const carrying = carryingAtReportDate(asset, computed, reportDate);
               return (
                 <>
                   <ModalHeader className="border-b bg-white px-6 py-4">
                     <div className="flex justify-between items-start w-full pr-6">
                       <div>
                         <div className="flex items-center gap-2 mb-1">
-                          <h3 className="text-xl font-bold text-gray-900">PPE ASSET</h3>
+                          <h3 className="text-xl font-bold text-gray-900">Asset</h3>
                           <Chip size="sm" variant="flat" color={asset.capExp === 'Capitalise' ? 'success' : asset.capExp === 'Expense' ? 'default' : 'warning'}>{asset.capExp}</Chip>
                         </div>
                         <p className="text-lg text-gray-800">{asset.assetName}</p>
                         <p className="text-sm font-mono text-gray-500">{asset.assetCode}</p>
                       </div>
                       <div className="text-right">
-                        <p className="text-2xl font-bold tabular-nums">{fmt(computed.nbv)}</p>
+                        <p className="text-2xl font-bold tabular-nums">{fmt(carrying.nbv)}</p>
                         <p className="text-xs text-gray-500">Net book value</p>
                       </div>
                     </div>
@@ -1472,22 +1814,34 @@ export default function PpeAssetRegisterPage() {
                         <div><span className="text-gray-500">Qty × price:</span> <span className="tabular-nums">{asset.quantity} × {fmt(asset.unitPrice)}</span></div>
                       </div>
                       <div className="space-y-1">
-                        <div><span className="text-gray-500">Cost:</span> <span className="tabular-nums font-medium">{fmt(computed.totalCost)}</span></div>
-                        <div><span className="text-gray-500">Accum dep:</span> <span className="tabular-nums">{fmt(computed.accumDep)}</span></div>
+                        <div><span className="text-gray-500">Cost:</span> <span className="tabular-nums font-medium">{fmt(carrying.cost)}</span></div>
+                        <div><span className="text-gray-500">Accum dep:</span> <span className="tabular-nums">{fmt(carrying.dep)}</span></div>
                         <div><span className="text-gray-500">GRA WDV:</span> <span className="tabular-nums">{fmt(computed.graWdvCurrent)}</span></div>
                         <div><span className="text-gray-500">Remaining:</span> <span>{computed.remainingLife?.display || '—'}</span></div>
                       </div>
                     </div>
+                    {deletePrompt && (
+                      <Alert color={deletePrompt.canConfirm ? 'danger' : 'warning'} className="mt-4">
+                        {deletePrompt.message}
+                      </Alert>
+                    )}
                   </ModalBody>
                   <ModalFooter className="border-t bg-white">
                     <Button variant="flat" onPress={onClose}>Close</Button>
-                    <Button color="danger" variant="flat" onPress={() => {
-                      if (confirm(`Delete "${asset.assetName}" (${asset.assetCode})? This cannot be undone.`)) {
-                        deleteAsset(asset.id);
-                        closeView();
-                      }
-                    }}>🗑️ Delete</Button>
-                    <Button color="primary" onPress={() => { closeView(); openEdit(asset); }}>✏️ Edit</Button>
+                    {asset.capExp === 'Capitalise' && (
+                      <Button color="warning" variant="flat" onPress={() => openDispose(asset)}>Dispose</Button>
+                    )}
+                    {deletePrompt?.canConfirm ? (
+                      <Button color="danger" onPress={() => {
+                        if (deleteAsset(asset.id)) {
+                          setNotice(`"${asset.assetName}" removed from the register.`);
+                          closeView();
+                        }
+                      }}>Confirm delete</Button>
+                    ) : (
+                      <Button color="danger" variant="flat" onPress={() => askDeleteAsset(asset)}>Delete</Button>
+                    )}
+                    <Button color="primary" onPress={() => { closeView(); openEdit(asset); }}>Edit</Button>
                   </ModalFooter>
                 </>
               );
@@ -1498,7 +1852,7 @@ export default function PpeAssetRegisterPage() {
               <>
                 <ModalHeader className="border-b bg-white px-6 py-4">
                   <div className="pr-6">
-                    <h3 className="text-xl font-bold text-gray-900">PPE CATEGORY</h3>
+                    <h3 className="text-xl font-bold text-gray-900">Category</h3>
                     <p className="text-lg text-gray-800">{c.name}</p>
                   </div>
                 </ModalHeader>
@@ -1514,13 +1868,27 @@ export default function PpeAssetRegisterPage() {
                       <div><span className="text-gray-500">Residual:</span> <span className="tabular-nums">{(c.residualPct * 100).toFixed(0)}%</span></div>
                       <div><span className="text-gray-500">Assets:</span> <span className="tabular-nums font-medium">{count}</span></div>
                     </div>
-                  </div>
-                </ModalBody>
-                <ModalFooter className="border-t bg-white">
-                  <Button variant="flat" onPress={onClose}>Close</Button>
-                  <Button color="danger" variant="flat" isDisabled={count > 0} onPress={() => { handleDeleteCategory(c); closeView(); }}>🗑️ Delete</Button>
-                  <Button color="primary" onPress={() => { closeView(); openEditCategory(c); }}>✏️ Edit</Button>
-                </ModalFooter>
+                    </div>
+                    {deletePrompt && (
+                      <Alert color={deletePrompt.canConfirm ? 'danger' : 'warning'} className="mt-4">
+                        {deletePrompt.message}
+                      </Alert>
+                    )}
+                  </ModalBody>
+                  <ModalFooter className="border-t bg-white">
+                    <Button variant="flat" onPress={onClose}>Close</Button>
+                    {deletePrompt?.canConfirm ? (
+                      <Button color="danger" onPress={() => {
+                        if (deleteCategory(c.id)) {
+                          setNotice(`Category "${c.name}" deleted.`);
+                          closeView();
+                        }
+                      }}>Confirm delete</Button>
+                    ) : (
+                      <Button color="danger" variant="flat" onPress={() => askDeleteCategory(c, count)}>Delete</Button>
+                    )}
+                    <Button color="primary" onPress={() => { closeView(); openEditCategory(c); }}>Edit</Button>
+                  </ModalFooter>
               </>
             );
           }}

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState, useCallback, useEffect } from 'react';
+import React, { useMemo, useState, useCallback, useEffect, Suspense, lazy } from 'react';
 import HeadingInfo from '../HeadingInfo';
 import {
 	Card, CardBody, Button,
@@ -83,6 +83,8 @@ function deskCmp(a: string | number, b: string | number) {
 	return String(a).localeCompare(String(b));
 }
 
+const EventsConferencesMainDashboard = lazy(() => import('../EventsConferencesMainDashboard'));
+
 function formatDeskDate(value: unknown): string {
 	if (value == null || value === '') return '—';
 	const d = value instanceof Date ? value : new Date(String(value));
@@ -139,6 +141,7 @@ export default function AccountsReceivable() {
 		updatePayment,
 		addInvoice,
 		updateInvoice,
+		deleteInvoice,
 		addBusinessPartner,
 		postInvoice,
 		initializeAccounting,
@@ -150,6 +153,8 @@ export default function AccountsReceivable() {
 		voidPayment,
     } = useAccountingStore();
 	const settings = useSettingsStore();
+	const canManageAr = settings.hasPermission('accounting.manage-ar');
+	const canDeleteInvoice = settings.hasPermission('accounting.delete');
 	const receiptTemplateKey = settings.printing?.receipt || 'simple-receipt';
 	const printOrg = useMemo(() => buildOrgProfile(settings), [settings]);
 	const printCurrency =
@@ -199,7 +204,7 @@ export default function AccountsReceivable() {
 				: paymentSyncStatus(record, journalEntries);
 		if (status === 'not_applicable') return null;
 		const color = status === 'synced' ? 'success' : status === 'subledger_only' ? 'warning' : 'danger';
-		const label = status === 'synced' ? 'GL ✓' : status === 'subledger_only' ? 'No GL' : 'GL only';
+		const label = status === 'synced' ? 'In books' : status === 'subledger_only' ? 'Not in books' : 'Books only';
 		return { color, label };
 	};
 
@@ -299,6 +304,9 @@ export default function AccountsReceivable() {
 	const [isWHTDetailOpen, setIsWHTDetailOpen] = useState(false);
 	const [receiveCertForm, setReceiveCertForm] = useState<{ certificateNumber: string; withholdingAgentTIN: string; attachments: string[] }>({ certificateNumber: '', withholdingAgentTIN: '', attachments: [] });
     const [invoiceForm, setInvoiceForm] = useState<any>({});
+	const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
+	/** Event-linked proforma edit: open Event workspace modal over AR (do not navigate away). */
+	const [eventWorkspaceId, setEventWorkspaceId] = useState<string | null>(null);
 	const [receiptForm, setReceiptForm] = useState<any>({ printAfterSave: true });
 	const [editingReceiptId, setEditingReceiptId] = useState<string | null>(null);
 	const [printForm, setPrintForm] = useState<{ targetKey: string; paymentId: string }>({
@@ -743,6 +751,64 @@ export default function AccountsReceivable() {
 		openPrintPreview(html);
 	}, [filteredWHTCerts]);
 
+	const printWHTCertificatePDF = useCallback((cert: any) => {
+		try {
+			if (!cert) {
+				window.alert('No WHT certificate selected to print.');
+				return;
+			}
+			const statusBadge =
+				cert.status === 'Verified' ? 'badge-success' : cert.status === 'Received' ? 'badge-info' : 'badge-warning';
+			const html = generatePdfHtml('WHT Certificate', `
+				<div class="header">
+					<h1>📜 WHT CERTIFICATE</h1>
+					<div class="subtitle">${cert.certificateNumber || 'PENDING'}</div>
+				</div>
+				<div class="section">
+					<div class="section-title">Certificate Information</div>
+					<div class="detail-grid">
+						<div class="detail-item"><div class="label">Certificate #</div><div class="value">${cert.certificateNumber || 'PENDING'}</div></div>
+						<div class="detail-item"><div class="label">Tax Period</div><div class="value">${cert.taxPeriod || '-'}</div></div>
+						<div class="detail-item"><div class="label">Status</div><div class="value"><span class="badge ${statusBadge}">${cert.status || '-'}</span></div></div>
+						<div class="detail-item"><div class="label">Date Received</div><div class="value">${cert.receivedDate ? new Date(cert.receivedDate).toLocaleDateString() : 'Not yet received'}</div></div>
+					</div>
+				</div>
+				<div class="section">
+					<div class="section-title">Withholding Agent (Customer)</div>
+					<div class="detail-grid">
+						<div class="detail-item"><div class="label">Name</div><div class="value">${cert.withholdingAgentName || '-'}</div></div>
+						<div class="detail-item"><div class="label">TIN</div><div class="value">${cert.withholdingAgentTIN || '-'}</div></div>
+						<div class="detail-item"><div class="label">Related Invoice</div><div class="value">${cert.invoiceNumber || '-'}</div></div>
+						<div class="detail-item"><div class="label">Gross Amount</div><div class="value">${formatAccountingCurrency(Number(cert.grossAmount || 0))}</div></div>
+					</div>
+				</div>
+				<div class="section">
+					<div class="section-title">Tax Credit Breakdown</div>
+					<table>
+						<thead><tr><th>Tax Type</th><th>Rate</th><th>Amount</th></tr></thead>
+						<tbody>
+							<tr><td>Withholding Tax (WHT)</td><td>${cert.whtRate ?? 5}%</td><td class="amount">${formatAccountingCurrency(Number(cert.whtAmount || 0))}</td></tr>
+							<tr><td>Withholding VAT (WHT-VAT)</td><td>${cert.whtVatRate ?? 7}%</td><td class="amount">${formatAccountingCurrency(Number(cert.whtVatAmount || 0))}</td></tr>
+							<tr class="total-row"><td><strong>Total Tax Credit</strong></td><td>-</td><td class="amount"><strong>${formatAccountingCurrency(Number(cert.totalWithheld || 0))}</strong></td></tr>
+						</tbody>
+					</table>
+				</div>
+				<div class="section">
+					<div class="section-title">Tax Credit Usage</div>
+					<div class="detail-grid">
+						<div class="detail-item"><div class="label">Total Credit</div><div class="value">${formatAccountingCurrency(Number(cert.totalWithheld || 0))}</div></div>
+						<div class="detail-item"><div class="label">Used</div><div class="value">${formatAccountingCurrency(Number(cert.taxCreditUsedAmount || 0))}</div></div>
+						<div class="detail-item"><div class="label">Remaining</div><div class="value">${formatAccountingCurrency(Number(cert.taxCreditBalance || cert.totalWithheld || 0))}</div></div>
+					</div>
+				</div>
+			`, `Generated on ${new Date().toLocaleString()}`);
+			openPrintPreview(html);
+		} catch (err) {
+			console.error('[AR] Print WHT certificate failed', err);
+			window.alert('Could not print this WHT certificate. Please try again.');
+		}
+	}, []);
+
 	// Print Aging Report as PDF
 	const printAgingPDF = useCallback(() => {
 		const rows = filteredAging.map((c: any) => `<tr>
@@ -795,6 +861,11 @@ export default function AccountsReceivable() {
 
 	// Print Individual Invoice/Proforma PDF
 	const printInvoicePDF = useCallback((invoice: any) => {
+		try {
+			if (!invoice) {
+				window.alert('No invoice selected to print.');
+				return;
+			}
 		const isProforma = invoice.isProforma || invoice.invoiceNumber?.startsWith('PRO-');
 		const source = getSourceLabel(invoice.sourceModule);
 		const balance = (invoice.total || 0) - (invoice.paidAmount || 0);
@@ -899,12 +970,25 @@ export default function AccountsReceivable() {
 			</div>
 		`, `Generated on ${new Date().toLocaleString()}`);
 		openPrintPreview(html);
+		} catch (err) {
+			console.error('[AR] Print invoice failed', err);
+			window.alert('Could not print this invoice. Please try again.');
+		}
 	}, [getInvoiceReceipts]);
 
 	// Print Individual Receipt (hotel template via folio/invoice picker context)
 	const printReceiptPDF = useCallback(
 		(receipt: StoredReceiptPayment) => {
-			printCustomerReceiptForPayment(receipt);
+			try {
+				if (!receipt) {
+					window.alert('No receipt selected to print.');
+					return;
+				}
+				printCustomerReceiptForPayment(receipt);
+			} catch (err) {
+				console.error('[AR] Print receipt failed', err);
+				window.alert('Could not print this receipt. Please try again.');
+			}
 		},
 		[printCustomerReceiptForPayment],
 	);
@@ -922,6 +1006,7 @@ export default function AccountsReceivable() {
 
 	// New invoice/proforma
 	const openNewInvoice = (isProforma: boolean = false) => {
+		setEditingInvoiceId(null);
 		setInvoiceForm({
 			businessPartnerId: '',
 			customerName: '',
@@ -947,6 +1032,67 @@ export default function AccountsReceivable() {
 		setIsNewInvoiceOpen(true);
 	};
 
+	const openEditInvoice = (inv: any) => {
+		const isProforma = inv.isProforma || inv.invoiceNumber?.startsWith('PRO-');
+		// Event/conference proformas are owned by the Event form — open that workspace
+		// as an overlay on Accounting (same form, stay in AR).
+		if (isProforma) {
+			const eventId =
+				(inv.eventId && String(inv.eventId)) ||
+				(inv.sourceModule === 'conference' && inv.reference ? String(inv.reference) : '') ||
+				(String(inv.id || '').startsWith('INV-CONFERENCE-PRO-')
+					? String(inv.id).slice('INV-CONFERENCE-PRO-'.length)
+					: '');
+			if (eventId || inv.sourceModule === 'conference') {
+				if (!eventId) {
+					window.alert('This conference proforma is not linked to an event record.');
+					return;
+				}
+				setIsDetailOpen(false);
+				setEventWorkspaceId(eventId);
+				return;
+			}
+		}
+		if (inv.status === 'Void') {
+			window.alert('Voided invoices cannot be edited');
+			return;
+		}
+		if (!isProforma && !isManualArApSource(inv.sourceModule)) {
+			window.alert('Only manual AR invoices or proformas can be edited here');
+			return;
+		}
+		const receipts = getInvoiceReceipts(inv.id);
+		if (!isProforma && receipts.length > 0) {
+			window.alert('Void linked receipts before editing this invoice');
+			return;
+		}
+		setEditingInvoiceId(inv.id);
+		setInvoiceForm({
+			businessPartnerId: inv.businessPartnerId || '',
+			customerName: inv.customerName || '',
+			customerPhone: inv.customerPhone || '',
+			customerEmail: inv.customerEmail || '',
+			customerAddress: inv.customerAddress || '',
+			customerTaxNumber: inv.customerTaxNumber || '',
+			customerCreditLimit: 0,
+			customerPaymentTerms: 'net30',
+			invoiceNumber: inv.invoiceNumber || '',
+			poNumber: inv.poNumber || inv.reference || '',
+			date: (inv.date || new Date().toISOString()).slice(0, 10),
+			dueDate: (inv.dueDate || inv.date || new Date().toISOString()).slice(0, 10),
+			description: inv.description || '',
+			subtotal: Number(inv.subtotal || 0),
+			taxAmount: Number(inv.taxAmount || 0),
+			total: Number(inv.total || 0),
+			taxType: Number(inv.taxAmount || 0) > 0 ? 'STANDARD' : 'NONE',
+			customTaxPercent: 0,
+			isProforma,
+		});
+		setFormError('');
+		setIsDetailOpen(false);
+		setIsNewInvoiceOpen(true);
+	};
+
 	const saveInvoice = () => {
 		if (!invoiceForm.customerName?.trim()) { setFormError('Customer name is required'); return; }
 		if (!invoiceForm.total || Number(invoiceForm.total) <= 0) { setFormError('Total must be greater than 0'); return; }
@@ -957,7 +1103,6 @@ export default function AccountsReceivable() {
 		const invoiceNumber = typedNumber || (isProforma ? settings.getNextProformaInvoiceNumber() : settings.getNextInvoiceNumber());
 
 		const subtotal = Number(invoiceForm.subtotal || invoiceForm.total);
-		const invoiceId = `${prefix}-${Date.now()}`;
 
 		// A customer typed by name with no existing business partner selected needs a real
 		// BusinessPartner record — otherwise their running balance never appears anywhere
@@ -989,6 +1134,46 @@ export default function AccountsReceivable() {
 			});
 		}
 
+		if (editingInvoiceId) {
+			const existing = invoices.find((i: any) => i.id === editingInvoiceId);
+			if (!existing) {
+				setFormError('Invoice no longer exists');
+				return;
+			}
+			updateInvoice(editingInvoiceId, {
+				invoiceNumber,
+				date: new Date(invoiceForm.date).toISOString(),
+				dueDate: new Date(invoiceForm.dueDate).toISOString(),
+				businessPartnerId,
+				customerName: invoiceForm.customerName,
+				description: invoiceForm.description || (isProforma ? 'Proforma invoice' : 'Sales invoice'),
+				poNumber: invoiceForm.poNumber || '',
+				subtotal,
+				taxAmount: Number(invoiceForm.taxAmount || 0),
+				total: Number(invoiceForm.total),
+				updatedAt: new Date().toISOString(),
+				...(isProforma
+					? {}
+					: {
+						lines: [{
+							id: existing.lines?.[0]?.id || `IL-${Date.now()}`,
+							invoiceId: editingInvoiceId,
+							description: invoiceForm.description || 'Sales revenue',
+							quantity: 1,
+							unitPrice: subtotal,
+							amount: subtotal,
+							taxAmount: Number(invoiceForm.taxAmount || 0),
+							glAccountCode: existing.lines?.[0]?.glAccountCode || GL_ACCOUNTS.OTHER_REVENUE,
+						}],
+					}),
+			} as any);
+			setEditingInvoiceId(null);
+			setIsNewInvoiceOpen(false);
+			handleRefresh();
+			return;
+		}
+
+		const invoiceId = `${prefix}-${Date.now()}`;
 		const payload = {
 			id: invoiceId,
 			invoiceNumber,
@@ -1061,8 +1246,13 @@ export default function AccountsReceivable() {
 		}
 	};
 
-	// New / edit receipt — optional invoice (posted AR) or folio reservation (in-house guest)
-	const openReceiptForm = (invoice?: any, folioReservationId?: string) => {
+	// New / edit receipt — optional invoice (posted AR) or folio reservation (in-house guest).
+	// paymentKind preselects standard / net-cash+WHT / WHT-only when opening from an invoice.
+	const openReceiptForm = (
+		invoice?: any,
+		folioReservationId?: string,
+		paymentKind: 'standard' | 'wht_settlement' | 'wht_only' = 'standard',
+	) => {
 		setEditingReceiptId(null);
 		if (folioReservationId) {
 			const folioTarget = buildFolioReceiptTargets(foFolios, foReservations).find(
@@ -1097,12 +1287,20 @@ export default function AccountsReceivable() {
 			});
 		} else {
 			const settlement = invoice ? computeInvoiceWhtSettlement(invoice, taxConfigs) : null;
+			const kind =
+				paymentKind !== 'standard' && settlement && settlement.whtTotalRemaining > 0.009
+					? paymentKind
+					: 'standard';
 			const defaultAmount =
 				invoice && settlement
 					? settlement.whtTotalRemaining > 0
 						? settlement.cashRemaining
 						: settlement.balanceDue
 					: '';
+			const cashAmount =
+				kind === 'wht_only' ? 0 : kind === 'wht_settlement' ? settlement!.cashRemaining : '';
+			const whtAmount = kind !== 'standard' ? settlement!.whtRemaining : '';
+			const whtVatAmount = kind !== 'standard' ? settlement!.whtVatRemaining : '';
 			setReceiptForm({
 				targetKey: invoice?.id ? `invoice:${invoice.id}` : '',
 				businessPartnerId: invoice?.businessPartnerId || '',
@@ -1110,17 +1308,19 @@ export default function AccountsReceivable() {
 				invoiceId: invoice?.id || '',
 				invoiceNumber: invoice?.invoiceNumber || '',
 				date: new Date().toISOString().slice(0, 10),
-				amount: defaultAmount === '' ? '' : defaultAmount,
+				amount: kind === 'standard' ? (defaultAmount === '' ? '' : defaultAmount) : cashAmount,
 				paymentMethod: 'Bank',
 				bankAccountId: activeBankAccounts[0]?.id || '',
 				checkNumber: '',
 				reference: invoice?.invoiceNumber ? `Payment for ${invoice.invoiceNumber}` : '',
 				notes: '',
 				printAfterSave: true,
-				paymentKind: 'standard',
-				cashAmount: '',
-				whtAmount: '',
-				whtVatAmount: '',
+				paymentKind: kind,
+				cashAmount,
+				whtAmount,
+				whtVatAmount,
+				whtHasTax: kind !== 'standard',
+				whtHasVat: kind !== 'standard',
 				certificateNumber: '',
 				withholdingAgentTIN: '',
 				revenueCenterCode: invoice
@@ -1858,6 +2058,47 @@ export default function AccountsReceivable() {
 		handleRefresh();
 	};
 
+	const handleDeleteInvoice = async (inv: any) => {
+		if (!useSettingsStore.getState().hasPermission('accounting.delete')) {
+			setFormError("You don't have permission to delete invoices.");
+			return;
+		}
+		if (inv.status === 'Void') {
+			setFormError('Voided invoices cannot be deleted');
+			return;
+		}
+		const activePay = payments.filter((p) => p.invoiceId === inv.id && p.status !== 'Void');
+		if (activePay.length > 0) {
+			setFormError('Delete or void all receipts and WHT payments on this invoice first');
+			return;
+		}
+		const isProforma = inv.isProforma || inv.invoiceNumber?.startsWith('PRO-');
+		const isDraft = inv.status === 'Draft' || isProforma;
+		if (!isDraft && !isManualArApSource(inv.sourceModule)) {
+			setFormError('Only manual AR invoices (or drafts/proformas) can be deleted here');
+			return;
+		}
+		const label = inv.invoiceNumber || inv.id;
+		if (!window.confirm(
+			isDraft
+				? `Permanently delete ${label}? This cannot be undone.`
+				: `Permanently delete ${label}? The invoice will be voided (GL reversed) then removed.`,
+		)) return;
+
+		// Posted invoices must reverse GL before removal so the ledger stays balanced.
+		if (!isDraft && inv.status === 'Posted') {
+			await voidInvoice(inv.id);
+			const err = useAccountingStore.getState().error;
+			if (err) {
+				setFormError(err);
+				return;
+			}
+		}
+		deleteInvoice(inv.id);
+		setIsDetailOpen(false);
+		handleRefresh();
+	};
+
 	const handleVoidReceipt = async (receipt: StoredReceiptPayment) => {
 		if (!useSettingsStore.getState().hasPermission('accounting.void-transaction')) {
 			setFormError("You don't have permission to void receipts.");
@@ -2100,27 +2341,48 @@ export default function AccountsReceivable() {
 
 	// Render filter bar
 	const renderFilters = (showStatus: boolean = true) => (
-		<div className="flex flex-wrap items-end gap-3 mb-4">
-			<Input label="Search" placeholder="Invoice #, customer..." value={searchQuery} onValueChange={setSearchQuery} className="w-56" size="sm" />
+		<div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-3">
+			<Input
+				aria-label="Search"
+				placeholder="Search invoice or customer"
+				value={searchQuery}
+				onValueChange={setSearchQuery}
+				className="w-52 shrink-0"
+				size="sm"
+			/>
 			{showStatus && (
-				<Select label="Status" selectedKeys={[statusFilter]} onSelectionChange={(s: any) => setStatusFilter(Array.from(s)[0] as string)} className="w-36" size="sm">
-					<SelectItem key="all">All</SelectItem>
+				<Select
+					aria-label="Status"
+					selectedKeys={[statusFilter]}
+					onSelectionChange={(s: any) => setStatusFilter(Array.from(s)[0] as string)}
+					className="w-32 shrink-0"
+					size="sm"
+					disallowEmptySelection
+				>
+					<SelectItem key="all">All statuses</SelectItem>
 					<SelectItem key="paid">Paid</SelectItem>
 					<SelectItem key="unpaid">Unpaid</SelectItem>
 					<SelectItem key="overdue">Overdue</SelectItem>
 				</Select>
 			)}
-			<Select label="Source" selectedKeys={[sourceFilter]} onSelectionChange={(s: any) => setSourceFilter(Array.from(s)[0] as string)} className="w-44" size="sm">
-				<SelectItem key="all">All Sources</SelectItem>
-				<SelectItem key="front_office">🏨 Front Office</SelectItem>
-				<SelectItem key="restaurant">🍽️ Restaurant</SelectItem>
-				<SelectItem key="bar">🍺 Bar</SelectItem>
-				<SelectItem key="room_service">🛎️ Room Service</SelectItem>
-				<SelectItem key="conference">📅 Conference</SelectItem>
-				<SelectItem key="manual">📝 Manual</SelectItem>
+			<Select
+				aria-label="Source"
+				selectedKeys={[sourceFilter]}
+				onSelectionChange={(s: any) => setSourceFilter(Array.from(s)[0] as string)}
+				className="w-40 shrink-0"
+				size="sm"
+				disallowEmptySelection
+			>
+				<SelectItem key="all">All sources</SelectItem>
+				<SelectItem key="front_office">Front Office</SelectItem>
+				<SelectItem key="restaurant">Restaurant</SelectItem>
+				<SelectItem key="bar">Bar</SelectItem>
+				<SelectItem key="room_service">Room Service</SelectItem>
+				<SelectItem key="conference">Conference</SelectItem>
+				<SelectItem key="manual">Manual</SelectItem>
 			</Select>
-			<Input type="date" label="From" value={dateFrom} onValueChange={setDateFrom} className="w-36" size="sm" />
-			<Input type="date" label="To" value={dateTo} onValueChange={setDateTo} className="w-36" size="sm" />
+			<Input type="date" aria-label="From date" value={dateFrom} onValueChange={setDateFrom} className="w-36 shrink-0" size="sm" />
+			<Input type="date" aria-label="To date" value={dateTo} onValueChange={setDateTo} className="w-36 shrink-0" size="sm" />
 		</div>
 	);
 
@@ -2140,8 +2402,8 @@ export default function AccountsReceivable() {
 						{salesColumn('paid', 'Paid', 'right')}
 						{salesColumn('balance', 'Balance', 'right')}
 						{salesColumn('status', 'Status')}
-						{salesColumn('wht', 'WHT')}
-						{salesColumn('gl', 'GL')}
+						{salesColumn('wht', 'Tax held')}
+						{salesColumn('gl', 'Books')}
 					</TableHeader>
 					<TableBody emptyContent="No sales invoices found.">
 						{salesPaging.paged.map((inv: any) => {
@@ -2183,9 +2445,9 @@ export default function AccountsReceivable() {
 										{inv.whtStatus === 'Pending' || hasPendingWhtCert ? (
 											<Chip size="sm" color="warning" variant="flat">Cert pending</Chip>
 										) : inv.whtStatus === 'Complete' ? (
-											<Chip size="sm" color="success" variant="flat">WHT ✓</Chip>
+											<Chip size="sm" color="success" variant="flat">Cert done</Chip>
 										) : settlement.whtTotalRemaining > 0 && balance > 0 ? (
-											<Chip size="sm" color="default" variant="flat">WHT due</Chip>
+											<Chip size="sm" color="default" variant="flat">Tax due</Chip>
 										) : (
 											<span className="text-xs text-gray-400">—</span>
 										)}
@@ -2303,11 +2565,10 @@ export default function AccountsReceivable() {
 		<div className="px-3 pt-2 pb-3 md:px-4 md:pt-3 md:pb-4" key={refreshKey}>
 			<div className="mb-2 flex justify-between items-center gap-2">
 				<div className="flex items-center gap-1.5 min-w-0">
-					<h1 className="text-lg md:text-xl font-bold text-gray-800 truncate">🧾 Accounts Receivable</h1>
-					<HeadingInfo label="About accounts receivable">
-						<p>Manage customer accounts, sales invoices, proformas, and receipts.</p>
-						<p className="mt-2 font-semibold">Official finance AR</p>
-						<p className="mt-1">Aging and outstanding on this screen come from the accounting subledger (posted invoices + GL). In-house guest folios are operational only until checkout posts here.</p>
+					<h1 className="text-lg md:text-xl font-bold text-gray-800 truncate">Accounts Receivable</h1>
+					<HeadingInfo label="About money customers owe">
+						<p>What customers still owe you from posted sales invoices, plus receipts and tax certificates.</p>
+						<p className="mt-2">Guest folios in Front Office are not on this desk until checkout posts the bill here.</p>
 					</HeadingInfo>
 				</div>
 				<div className="flex gap-2 shrink-0">
@@ -2330,10 +2591,10 @@ export default function AccountsReceivable() {
 			<DeskKpiStrip
 				className="mb-2"
 				items={[
-					{ id: 'ar.totalInvoiced', label: 'Total Invoiced', value: formatAccountingCurrency(totalRevenue), tone: 'text-blue-700' },
-					{ id: 'ar.outstanding', label: 'Outstanding AR', value: formatAccountingCurrency(totalOutstanding), tone: 'text-orange-700' },
-					{ id: 'ar.receipts', label: 'Total Receipts', value: formatAccountingCurrency(totalReceived), tone: 'text-green-700' },
-					{ id: 'ar.whtCredits', label: 'WHT Credits', value: formatAccountingCurrency(totalWHTReceivable), tone: 'text-amber-700' },
+					{ id: 'ar.totalInvoiced', label: 'Invoiced', value: formatAccountingCurrency(totalRevenue), tone: 'text-blue-700' },
+					{ id: 'ar.outstanding', label: 'Still owed', value: formatAccountingCurrency(totalOutstanding), tone: 'text-orange-700' },
+					{ id: 'ar.receipts', label: 'Received', value: formatAccountingCurrency(totalReceived), tone: 'text-green-700' },
+					{ id: 'ar.whtCredits', label: 'Tax certificates', value: formatAccountingCurrency(totalWHTReceivable), tone: 'text-amber-700' },
 				]}
 			/>
 
@@ -2350,21 +2611,19 @@ export default function AccountsReceivable() {
 					>
 						
 						{/* Overview Tab */}
-						<Tab key="overview" title="📊 Overview & Aging">
+						<Tab key="overview" title="Who owes us">
 							<div className={deskBookTabPanelClassName}>
-								<div className="flex justify-between items-center mb-2">
-									<h3 className="text-sm font-semibold text-gray-800">Customer Balance & Aging Analysis</h3>
-									<div className="flex items-center gap-2">
-										<Dropdown>
-											<DropdownTrigger>
-												<Button variant="flat" size="sm">📥 Export</Button>
-											</DropdownTrigger>
-											<DropdownMenu>
-												<DropdownItem key="csv" onPress={exportAgingCSV}>📄 Download CSV</DropdownItem>
-												<DropdownItem key="pdf" onPress={printAgingPDF}>📑 Print PDF</DropdownItem>
-											</DropdownMenu>
-										</Dropdown>
-								</div>
+								<div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-2">
+									<h3 className="text-sm font-semibold text-gray-800 shrink-0 mr-auto">Customer balances by age</h3>
+									<Dropdown>
+										<DropdownTrigger>
+											<Button variant="flat" size="sm" className="shrink-0">📥 Export</Button>
+										</DropdownTrigger>
+										<DropdownMenu>
+											<DropdownItem key="csv" onPress={exportAgingCSV}>CSV spreadsheet</DropdownItem>
+											<DropdownItem key="pdf" onPress={printAgingPDF}>📑 Print PDF</DropdownItem>
+										</DropdownMenu>
+									</Dropdown>
 								</div>
 								{renderFilters(false)}
 								<div ref={agingCols.frameRef} style={agingCols.frameStyle}>
@@ -2450,12 +2709,14 @@ export default function AccountsReceivable() {
 						{/* Invoices Tab — Sales and Proforma are the same document set (allSalesInvoices),
 						    split by isProforma; toggle below switches which subset renders instead of
 						    forcing two separate top-level tabs for what is one invoice ledger. */}
-						<Tab key="invoices" title={`🧾 Invoices (${allSalesInvoices.length})`}>
+						<Tab key="invoices" title={`Invoices (${allSalesInvoices.length})`}>
 							<div className={deskBookTabPanelClassName}>
-								<div className="flex justify-between items-center mb-4">
-									<div className="flex items-center gap-3">
-										<h3 className="text-lg font-semibold">{invoiceDocType === 'sales' ? 'Sales Invoices' : 'Proforma Invoices'}</h3>
-										<div className="flex rounded-lg border border-gray-200 p-0.5">
+								<div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-3">
+									<div className="flex items-center gap-2 shrink-0 mr-auto">
+										<h3 className="text-sm font-semibold text-gray-800 whitespace-nowrap">
+											{invoiceDocType === 'sales' ? 'Sales invoices' : 'Proforma quotes'}
+										</h3>
+										<div className="flex rounded-lg border border-gray-200 p-0.5 shrink-0">
 											<button
 												type="button"
 												onClick={() => setInvoiceDocType('sales')}
@@ -2473,31 +2734,35 @@ export default function AccountsReceivable() {
 										</div>
 									</div>
 									{invoiceDocType === 'sales' ? (
-										<div className="flex items-center gap-2">
+										<>
 											<Dropdown>
 												<DropdownTrigger>
-													<Button variant="flat" size="sm">📥 Export</Button>
+													<Button variant="flat" size="sm" className="shrink-0">📥 Export</Button>
 												</DropdownTrigger>
 												<DropdownMenu>
-													<DropdownItem key="csv" onPress={exportInvoicesCSV}>📄 Download CSV</DropdownItem>
+													<DropdownItem key="csv" onPress={exportInvoicesCSV}>CSV spreadsheet</DropdownItem>
 													<DropdownItem key="pdf" onPress={printInvoicesTablePDF}>📑 Print PDF</DropdownItem>
 												</DropdownMenu>
 											</Dropdown>
-											<Button color="primary" size="sm" onClick={() => openNewInvoice(false)}>➕ New Manual Invoice</Button>
-										</div>
+											{canManageAr && (
+												<Button color="primary" size="sm" className="shrink-0" onClick={() => openNewInvoice(false)}>New invoice</Button>
+											)}
+										</>
 									) : (
-										<div className="flex items-center gap-2">
+										<>
 											<Dropdown>
 												<DropdownTrigger>
-													<Button variant="flat" size="sm">📥 Export</Button>
+													<Button variant="flat" size="sm" className="shrink-0">📥 Export</Button>
 												</DropdownTrigger>
 												<DropdownMenu>
-													<DropdownItem key="csv" onPress={exportProformasCSV}>📄 Download CSV</DropdownItem>
+													<DropdownItem key="csv" onPress={exportProformasCSV}>CSV spreadsheet</DropdownItem>
 													<DropdownItem key="pdf" onPress={printProformasTablePDF}>📑 Print PDF</DropdownItem>
 												</DropdownMenu>
 											</Dropdown>
-											<Button color="secondary" size="sm" onClick={() => openNewInvoice(true)}>➕ New Proforma</Button>
-										</div>
+											{canManageAr && (
+												<Button color="secondary" size="sm" className="shrink-0" onClick={() => openNewInvoice(true)}>New proforma</Button>
+											)}
+										</>
 									)}
 								</div>
 								{invoiceDocType === 'sales' ? (
@@ -2515,23 +2780,23 @@ export default function AccountsReceivable() {
 						</Tab>
 
 						{/* Receipts Tab */}
-						<Tab key="receipts" title={`💳 Receipts (${receipts.length})`}>
+						<Tab key="receipts" title={`Receipts (${receipts.length})`}>
 							<div className={deskBookTabPanelClassName}>
-								<div className="flex justify-between items-center mb-4">
-                                    <h3 className="text-lg font-semibold">Customer Receipts</h3>
-									<div className="flex items-center gap-2">
-										<Dropdown>
-											<DropdownTrigger>
-												<Button variant="flat" size="sm">📥 Export</Button>
-											</DropdownTrigger>
-											<DropdownMenu>
-												<DropdownItem key="csv" onPress={exportReceiptsCSV}>📄 Download CSV</DropdownItem>
-												<DropdownItem key="pdf" onPress={printReceiptsTablePDF}>📑 Print PDF</DropdownItem>
-											</DropdownMenu>
-										</Dropdown>
-										<Button variant="flat" size="sm" onClick={openPrintReceiptModal}>🖨️ Print Receipt</Button>
-										<Button color="primary" size="sm" onClick={() => openReceiptForm()}>➕ Record Receipt</Button>
-                                </div>
+								<div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-3">
+									<h3 className="text-sm font-semibold text-gray-800 shrink-0 mr-auto">Money received</h3>
+									<Dropdown>
+										<DropdownTrigger>
+											<Button variant="flat" size="sm" className="shrink-0">📥 Export</Button>
+										</DropdownTrigger>
+										<DropdownMenu>
+											<DropdownItem key="csv" onPress={exportReceiptsCSV}>CSV spreadsheet</DropdownItem>
+											<DropdownItem key="pdf" onPress={printReceiptsTablePDF}>📑 Print PDF</DropdownItem>
+										</DropdownMenu>
+									</Dropdown>
+									<Button variant="flat" size="sm" className="shrink-0" onClick={openPrintReceiptModal}>Print receipt</Button>
+									{canManageAr && (
+										<Button color="primary" size="sm" className="shrink-0" onClick={() => openReceiptForm()}>Record receipt</Button>
+									)}
 								</div>
 								{renderFilters(false)}
 								
@@ -2595,34 +2860,31 @@ export default function AccountsReceivable() {
                         </Tab>
 
 						{/* WHT Certificates Tab */}
-						<Tab key="wht" title={`📜 WHT Certificates (${whtCertificates?.length || 0})`}>
+						<Tab key="wht" title={`Tax certificates (${whtCertificates?.length || 0})`}>
 							<div className={deskBookTabPanelClassName}>
-								<div className="flex justify-between items-center mb-4">
-									<h3 className="text-lg font-semibold inline-flex items-center gap-1.5">
-										WHT Certificates (Tax Credits)
-										<InfoTip label="What is WHT?">
+								<div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-3">
+									<h3 className="text-sm font-semibold text-gray-800 inline-flex items-center gap-1.5 shrink-0 mr-auto">
+										Tax certificates from customers
+										<InfoTip label="What are tax certificates?">
 											<div className="space-y-2">
-												<p className="font-semibold">What is WHT?</p>
+												<p className="font-semibold">Withholding tax certificates</p>
 												<p>
-													When corporate/government clients pay, they withhold WHT on the invoice subtotal (
-													{whtCertRates.onSubtotalPct}% per your tax settings) and WHT-VAT on the VAT portion (
-													{whtCertRates.onVatPct}%). They later provide a GRA certificate as proof. These certificates
-													become tax credits for your company. Adjust rates under Books &amp; Taxes (WHT_CERT / WHT_VAT_CERT).
+													Some customers withhold tax when they pay (
+													{whtCertRates.onSubtotalPct}% on the bill before VAT, and {whtCertRates.onVatPct}% of the VAT).
+													They later send a GRA certificate. That certificate is a credit you can use. Rates are set under Compliance tax rules (WHT certificate types).
 												</p>
 											</div>
 										</InfoTip>
 									</h3>
-									<div className="flex items-center gap-2">
-										<Dropdown>
-											<DropdownTrigger>
-												<Button variant="flat" size="sm">📥 Export</Button>
-											</DropdownTrigger>
-											<DropdownMenu>
-												<DropdownItem key="csv" onPress={exportWHTCertificatesCSV}>📄 Download CSV</DropdownItem>
-												<DropdownItem key="pdf" onPress={printWHTCertificatesTablePDF}>📑 Print PDF</DropdownItem>
-											</DropdownMenu>
-										</Dropdown>
-									</div>
+									<Dropdown>
+										<DropdownTrigger>
+											<Button variant="flat" size="sm" className="shrink-0">📥 Export</Button>
+										</DropdownTrigger>
+										<DropdownMenu>
+											<DropdownItem key="csv" onPress={exportWHTCertificatesCSV}>CSV spreadsheet</DropdownItem>
+											<DropdownItem key="pdf" onPress={printWHTCertificatesTablePDF}>📑 Print PDF</DropdownItem>
+										</DropdownMenu>
+									</Dropdown>
 								</div>
 
 								{renderFilters(false)}
@@ -2909,155 +3171,198 @@ export default function AccountsReceivable() {
             </Modal>
 
 			{/* WHT Certificate Detail Modal */}
-			<Modal isOpen={isWHTDetailOpen} onOpenChange={setIsWHTDetailOpen} size="2xl">
-                <ModalContent>
+			<Modal isOpen={isWHTDetailOpen} onOpenChange={setIsWHTDetailOpen} size="3xl" scrollBehavior="inside">
+				<ModalContent className="max-w-[720px]">
 					{(onClose) => selectedWHTCert && (
-                        <>
-							<ModalHeader>📜 WHT Certificate Details</ModalHeader>
-                            <ModalBody>
-								<div className="grid grid-cols-2 gap-6">
-									{/* Certificate Info */}
-									<Card className="bg-amber-50 border border-amber-200">
-										<CardBody>
-											<h4 className="font-semibold text-amber-800 mb-3">Certificate Information</h4>
-											<div className="space-y-2 text-sm">
-												<div className="flex justify-between">
-													<span className="text-gray-600">Certificate #:</span>
-													<span className="font-mono font-bold">{selectedWHTCert.certificateNumber || 'PENDING'}</span>
-                                </div>
-												<div className="flex justify-between">
-													<span className="text-gray-600">Tax Period:</span>
-													<span className="font-medium">{selectedWHTCert.taxPeriod}</span>
-												</div>
-												<div className="flex justify-between">
-													<span className="text-gray-600">Status:</span>
-													<Chip size="sm" color={selectedWHTCert.status === 'Verified' ? 'success' : selectedWHTCert.status === 'Pending' ? 'warning' : 'primary'}>
-														{selectedWHTCert.status}
-													</Chip>
-												</div>
-												<div className="flex justify-between">
-													<span className="text-gray-600">Date Received:</span>
-													<span>{selectedWHTCert.receivedDate ? new Date(selectedWHTCert.receivedDate).toLocaleDateString() : 'Not yet received'}</span>
-												</div>
-											</div>
-										</CardBody>
-									</Card>
-
-									{/* Withholding Agent */}
-									<Card className="bg-gray-50">
-										<CardBody>
-											<h4 className="font-semibold text-gray-700 mb-3">Withholding Agent (Customer)</h4>
-											<div className="space-y-2 text-sm">
-												<div className="flex justify-between">
-													<span className="text-gray-600">Name:</span>
-													<span className="font-medium">{selectedWHTCert.withholdingAgentName}</span>
-												</div>
-												<div className="flex justify-between">
-													<span className="text-gray-600">TIN:</span>
-													<span className="font-mono">{selectedWHTCert.withholdingAgentTIN || '-'}</span>
-												</div>
-												<div className="flex justify-between">
-													<span className="text-gray-600">Related Invoice:</span>
-													<span className="font-mono text-blue-600">{selectedWHTCert.invoiceNumber}</span>
-												</div>
-												<div className="flex justify-between">
-													<span className="text-gray-600">Gross Amount:</span>
-													<span className="font-bold">{formatAccountingCurrency(Number(selectedWHTCert.grossAmount || 0))}</span>
-												</div>
-											</div>
-										</CardBody>
-									</Card>
+						<>
+							<ModalHeader className="border-b bg-white px-4 py-2.5 pe-12">
+								<div className="flex justify-between items-start w-full gap-3">
+									<div>
+										<div className="flex items-center gap-2">
+											<h3 className="text-base font-bold text-gray-900">WHT CERTIFICATE</h3>
+											<Chip
+												size="sm"
+												variant="flat"
+												color={
+													selectedWHTCert.status === 'Verified'
+														? 'success'
+														: selectedWHTCert.status === 'Pending'
+															? 'warning'
+															: 'primary'
+												}
+											>
+												{(selectedWHTCert.status || 'PENDING').toUpperCase()}
+											</Chip>
+										</div>
+										<p className="text-sm font-mono text-gray-700">
+											{selectedWHTCert.certificateNumber || 'PENDING'}
+										</p>
+									</div>
+									<div className="text-right text-xs text-gray-600 leading-snug">
+										<div>Tax period: <span className="font-medium">{selectedWHTCert.taxPeriod || '-'}</span></div>
+										<div>
+											Received:{' '}
+											{selectedWHTCert.receivedDate
+												? new Date(selectedWHTCert.receivedDate).toLocaleDateString()
+												: 'Not yet'}
+										</div>
+									</div>
 								</div>
-
-								{/* Tax Breakdown */}
-								<Card className="mt-4">
-									<CardBody>
-										<h4 className="font-semibold text-gray-800 mb-3">Tax Credit Breakdown</h4>
-										<Table removeWrapper aria-label="Tax breakdown">
-                                        <TableHeader>
-												<TableColumn>TAX TYPE</TableColumn>
-												<TableColumn>RATE</TableColumn>
-                                            <TableColumn align="end">AMOUNT</TableColumn>
-                                        </TableHeader>
-											<TableBody>
-												<TableRow>
-													<TableCell>Withholding Tax (WHT)</TableCell>
-													{/* ?? not || : a real 0% (this preparer flagged "not withheld") must not fall back to
-													    the statutory default -- only a genuinely missing rate (older certs) should. */}
-													<TableCell>{selectedWHTCert.whtRate ?? 5}%</TableCell>
-													<TableCell className="text-right font-medium">{formatAccountingCurrency(Number(selectedWHTCert.whtAmount || 0))}</TableCell>
-                                                    </TableRow>
-												<TableRow>
-													<TableCell>Withholding VAT (WHT-VAT)</TableCell>
-													<TableCell>{selectedWHTCert.whtVatRate ?? 7}%</TableCell>
-													<TableCell className="text-right font-medium">{formatAccountingCurrency(Number(selectedWHTCert.whtVatAmount || 0))}</TableCell>
-												</TableRow>
-												<TableRow className="bg-amber-50">
-													<TableCell className="font-bold">TOTAL TAX CREDIT</TableCell>
-													<TableCell>-</TableCell>
-													<TableCell className="text-right font-bold text-amber-600">{formatAccountingCurrency(Number(selectedWHTCert.totalWithheld || 0))}</TableCell>
-												</TableRow>
-                                        </TableBody>
-                                    </Table>
-									</CardBody>
-								</Card>
-
-								{/* Tax Credit Usage */}
-								<Card className="mt-4 bg-green-50 border border-green-200">
-									<CardBody>
-										<h4 className="font-semibold text-green-800 mb-3">Tax Credit Usage</h4>
-										<div className="grid grid-cols-3 gap-4 text-sm">
-											<div>
-												<div className="text-gray-600">Total Credit</div>
-												<div className="font-bold text-lg">{formatAccountingCurrency(Number(selectedWHTCert.totalWithheld || 0))}</div>
-                                    </div>
-											<div>
-												<div className="text-gray-600">Used</div>
-												<div className="font-bold text-lg text-gray-500">{formatAccountingCurrency(Number(selectedWHTCert.taxCreditUsedAmount || 0))}</div>
-                                </div>
-											<div>
-												<div className="text-gray-600">Remaining Balance</div>
-												<div className="font-bold text-lg text-green-600">{formatAccountingCurrency(Number(selectedWHTCert.taxCreditBalance || selectedWHTCert.totalWithheld || 0))}</div>
+							</ModalHeader>
+							<ModalBody className="px-4 py-3 bg-white">
+								<div className="space-y-3">
+									<div className="grid grid-cols-2 gap-3 pb-3 border-b">
+										<div>
+											<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">
+												Certificate Information
+											</h4>
+											<div className="text-sm space-y-0.5">
+												<div className="flex justify-between gap-2">
+													<span className="text-gray-500">Certificate #:</span>
+													<span className="font-mono font-medium">{selectedWHTCert.certificateNumber || 'PENDING'}</span>
+												</div>
+												<div className="flex justify-between gap-2">
+													<span className="text-gray-500">Tax Period:</span>
+													<span className="font-medium">{selectedWHTCert.taxPeriod || '-'}</span>
+												</div>
+												<div className="flex justify-between gap-2">
+													<span className="text-gray-500">Status:</span>
+													<span className="font-medium">{selectedWHTCert.status || '-'}</span>
+												</div>
+												<div className="flex justify-between gap-2">
+													<span className="text-gray-500">Date Received:</span>
+													<span>
+														{selectedWHTCert.receivedDate
+															? new Date(selectedWHTCert.receivedDate).toLocaleDateString()
+															: 'Not yet received'}
+													</span>
+												</div>
 											</div>
 										</div>
-                                                </CardBody>
-                                            </Card>
+										<div>
+											<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">
+												Withholding Agent
+											</h4>
+											<div className="text-sm space-y-0.5">
+												<div className="flex justify-between gap-2">
+													<span className="text-gray-500">Name:</span>
+													<span className="font-medium">{selectedWHTCert.withholdingAgentName || '-'}</span>
+												</div>
+												<div className="flex justify-between gap-2">
+													<span className="text-gray-500">TIN:</span>
+													<span className="font-mono text-xs">{selectedWHTCert.withholdingAgentTIN || '-'}</span>
+												</div>
+												<div className="flex justify-between gap-2">
+													<span className="text-gray-500">Invoice:</span>
+													<span className="font-mono text-xs text-blue-600">{selectedWHTCert.invoiceNumber || '-'}</span>
+												</div>
+												<div className="flex justify-between gap-2">
+													<span className="text-gray-500">Gross Amount:</span>
+													<span className="font-medium">{formatAccountingCurrency(Number(selectedWHTCert.grossAmount || 0))}</span>
+												</div>
+											</div>
+										</div>
+									</div>
 
-								{selectedWHTCert.attachments?.length > 0 && (
-									<Card className="mt-4">
-										<CardBody>
-											<h4 className="font-semibold text-gray-700 mb-2">Attachments</h4>
-											<ul className="text-sm text-gray-700 space-y-1">
+									<div className="pb-3 border-b">
+										<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
+											Tax Credit Breakdown
+										</h4>
+										<div className="bg-gray-50 rounded-md p-2.5 text-sm">
+											<table className="w-full">
+												<tbody>
+													<tr className="border-b border-gray-200">
+														<td className="py-1 text-gray-600">Withholding Tax (WHT)</td>
+														<td className="py-1 text-right text-gray-500">{selectedWHTCert.whtRate ?? 5}%</td>
+														<td className="py-1 text-right font-mono">
+															{formatAccountingCurrency(Number(selectedWHTCert.whtAmount || 0))}
+														</td>
+													</tr>
+													<tr className="border-b border-gray-200">
+														<td className="py-1 text-gray-600">Withholding VAT (WHT-VAT)</td>
+														<td className="py-1 text-right text-gray-500">{selectedWHTCert.whtVatRate ?? 7}%</td>
+														<td className="py-1 text-right font-mono">
+															{formatAccountingCurrency(Number(selectedWHTCert.whtVatAmount || 0))}
+														</td>
+													</tr>
+													<tr className="font-semibold">
+														<td className="py-1.5 text-gray-800">Total Tax Credit</td>
+														<td className="py-1.5" />
+														<td className="py-1.5 text-right font-mono text-amber-700">
+															{formatAccountingCurrency(Number(selectedWHTCert.totalWithheld || 0))}
+														</td>
+													</tr>
+												</tbody>
+											</table>
+										</div>
+									</div>
+
+									<div className="pb-3 border-b">
+										<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
+											Tax Credit Usage
+										</h4>
+										<div className="grid grid-cols-3 gap-2 text-sm">
+											<div className="bg-gray-50 rounded-md p-2.5">
+												<div className="text-[11px] text-gray-500 uppercase">Total Credit</div>
+												<div className="font-semibold">
+													{formatAccountingCurrency(Number(selectedWHTCert.totalWithheld || 0))}
+												</div>
+											</div>
+											<div className="bg-gray-50 rounded-md p-2.5">
+												<div className="text-[11px] text-gray-500 uppercase">Used</div>
+												<div className="font-semibold text-gray-600">
+													{formatAccountingCurrency(Number(selectedWHTCert.taxCreditUsedAmount || 0))}
+												</div>
+											</div>
+											<div className="bg-gray-50 rounded-md p-2.5">
+												<div className="text-[11px] text-gray-500 uppercase">Remaining</div>
+												<div className="font-semibold text-green-700">
+													{formatAccountingCurrency(
+														Number(selectedWHTCert.taxCreditBalance || selectedWHTCert.totalWithheld || 0),
+													)}
+												</div>
+											</div>
+										</div>
+									</div>
+
+									{selectedWHTCert.attachments?.length > 0 && (
+										<div>
+											<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">
+												Attachments
+											</h4>
+											<ul className="text-sm text-gray-700 bg-gray-50 p-2.5 rounded-md space-y-0.5">
 												{selectedWHTCert.attachments.map((a: string, i: number) => (
 													<li key={i} className="font-mono text-xs">
 														{/^https?:\/\//.test(a) ? (
 															<a href={a} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
 																{decodeURIComponent(a.split('/').pop() || a)}
 															</a>
-														) : a}
+														) : (
+															a
+														)}
 													</li>
 												))}
 											</ul>
-										</CardBody>
-									</Card>
-								)}
+										</div>
+									)}
 
-								{selectedWHTCert.status === 'Pending' && (
-									<Card className="mt-4 border border-amber-300 bg-amber-50">
-										<CardBody>
-											<h4 className="font-semibold text-amber-900 mb-3">Receive GRA Certificate</h4>
-											<p className="text-sm text-amber-800 mb-3">
-												The WHT was recorded when payment was received. Enter the official certificate details when the customer/GRA provides them.
+									{selectedWHTCert.status === 'Pending' && (
+										<div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+											<h4 className="text-sm font-semibold text-amber-900 mb-1">Receive GRA Certificate</h4>
+											<p className="text-xs text-amber-800 mb-2">
+												Enter the official certificate details when the customer/GRA provides them.
 											</p>
-											{formError && <div className="text-red-600 text-sm mb-3">{formError}</div>}
-											<div className="grid grid-cols-2 gap-4">
+											{formError && <div className="text-red-600 text-sm mb-2">{formError}</div>}
+											<div className="grid grid-cols-2 gap-3">
 												<Input
+													size="sm"
 													label="Certificate Number *"
 													placeholder="e.g., WHT-2026-001234"
 													value={receiveCertForm.certificateNumber}
 													onValueChange={(v) => setReceiveCertForm((f) => ({ ...f, certificateNumber: v }))}
 												/>
 												<Input
+													size="sm"
 													label="Withholding Agent TIN"
 													placeholder="e.g., P00012345X"
 													value={receiveCertForm.withholdingAgentTIN}
@@ -3070,37 +3375,67 @@ export default function AccountsReceivable() {
 													className="col-span-2"
 												/>
 											</div>
-										</CardBody>
-									</Card>
-								)}
+										</div>
+									)}
+								</div>
 							</ModalBody>
-							<ModalFooter>
+							<ModalFooter className="border-t bg-white px-4 py-2.5">
+								<Button variant="flat" size="sm" onPress={onClose}>Close</Button>
 								{selectedWHTCert.status === 'Pending' && (
-									<Button color="primary" onPress={saveReceiveWHTCertificate}>
+									<Button color="primary" size="sm" onPress={saveReceiveWHTCertificate}>
 										Save certificate details
 									</Button>
 								)}
 								{selectedWHTCert.status === 'Received' && (
-									<Button color="success" onPress={() => { verifyWHTCertificate(selectedWHTCert.id); onClose(); }}>
+									<Button
+										color="success"
+										size="sm"
+										onPress={() => {
+											verifyWHTCertificate(selectedWHTCert.id);
+											onClose();
+										}}
+									>
 										✓ Mark as Verified
 									</Button>
 								)}
-								<Button variant="flat" onPress={onClose}>Close</Button>
+								<Button
+									color="primary"
+									variant="flat"
+									size="sm"
+									onPress={() => printWHTCertificatePDF(selectedWHTCert)}
+								>
+									Print PDF
+								</Button>
 							</ModalFooter>
 						</>
 					)}
 				</ModalContent>
 			</Modal>
 
-			{/* New Invoice Modal */}
-			<Modal isOpen={isNewInvoiceOpen} onOpenChange={setIsNewInvoiceOpen} size="2xl">
+			{/* New / Edit Invoice Modal */}
+			<Modal
+				isOpen={isNewInvoiceOpen}
+				onOpenChange={(open) => {
+					setIsNewInvoiceOpen(open);
+					if (!open) {
+						setEditingInvoiceId(null);
+						setFormError('');
+					}
+				}}
+				size="2xl"
+			>
                 <ModalContent>
                     {(onClose) => (
                         <>
-							<ModalHeader>➕ {invoiceForm.isProforma ? 'New Proforma Invoice' : 'New Manual Invoice'}</ModalHeader>
+							<ModalHeader>
+								{editingInvoiceId
+									? (invoiceForm.isProforma ? '✏️ Edit Proforma Invoice' : '✏️ Edit Sales Invoice')
+									: (invoiceForm.isProforma ? '➕ New Proforma Invoice' : '➕ New Manual Invoice')}
+							</ModalHeader>
                             <ModalBody>
 								{formError && <div className="text-red-600 text-sm mb-3 p-2 bg-red-50 rounded">{formError}</div>}
 								
+								{!editingInvoiceId && (
 								<div className="mb-4 p-3 bg-gray-50 rounded-lg">
 									<Checkbox 
 										isSelected={invoiceForm.isProforma || false} 
@@ -3112,6 +3447,7 @@ export default function AccountsReceivable() {
 										{invoiceForm.isProforma ? 'Preliminary invoice before delivery' : 'Regular sales invoice'}
 									</span>
                                         </div>
+								)}
 
                                 <div className="grid grid-cols-2 gap-4">
 									<Autocomplete
@@ -3240,7 +3576,9 @@ export default function AccountsReceivable() {
                             <ModalFooter>
                                 <Button variant="light" onPress={onClose}>Cancel</Button>
 								<Button color={invoiceForm.isProforma ? "secondary" : "primary"} onPress={saveInvoice}>
-									{invoiceForm.isProforma ? 'Save Proforma' : 'Save Invoice'}
+									{editingInvoiceId
+										? (invoiceForm.isProforma ? 'Update Proforma' : 'Update Invoice')
+										: (invoiceForm.isProforma ? 'Save Proforma' : 'Save Invoice')}
 								</Button>
                             </ModalFooter>
                         </>
@@ -3737,8 +4075,8 @@ export default function AccountsReceivable() {
 			</Modal>
 
 			{/* Invoice Detail Modal */}
-			<Modal isOpen={isDetailOpen} onOpenChange={setIsDetailOpen} size="5xl" scrollBehavior="inside">
-				<ModalContent className="max-w-[1200px]">
+			<Modal isOpen={isDetailOpen} onOpenChange={setIsDetailOpen} size="3xl" scrollBehavior="inside">
+				<ModalContent className="max-w-[720px]">
 					{(onClose) => {
 						if (!selectedInvoice) return null;
 						const source = getSourceLabel(selectedInvoice.sourceModule);
@@ -3770,104 +4108,104 @@ export default function AccountsReceivable() {
 						
                                                 return (
 							<>
-								<ModalHeader className="border-b bg-white px-6 py-4">
-									<div className="flex justify-between items-start w-full">
+								<ModalHeader className="border-b bg-white px-4 py-2.5 pe-12">
+									<div className="flex justify-between items-start w-full gap-3">
 										<div>
-											<div className="flex items-center gap-2 mb-1">
-												<h3 className="text-xl font-bold text-gray-900">{isProforma ? 'PROFORMA INVOICE' : 'SALES INVOICE'}</h3>
+											<div className="flex items-center gap-2">
+												<h3 className="text-base font-bold text-gray-900">{isProforma ? 'PROFORMA INVOICE' : 'SALES INVOICE'}</h3>
 												<Chip size="sm" variant="flat" color={balance === 0 ? 'success' : isOverdue ? 'danger' : 'warning'}>
 													{balance === 0 ? 'PAID' : isOverdue ? 'OVERDUE' : isProforma ? 'DRAFT' : 'OPEN'}
 												</Chip>
 											</div>
-											<p className="text-lg font-mono text-gray-700">{selectedInvoice.invoiceNumber || selectedInvoice.id}</p>
+											<p className="text-sm font-mono text-gray-700">{selectedInvoice.invoiceNumber || selectedInvoice.id}</p>
 										</div>
-										<div className="text-right text-sm text-gray-600">
+										<div className="text-right text-xs text-gray-600 leading-snug">
 											<div>Source: <span className="font-medium">{source.label}</span></div>
 											<div>Created: {new Date(selectedInvoice.date).toLocaleString()}</div>
 										</div>
 									</div>
 								</ModalHeader>
-								<ModalBody className="p-6 bg-white">
-									<div className="space-y-6">
+								<ModalBody className="px-4 py-3 bg-white">
+									<div className="space-y-3">
 										{/* Header Info Grid */}
-										<div className="grid grid-cols-3 gap-6 pb-6 border-b">
+										<div className="grid grid-cols-3 gap-3 pb-3 border-b">
 											{/* Bill To */}
 											<div>
-												<h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Bill To</h4>
-												<div className="text-sm space-y-1">
+												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Bill To</h4>
+												<div className="text-sm space-y-0.5">
 													<div className="font-semibold text-gray-900">{selectedInvoice.customerName || 'Walk-in Customer'}</div>
-													{selectedInvoice.customerEmail && <div className="text-gray-600">{selectedInvoice.customerEmail}</div>}
-													{selectedInvoice.customerPhone && <div className="text-gray-600">{selectedInvoice.customerPhone}</div>}
-													<div className="text-gray-500 font-mono text-xs mt-2">ID: {selectedInvoice.businessPartnerId}</div>
+													{selectedInvoice.customerEmail && <div className="text-gray-600 text-xs">{selectedInvoice.customerEmail}</div>}
+													{selectedInvoice.customerPhone && <div className="text-gray-600 text-xs">{selectedInvoice.customerPhone}</div>}
+													<div className="text-gray-500 font-mono text-xs mt-1">ID: {selectedInvoice.businessPartnerId}</div>
                                     </div>
                                 </div>
 
 											{/* Invoice Details */}
 											<div>
-												<h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Invoice Details</h4>
-												<div className="text-sm space-y-1">
-													<div className="flex justify-between"><span className="text-gray-500">Invoice Date:</span><span className="font-medium">{new Date(selectedInvoice.date).toLocaleDateString()}</span></div>
-													<div className="flex justify-between"><span className="text-gray-500">{isProforma ? 'Valid Until:' : 'Due Date:'}</span><span className={`font-medium ${isOverdue ? 'text-red-600' : ''}`}>{new Date(selectedInvoice.dueDate).toLocaleDateString()}</span></div>
-													<div className="flex justify-between"><span className="text-gray-500">PO / Reference:</span><span className="font-mono text-xs">{selectedInvoice.poNumber || selectedInvoice.reference || '-'}</span></div>
-													<div className="flex justify-between"><span className="text-gray-500">Currency:</span><span className="font-medium">GHS (₵)</span></div>
+												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Invoice Details</h4>
+												<div className="text-sm space-y-0.5">
+													<div className="flex justify-between gap-2"><span className="text-gray-500">Invoice Date:</span><span className="font-medium">{new Date(selectedInvoice.date).toLocaleDateString()}</span></div>
+													<div className="flex justify-between gap-2"><span className="text-gray-500">{isProforma ? 'Valid Until:' : 'Due Date:'}</span><span className={`font-medium ${isOverdue ? 'text-red-600' : ''}`}>{new Date(selectedInvoice.dueDate).toLocaleDateString()}</span></div>
+													<div className="flex justify-between gap-2"><span className="text-gray-500">PO / Reference:</span><span className="font-mono text-xs">{selectedInvoice.poNumber || selectedInvoice.reference || '-'}</span></div>
+													<div className="flex justify-between gap-2"><span className="text-gray-500">Currency:</span><span className="font-medium">GHS (₵)</span></div>
                                         </div>
 											</div>
 											
 											{/* Processed By */}
 											<div>
-												<h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Processed By</h4>
-												<div className="text-sm space-y-1">
-													<div className="flex justify-between"><span className="text-gray-500">Staff:</span><span className="font-medium">{selectedInvoice.staffName || 'System'}</span></div>
-													<div className="flex justify-between"><span className="text-gray-500">Staff ID:</span><span className="font-mono text-xs">{selectedInvoice.staffId || '-'}</span></div>
-													<div className="flex justify-between"><span className="text-gray-500">Role:</span><span>{selectedInvoice.staffRole || 'Staff'}</span></div>
-													<div className="flex justify-between"><span className="text-gray-500">Department:</span><span>{source.label}</span></div>
+												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Processed By</h4>
+												<div className="text-sm space-y-0.5">
+													<div className="flex justify-between gap-2"><span className="text-gray-500">Staff:</span><span className="font-medium">{selectedInvoice.staffName || 'System'}</span></div>
+													<div className="flex justify-between gap-2"><span className="text-gray-500">Staff ID:</span><span className="font-mono text-xs">{selectedInvoice.staffId || '-'}</span></div>
+													<div className="flex justify-between gap-2"><span className="text-gray-500">Role:</span><span>{selectedInvoice.staffRole || 'Staff'}</span></div>
+													<div className="flex justify-between gap-2"><span className="text-gray-500">Department:</span><span>{source.label}</span></div>
 												</div>
 											</div>
 										</div>
 										
 										{/* Event/Booking Details (for Proformas) */}
 										{isProforma && (selectedInvoice.eventId || selectedInvoice.checkIn || selectedInvoice.venue) && (
-											<div className="pb-6 border-b">
-												<h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Event / Booking Information</h4>
-												<div className="grid grid-cols-5 gap-4 text-sm">
-													{selectedInvoice.eventId && <div><span className="text-gray-500 block">Event ID</span><span className="font-mono">{selectedInvoice.eventId}</span></div>}
-													{selectedInvoice.checkIn && <div><span className="text-gray-500 block">Check-In</span><span className="font-medium">{new Date(selectedInvoice.checkIn).toLocaleDateString()}</span></div>}
-													{selectedInvoice.checkOut && <div><span className="text-gray-500 block">Check-Out</span><span className="font-medium">{new Date(selectedInvoice.checkOut).toLocaleDateString()}</span></div>}
-													{selectedInvoice.pax && <div><span className="text-gray-500 block">Guests/Pax</span><span className="font-semibold">{selectedInvoice.pax}</span></div>}
-													{selectedInvoice.venue && <div><span className="text-gray-500 block">Venue</span><span className="font-medium">{selectedInvoice.venue}</span></div>}
+											<div className="pb-3 border-b">
+												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Event / Booking Information</h4>
+												<div className="grid grid-cols-5 gap-2 text-sm">
+													{selectedInvoice.eventId && <div><span className="text-gray-500 block text-xs">Event ID</span><span className="font-mono text-xs">{selectedInvoice.eventId}</span></div>}
+													{selectedInvoice.checkIn && <div><span className="text-gray-500 block text-xs">Check-In</span><span className="font-medium">{new Date(selectedInvoice.checkIn).toLocaleDateString()}</span></div>}
+													{selectedInvoice.checkOut && <div><span className="text-gray-500 block text-xs">Check-Out</span><span className="font-medium">{new Date(selectedInvoice.checkOut).toLocaleDateString()}</span></div>}
+													{selectedInvoice.pax && <div><span className="text-gray-500 block text-xs">Guests/Pax</span><span className="font-semibold">{selectedInvoice.pax}</span></div>}
+													{selectedInvoice.venue && <div><span className="text-gray-500 block text-xs">Venue</span><span className="font-medium">{selectedInvoice.venue}</span></div>}
 												</div>
 											</div>
 										)}
 
 										{/* Line Items Table */}
-										<div className="pb-6 border-b">
-											<h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Line Items</h4>
+										<div className="pb-3 border-b">
+											<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Line Items</h4>
 											<table className="w-full text-sm">
 												<thead>
-													<tr className="border-b-2 border-gray-200">
-														<th className="text-left py-2 text-gray-600 font-semibold">#</th>
-														<th className="text-left py-2 text-gray-600 font-semibold">Description</th>
-														<th className="text-right py-2 text-gray-600 font-semibold">Qty</th>
-														<th className="text-right py-2 text-gray-600 font-semibold">Unit Price</th>
-														<th className="text-right py-2 text-gray-600 font-semibold">Amount</th>
+													<tr className="border-b border-gray-200">
+														<th className="text-left py-1 text-gray-600 font-semibold">#</th>
+														<th className="text-left py-1 text-gray-600 font-semibold">Description</th>
+														<th className="text-right py-1 text-gray-600 font-semibold">Qty</th>
+														<th className="text-right py-1 text-gray-600 font-semibold">Unit Price</th>
+														<th className="text-right py-1 text-gray-600 font-semibold">Amount</th>
 													</tr>
 												</thead>
 												<tbody>
 													{lineItems.length > 0 ? lineItems.map((item: any, idx: number) => (
 														<tr key={idx} className="border-b border-gray-100">
-															<td className="py-2 text-gray-500">{idx + 1}</td>
-															<td className="py-2">{item.description || item.name}</td>
-															<td className="py-2 text-right">{item.quantity || item.qty || 1}</td>
-															<td className="py-2 text-right">{formatAccountingCurrency(Number(item.unitPrice || item.price || 0))}</td>
-															<td className="py-2 text-right font-medium">{formatAccountingCurrency(Number((item.quantity || item.qty || 1) * (item.unitPrice || item.price || 0)))}</td>
+															<td className="py-1 text-gray-500">{idx + 1}</td>
+															<td className="py-1">{item.description || item.name}</td>
+															<td className="py-1 text-right">{item.quantity || item.qty || 1}</td>
+															<td className="py-1 text-right">{formatAccountingCurrency(Number(item.unitPrice || item.price || 0))}</td>
+															<td className="py-1 text-right font-medium">{formatAccountingCurrency(Number((item.quantity || item.qty || 1) * (item.unitPrice || item.price || 0)))}</td>
 														</tr>
 													)) : (
 														<tr className="border-b border-gray-100">
-															<td className="py-2 text-gray-500">1</td>
-															<td className="py-2">{selectedInvoice.description || 'Services/Products'}</td>
-															<td className="py-2 text-right">1</td>
-															<td className="py-2 text-right">{formatAccountingCurrency(subtotal)}</td>
-															<td className="py-2 text-right font-medium">{formatAccountingCurrency(subtotal)}</td>
+															<td className="py-1 text-gray-500">1</td>
+															<td className="py-1">{selectedInvoice.description || 'Services/Products'}</td>
+															<td className="py-1 text-right">1</td>
+															<td className="py-1 text-right">{formatAccountingCurrency(subtotal)}</td>
+															<td className="py-1 text-right font-medium">{formatAccountingCurrency(subtotal)}</td>
 														</tr>
 													)}
 												</tbody>
@@ -3875,31 +4213,31 @@ export default function AccountsReceivable() {
 										</div>
 
 										{/* Financial Summary with Tax Breakdown */}
-										<div className="grid grid-cols-2 gap-8">
+										<div className="grid grid-cols-2 gap-3">
 											{/* Tax Breakdown */}
 											<div>
-												<div className="flex items-center justify-between mb-3">
-													<h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Tax Breakdown (Ghana GRA)</h4>
+												<div className="flex items-center justify-between mb-1.5">
+													<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Tax Breakdown (Ghana GRA)</h4>
 													<Tooltip content="Tax rates from system configuration">
 														<span className="text-xs text-gray-400 cursor-help">ⓘ</span>
 													</Tooltip>
 												</div>
-												<div className="bg-gray-50 rounded-lg p-4 text-sm">
+												<div className="bg-gray-50 rounded-md p-2.5 text-sm">
 													<table className="w-full">
 														<tbody>
 															{taxBreakdown.length > 0 ? taxBreakdown.map((tax: any, idx: number) => (
 																<tr key={tax.code || idx} className="border-b border-gray-200">
-																	<td className="py-2 text-gray-600">{tax.name} ({tax.rate}%)</td>
-																	<td className="py-2 text-right font-mono">{formatAccountingCurrency(Number(tax.amount || 0))}</td>
+																	<td className="py-1 text-gray-600">{tax.name} ({tax.rate}%)</td>
+																	<td className="py-1 text-right font-mono">{formatAccountingCurrency(Number(tax.amount || 0))}</td>
 																</tr>
 															)) : (
 																<tr className="border-b border-gray-200">
-																	<td className="py-2 text-gray-400 italic" colSpan={2}>No taxes applied</td>
+																	<td className="py-1 text-gray-400 italic" colSpan={2}>No taxes applied</td>
 																</tr>
 															)}
 															<tr className="font-semibold">
-																<td className="py-2 text-gray-800">Total Tax ({totalTaxRate.toFixed(1)}%)</td>
-																<td className="py-2 text-right font-mono">{formatAccountingCurrency(totalTax)}</td>
+																<td className="py-1 text-gray-800">Total Tax ({totalTaxRate.toFixed(1)}%)</td>
+																<td className="py-1 text-right font-mono">{formatAccountingCurrency(totalTax)}</td>
 															</tr>
 														</tbody>
 													</table>
@@ -3908,29 +4246,29 @@ export default function AccountsReceivable() {
 											
 											{/* Amount Summary */}
 											<div>
-												<h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Amount Summary</h4>
-												<div className="bg-gray-50 rounded-lg p-4 text-sm">
+												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Amount Summary</h4>
+												<div className="bg-gray-50 rounded-md p-2.5 text-sm">
 													<table className="w-full">
 														<tbody>
 															<tr className="border-b border-gray-200">
-																<td className="py-2 text-gray-600">Subtotal</td>
-																<td className="py-2 text-right font-mono">{formatAccountingCurrency(subtotal)}</td>
+																<td className="py-1 text-gray-600">Subtotal</td>
+																<td className="py-1 text-right font-mono">{formatAccountingCurrency(subtotal)}</td>
 															</tr>
 															<tr className="border-b border-gray-200">
-																<td className="py-2 text-gray-600">Total Tax</td>
-																<td className="py-2 text-right font-mono">{formatAccountingCurrency(totalTax)}</td>
+																<td className="py-1 text-gray-600">Total Tax</td>
+																<td className="py-1 text-right font-mono">{formatAccountingCurrency(totalTax)}</td>
 															</tr>
-															<tr className="border-b border-gray-200 font-semibold text-base">
-																<td className="py-3 text-gray-900">TOTAL AMOUNT</td>
-																<td className="py-3 text-right font-mono">{formatAccountingCurrency(Number(selectedInvoice.total || 0))}</td>
+															<tr className="border-b border-gray-200 font-semibold">
+																<td className="py-1.5 text-gray-900">TOTAL AMOUNT</td>
+																<td className="py-1.5 text-right font-mono">{formatAccountingCurrency(Number(selectedInvoice.total || 0))}</td>
 															</tr>
 															<tr className="border-b border-gray-200">
-																<td className="py-2 text-green-700">Amount Paid</td>
-																<td className="py-2 text-right font-mono text-green-700">{formatAccountingCurrency(Number(selectedInvoice.paidAmount || 0))}</td>
+																<td className="py-1 text-green-700">Amount Paid</td>
+																<td className="py-1 text-right font-mono text-green-700">{formatAccountingCurrency(Number(selectedInvoice.paidAmount || 0))}</td>
 															</tr>
-															<tr className={`font-bold text-lg ${balance > 0 ? 'text-red-700' : 'text-green-700'}`}>
-																<td className="py-3">BALANCE DUE</td>
-																<td className="py-3 text-right font-mono">{formatAccountingCurrency(balance)}</td>
+															<tr className={`font-bold ${balance > 0 ? 'text-red-700' : 'text-green-700'}`}>
+																<td className="py-1.5">BALANCE DUE</td>
+																<td className="py-1.5 text-right font-mono">{formatAccountingCurrency(balance)}</td>
 															</tr>
 														</tbody>
 													</table>
@@ -3940,33 +4278,33 @@ export default function AccountsReceivable() {
 
 										{/* Payment History */}
 										{!isProforma && (
-											<div className="pt-6 border-t">
-												<h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Payment History ({invoiceReceipts.length})</h4>
+											<div className="pt-3 border-t">
+												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Payment History ({invoiceReceipts.length})</h4>
 												{invoiceReceipts.length > 0 ? (
 													<table className="w-full text-sm">
 														<thead>
-															<tr className="border-b-2 border-gray-200">
-																<th className="text-left py-2 text-gray-600 font-semibold">Receipt #</th>
-																<th className="text-left py-2 text-gray-600 font-semibold">Date/Time</th>
-																<th className="text-left py-2 text-gray-600 font-semibold">Method</th>
-																<th className="text-left py-2 text-gray-600 font-semibold">Processed By</th>
-																<th className="text-right py-2 text-gray-600 font-semibold">Amount</th>
+															<tr className="border-b border-gray-200">
+																<th className="text-left py-1 text-gray-600 font-semibold">Receipt #</th>
+																<th className="text-left py-1 text-gray-600 font-semibold">Date/Time</th>
+																<th className="text-left py-1 text-gray-600 font-semibold">Method</th>
+																<th className="text-left py-1 text-gray-600 font-semibold">Processed By</th>
+																<th className="text-right py-1 text-gray-600 font-semibold">Amount</th>
 															</tr>
 														</thead>
 														<tbody>
 															{invoiceReceipts.map((r: any) => (
 																<tr key={r.id} className="border-b border-gray-100 hover:bg-gray-50">
-																	<td className="py-2 font-mono text-xs">{r.paymentNumber || r.id}</td>
-																	<td className="py-2">{new Date(r.date).toLocaleString()}</td>
-																	<td className="py-2">{r.paymentMethod}</td>
-																	<td className="py-2">{r.staffName || '-'}</td>
-																	<td className="py-2 text-right font-semibold text-green-700">{formatAccountingCurrency(Number(r.amount))}</td>
+																	<td className="py-1 font-mono text-xs">{r.paymentNumber || r.id}</td>
+																	<td className="py-1">{new Date(r.date).toLocaleString()}</td>
+																	<td className="py-1">{r.paymentMethod}</td>
+																	<td className="py-1">{r.staffName || '-'}</td>
+																	<td className="py-1 text-right font-semibold text-green-700">{formatAccountingCurrency(Number(r.amount))}</td>
 																</tr>
 															))}
 														</tbody>
 													</table>
 												) : (
-													<div className="text-center py-6 text-gray-500 bg-gray-50 rounded">
+													<div className="text-center py-3 text-sm text-gray-500 bg-gray-50 rounded-md">
 														No payments recorded
 													</div>
 												)}
@@ -3974,46 +4312,43 @@ export default function AccountsReceivable() {
 										)}
 									</div>
                             </ModalBody>
-								<ModalFooter className="border-t bg-white">
-									<Button variant="flat" onPress={onClose}>Close</Button>
-									{isProforma && (
-										<Button color="primary" onPress={() => handleConvertProforma(selectedInvoice)}>
+								<ModalFooter className="border-t bg-white px-4 py-2.5">
+									<Button variant="flat" size="sm" onPress={onClose}>Close</Button>
+									{canManageAr && selectedInvoice.status !== 'Void' && (isProforma || isManualArApSource(selectedInvoice.sourceModule)) && (isProforma || invoiceReceipts.length === 0) && (
+										<Button
+											variant="flat"
+											size="sm"
+											onPress={() => openEditInvoice(selectedInvoice)}
+										>
+											Edit
+										</Button>
+									)}
+									{canManageAr && isProforma && (
+										<Button color="primary" size="sm" onPress={() => handleConvertProforma(selectedInvoice)}>
 											Convert to sales invoice
 										</Button>
 									)}
 									{!isProforma && selectedInvoice.status !== 'Void' && isManualArApSource(selectedInvoice.sourceModule) && invoiceReceipts.length === 0 && settings.hasPermission('accounting.void-transaction') && (
-										<Button color="danger" variant="flat" onPress={() => handleVoidInvoice(selectedInvoice)}>
+										<Button color="danger" variant="flat" size="sm" onPress={() => handleVoidInvoice(selectedInvoice)}>
 											Void invoice
 										</Button>
 									)}
-									{!isProforma && balance > 0 && (
-										<>
-											<Button
-												color="primary"
-												variant="flat"
-												onPress={() => { openReceiptForm(selectedInvoice); setIsDetailOpen(false); }}
-											>
-												➕ Record receipt
-											</Button>
-											<Button 
-												color="warning" 
-												variant="flat" 
-												onPress={() => { openWHTPayment(selectedInvoice, 'settlement'); setIsDetailOpen(false); }}
-											>
-												💰 Payment + WHT
-											</Button>
-											{computeInvoiceWhtSettlement(selectedInvoice, taxConfigs).whtTotalRemaining > 0 && (
-												<Button 
-													color="secondary" 
-													variant="flat" 
-													onPress={() => { openWHTPayment(selectedInvoice, 'wht_only'); setIsDetailOpen(false); }}
-												>
-													📜 WHT only
-												</Button>
-											)}
-										</>
+									{canDeleteInvoice && selectedInvoice.status !== 'Void' && invoiceReceipts.length === 0 && (isProforma || isManualArApSource(selectedInvoice.sourceModule)) && (
+										<Button color="danger" variant="light" size="sm" onPress={() => handleDeleteInvoice(selectedInvoice)}>
+											Delete
+										</Button>
 									)}
-									<Button color="primary" variant="flat" onPress={() => printInvoicePDF(selectedInvoice)}>
+									{canManageAr && !isProforma && balance > 0 && (
+										<Button
+											color="primary"
+											variant="flat"
+											size="sm"
+											onPress={() => { openReceiptForm(selectedInvoice); setIsDetailOpen(false); }}
+										>
+											➕ Record receipt
+										</Button>
+									)}
+									<Button color="primary" variant="flat" size="sm" onPress={() => printInvoicePDF(selectedInvoice)}>
 										Print PDF
 									</Button>
                             </ModalFooter>
@@ -4024,8 +4359,8 @@ export default function AccountsReceivable() {
 			</Modal>
 
 			{/* Receipt Detail Modal - Clean Accounting Style */}
-			<Modal isOpen={isReceiptDetailOpen} onOpenChange={setIsReceiptDetailOpen} size="4xl" scrollBehavior="inside">
-				<ModalContent className="max-w-[900px]">
+			<Modal isOpen={isReceiptDetailOpen} onOpenChange={setIsReceiptDetailOpen} size="3xl" scrollBehavior="inside">
+				<ModalContent className="max-w-[720px]">
 					{(onClose) => {
 						if (!selectedReceipt) return null;
 						const source = getSourceLabel(selectedReceipt.sourceModule);
@@ -4034,11 +4369,11 @@ export default function AccountsReceivable() {
 						
 						return (
 							<>
-								<ModalHeader className="border-b bg-white px-6 py-4">
-									<div className="flex justify-between items-start w-full">
+								<ModalHeader className="border-b bg-white px-4 py-2.5 pe-12">
+									<div className="flex justify-between items-start w-full gap-3">
 										<div>
-											<div className="flex items-center gap-2 mb-1">
-												<h3 className="text-xl font-bold text-gray-900">PAYMENT RECEIPT</h3>
+											<div className="flex items-center gap-2">
+												<h3 className="text-base font-bold text-gray-900">PAYMENT RECEIPT</h3>
 												<Chip
 													size="sm"
 													variant="flat"
@@ -4047,75 +4382,75 @@ export default function AccountsReceivable() {
 													{selectedReceipt.status === 'Void' ? 'VOID' : 'POSTED'}
 												</Chip>
 											</div>
-											<p className="text-lg font-mono text-gray-700">{selectedReceipt.paymentNumber || selectedReceipt.id}</p>
+											<p className="text-sm font-mono text-gray-700">{selectedReceipt.paymentNumber || selectedReceipt.id}</p>
 										</div>
-										<div className="text-right text-sm text-gray-600">
+										<div className="text-right text-xs text-gray-600 leading-snug">
 											<div>Source: <span className="font-medium">{source.label}</span></div>
 											<div>Posted: {new Date(selectedReceipt.date).toLocaleString()}</div>
 										</div>
 									</div>
 								</ModalHeader>
-								<ModalBody className="p-6 bg-white">
-									<div className="space-y-6">
+								<ModalBody className="px-4 py-3 bg-white">
+									<div className="space-y-3">
 										{/* Amount Received - Clean Highlight */}
-										<div className="text-center py-6 border-b">
-											<p className="text-sm text-gray-500 uppercase tracking-wide mb-2">Amount Received</p>
-											<p className="text-4xl font-bold text-gray-900">{formatAccountingCurrency(Number(selectedReceipt.amount || 0))}</p>
-											<p className="text-sm text-gray-500 mt-2">{selectedReceipt.currency || 'GHS'} • {selectedReceipt.paymentMethod || 'Cash'}</p>
+										<div className="text-center py-3 border-b">
+											<p className="text-[11px] text-gray-500 uppercase tracking-wide mb-0.5">Amount Received</p>
+											<p className="text-2xl font-bold text-gray-900">{formatAccountingCurrency(Number(selectedReceipt.amount || 0))}</p>
+											<p className="text-xs text-gray-500 mt-0.5">{selectedReceipt.currency || 'GHS'} • {selectedReceipt.paymentMethod || 'Cash'}</p>
 										</div>
 
 										{/* Receipt Details Grid */}
-										<div className="grid grid-cols-2 gap-6 pb-6 border-b">
+										<div className="grid grid-cols-2 gap-3 pb-3 border-b">
 											{/* Received From */}
 											<div>
-												<h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Received From</h4>
-												<div className="text-sm space-y-1">
+												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Received From</h4>
+												<div className="text-sm space-y-0.5">
 													<div className="font-semibold text-gray-900">{selectedReceipt.customerName || 'Walk-in Customer'}</div>
-													<div className="text-gray-500 font-mono text-xs mt-2">ID: {selectedReceipt.businessPartnerId || '-'}</div>
+													<div className="text-gray-500 font-mono text-xs mt-1">ID: {selectedReceipt.businessPartnerId || '-'}</div>
 												</div>
 											</div>
 											
 											{/* Processed By */}
 											<div>
-												<h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Processed By</h4>
-												<div className="text-sm space-y-1">
-													<div className="flex justify-between"><span className="text-gray-500">Staff:</span><span className="font-medium">{selectedReceipt.staffName || 'System'}</span></div>
-													<div className="flex justify-between"><span className="text-gray-500">Staff ID:</span><span className="font-mono text-xs">{selectedReceipt.staffId || '-'}</span></div>
-													<div className="flex justify-between"><span className="text-gray-500">Role:</span><span>{selectedReceipt.staffRole || 'Staff'}</span></div>
-													<div className="flex justify-between"><span className="text-gray-500">Department:</span><span>{source.label}</span></div>
+												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Processed By</h4>
+												<div className="text-sm space-y-0.5">
+													<div className="flex justify-between gap-2"><span className="text-gray-500">Staff:</span><span className="font-medium">{selectedReceipt.staffName || 'System'}</span></div>
+													<div className="flex justify-between gap-2"><span className="text-gray-500">Staff ID:</span><span className="font-mono text-xs">{selectedReceipt.staffId || '-'}</span></div>
+													<div className="flex justify-between gap-2"><span className="text-gray-500">Role:</span><span>{selectedReceipt.staffRole || 'Staff'}</span></div>
+													<div className="flex justify-between gap-2"><span className="text-gray-500">Department:</span><span>{source.label}</span></div>
 												</div>
 											</div>
 										</div>
 
 										{/* Payment Details */}
-										<div className="pb-6 border-b">
-											<h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Payment Details</h4>
-											<div className="bg-gray-50 rounded-lg p-4 text-sm">
+										<div className="pb-3 border-b">
+											<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Payment Details</h4>
+											<div className="bg-gray-50 rounded-md p-2.5 text-sm">
 												<table className="w-full">
 													<tbody>
 														<tr className="border-b border-gray-200">
-															<td className="py-2 text-gray-600">Payment Method</td>
-															<td className="py-2 text-right font-medium">{selectedReceipt.paymentMethod || 'Cash'}</td>
+															<td className="py-1 text-gray-600">Payment Method</td>
+															<td className="py-1 text-right font-medium">{selectedReceipt.paymentMethod || 'Cash'}</td>
 														</tr>
 														<tr className="border-b border-gray-200">
-															<td className="py-2 text-gray-600">Transaction Date</td>
-															<td className="py-2 text-right">{new Date(selectedReceipt.date).toLocaleDateString()}</td>
+															<td className="py-1 text-gray-600">Transaction Date</td>
+															<td className="py-1 text-right">{new Date(selectedReceipt.date).toLocaleDateString()}</td>
 														</tr>
 														<tr className="border-b border-gray-200">
-															<td className="py-2 text-gray-600">Transaction Time</td>
-															<td className="py-2 text-right">{new Date(selectedReceipt.date).toLocaleTimeString()}</td>
+															<td className="py-1 text-gray-600">Transaction Time</td>
+															<td className="py-1 text-right">{new Date(selectedReceipt.date).toLocaleTimeString()}</td>
 														</tr>
 														<tr className="border-b border-gray-200">
-															<td className="py-2 text-gray-600">Reference</td>
-															<td className="py-2 text-right font-mono text-xs">{selectedReceipt.reference || '-'}</td>
+															<td className="py-1 text-gray-600">Reference</td>
+															<td className="py-1 text-right font-mono text-xs">{selectedReceipt.reference || '-'}</td>
 														</tr>
 														<tr className="border-b border-gray-200">
-															<td className="py-2 text-gray-600">Currency</td>
-															<td className="py-2 text-right">{selectedReceipt.currency || 'GHS'}</td>
+															<td className="py-1 text-gray-600">Currency</td>
+															<td className="py-1 text-right">{selectedReceipt.currency || 'GHS'}</td>
 														</tr>
 														<tr className="font-semibold">
-															<td className="py-2 text-gray-800">Amount</td>
-															<td className="py-2 text-right font-mono text-green-700">{formatAccountingCurrency(Number(selectedReceipt.amount || 0))}</td>
+															<td className="py-1 text-gray-800">Amount</td>
+															<td className="py-1 text-right font-mono text-green-700">{formatAccountingCurrency(Number(selectedReceipt.amount || 0))}</td>
 														</tr>
 													</tbody>
 												</table>
@@ -4124,26 +4459,26 @@ export default function AccountsReceivable() {
 
 										{/* Linked Invoice */}
 										{linkedInvoice && (
-											<div className="pb-6 border-b">
-												<h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Applied To Invoice</h4>
-												<div className="bg-gray-50 rounded-lg p-4 text-sm">
+											<div className="pb-3 border-b">
+												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Applied To Invoice</h4>
+												<div className="bg-gray-50 rounded-md p-2.5 text-sm">
 													<table className="w-full">
 														<tbody>
 															<tr className="border-b border-gray-200">
-																<td className="py-2 text-gray-600">Invoice Number</td>
-																<td className="py-2 text-right font-mono">{(linkedInvoice as any).invoiceNumber || linkedInvoice.id}</td>
+																<td className="py-1 text-gray-600">Invoice Number</td>
+																<td className="py-1 text-right font-mono">{(linkedInvoice as any).invoiceNumber || linkedInvoice.id}</td>
 															</tr>
 															<tr className="border-b border-gray-200">
-																<td className="py-2 text-gray-600">Invoice Total</td>
-																<td className="py-2 text-right font-mono">{formatAccountingCurrency(Number(linkedInvoice.total || 0))}</td>
+																<td className="py-1 text-gray-600">Invoice Total</td>
+																<td className="py-1 text-right font-mono">{formatAccountingCurrency(Number(linkedInvoice.total || 0))}</td>
 															</tr>
 															<tr className="border-b border-gray-200">
-																<td className="py-2 text-gray-600">Total Paid (incl. this receipt)</td>
-																<td className="py-2 text-right font-mono text-green-700">{formatAccountingCurrency(Number(linkedInvoice.paidAmount || 0))}</td>
+																<td className="py-1 text-gray-600">Total Paid (incl. this receipt)</td>
+																<td className="py-1 text-right font-mono text-green-700">{formatAccountingCurrency(Number(linkedInvoice.paidAmount || 0))}</td>
 															</tr>
 															<tr className={`font-semibold ${invoiceBalance > 0 ? 'text-red-700' : 'text-green-700'}`}>
-																<td className="py-2">Invoice Balance</td>
-																<td className="py-2 text-right font-mono">{formatAccountingCurrency(invoiceBalance)}</td>
+																<td className="py-1">Invoice Balance</td>
+																<td className="py-1 text-right font-mono">{formatAccountingCurrency(invoiceBalance)}</td>
 															</tr>
 														</tbody>
 													</table>
@@ -4154,16 +4489,16 @@ export default function AccountsReceivable() {
 										{/* Description / Notes */}
 										{selectedReceipt.description && (
 											<div>
-												<h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Notes / Description</h4>
-												<p className="text-sm text-gray-700 bg-gray-50 p-4 rounded">{selectedReceipt.description}</p>
+												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Notes / Description</h4>
+												<p className="text-sm text-gray-700 bg-gray-50 p-2.5 rounded-md">{selectedReceipt.description}</p>
 											</div>
 										)}
 
 										{/* Attachments */}
 										{selectedReceipt.attachments?.length > 0 && (
 											<div>
-												<h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Attachments</h4>
-												<ul className="text-sm text-gray-700 bg-gray-50 p-4 rounded space-y-1">
+												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Attachments</h4>
+												<ul className="text-sm text-gray-700 bg-gray-50 p-2.5 rounded-md space-y-0.5">
 													{selectedReceipt.attachments.map((a: string, i: number) => (
 														<li key={i} className="font-mono text-xs">
 														{/^https?:\/\//.test(a) ? (
@@ -4178,11 +4513,12 @@ export default function AccountsReceivable() {
 										)}
 									</div>
 								</ModalBody>
-								<ModalFooter className="border-t bg-white">
-									<Button variant="flat" onPress={onClose}>Close</Button>
-									{selectedReceipt.status !== 'Void' && receiptCanEdit(selectedReceipt) && (
+								<ModalFooter className="border-t bg-white px-4 py-2.5">
+									<Button variant="flat" size="sm" onPress={onClose}>Close</Button>
+									{canManageAr && selectedReceipt.status !== 'Void' && receiptCanEdit(selectedReceipt) && (
 										<Button
 											variant="flat"
+											size="sm"
 											onPress={() => {
 												openEditReceiptForm(selectedReceipt);
 												setIsReceiptDetailOpen(false);
@@ -4192,11 +4528,11 @@ export default function AccountsReceivable() {
 										</Button>
 									)}
 									{selectedReceipt.status !== 'Void' && receiptCanVoid(selectedReceipt) && settings.hasPermission('accounting.void-transaction') && (
-										<Button color="danger" variant="flat" onPress={() => handleVoidReceipt(selectedReceipt)}>
+										<Button color="danger" variant="flat" size="sm" onPress={() => handleVoidReceipt(selectedReceipt)}>
 											Void receipt
 										</Button>
 									)}
-									<Button color="primary" variant="flat" onPress={() => printReceiptPDF(selectedReceipt)}>
+									<Button color="primary" variant="flat" size="sm" onPress={() => printReceiptPDF(selectedReceipt)}>
 										Print Receipt
 									</Button>
 								</ModalFooter>
@@ -4205,6 +4541,19 @@ export default function AccountsReceivable() {
 					}}
                 </ModalContent>
             </Modal>
+
+			{eventWorkspaceId && (
+				<Suspense fallback={null}>
+					<EventsConferencesMainDashboard
+						workspaceOnly
+						externalEditEventId={eventWorkspaceId}
+						onWorkspaceClose={() => {
+							setEventWorkspaceId(null);
+							handleRefresh();
+						}}
+					/>
+				</Suspense>
+			)}
 		</div>
 	);
 }

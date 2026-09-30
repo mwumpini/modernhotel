@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Select, SelectItem } from '@heroui/react';
 
 export type DateMode = 'all' | 'today' | 'specific' | 'range';
 
@@ -46,6 +47,19 @@ const LABELS: Record<DateMode, string> = {
   range: 'Date Range',
 };
 
+const DATE_OPTIONS: { key: DateMode; label: string }[] = [
+  { key: 'all', label: 'All Dates' },
+  { key: 'today', label: 'Today' },
+  { key: 'specific', label: 'Specific Date' },
+  { key: 'range', label: 'Date Range' },
+];
+
+function displayLabel(mode: DateMode, single: string, from: string, to: string) {
+  if (mode === 'specific' && single) return single;
+  if (mode === 'range' && (from || to)) return `${from || '…'} → ${to || '…'}`;
+  return LABELS[mode];
+}
+
 export function DateFilterPills({
   mode,
   onMode,
@@ -65,48 +79,75 @@ export function DateFilterPills({
   to: string;
   onTo: (value: string) => void;
 }) {
+  const showPicker = mode === 'specific' || mode === 'range';
+
   return (
     <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-      <span className="mr-1 text-sm font-medium text-gray-500">📅 Date:</span>
-      {(['all', 'today', 'specific', 'range'] as const).map((key) => (
-        <button
-          key={key}
-          type="button"
-          onClick={() => onMode(key)}
-          className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
-            mode === key
-              ? 'border-blue-600 bg-blue-600 text-white'
-              : 'border-gray-300 bg-white text-gray-600 hover:border-blue-400 hover:text-blue-600'
-          }`}
+      {/* Compact Select below lg / zoomed; chip bar on standard desktop */}
+      <div className="w-[12.5rem] max-w-full shrink-0 lg:hidden">
+        <Select
+          size="sm"
+          aria-label="Date filter"
+          selectedKeys={[mode]}
+          disallowEmptySelection
+          className="w-full"
+          renderValue={() => (
+            <span className="text-sm">{displayLabel(mode, single, from, to)}</span>
+          )}
+          onSelectionChange={(keys) => {
+            const value = Array.from(keys)[0] as DateMode;
+            if (value) onMode(value);
+          }}
         >
-          {LABELS[key]}
-        </button>
-      ))}
-      {mode === 'specific' && (
+          {DATE_OPTIONS.map((option) => (
+            <SelectItem key={option.key}>{option.label}</SelectItem>
+          ))}
+        </Select>
+      </div>
+
+      <div className="hidden min-w-0 flex-wrap items-center justify-end gap-2 lg:flex">
+        <span className="mr-1 text-sm font-medium text-gray-500">📅 Date:</span>
+        {DATE_OPTIONS.map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            onClick={() => onMode(option.key)}
+            className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+              mode === option.key
+                ? 'border-blue-600 bg-blue-600 text-white'
+                : 'border-gray-300 bg-white text-gray-600 hover:border-blue-400 hover:text-blue-600'
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      {showPicker && mode === 'specific' && (
         <input
           type="date"
           aria-label="Specific date"
           value={single}
           onChange={(event) => onSingle(event.target.value)}
-          className="ml-2 rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+          className="h-8 min-w-[min(100%,10rem)] flex-1 basis-[10rem] max-w-full rounded-lg border border-gray-300 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 sm:max-w-[12rem]"
         />
       )}
-      {mode === 'range' && (
-        <div className="ml-2 flex items-center gap-2">
+      {showPicker && mode === 'range' && (
+        <div className="flex min-w-[min(100%,14rem)] flex-1 basis-[14rem] max-w-full flex-wrap items-center gap-1.5 sm:max-w-none">
           <input
             type="date"
             aria-label="From date"
             value={from}
             onChange={(event) => onFrom(event.target.value)}
-            className="rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            className="h-8 min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
           />
-          <span className="text-sm text-gray-400">→</span>
+          <span className="text-xs text-gray-400">→</span>
           <input
             type="date"
             aria-label="To date"
             value={to}
             onChange={(event) => onTo(event.target.value)}
-            className="rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            className="h-8 min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
           />
         </div>
       )}

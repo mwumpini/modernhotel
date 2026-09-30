@@ -19,6 +19,7 @@ import { computePurchaseWht, computePurchaseWhtVat, PURCHASE_WHT_CATEGORIES, typ
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { filterFinanceApInvoices, computeSupplierAgingFromInvoices } from '@/app/lib/accounting/apSubledger';
 import { GL_ACCOUNTS } from '@/app/lib/accounting/integration';
+import { isManualArApSource } from '@/app/lib/accounting/journalReversal';
 import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
 import AttachmentUpload from '@/app/components/shared/AttachmentUpload';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
@@ -60,12 +61,20 @@ export default function AccountsPayablePage() {
     updateBusinessPartner,
     addInvoice,
     updateInvoice,
+    deleteInvoice,
+    voidInvoice,
     addPayment,
     postPayment,
+    deletePayment,
+    voidPayment,
+    updatePayment,
     recordSupplierWHTPayment,
 
   } = useAccountingStore();
   const canApprovePayments = useSettingsStore((s) => s.hasPermission('accounting.approve-payment'));
+  const canManageAp = useSettingsStore((s) => s.hasPermission('accounting.manage-ap'));
+  const canDeleteAp = useSettingsStore((s) => s.hasPermission('accounting.delete'));
+  const canVoidAp = useSettingsStore((s) => s.hasPermission('accounting.void-transaction'));
   const { generateNextSupplierCode } = useSupplierStore();
   const { stockItems } = useStockStore();
 
@@ -77,7 +86,7 @@ export default function AccountsPayablePage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [postOnSave, setPostOnSave] = useState(true);
   const [showAdvancedInvoice, setShowAdvancedInvoice] = useState(false);
-  const [isTotalsOpen, setIsTotalsOpen] = useState(false);
+  const [lineEntryKind, setLineEntryKind] = useState<'item' | 'service'>('item');
   const [viewKind, setViewKind] = useState<'supplier' | 'invoice' | 'payment' | null>(null);
   const [viewItem, setViewItem] = useState<any>(null);
   const isViewOpen = viewKind != null && viewItem != null;
@@ -114,13 +123,13 @@ export default function AccountsPayablePage() {
       if (form.creditLimit != null && Number(form.creditLimit) < 0) e.creditLimit = 'Must be >= 0';
       if (form.paymentTerms != null && Number(form.paymentTerms) < 0) e.paymentTerms = 'Must be >= 0';
     } else if (dialogType === 'invoice') {
-      if (!form.businessPartnerId) e.businessPartnerId = 'Supplier is required';
+      if (!form.businessPartnerId && !(form.supplierName || '').trim()) e.businessPartnerId = 'Supplier is required';
       if (!form.date) e.date = 'Date is required';
       if (!form.dueDate) e.dueDate = 'Due date is required';
       if (Number(form.total || 0) < 0) e.total = 'Total must be >= 0';
     } else if (dialogType === 'payment') {
       const whtAmount = form.applyWht ? Number(form.whtAmount || 0) : 0;
-      if (!form.businessPartnerId) e.businessPartnerId = 'Supplier is required';
+      if (!form.businessPartnerId && !(form.supplierName || '').trim()) e.businessPartnerId = 'Supplier is required';
       if (!form.date) e.date = 'Date is required';
       if (!(Number(form.amount || 0) + whtAmount > 0)) e.amount = 'Amount must be > 0';
       else if (Number(form.amount || 0) < 0) e.amount = 'Amount must be >= 0';
@@ -412,23 +421,101 @@ export default function AccountsPayablePage() {
     </TableColumn>
   );
 
+  const taxFromSubtotal = (subtotal: number, taxType?: string, customTaxPercent?: number) => {
+    const type = taxType || 'STANDARD';
+    if (type === 'NONE') return 0;
+    if (type === 'CUSTOM') return +(subtotal * (Number(customTaxPercent || 0) / 100)).toFixed(2);
+    return +computePurchaseTax(subtotal).totalTax.toFixed(2);
+  };
+
+  const recomputeInvoiceFromLines = (
+    lines: any[],
+    taxType?: string,
+    customTaxPercent?: number,
+    taxBreakdown?: any,
+  ) => {
+    const subtotal = lines.reduce((s: number, l: any) => {
+      const qty = l.lineKind === 'service' ? 1 : Number(l.quantity || 0);
+      return s + qty * Number(l.unitPrice || 0);
+    }, 0);
+    const taxAmount = taxFromSubtotal(subtotal, taxType ?? form.taxType, customTaxPercent ?? form.customTaxPercent);
+    const nextBreakdown = { ...(taxBreakdown ?? form.taxBreakdown ?? {}) };
+    if (form.whtApplicable) {
+      const wht = computePurchaseWht(subtotal, form.whtCategory || 'SERVICE');
+      nextBreakdown.withholding = wht?.amount || 0;
+    }
+    if (form.whtVatApplicable) {
+      const whtVat = computePurchaseWhtVat(taxAmount);
+      nextBreakdown.withholdingVat = whtVat?.amount || 0;
+    }
+    return {
+      lines,
+      subtotal: +subtotal.toFixed(2),
+      taxAmount,
+      total: +(subtotal + taxAmount).toFixed(2),
+      taxBreakdown: nextBreakdown,
+    };
+  };
+
+  const resolveOrCreateSupplierId = (currentForm: any): string | null => {
+    if (currentForm.businessPartnerId) return currentForm.businessPartnerId;
+    const name = String(currentForm.supplierName || '').trim();
+    if (name.length < 2) return null;
+    const existing = suppliers.find((s) => s.name.toLowerCase() === name.toLowerCase());
+    if (existing) return existing.id;
+    const id = `SUP-${Date.now()}`;
+    const now = new Date().toISOString();
+    addBusinessPartner({
+      id,
+      code: generateNextSupplierCode(),
+      name,
+      type: 'Supplier',
+      taxNumber: '',
+      address: '',
+      phone: currentForm.supplierPhone || '',
+      email: currentForm.supplierEmail || '',
+      contactPerson: '',
+      creditLimit: 0,
+      paymentTerms: 30,
+      glAccountCode: GL_ACCOUNTS.ACCOUNTS_PAYABLE,
+      currency: 'GHS',
+      balance: 0,
+      isActive: true,
+      countryCode: 'GH',
+      createdAt: now,
+      updatedAt: now,
+    });
+    return id;
+  };
+
   // Opens the "new invoice" dialog pre-filled for a given supplier — used by every quick-action
   // "Invoice" button so they all create a real invoice instead of misusing `editing` (which
   // must hold an invoice being edited, never a supplier) and silently no-op'ing on save.
   const openNewInvoiceFor = (supplierId: string) => {
     setDialogType('invoice');
     setEditing(null);
+    setShowAdvancedInvoice(false);
+    setLineEntryKind('item');
     const today = new Date().toISOString().slice(0, 10);
+    const supplier = suppliers.find((s) => s.id === supplierId);
+    const terms = supplier?.paymentTerms || 0;
+    const due = new Date(Date.now() + terms * 86400000).toISOString().slice(0, 10);
+    const vatCfg = useAccountingStore.getState().taxConfigs.find((c) => c.type === 'VAT' && c.isActive);
     setForm({
       businessPartnerId: supplierId,
+      supplierName: supplier?.name || '',
       invoiceNumber: '',
       date: today,
-      dueDate: today,
+      dueDate: due,
+      currency: 'GHS',
+      exchangeRate: 1,
       subtotal: 0,
       taxAmount: 0,
       total: 0,
+      taxType: 'STANDARD',
+      claimInputTax: vatCfg ? vatCfg.isRecoverable !== false : true,
       description: '',
-      lines: [{ id: `INL-${Date.now()}`, description: '', quantity: 1, unitPrice: 0, taxPercent: 20, glAccountCode: '5100' }]
+      lines: [{ id: `INL-${Date.now()}`, lineKind: 'item', description: '', quantity: 1, unitPrice: 0, glAccountCode: '5100', uom: 'Each' }],
     });
     setIsOpen(true);
   };
@@ -444,21 +531,274 @@ export default function AccountsPayablePage() {
   };
 
   const openBillEdit = (invoice: any) => {
+    if (invoice.status === 'Void') {
+      window.alert('Voided bills cannot be edited');
+      return;
+    }
+    const activePay = payments.filter((p) => p.invoiceId === invoice.id && p.status !== 'Void');
+    if (activePay.length > 0) {
+      window.alert('Void linked payments before editing this bill');
+      return;
+    }
     setDialogType('invoice');
     setEditing(invoice);
+    setShowAdvancedInvoice(false);
+    const rawLines = invoice.lines || invoice.items || invoice.lineItems || [];
+    const normalized = rawLines.map((ln: any) => ({
+      ...ln,
+      lineKind: ln.lineKind || (ln.itemId ? 'item' : 'service'),
+    }));
+    setLineEntryKind(normalized.some((ln: any) => ln.lineKind === 'service') && !normalized.some((ln: any) => ln.lineKind === 'item') ? 'service' : 'item');
     setForm({
       businessPartnerId: invoice.businessPartnerId,
+      supplierName: suppliers.find((s) => s.id === invoice.businessPartnerId)?.name || '',
       invoiceNumber: invoice.invoiceNumber,
       date: String(invoice.date || '').slice(0, 10),
       dueDate: String(invoice.dueDate || invoice.date || '').slice(0, 10),
       subtotal: invoice.subtotal,
       taxAmount: invoice.taxAmount,
       total: invoice.total,
-      currency: invoice.currency,
+      currency: invoice.currency || 'GHS',
+      exchangeRate: invoice.exchangeRate ?? 1,
       description: invoice.description,
-      lines: invoice.lines || invoice.items || invoice.lineItems || [],
+      poNumber: invoice.poNumber || '',
+      receiptNumber: invoice.receiptNumber || '',
+      discountAmount: invoice.discountAmount || 0,
+      shippingCharges: invoice.shippingCharges || 0,
+      otherCharges: invoice.otherCharges || 0,
+      paidAmount: invoice.paidAmount || 0,
+      taxBreakdown: invoice.taxBreakdown,
+      taxType: invoice.taxType || 'STANDARD',
+      claimInputTax: invoice.claimInputTax !== false,
+      whtApplicable: Number(invoice.taxBreakdown?.withholding || 0) > 0,
+      whtVatApplicable: Number(invoice.taxBreakdown?.withholdingVat || 0) > 0,
+      whtCategory: invoice.whtCategory || 'SERVICE',
+      attachments: invoice.attachments || [],
+      lines: normalized,
     });
     setIsOpen(true);
+  };
+
+  const billActivePayments = (invoiceId: string) =>
+    payments.filter((p) => p.invoiceId === invoiceId && p.status !== 'Void');
+
+  const printBillPDF = (invoice: any) => {
+    try {
+      if (!invoice) {
+        window.alert('No bill selected to print.');
+        return;
+      }
+      const supplier = suppliers.find((s) => s.id === invoice.businessPartnerId);
+      const paidAmount = (invoice.paidAmount != null)
+        ? invoice.paidAmount
+        : supplierPayments.filter((p) => p.invoiceId === invoice.id).reduce((sum, p) => sum + p.amount, 0);
+      const balance = (invoice.total || 0) - paidAmount;
+      const lineItems = invoice.lines || invoice.items || invoice.lineItems || [];
+      const lineRows = lineItems.map((ln: any) => `<tr>
+        <td>${ln.description || '—'}</td>
+        <td class="amount">${ln.quantity ?? '—'}</td>
+        <td class="amount">${formatAccountingCurrency(Number(ln.unitPrice || 0))}</td>
+        <td class="amount">${formatAccountingCurrency(Number(ln.amount ?? ((ln.quantity || 0) * (ln.unitPrice || 0))))}</td>
+      </tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#6b7280">No line items</td></tr>';
+      const paymentRows = billActivePayments(invoice.id).map((p) => `<tr>
+        <td>${p.paymentNumber || p.id}</td>
+        <td>${new Date(p.date).toLocaleDateString()}</td>
+        <td>${p.paymentMethod || '—'}</td>
+        <td class="amount">${formatAccountingCurrency(Number(p.amount || 0))}</td>
+      </tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#6b7280">No payments recorded</td></tr>';
+      const html = generatePdfHtml('Purchase Bill', `
+        <div class="header">
+          <h1>PURCHASE BILL</h1>
+          <div class="subtitle">${invoice.invoiceNumber || invoice.id}</div>
+        </div>
+        <div class="section">
+          <div class="section-title">Supplier</div>
+          <div class="detail-grid">
+            <div class="detail-item"><div class="label">Name</div><div class="value">${supplier?.name || '—'}</div></div>
+            <div class="detail-item"><div class="label">Code</div><div class="value">${supplier?.code || invoice.businessPartnerId || '—'}</div></div>
+            <div class="detail-item"><div class="label">Date</div><div class="value">${new Date(invoice.date).toLocaleDateString()}</div></div>
+            <div class="detail-item"><div class="label">Due</div><div class="value">${new Date(invoice.dueDate || invoice.date).toLocaleDateString()}</div></div>
+            <div class="detail-item"><div class="label">PO</div><div class="value">${invoice.poNumber || '—'}</div></div>
+            <div class="detail-item"><div class="label">Status</div><div class="value">${invoice.status || '—'}</div></div>
+          </div>
+        </div>
+        ${invoice.description ? `<div class="section"><div class="section-title">Memo</div><p>${invoice.description}</p></div>` : ''}
+        <div class="section">
+          <div class="section-title">Line Items</div>
+          <table>
+            <thead><tr><th>Description</th><th>Qty</th><th>Unit</th><th>Amount</th></tr></thead>
+            <tbody>${lineRows}</tbody>
+          </table>
+        </div>
+        <div class="section">
+          <div class="section-title">Totals</div>
+          <table>
+            <tr><td style="width:70%">Subtotal</td><td class="amount">${formatAccountingCurrency(Number(invoice.subtotal || 0))}</td></tr>
+            <tr><td>Tax</td><td class="amount">${formatAccountingCurrency(Number(invoice.taxAmount || 0))}</td></tr>
+            ${Number(invoice.taxBreakdown?.withholding || 0) > 0 ? `<tr><td>WHT</td><td class="amount">−${formatAccountingCurrency(Number(invoice.taxBreakdown.withholding))}</td></tr>` : ''}
+            ${Number(invoice.taxBreakdown?.withholdingVat || 0) > 0 ? `<tr><td>WHT-VAT</td><td class="amount">−${formatAccountingCurrency(Number(invoice.taxBreakdown.withholdingVat))}</td></tr>` : ''}
+            <tr class="total-row"><td><strong>Total</strong></td><td class="amount"><strong>${formatAccountingCurrency(Number(invoice.total || 0))}</strong></td></tr>
+            <tr><td>Paid</td><td class="amount" style="color:#16a34a">${formatAccountingCurrency(paidAmount)}</td></tr>
+            <tr><td><strong>Balance</strong></td><td class="amount" style="color:${balance > 0 ? '#ea580c' : '#16a34a'};font-weight:bold">${formatAccountingCurrency(balance)}</td></tr>
+          </table>
+        </div>
+        <div class="section">
+          <div class="section-title">Payments</div>
+          <table>
+            <thead><tr><th>Payment #</th><th>Date</th><th>Method</th><th>Amount</th></tr></thead>
+            <tbody>${paymentRows}</tbody>
+          </table>
+        </div>
+      `);
+      openPrintPreview(html);
+    } catch (err) {
+      console.error('[AP] Print bill failed', err);
+      window.alert('Could not print this bill.');
+    }
+  };
+
+  const printPaymentPDF = (payment: any) => {
+    try {
+      if (!payment) {
+        window.alert('No payment selected to print.');
+        return;
+      }
+      const supplier = suppliers.find((s) => s.id === payment.businessPartnerId);
+      const linkedBill = payment.invoiceId ? purchaseInvoices.find((i) => i.id === payment.invoiceId) : undefined;
+      const html = generatePdfHtml('Supplier Payment', `
+        <div class="header">
+          <h1>SUPPLIER PAYMENT</h1>
+          <div class="subtitle">${payment.paymentNumber || payment.id}</div>
+        </div>
+        <div class="section">
+          <div class="section-title">Payment Details</div>
+          <div class="detail-grid">
+            <div class="detail-item"><div class="label">Supplier</div><div class="value">${supplier?.name || payment.businessPartnerId || '—'}</div></div>
+            <div class="detail-item"><div class="label">Date</div><div class="value">${new Date(payment.date).toLocaleDateString()}</div></div>
+            <div class="detail-item"><div class="label">Method</div><div class="value">${payment.paymentMethod || '—'}</div></div>
+            <div class="detail-item"><div class="label">Status</div><div class="value">${payment.status || '—'}</div></div>
+            <div class="detail-item"><div class="label">Reference</div><div class="value">${payment.reference || '—'}</div></div>
+            <div class="detail-item"><div class="label">Bill</div><div class="value">${linkedBill?.invoiceNumber || payment.invoiceId || '—'}</div></div>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-title">Amount</div>
+          <table>
+            <tr class="total-row"><td><strong>Cash paid</strong></td><td class="amount"><strong>${formatAccountingCurrency(Number(payment.amount || 0))}</strong></td></tr>
+            ${Number(payment.whtAmount || 0) > 0 ? `<tr><td>WHT withheld</td><td class="amount">${formatAccountingCurrency(Number(payment.whtAmount))}</td></tr>` : ''}
+            ${Number(payment.whtVatAmount || 0) > 0 ? `<tr><td>WHT-VAT withheld</td><td class="amount">${formatAccountingCurrency(Number(payment.whtVatAmount))}</td></tr>` : ''}
+          </table>
+        </div>
+      `);
+      openPrintPreview(html);
+    } catch (err) {
+      console.error('[AP] Print payment failed', err);
+      window.alert('Could not print this payment.');
+    }
+  };
+
+  const handleVoidBill = async (invoice: any) => {
+    if (!canVoidAp) {
+      window.alert("You don't have permission to void bills.");
+      return;
+    }
+    if (invoice.status === 'Void') return;
+    if (billActivePayments(invoice.id).length > 0) {
+      window.alert('Void linked payments on this bill first.');
+      return;
+    }
+    if (!window.confirm(`Void bill ${invoice.invoiceNumber || invoice.id}? A reversing GL entry will be posted.`)) return;
+    await voidInvoice(invoice.id);
+    const err = useAccountingStore.getState().error;
+    if (err) {
+      window.alert(err);
+      return;
+    }
+    closeView();
+  };
+
+  const handleDeleteBill = async (invoice: any) => {
+    if (!canDeleteAp) {
+      window.alert("You don't have permission to delete bills.");
+      return;
+    }
+    if (invoice.status === 'Void') {
+      window.alert('Voided bills cannot be deleted');
+      return;
+    }
+    if (billActivePayments(invoice.id).length > 0) {
+      window.alert('Void or delete linked payments on this bill first.');
+      return;
+    }
+    if (!isManualArApSource(invoice.sourceModule) && invoice.status === 'Posted') {
+      window.alert('Only manually entered bills can be deleted here');
+      return;
+    }
+    const label = invoice.invoiceNumber || invoice.id;
+    const isDraft = invoice.status === 'Draft';
+    if (!window.confirm(
+      isDraft
+        ? `Permanently delete ${label}? This cannot be undone.`
+        : `Permanently delete ${label}? The bill will be voided (GL reversed) then removed.`,
+    )) return;
+    if (!isDraft && invoice.status === 'Posted') {
+      await voidInvoice(invoice.id);
+      const err = useAccountingStore.getState().error;
+      if (err) {
+        window.alert(err);
+        return;
+      }
+    }
+    deleteInvoice(invoice.id);
+    closeView();
+  };
+
+  const handleVoidPayment = async (payment: any) => {
+    if (!canVoidAp) {
+      window.alert("You don't have permission to void payments.");
+      return;
+    }
+    if (payment.status === 'Void') return;
+    if (!window.confirm(`Void payment ${payment.paymentNumber || payment.id}? This reverses GL and reopens bill balance.`)) return;
+    await voidPayment(payment.id);
+    const err = useAccountingStore.getState().error;
+    if (err) {
+      window.alert(err);
+      return;
+    }
+    closeView();
+  };
+
+  const handleDeletePayment = async (payment: any) => {
+    if (!canDeleteAp) {
+      window.alert("You don't have permission to delete payments.");
+      return;
+    }
+    if (payment.status === 'Void') {
+      window.alert('Voided payments cannot be deleted');
+      return;
+    }
+    const isDraft = payment.status === 'Draft' || payment.status === 'Pending Approval';
+    if (!isDraft && !isManualArApSource(payment.sourceModule)) {
+      window.alert('Only draft or manual payments can be deleted here');
+      return;
+    }
+    const label = payment.paymentNumber || payment.id;
+    if (!window.confirm(
+      isDraft
+        ? `Permanently delete ${label}? This cannot be undone.`
+        : `Permanently delete ${label}? The payment will be voided then removed.`,
+    )) return;
+    if (!isDraft && payment.status === 'Posted') {
+      await voidPayment(payment.id);
+      const err = useAccountingStore.getState().error;
+      if (err) {
+        window.alert(err);
+        return;
+      }
+    }
+    deletePayment(payment.id);
+    closeView();
   };
 
   // Opens the "record payment" dialog pre-filled for a given supplier/amount.
@@ -467,6 +807,7 @@ export default function AccountsPayablePage() {
     setEditing(null);
     setForm({
       businessPartnerId: supplierId,
+      supplierName: suppliers.find((s) => s.id === supplierId)?.name || '',
       date: new Date().toISOString().slice(0, 10),
       amount,
       paymentMethod: 'Bank',
@@ -497,6 +838,7 @@ export default function AccountsPayablePage() {
     setEditing(null);
     setForm({
       businessPartnerId: inv.businessPartnerId,
+      supplierName: suppliers.find((s) => s.id === inv.businessPartnerId)?.name || '',
       invoiceId: inv.id,
       date: new Date().toISOString().slice(0, 10),
       amount,
@@ -555,10 +897,16 @@ export default function AccountsPayablePage() {
   };
 
   const openPaymentEdit = (payment: (typeof supplierPayments)[number]) => {
+    if (payment.status === 'Void') {
+      window.alert('Voided payments cannot be edited');
+      return;
+    }
     setDialogType('payment');
     setEditing(payment);
+    setShowAdvancedInvoice(false);
     setForm({
       businessPartnerId: payment.businessPartnerId,
+      supplierName: suppliers.find((s) => s.id === payment.businessPartnerId)?.name || '',
       date: String(payment.date || '').slice(0, 10),
       amount: payment.amount,
       paymentMethod: payment.paymentMethod,
@@ -762,18 +1110,20 @@ export default function AccountsPayablePage() {
   return (
     <div className="px-3 pt-2 pb-3 md:px-4 md:pt-3 md:pb-4">
       <div className="mb-2 flex items-center gap-1.5">
-        <h1 className="text-lg md:text-xl font-bold text-gray-800">💳 Accounts Payable</h1>
-        <HeadingInfo label="About accounts payable">Manage supplier accounts, purchase invoices, and payments</HeadingInfo>
+        <h1 className="text-lg md:text-xl font-bold text-gray-800">Accounts Payable</h1>
+        <HeadingInfo label="About money we owe suppliers">
+          <p>What you still owe suppliers from purchase bills, plus payments you have already made.</p>
+        </HeadingInfo>
       </div>
 
       {/* Summary Cards */}
       <DeskKpiStrip
         className="mb-3"
         items={[
-          { id: 'ap.totalPayables', label: 'Total Payables', value: formatAccountingCurrency(totalPayables), tone: 'text-red-700' },
+          { id: 'ap.totalPayables', label: 'Still to pay', value: formatAccountingCurrency(totalPayables), tone: 'text-red-700' },
           { id: 'ap.overdue', label: 'Overdue', value: formatAccountingCurrency(totalOverduePayables), tone: 'text-orange-700' },
-          { id: 'ap.totalInvoices', label: 'Total Invoices', value: formatAccountingCurrency(totalInvoices), tone: 'text-blue-700' },
-          { id: 'ap.totalPayments', label: 'Total Payments', value: formatAccountingCurrency(totalPayments), tone: 'text-green-700' },
+          { id: 'ap.totalInvoices', label: 'Billed', value: formatAccountingCurrency(totalInvoices), tone: 'text-blue-700' },
+          { id: 'ap.totalPayments', label: 'Paid out', value: formatAccountingCurrency(totalPayments), tone: 'text-green-700' },
         ]}
       />
 
@@ -795,12 +1145,11 @@ export default function AccountsPayablePage() {
             variant="solid"
             classNames={deskBookTabsClassNames}
           >
-            <Tab key="balances" title="📊 Supplier Balances & Aging">
+            <Tab key="balances" title="Who we owe">
               <div className={deskBookTabPanelClassName}>
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="text-sm font-semibold text-gray-800">Supplier Balance Analysis</h3>
-                  <div className="flex gap-2">
-                  <Button size="sm" color="primary" onClick={() => { 
+                <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-2">
+                  <h3 className="text-sm font-semibold text-gray-800 shrink-0 mr-auto">Supplier balances by age</h3>
+                  <Button size="sm" color="primary" className="shrink-0" onClick={() => { 
                       setDialogType('supplier'); 
                       setEditing(null);
                       setForm({
@@ -819,26 +1168,25 @@ export default function AccountsPayablePage() {
                       }); 
                       setIsOpen(true); 
                     }}>
-                      ➕ Add Supplier
+                      Add supplier
                     </Button>
-                  </div>
                 </div>
 
-                <div className="flex flex-wrap items-end gap-3 mb-4">
-                  <Input label="Search" placeholder="Supplier name, code, tax ID..." value={searchTerm} onValueChange={setSearchTerm} className="w-64" size="sm" />
+                <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-3">
+                  <Input aria-label="Search suppliers" placeholder="Search supplier" value={searchTerm} onValueChange={setSearchTerm} className="w-56 shrink-0" size="sm" />
                 </div>
 
                 <div ref={agingCols.frameRef} style={agingCols.frameStyle}>
                 <Table aria-label="Supplier Aging" removeWrapper classNames={deskResizableTableClassNames()}>
                   <TableHeader>
                     {agingColumn('supplier', 'Supplier')}
-                    {agingColumn('outstanding', 'Outstanding', 'right')}
+                    {agingColumn('outstanding', 'Still owed', 'right')}
                     {agingColumn('current', 'Current', 'right')}
-                    {agingColumn('overdue30', '1-30 Days', 'right')}
-                    {agingColumn('overdue60', '31-60 Days', 'right')}
-                    {agingColumn('overdue90', '61-90 Days', 'right')}
-                    {agingColumn('overdue90Plus', '90+ Days', 'right')}
-                    {agingColumn('lastActivity', 'Last Activity')}
+                    {agingColumn('overdue30', '1-30 days', 'right')}
+                    {agingColumn('overdue60', '31-60 days', 'right')}
+                    {agingColumn('overdue90', '61-90 days', 'right')}
+                    {agingColumn('overdue90Plus', '90+ days', 'right')}
+                    {agingColumn('lastActivity', 'Last activity')}
                   </TableHeader>
                   <TableBody emptyContent="No supplier data found.">
                     {agingPager.paged.map((supplier) => (
@@ -882,21 +1230,20 @@ export default function AccountsPayablePage() {
               </div>
             </Tab>
 
-            <Tab key="suppliers" title={`🏢 Suppliers (${suppliers.length})`}>
+            <Tab key="suppliers" title={`Suppliers (${suppliers.length})`}>
               <div className={deskBookTabPanelClassName}>
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="text-sm font-semibold text-gray-800">Supplier Accounts</h3>
-                  <div className="flex items-center gap-2">
+                <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-2">
+                  <h3 className="text-sm font-semibold text-gray-800 shrink-0 mr-auto">Supplier list</h3>
                     <Dropdown>
                       <DropdownTrigger>
-                        <Button variant="flat" size="sm">📥 Export</Button>
+                        <Button variant="flat" size="sm" className="shrink-0">📥 Export</Button>
                       </DropdownTrigger>
                       <DropdownMenu>
-                        <DropdownItem key="csv" onPress={exportSuppliersCSV}>📄 Download CSV</DropdownItem>
+                        <DropdownItem key="csv" onPress={exportSuppliersCSV}>CSV spreadsheet</DropdownItem>
                         <DropdownItem key="pdf" onPress={printSuppliers}>📑 Print PDF</DropdownItem>
                       </DropdownMenu>
                     </Dropdown>
-                    <Button color="primary" size="sm" startContent={<span>➕</span>} onClick={() => {
+                    <Button color="primary" size="sm" className="shrink-0" onClick={() => {
                       setDialogType('supplier');
                       setEditing(null);
                       setForm({
@@ -915,13 +1262,12 @@ export default function AccountsPayablePage() {
                       });
                       setIsOpen(true);
                     }}>
-                      Add Supplier
+                      Add supplier
                     </Button>
-                  </div>
                 </div>
 
-                <div className="flex flex-wrap items-end gap-3 mb-4">
-                  <Input label="Search" placeholder="Name, code, email, phone, tax ID..." value={searchTerm} onValueChange={setSearchTerm} className="w-64" size="sm" />
+                <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-3">
+                  <Input aria-label="Search suppliers" placeholder="Search name, code, phone" value={searchTerm} onValueChange={setSearchTerm} className="w-56 shrink-0" size="sm" />
                 </div>
 
                 <div ref={supplierCols.frameRef} style={supplierCols.frameStyle}>
@@ -996,7 +1342,7 @@ export default function AccountsPayablePage() {
                               size="sm"
                             >
                               {outstandingBalance > (supplier.creditLimit || 0) ? 'Over Limit' :
-                               outstandingBalance > 0 ? 'Outstanding' :
+                               outstandingBalance > 0 ? 'Still owed' :
                                'Current'}
                             </Chip>
                           </TableCell>
@@ -1012,70 +1358,55 @@ export default function AccountsPayablePage() {
               </div>
             </Tab>
 
-            <Tab key="invoices" title={`📄 Bills (${filteredInvoices.length})`}>
+            <Tab key="invoices" title={`Bills (${filteredInvoices.length})`}>
               <div className={deskBookTabPanelClassName}>
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="text-sm font-semibold text-gray-800">Bills (Purchases)</h3>
-                  <div className="flex items-center gap-2">
+                <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-2">
+                  <h3 className="text-sm font-semibold text-gray-800 shrink-0 mr-auto">Purchase bills</h3>
                     <Dropdown>
                       <DropdownTrigger>
-                        <Button variant="flat" size="sm">📥 Export</Button>
+                        <Button variant="flat" size="sm" className="shrink-0">📥 Export</Button>
                       </DropdownTrigger>
                       <DropdownMenu>
-                        <DropdownItem key="csv" onPress={exportBillsCSV}>📄 Download CSV</DropdownItem>
+                        <DropdownItem key="csv" onPress={exportBillsCSV}>CSV spreadsheet</DropdownItem>
                         <DropdownItem key="pdf" onPress={printBills}>📑 Print PDF</DropdownItem>
                       </DropdownMenu>
                     </Dropdown>
-                    <Button color="primary" size="sm" startContent={<span>➕</span>} onClick={() => {
-                      setDialogType('invoice');
-                      setEditing(null);
-                      const today = new Date().toISOString().slice(0,10);
-                      setForm({
-                        businessPartnerId: (suppliers[0]?.id) || '',
-                        invoiceNumber: '',
-                        date: today,
-                        dueDate: today,
-                        subtotal: 0,
-                        taxAmount: 0,
-                        total: 0,
-                        description: '',
-                        lines: [{ id: `INL-${Date.now()}`, description: '', quantity: 1, unitPrice: 0, taxPercent: 20, glAccountCode: '5100' }]
-                      });
-                      setIsOpen(true);
-                    }}>
-                    Add Bill
+                    <Button color="primary" size="sm" className="shrink-0" onClick={() => openNewInvoiceFor(suppliers[0]?.id || '')}>
+                    New bill
                     </Button>
-                  </div>
                 </div>
 
-                {/* Invoice Filters */}
-                <div className="flex flex-wrap gap-4 mb-4 p-4 bg-gray-50 rounded-lg">
+                <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-3">
                   <Input
-                    label="Search"
-                    placeholder="Invoice #, PO #, supplier..."
-                    className="w-56"
+                    aria-label="Search bills"
+                    placeholder="Search bill or supplier"
+                    className="w-52 shrink-0"
                     size="sm"
                     value={searchTerm}
                     onValueChange={setSearchTerm}
                   />
                   <Select
-                    placeholder="Filter by Status"
-                    className="w-48"
+                    aria-label="Status"
+                    className="w-36 shrink-0"
+                    size="sm"
                     selectedKeys={[statusFilter]}
+                    disallowEmptySelection
                     onSelectionChange={(keys) => setStatusFilter(Array.from(keys)[0] as string)}
                   >
-                    <SelectItem key="all">All Status</SelectItem>
-                    <SelectItem key="outstanding">Outstanding</SelectItem>
+                    <SelectItem key="all">All statuses</SelectItem>
+                    <SelectItem key="outstanding">Still owed</SelectItem>
                     <SelectItem key="overdue">Overdue</SelectItem>
                     <SelectItem key="paid">Paid</SelectItem>
                   </Select>
                   <Select
-                    placeholder="Filter by Supplier"
-                    className="w-48"
+                    aria-label="Supplier"
+                    className="w-44 shrink-0"
+                    size="sm"
                     selectedKeys={[supplierFilter]}
+                    disallowEmptySelection
                     onSelectionChange={(keys) => setSupplierFilter(Array.from(keys)[0] as string)}
                   >
-                    <SelectItem key="all">All Suppliers</SelectItem>
+                    <SelectItem key="all">All suppliers</SelectItem>
                     <>
                       {suppliers.map(supplier => (
                         <SelectItem key={supplier.id}>{supplier.name}</SelectItem>
@@ -1084,15 +1415,17 @@ export default function AccountsPayablePage() {
                   </Select>
                   <Input
                     type="date"
-                    placeholder="From Date"
-                    className="w-40"
+                    aria-label="From date"
+                    className="w-36 shrink-0"
+                    size="sm"
                     value={dateFromFilter}
                     onChange={(e) => setDateFromFilter(e.target.value)}
                   />
                   <Input
                     type="date"
-                    placeholder="To Date"
-                    className="w-40"
+                    aria-label="To date"
+                    className="w-36 shrink-0"
+                    size="sm"
                     value={dateToFilter}
                     onChange={(e) => setDateToFilter(e.target.value)}
                   />
@@ -1182,7 +1515,7 @@ export default function AccountsPayablePage() {
                             >
                               {balance <= 0 ? 'Paid' : 
                                daysOverdue > 0 ? 'Overdue' : 
-                               'Outstanding'}
+                               'Still owed'}
                             </Chip>
                           </TableCell>
                           <TableCell>
@@ -1230,28 +1563,26 @@ export default function AccountsPayablePage() {
               </div>
             </Tab>
 
-            <Tab key="payments" title={`💸 Payments (${filteredPayments.length})`}>
+            <Tab key="payments" title={`Payments (${filteredPayments.length})`}>
               <div className={deskBookTabPanelClassName}>
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="text-sm font-semibold text-gray-800">Supplier Payments</h3>
-                  <div className="flex items-center gap-2">
+                <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-2">
+                  <h3 className="text-sm font-semibold text-gray-800 shrink-0 mr-auto">Payments to suppliers</h3>
                     <Dropdown>
                       <DropdownTrigger>
-                        <Button variant="flat" size="sm">📥 Export</Button>
+                        <Button variant="flat" size="sm" className="shrink-0">📥 Export</Button>
                       </DropdownTrigger>
                       <DropdownMenu>
-                        <DropdownItem key="csv" onPress={exportPaymentsCSV}>📄 Download CSV</DropdownItem>
+                        <DropdownItem key="csv" onPress={exportPaymentsCSV}>CSV spreadsheet</DropdownItem>
                         <DropdownItem key="pdf" onPress={printPayments}>📑 Print PDF</DropdownItem>
                       </DropdownMenu>
                     </Dropdown>
-                    <Button color="primary" size="sm" startContent={<span>➕</span>} onClick={() => { setDialogType('payment'); setEditing(null); setForm({ businessPartnerId: suppliers[0]?.id || '', date: new Date().toISOString().slice(0,10), amount: 0, paymentMethod: 'Bank', reference: '' }); setIsOpen(true); }}>
-                      Record Payment
+                    <Button color="primary" size="sm" className="shrink-0" onClick={() => { setDialogType('payment'); setEditing(null); setShowAdvancedInvoice(false); setForm({ businessPartnerId: suppliers[0]?.id || '', supplierName: suppliers[0]?.name || '', date: new Date().toISOString().slice(0,10), amount: 0, paymentMethod: 'Bank', reference: '' }); setIsOpen(true); }}>
+                      Record payment
                     </Button>
-                  </div>
                 </div>
 
-                <div className="flex flex-wrap items-end gap-3 mb-4">
-                  <Input label="Search" placeholder="Payment #, supplier, reference..." value={searchTerm} onValueChange={setSearchTerm} className="w-64" size="sm" />
+                <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-3">
+                  <Input aria-label="Search payments" placeholder="Search payment or supplier" value={searchTerm} onValueChange={setSearchTerm} className="w-56 shrink-0" size="sm" />
                 </div>
 
                 <div ref={paymentCols.frameRef} style={paymentCols.frameStyle}>
@@ -1336,13 +1667,53 @@ export default function AccountsPayablePage() {
       {/* Create/Edit Dialog */}
       <Modal
         isOpen={isOpen}
-        onOpenChange={setIsOpen}
+        onOpenChange={(open) => {
+          setIsOpen(open);
+          if (!open) {
+            setShowAdvancedInvoice(false);
+            setErrors({});
+          }
+        }}
         size={dialogType === 'invoice' ? '5xl' : dialogType === 'payment' ? '3xl' : '2xl'}
         scrollBehavior="inside"
+        classNames={
+          dialogType === 'invoice'
+            ? { base: 'max-w-[980px]' }
+            : dialogType === 'payment'
+              ? { base: 'max-w-[720px]' }
+              : undefined
+        }
       >
         <ModalContent>
           {(onClose) => {
           const dialogTitle = dialogType === 'supplier' ? (editing ? 'Edit Supplier' : 'Add Supplier') : dialogType === 'invoice' ? (editing ? 'Edit Purchase Invoice' : 'Add Purchase Invoice') : (editing ? 'Edit Payment' : 'Record Payment');
+          const selectedSupplier = suppliers.find((s) => s.id === (form.businessPartnerId || suppliers[0]?.id));
+          const selectedPaymentInvoice = form.invoiceId
+            ? purchaseInvoices.find((i) => i.id === form.invoiceId)
+            : undefined;
+          const paymentInvoicePaid = selectedPaymentInvoice
+            ? payments.filter((p) => p.invoiceId === selectedPaymentInvoice.id).reduce((s, p) => s + p.amount, 0)
+            : 0;
+          const paymentInvoiceOutstanding = selectedPaymentInvoice
+            ? Math.max(0, (selectedPaymentInvoice.total || 0) - paymentInvoicePaid)
+            : 0;
+          const paymentCash = Number(form.amount || 0);
+          const paymentWht = form.applyWht ? Number(form.whtAmount || 0) : 0;
+          const paymentWhtVat = form.applyWht ? Number(form.whtVatAmount || 0) : 0;
+          const paymentSettlement = +(paymentCash + paymentWht + paymentWhtVat).toFixed(2);
+          const paymentNewBalance = selectedPaymentInvoice
+            ? Math.max(0, paymentInvoiceOutstanding - paymentSettlement)
+            : null;
+          const invoiceNetPayable = +(
+            Number(form.subtotal || 0)
+            + Number(form.taxAmount || 0)
+            + Number(form.shippingCharges || 0)
+            + Number(form.otherCharges || 0)
+            - Number(form.discountAmount || 0)
+            - Number(form.taxBreakdown?.withholding || 0)
+            - Number(form.taxBreakdown?.withholdingVat || 0)
+            - Number(form.paidAmount || 0)
+          ).toFixed(2);
           const handleSave = () => {
           if (!validate()) return;
           if (dialogType === 'supplier') {
@@ -1387,22 +1758,31 @@ export default function AccountsPayablePage() {
             };
             if (editing) updateBusinessPartner(editing.id, payload); else addBusinessPartner(payload);
           } else if (dialogType === 'invoice') {
+            const supplierId = resolveOrCreateSupplierId(form);
+            if (!supplierId) { setErrors({ businessPartnerId: 'Supplier is required' }); return; }
             // duplicate invoice check
-            const dup = purchaseInvoices.some((inv)=> inv.invoiceNumber === (form.invoiceNumber||'') && inv.businessPartnerId === form.businessPartnerId && (!editing || inv.id !== editing.id));
+            const dup = purchaseInvoices.some((inv)=> inv.invoiceNumber === (form.invoiceNumber||'') && inv.businessPartnerId === supplierId && (!editing || inv.id !== editing.id));
             if (dup) { setErrors({ invoiceNumber: 'Duplicate invoice for this supplier' }); return; }
             const invId = editing?.id || `INV-${Date.now()}`;
             const lines = (form.lines || []).map((ln: any, idx: number) => {
-              const amount = +(Number(ln.quantity || 0) * Number(ln.unitPrice || 0)).toFixed(2);
+              const quantity = ln.lineKind === 'service' ? 1 : Number(ln.quantity || 0);
+              const unitPrice = Number(ln.unitPrice || 0);
+              const amount = +(quantity * unitPrice).toFixed(2);
               const taxAmount = +((amount * Number(ln.taxPercent || 0)) / 100).toFixed(2);
               return {
                 id: ln.id || `INL-${Date.now()}-${idx}`,
                 invoiceId: invId,
+                lineKind: ln.lineKind || (ln.itemId ? 'item' : 'service'),
+                itemId: ln.itemId || undefined,
+                itemCode: ln.itemCode || undefined,
                 description: ln.description || '',
-                quantity: Number(ln.quantity || 0),
-                unitPrice: Number(ln.unitPrice || 0),
+                quantity,
+                unitPrice,
                 amount,
                 taxAmount,
-                glAccountCode: ln.glAccountCode || '5100'
+                uom: ln.uom || 'Each',
+                costCenter: ln.costCenter || undefined,
+                glAccountCode: ln.glAccountCode || '5100',
               };
             });
             const subtotalFromLines = lines.reduce((s: number, l: any) => s + l.amount, 0);
@@ -1413,8 +1793,11 @@ export default function AccountsPayablePage() {
               type: 'Purchase' as const,
               date: (form.date ? new Date(form.date) : new Date()).toISOString(),
               dueDate: (form.dueDate ? new Date(form.dueDate) : new Date()).toISOString(),
-              businessPartnerId: form.businessPartnerId,
-              description: form.description || 'Purchase invoice',
+              businessPartnerId: supplierId,
+              description:
+                form.description
+                || (form.lines || []).map((l: any) => l.description).find((d: string) => d?.trim())
+                || 'Purchase invoice',
               subtotal: +(Number(form.subtotal ?? subtotalFromLines)).toFixed(2),
               taxAmount: +(Number(form.taxAmount ?? taxFromLines)).toFixed(2),
               total: +((Number(form.subtotal ?? subtotalFromLines)) + (Number(form.taxAmount ?? taxFromLines))).toFixed(2),
@@ -1432,10 +1815,14 @@ export default function AccountsPayablePage() {
               amountDue: +(((Number(form.subtotal ?? subtotalFromLines)) + (Number(form.taxAmount ?? taxFromLines)) + Number(form.shippingCharges || 0) + Number(form.otherCharges || 0) - Number(form.discountAmount || 0) - Number(form.taxBreakdown?.withholding || 0) - Number(form.taxBreakdown?.withholdingVat || 0)) - Number(form.paidAmount || 0)).toFixed(2),
               workflowStatus: form.workflowStatus || 'Posted',
               taxBreakdown: form.taxBreakdown || undefined,
+              claimInputTax: form.taxType === 'NONE' ? false : form.claimInputTax !== false,
+              sourceModule: editing?.sourceModule || 'manual',
               lines
             } as any;
             if (editing) updateInvoice(editing.id, payload); else addInvoice(payload);
           } else if (dialogType === 'payment' && !editing && form.applyWht && form.invoiceId && (Number(form.whtAmount || 0) > 0 || Number(form.whtVatAmount || 0) > 0)) {
+            const supplierId = resolveOrCreateSupplierId(form);
+            if (!supplierId) { setErrors({ businessPartnerId: 'Supplier is required' }); return; }
             const result = recordSupplierWHTPayment({
               invoiceId: form.invoiceId,
               cashAmount: Number(form.amount || 0),
@@ -1450,12 +1837,14 @@ export default function AccountsPayablePage() {
               return;
             }
           } else if (dialogType === 'payment') {
+            const supplierId = resolveOrCreateSupplierId(form);
+            if (!supplierId) { setErrors({ businessPartnerId: 'Supplier is required' }); return; }
             const payload = {
               id: editing?.id || `PAY-${Date.now()}`,
               paymentNumber: editing?.paymentNumber || `AP-PAY-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
               date: (form.date ? new Date(form.date) : new Date()).toISOString(),
               type: 'Payment' as const,
-              businessPartnerId: form.businessPartnerId,
+              businessPartnerId: supplierId,
               invoiceId: form.invoiceId || undefined,
               description: form.reference || 'Supplier payment',
               amount: Number(form.amount || 0),
@@ -1475,17 +1864,22 @@ export default function AccountsPayablePage() {
               pdfUrl: form.pdfUrl,
               pdfFileName: form.pdfFileName,
               createdAt: editing?.createdAt || new Date().toISOString(),
-              updatedAt: new Date().toISOString()
+              updatedAt: new Date().toISOString(),
+              sourceModule: editing?.sourceModule || 'manual',
             };
             if (editing) {
-              // No updatePayment in store; treat as add new for simplicity
-              addPayment(payload as any);
+              updatePayment(editing.id, {
+                ...payload,
+                id: editing.id,
+                paymentNumber: editing.paymentNumber || payload.paymentNumber,
+                status: editing.status || payload.status,
+                createdAt: editing.createdAt || payload.createdAt,
+              } as any);
             } else {
               addPayment(payload as any);
-            }
-            // Post the payment to create JE and bank transaction
-            if (postOnSave) {
-              try { postPayment(payload.id); } catch {}
+              if (postOnSave) {
+                try { postPayment(payload.id); } catch {}
+              }
             }
           }
           setIsOpen(false);
@@ -1494,8 +1888,74 @@ export default function AccountsPayablePage() {
           };
           return (
             <>
-              <ModalHeader>{dialogTitle}</ModalHeader>
-              <ModalBody>
+              {dialogType === 'invoice' ? (
+                <ModalHeader className="border-b bg-white px-4 py-2.5 pe-12">
+                  <div className="flex justify-between items-start w-full gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-base font-bold text-gray-900">
+                          {editing ? 'PURCHASE BILL' : 'NEW PURCHASE BILL'}
+                        </h3>
+                        <Chip size="sm" variant="flat" color={editing ? 'primary' : 'default'}>
+                          {editing ? 'EDITING' : 'DRAFT'}
+                        </Chip>
+                      </div>
+                      <p className="text-sm text-gray-600 mt-0.5">
+                        {selectedSupplier?.name || form.supplierName || 'Select a supplier'}
+                        {selectedSupplier?.paymentTerms != null ? (
+                          <span className="text-gray-400"> · Net {selectedSupplier.paymentTerms} days</span>
+                        ) : !selectedSupplier && form.supplierName?.trim() ? (
+                          <span className="text-amber-600"> · new</span>
+                        ) : null}
+                      </p>
+                    </div>
+                    <div className="text-right text-xs text-gray-600 leading-snug">
+                      <div className="text-[11px] uppercase tracking-wide text-gray-400">Invoice #</div>
+                      <div className="font-mono text-sm text-gray-800">{form.invoiceNumber || 'Auto on save'}</div>
+                      <div className="tabular-nums font-semibold text-gray-900 mt-1">
+                        {formatAccountingCurrency(invoiceNetPayable)} due
+                      </div>
+                    </div>
+                  </div>
+                </ModalHeader>
+              ) : dialogType === 'payment' ? (
+                <ModalHeader className="border-b bg-white px-4 py-2.5 pe-12">
+                  <div className="flex justify-between items-start w-full gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-base font-bold text-gray-900">
+                          {editing ? 'EDIT PAYMENT' : 'RECORD PAYMENT'}
+                        </h3>
+                        <Chip size="sm" variant="flat" color={postOnSave ? 'success' : 'default'}>
+                          {postOnSave ? 'POST ON SAVE' : 'DRAFT'}
+                        </Chip>
+                      </div>
+                      <p className="text-sm text-gray-600 mt-0.5">
+                        {selectedSupplier?.name || form.supplierName || 'Select a supplier'}
+                        {selectedPaymentInvoice ? (
+                          <span className="text-gray-400"> · {selectedPaymentInvoice.invoiceNumber}</span>
+                        ) : !selectedSupplier && form.supplierName?.trim() ? (
+                          <span className="text-amber-600"> · new</span>
+                        ) : null}
+                      </p>
+                    </div>
+                    <div className="text-right text-xs text-gray-600 leading-snug">
+                      <div className="text-[11px] uppercase tracking-wide text-gray-400">Paying</div>
+                      <div className="tabular-nums font-semibold text-gray-900 text-sm">
+                        {formatAccountingCurrency(paymentCash)}
+                      </div>
+                      {(paymentWht > 0 || paymentWhtVat > 0) && (
+                        <div className="text-[11px] text-amber-700 mt-0.5">
+                          + {formatAccountingCurrency(paymentWht + paymentWhtVat)} withheld
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </ModalHeader>
+              ) : (
+                <ModalHeader>{dialogTitle}</ModalHeader>
+              )}
+              <ModalBody className={dialogType === 'invoice' || dialogType === 'payment' ? 'px-4 py-3 bg-white' : undefined}>
         {dialogType === 'supplier' && (
           <div className="grid grid-cols-2 gap-4">
             <Input
@@ -1658,518 +2118,1072 @@ export default function AccountsPayablePage() {
           </div>
         )}
         {dialogType === 'invoice' && (
-          <div className="space-y-4">
-            {/* Header bar */}
-            <div className="flex items-center justify-between bg-gray-50 rounded px-3 py-2">
-              <div className="flex items-center gap-2">
-                <Chip size="sm" color={editing ? 'primary' : 'default'} variant="flat">{editing ? 'Editing' : 'Draft'}</Chip>
-                <span className="text-sm text-gray-600">Purchase Invoice</span>
-              </div>
-              <div className="text-right">
-                <div className="text-xs text-gray-500">Invoice #</div>
-                <div className="font-mono text-sm">{form.invoiceNumber || 'Auto'}</div>
-              </div>
-            </div>
-
-            {/* Two-column layout with summary */}
-            <div className="grid grid-cols-1 gap-6">
-              <div className="space-y-4">
-                {/* Party & Document */}
-                <div className="grid grid-cols-3 gap-4">
-              <Select size="sm" label="Supplier" selectedKeys={[form.businessPartnerId || suppliers[0]?.id]} onSelectionChange={(keys) => setForm({ ...form, businessPartnerId: Array.from(keys)[0] })}>
-                {suppliers.map(s => (<SelectItem key={s.id}>{s.name}</SelectItem>))}
-              </Select>
-              <Input size="sm" label="Invoice #" value={form.invoiceNumber || ''} onChange={(e) => setForm({ ...form, invoiceNumber: e.target.value })} />
-              <Input size="sm" label="PO Number" value={form.poNumber || ''} onChange={(e) => setForm({ ...form, poNumber: e.target.value })} />
-                </div>
-
-                {/* Dates */}
-                <div className="grid grid-cols-3 gap-4">
-              <div>
-                <Input size="sm" type="date" label="Date" value={form.date || new Date().toISOString().slice(0,10)} onChange={(e) => setForm({ ...form, date: e.target.value, dueDate: (() => { const d = new Date(e.target.value); const supplier = suppliers.find(s => s.id === (form.businessPartnerId || suppliers[0]?.id)); const terms = supplier?.paymentTerms || 0; const due = new Date(d.getTime() + terms * 86400000); return due.toISOString().slice(0,10); })() })} />
-                {errors.date && <div className="text-red-600 text-xs mt-1">{errors.date}</div>}
-              </div>
-              <div>
-                <Input size="sm" type="date" label="Due Date" value={form.dueDate || new Date().toISOString().slice(0,10)} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} />
-                {errors.dueDate && <div className="text-red-600 text-xs mt-1">{errors.dueDate}</div>}
-              </div>
-              <Input size="sm" label="Receipt/Delivery Note" value={form.receiptNumber || ''} onChange={(e) => setForm({ ...form, receiptNumber: e.target.value })} />
-                </div>
-
-                {/* Supplier preview card */}
-                {(() => {
-                  const sup = suppliers.find(s => s.id === (form.businessPartnerId || suppliers[0]?.id));
-                  if (!sup) return null;
-                  const terms = sup.paymentTerms ?? 0;
-                  return (
-                    <Card>
-                      <CardBody className="grid grid-cols-3 gap-4 text-sm text-gray-700">
-                        <div>
-                          <div className="font-medium">Supplier</div>
-                          <div>{sup.name}</div>
-                          {sup.contactPerson && <div className="text-xs text-gray-500">Attn: {sup.contactPerson}</div>}
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-4 items-start">
+            <div className="space-y-4 min-w-0">
+              {/* Document details */}
+              <section className="space-y-3">
+                <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Document</h4>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <Autocomplete
+                    size="sm"
+                    label="Supplier"
+                    className="sm:col-span-2"
+                    placeholder="Search or type a new supplier..."
+                    startContent={<span className="text-gray-400 text-sm">🔍</span>}
+                    selectedKey={form.businessPartnerId || null}
+                    inputValue={form.supplierName || ''}
+                    allowsCustomValue
+                    isInvalid={!!errors.businessPartnerId}
+                    errorMessage={errors.businessPartnerId}
+                    onInputChange={(v) => {
+                      const matched = suppliers.find((s) => s.name === v);
+                      setForm({
+                        ...form,
+                        supplierName: v,
+                        ...(form.businessPartnerId && !matched && v !== suppliers.find((s) => s.id === form.businessPartnerId)?.name
+                          ? { businessPartnerId: '' }
+                          : matched
+                            ? { businessPartnerId: matched.id }
+                            : {}),
+                      });
+                    }}
+                    onSelectionChange={(key) => {
+                      const id = String(key || '');
+                      const supplier = suppliers.find((s) => s.id === id);
+                      const terms = supplier?.paymentTerms || 0;
+                      const base = form.date ? new Date(form.date) : new Date();
+                      const due = new Date(base.getTime() + terms * 86400000).toISOString().slice(0, 10);
+                      setForm({
+                        ...form,
+                        businessPartnerId: id,
+                        supplierName: supplier?.name || form.supplierName || '',
+                        dueDate: due,
+                      });
+                    }}
+                  >
+                    {suppliers.map((s) => (
+                      <AutocompleteItem key={s.id} textValue={s.name}>
+                        <div className="flex flex-col">
+                          <span className="font-medium">{s.name}</span>
+                          <span className="text-xs text-gray-500">{s.code}{s.paymentTerms != null ? ` · Net ${s.paymentTerms}` : ''}</span>
                         </div>
-                        <div>
-                          <div className="font-medium">Contact</div>
-                          <div className="text-xs text-gray-500">{sup.phone || '-'}{sup.email ? ` · ${sup.email}` : ''}</div>
-                        </div>
-                        <div>
-                          <div className="font-medium">Terms</div>
-                          <div className="text-xs text-gray-500">Net {terms} days</div>
-                        </div>
-                      </CardBody>
-                    </Card>
-                  );
-                })()}
-
-                {/* Money */}
-                <div className="grid grid-cols-4 gap-4">
-              <Input size="sm" label="Currency" value={form.currency || 'GHS'} onChange={(e) => setForm({ ...form, currency: e.target.value })} />
-              <Input size="sm" type="number" label="Exchange Rate" value={form.exchangeRate ?? 1} onChange={(e) => setForm({ ...form, exchangeRate: parseFloat(e.target.value) || 1 })} />
-              <Input size="sm" type="number" label="Subtotal" value={form.subtotal ?? 0} onChange={(e) => {
-                const subtotal = parseFloat(e.target.value) || 0;
-                const taxAmount = computePurchaseTax(subtotal).totalTax;
-                const whtAmount = form.whtApplicable ? (computePurchaseWht(subtotal, form.whtCategory || 'SERVICE')?.amount || 0) : form.taxBreakdown?.withholding;
-                const whtVatAmount = form.whtVatApplicable ? (computePurchaseWhtVat(taxAmount)?.amount || 0) : form.taxBreakdown?.withholdingVat;
-                setForm({ ...form, subtotal, taxAmount, total: +(subtotal + taxAmount).toFixed(2), taxBreakdown: { ...(form.taxBreakdown || {}), withholding: whtAmount, withholdingVat: whtVatAmount } });
-              }} />
-              <Input size="sm" type="number" label="Tax Amount" value={form.taxAmount ?? 0} onChange={(e) => {
-                const taxAmount = parseFloat(e.target.value) || 0;
-                const subtotal = Number(form.subtotal || 0);
-                const whtVatAmount = form.whtVatApplicable ? (computePurchaseWhtVat(taxAmount)?.amount || 0) : form.taxBreakdown?.withholdingVat;
-                setForm({ ...form, taxAmount, total: +(subtotal + taxAmount).toFixed(2), taxBreakdown: { ...(form.taxBreakdown || {}), withholdingVat: whtVatAmount } });
-              }} />
+                      </AutocompleteItem>
+                    ))}
+                  </Autocomplete>
+                  <Input
+                    size="sm"
+                    label="Supplier invoice #"
+                    placeholder="From supplier bill"
+                    value={form.invoiceNumber || ''}
+                    onChange={(e) => setForm({ ...form, invoiceNumber: e.target.value })}
+                    isInvalid={!!errors.invoiceNumber}
+                    errorMessage={errors.invoiceNumber}
+                  />
+                  <Input
+                    size="sm"
+                    type="date"
+                    label="Invoice date"
+                    value={form.date || new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => {
+                      const d = new Date(e.target.value);
+                      const terms = selectedSupplier?.paymentTerms || 0;
+                      const due = new Date(d.getTime() + terms * 86400000).toISOString().slice(0, 10);
+                      setForm({ ...form, date: e.target.value, dueDate: due });
+                    }}
+                    isInvalid={!!errors.date}
+                    errorMessage={errors.date}
+                  />
+                  <Input
+                    size="sm"
+                    type="date"
+                    label="Due date"
+                    value={form.dueDate || new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
+                    description={selectedSupplier?.paymentTerms != null ? `From Net ${selectedSupplier.paymentTerms} — editable` : undefined}
+                    isInvalid={!!errors.dueDate}
+                    errorMessage={errors.dueDate}
+                  />
+                  <Input
+                    size="sm"
+                    label="Our PO #"
+                    placeholder="Optional"
+                    value={form.poNumber || ''}
+                    onChange={(e) => setForm({ ...form, poNumber: e.target.value })}
+                  />
+                  <Input
+                    size="sm"
+                    label="Delivery / GRN #"
+                    placeholder="Optional"
+                    value={form.receiptNumber || ''}
+                    onChange={(e) => setForm({ ...form, receiptNumber: e.target.value })}
+                  />
+                  <Input
+                    size="sm"
+                    label="Memo"
+                    placeholder="Bill note — e.g. September produce order"
+                    value={form.description || ''}
+                    onChange={(e) => setForm({ ...form, description: e.target.value })}
+                    className="sm:col-span-3"
+                  />
                 </div>
-            {/* Totals quick view */}
-            <div className="flex items-center justify-between">
-              <div className="text-xs text-gray-500">Totals are calculated automatically.</div>
-              <Button size="sm" variant="bordered" onClick={()=> setIsTotalsOpen(true)}>View Totals</Button>
-            </div>
-            {/* Total shown in summary card */}
-            {errors.total && <div className="text-red-600 text-xs mt-1">{errors.total}</div>}
-            <Input size="sm" label="Description" value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-            {errors.businessPartnerId && <div className="text-red-600 text-xs">{errors.businessPartnerId}</div>}
+                {selectedSupplier ? (
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 px-0.5">
+                    {selectedSupplier.contactPerson && <span>Attn: {selectedSupplier.contactPerson}</span>}
+                    {selectedSupplier.phone && <span>{selectedSupplier.phone}</span>}
+                    {selectedSupplier.email && <span>{selectedSupplier.email}</span>}
+                    {selectedSupplier.taxNumber && <span className="font-mono">TIN {selectedSupplier.taxNumber}</span>}
+                  </div>
+                ) : form.supplierName?.trim() ? (
+                  <div className="text-xs text-amber-700 px-0.5">New supplier — will be created when you save this bill</div>
+                ) : null}
+              </section>
 
-            {/* Tax Options + Withholding Tax — combined into one row (Tax Type left, WHT right)
-                so the two no longer eat two full bordered boxes of vertical space. WHT rate is
-                never hardcoded here — computePurchaseWht reads the live rule for whichever
-                category is picked from the compliance tax-rule engine (Books & Taxes). */}
-            <div className="p-3 border rounded space-y-3">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex gap-2 items-end">
-                  <Select size="sm" label="Tax Type" className="flex-1" selectedKeys={[form.taxType || 'STANDARD']} onSelectionChange={(keys)=> {
-                    const v = Array.from(keys)[0] as string;
-                    if (v === 'NONE') {
-                      const subtotal = Number(form.subtotal||0);
-                      setForm({ ...form, taxType: 'NONE', taxAmount: 0, total: +(subtotal).toFixed(2) });
-                    } else {
-                      setForm({ ...form, taxType: v });
-                    }
-                  }}>
-                    <SelectItem key="STANDARD">Standard (Purchase stack)</SelectItem>
-                    <SelectItem key="CUSTOM">Custom Rate</SelectItem>
-                    <SelectItem key="NONE">No Tax</SelectItem>
-                  </Select>
-                  {form.taxType === 'CUSTOM' && (
-                    <Input size="sm" type="number" label="Custom %" className="w-24" value={form.customTaxPercent ?? 0} onChange={(e)=> setForm({ ...form, customTaxPercent: parseFloat(e.target.value)||0 })} />
+              {/* Line items — primary work surface */}
+              <section className="space-y-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="inline-flex rounded-md border border-gray-200 p-0.5 bg-white">
+                    <button
+                      type="button"
+                      className={`px-3 py-1 text-xs font-medium rounded ${lineEntryKind === 'item' ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+                      onClick={() => {
+                        setLineEntryKind('item');
+                        const next = (form.lines || []).map((ln: any) => ({
+                          ...ln,
+                          lineKind: 'item',
+                          quantity: ln.quantity || 1,
+                        }));
+                        setForm({ ...form, ...recomputeInvoiceFromLines(next.length ? next : [{
+                          id: `INL-${Date.now()}`,
+                          lineKind: 'item',
+                          description: '',
+                          quantity: 1,
+                          unitPrice: 0,
+                          glAccountCode: '5100',
+                          uom: 'Each',
+                        }]) });
+                      }}
+                    >
+                      Item
+                    </button>
+                    <button
+                      type="button"
+                      className={`px-3 py-1 text-xs font-medium rounded ${lineEntryKind === 'service' ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+                      onClick={() => {
+                        setLineEntryKind('service');
+                        const next = (form.lines || []).map((ln: any) => ({
+                          ...ln,
+                          lineKind: 'service',
+                          quantity: 1,
+                          itemId: '',
+                          itemCode: '',
+                          uom: undefined,
+                        }));
+                        setForm({ ...form, ...recomputeInvoiceFromLines(next.length ? next : [{
+                          id: `INL-${Date.now()}`,
+                          lineKind: 'service',
+                          description: '',
+                          quantity: 1,
+                          unitPrice: 0,
+                          glAccountCode: '5100',
+                        }]) });
+                      }}
+                    >
+                      Service
+                    </button>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="flat"
+                    color="primary"
+                    onPress={() => {
+                      const next = [...(form.lines || [])];
+                      next.push(
+                        lineEntryKind === 'service'
+                          ? {
+                              id: `INL-${Date.now()}`,
+                              lineKind: 'service',
+                              description: '',
+                              quantity: 1,
+                              unitPrice: 0,
+                              glAccountCode: '5100',
+                            }
+                          : {
+                              id: `INL-${Date.now()}`,
+                              lineKind: 'item',
+                              description: '',
+                              quantity: 1,
+                              unitPrice: 0,
+                              glAccountCode: '5100',
+                              uom: 'Each',
+                              costCenter: '',
+                            },
+                      );
+                      setForm({ ...form, ...recomputeInvoiceFromLines(next) });
+                    }}
+                  >
+                    ➕ Add line
+                  </Button>
+                </div>
+                <div className="rounded-lg border border-gray-200 overflow-x-auto">
+                  {lineEntryKind === 'item' ? (
+                    <Table aria-label="Item lines" removeWrapper classNames={{ th: 'bg-gray-50 text-[11px] uppercase tracking-wide', td: 'py-2' }}>
+                      <TableHeader>
+                        <TableColumn>ITEM</TableColumn>
+                        <TableColumn width={88}>QTY</TableColumn>
+                        <TableColumn width={110}>UNIT PRICE</TableColumn>
+                        <TableColumn width={120}>AMOUNT</TableColumn>
+                        <TableColumn width={56}>{''}</TableColumn>
+                      </TableHeader>
+                      <TableBody emptyContent="Add a line to start this bill.">
+                        {(form.lines || []).map((ln: any, idx: number) => {
+                          const lineAmount = +(Number(ln.quantity || 0) * Number(ln.unitPrice || 0)).toFixed(2);
+                          const updateLine = (patch: Record<string, any>) => {
+                            const next = [...(form.lines || [])];
+                            next[idx] = { ...next[idx], lineKind: 'item', ...patch };
+                            setForm({ ...form, ...recomputeInvoiceFromLines(next) });
+                          };
+                          return (
+                            <TableRow key={ln.id || idx}>
+                              <TableCell>
+                                <div className="space-y-1.5 min-w-[200px]">
+                                  <Autocomplete
+                                    size="sm"
+                                    selectedKey={ln.itemId || undefined}
+                                    onSelectionChange={(key) => {
+                                      const item = stockItems.find((i) => i.id === String(key || ''));
+                                      if (item) {
+                                        updateLine({
+                                          itemId: item.id,
+                                          itemCode: item.itemCode,
+                                          description: item.name,
+                                          unitPrice: ln.unitPrice > 0 ? ln.unitPrice : item.unitCost,
+                                          uom: item.unit || 'Each',
+                                        });
+                                      } else {
+                                        updateLine({ itemId: '', itemCode: '', description: ln.description || '' });
+                                      }
+                                    }}
+                                    placeholder="Select stock item"
+                                  >
+                                    {(stockItems || [])
+                                      .filter((it) => !form.businessPartnerId || it.supplierId === form.businessPartnerId)
+                                      .map((item) => (
+                                        <AutocompleteItem key={item.id} textValue={`${item.itemCode} ${item.name}`}>
+                                          <div className="flex flex-col">
+                                            <span className="font-mono text-xs">{item.itemCode}</span>
+                                            <span className="text-xs text-gray-600">{item.name}</span>
+                                          </div>
+                                        </AutocompleteItem>
+                                      ))}
+                                  </Autocomplete>
+                                  {showAdvancedInvoice && (
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                      <Input
+                                        size="sm"
+                                        aria-label="UOM"
+                                        placeholder="UOM"
+                                        value={ln.uom || 'Each'}
+                                        onChange={(e) => updateLine({ uom: e.target.value })}
+                                      />
+                                      <Autocomplete
+                                        size="sm"
+                                        selectedKey={ln.glAccountCode || undefined}
+                                        onSelectionChange={(key) => updateLine({ glAccountCode: String(key || '') })}
+                                        placeholder="GL"
+                                      >
+                                        {chartOfAccounts.map((acc) => (
+                                          <AutocompleteItem key={acc.code} textValue={`${acc.code} ${acc.name}`}>
+                                            <span className="font-mono text-xs">{acc.code}</span> {acc.name}
+                                          </AutocompleteItem>
+                                        ))}
+                                      </Autocomplete>
+                                      <Autocomplete
+                                        size="sm"
+                                        selectedKey={ln.costCenter || undefined}
+                                        onSelectionChange={(key) => updateLine({ costCenter: String(key || '') })}
+                                        placeholder="Cost center"
+                                        className="col-span-2"
+                                      >
+                                        {(costCenters || []).map((cc) => (
+                                          <AutocompleteItem key={cc.code} textValue={`${cc.code} ${cc.name}`}>
+                                            <span className="font-mono text-xs">{cc.code}</span> {cc.name}
+                                          </AutocompleteItem>
+                                        ))}
+                                      </Autocomplete>
+                                    </div>
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  size="sm"
+                                  type="number"
+                                  aria-label="Quantity"
+                                  value={String(ln.quantity ?? 1)}
+                                  onChange={(e) => updateLine({ quantity: parseFloat(e.target.value) || 0 })}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  size="sm"
+                                  type="number"
+                                  aria-label="Unit price"
+                                  value={String(ln.unitPrice ?? 0)}
+                                  onChange={(e) => updateLine({ unitPrice: parseFloat(e.target.value) || 0 })}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <div className="text-sm tabular-nums text-right font-medium">{formatAccountingCurrency(lineAmount)}</div>
+                              </TableCell>
+                              <TableCell>
+                                <Button
+                                  size="sm"
+                                  isIconOnly
+                                  variant="light"
+                                  color="danger"
+                                  aria-label="Remove line"
+                                  onPress={() => {
+                                    const next = (form.lines || []).filter((_: any, i: number) => i !== idx);
+                                    setForm({ ...form, ...recomputeInvoiceFromLines(next) });
+                                  }}
+                                >
+                                  ✕
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  ) : (
+                    <Table aria-label="Service lines" removeWrapper classNames={{ th: 'bg-gray-50 text-[11px] uppercase tracking-wide', td: 'py-2' }}>
+                      <TableHeader>
+                        <TableColumn>DESCRIPTION</TableColumn>
+                        <TableColumn width={140}>AMOUNT</TableColumn>
+                        <TableColumn width={56}>{''}</TableColumn>
+                      </TableHeader>
+                      <TableBody emptyContent="Add a line to start this bill.">
+                        {(form.lines || []).map((ln: any, idx: number) => {
+                          const updateLine = (patch: Record<string, any>) => {
+                            const next = [...(form.lines || [])];
+                            next[idx] = { ...next[idx], lineKind: 'service', quantity: 1, ...patch };
+                            setForm({ ...form, ...recomputeInvoiceFromLines(next) });
+                          };
+                          return (
+                            <TableRow key={ln.id || idx}>
+                              <TableCell>
+                                <div className="space-y-1.5 min-w-[240px]">
+                                  <Input
+                                    size="sm"
+                                    aria-label="Service description"
+                                    placeholder="Describe the service"
+                                    value={ln.description || ''}
+                                    onChange={(e) => updateLine({ description: e.target.value })}
+                                  />
+                                  {showAdvancedInvoice && (
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                      <Autocomplete
+                                        size="sm"
+                                        selectedKey={ln.glAccountCode || undefined}
+                                        onSelectionChange={(key) => updateLine({ glAccountCode: String(key || '') })}
+                                        placeholder="GL"
+                                      >
+                                        {chartOfAccounts.map((acc) => (
+                                          <AutocompleteItem key={acc.code} textValue={`${acc.code} ${acc.name}`}>
+                                            <span className="font-mono text-xs">{acc.code}</span> {acc.name}
+                                          </AutocompleteItem>
+                                        ))}
+                                      </Autocomplete>
+                                      <Autocomplete
+                                        size="sm"
+                                        selectedKey={ln.costCenter || undefined}
+                                        onSelectionChange={(key) => updateLine({ costCenter: String(key || '') })}
+                                        placeholder="Cost center"
+                                      >
+                                        {(costCenters || []).map((cc) => (
+                                          <AutocompleteItem key={cc.code} textValue={`${cc.code} ${cc.name}`}>
+                                            <span className="font-mono text-xs">{cc.code}</span> {cc.name}
+                                          </AutocompleteItem>
+                                        ))}
+                                      </Autocomplete>
+                                    </div>
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  size="sm"
+                                  type="number"
+                                  aria-label="Amount"
+                                  value={String(ln.unitPrice ?? 0)}
+                                  onChange={(e) => updateLine({ unitPrice: parseFloat(e.target.value) || 0 })}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Button
+                                  size="sm"
+                                  isIconOnly
+                                  variant="light"
+                                  color="danger"
+                                  aria-label="Remove line"
+                                  onPress={() => {
+                                    const next = (form.lines || []).filter((_: any, i: number) => i !== idx);
+                                    setForm({ ...form, ...recomputeInvoiceFromLines(next) });
+                                  }}
+                                >
+                                  ✕
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
                   )}
-                  <Button size="sm" variant="bordered" onClick={() => {
-                    const subtotal = Number(form.subtotal||0);
-                    const recomputeWhtVat = (taxAmount: number) =>
-                      form.whtVatApplicable ? (computePurchaseWhtVat(taxAmount)?.amount || 0) : form.taxBreakdown?.withholdingVat;
-                    if ((form.taxType||'STANDARD') === 'CUSTOM') {
-                      const rate = Number(form.customTaxPercent||0)/100;
-                      const taxAmount = +(subtotal*rate).toFixed(2);
-                      setForm({ ...form, taxAmount, total: +(subtotal+taxAmount).toFixed(2), taxBreakdown: { ...(form.taxBreakdown || {}), withholdingVat: recomputeWhtVat(taxAmount) } });
-                      return;
-                    }
-                    if ((form.taxType||'STANDARD') === 'NONE') {
-                      setForm({ ...form, taxAmount: 0, total: subtotal, taxBreakdown: { ...(form.taxBreakdown || {}), withholdingVat: recomputeWhtVat(0) } });
-                      return;
-                    }
-                    const { totalTax } = computePurchaseTax(subtotal);
-                    const taxAmount = +totalTax.toFixed(2);
-                    setForm({ ...form, taxAmount, total: +(subtotal + taxAmount).toFixed(2), taxBreakdown: { ...(form.taxBreakdown || {}), withholdingVat: recomputeWhtVat(taxAmount) } });
-                  }}>Apply Tax</Button>
                 </div>
-                <div className="flex gap-2 items-end">
-                  <Checkbox isSelected={!!form.whtApplicable} onValueChange={(checked) => {
-                    const subtotal = Number(form.subtotal || 0);
-                    const category: PurchaseWhtCategory = form.whtCategory || 'SERVICE';
-                    if (checked) {
-                      const wht = computePurchaseWht(subtotal, category);
-                      setForm({ ...form, whtApplicable: true, whtCategory: category, taxBreakdown: { ...(form.taxBreakdown || {}), withholding: wht?.amount || 0 } });
-                    } else {
-                      const tb = { ...(form.taxBreakdown || {}) };
-                      delete tb.withholding;
-                      setForm({ ...form, whtApplicable: false, taxBreakdown: tb });
-                    }
-                  }}>Withhold tax</Checkbox>
-                  {form.whtApplicable && (
-                    <Select size="sm" label="WHT Category" className="flex-1" selectedKeys={[form.whtCategory || 'SERVICE']} onSelectionChange={(keys) => {
-                      const category = Array.from(keys)[0] as PurchaseWhtCategory;
-                      const subtotal = Number(form.subtotal || 0);
-                      const wht = computePurchaseWht(subtotal, category);
-                      setForm({ ...form, whtCategory: category, taxBreakdown: { ...(form.taxBreakdown || {}), withholding: wht?.amount || 0 } });
-                    }}>
+              </section>
+
+              {/* Tax & withholding */}
+              <section className="rounded-lg border border-gray-200 p-3 space-y-3">
+                <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Tax & withholding</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+                  <div className="flex gap-2 items-end">
+                    <Select
+                      size="sm"
+                      label="VAT / tax"
+                      className="flex-1"
+                      selectedKeys={[form.taxType || 'STANDARD']}
+                      onSelectionChange={(keys) => {
+                        const v = Array.from(keys)[0] as string;
+                        const subtotal = Number(form.subtotal || 0);
+                        const taxAmount = taxFromSubtotal(subtotal, v, form.customTaxPercent);
+                        const tb = { ...(form.taxBreakdown || {}) };
+                        if (form.whtVatApplicable) {
+                          tb.withholdingVat = computePurchaseWhtVat(taxAmount)?.amount || 0;
+                        }
+                        setForm({
+                          ...form,
+                          taxType: v,
+                          taxAmount,
+                          total: +(subtotal + taxAmount).toFixed(2),
+                          taxBreakdown: tb,
+                        });
+                      }}
+                    >
+                      <SelectItem key="STANDARD">Standard purchase stack</SelectItem>
+                      <SelectItem key="CUSTOM">Custom rate</SelectItem>
+                      <SelectItem key="NONE">No tax</SelectItem>
+                    </Select>
+                    {form.taxType === 'CUSTOM' && (
+                      <Input
+                        size="sm"
+                        type="number"
+                        label="%"
+                        className="w-20"
+                        value={String(form.customTaxPercent ?? 0)}
+                        onChange={(e) => {
+                          const customTaxPercent = parseFloat(e.target.value) || 0;
+                          const subtotal = Number(form.subtotal || 0);
+                          const taxAmount = taxFromSubtotal(subtotal, 'CUSTOM', customTaxPercent);
+                          const tb = { ...(form.taxBreakdown || {}) };
+                          if (form.whtVatApplicable) {
+                            tb.withholdingVat = computePurchaseWhtVat(taxAmount)?.amount || 0;
+                          }
+                          setForm({
+                            ...form,
+                            customTaxPercent,
+                            taxAmount,
+                            total: +(subtotal + taxAmount).toFixed(2),
+                            taxBreakdown: tb,
+                          });
+                        }}
+                      />
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Checkbox
+                      size="sm"
+                      isSelected={form.taxType !== 'NONE' && form.claimInputTax !== false}
+                      isDisabled={form.taxType === 'NONE' || !(Number(form.taxAmount || 0) > 0)}
+                      onValueChange={(checked) => setForm({ ...form, claimInputTax: checked })}
+                    >
+                      Claim input tax (VAT)
+                    </Checkbox>
+                    <p className="text-[11px] text-gray-500 -mt-1 leading-snug">
+                      On = reclaimable on the Taxes desk. Off = tax stays as a cost on this bill.
+                    </p>
+                    <Checkbox
+                      size="sm"
+                      isSelected={!!form.whtApplicable}
+                      onValueChange={(checked) => {
+                        const subtotal = Number(form.subtotal || 0);
+                        const category: PurchaseWhtCategory = form.whtCategory || 'SERVICE';
+                        if (checked) {
+                          const wht = computePurchaseWht(subtotal, category);
+                          setForm({
+                            ...form,
+                            whtApplicable: true,
+                            whtCategory: category,
+                            taxBreakdown: { ...(form.taxBreakdown || {}), withholding: wht?.amount || 0 },
+                          });
+                        } else {
+                          const tb = { ...(form.taxBreakdown || {}) };
+                          delete tb.withholding;
+                          setForm({ ...form, whtApplicable: false, taxBreakdown: tb });
+                        }
+                      }}
+                    >
+                      Withhold tax (WHT)
+                    </Checkbox>
+                    <Checkbox
+                      size="sm"
+                      isSelected={!!form.whtVatApplicable}
+                      onValueChange={(checked) => {
+                        const taxAmount = Number(form.taxAmount || 0);
+                        if (checked) {
+                          const whtVat = computePurchaseWhtVat(taxAmount);
+                          setForm({
+                            ...form,
+                            whtVatApplicable: true,
+                            taxBreakdown: { ...(form.taxBreakdown || {}), withholdingVat: whtVat?.amount || 0 },
+                          });
+                        } else {
+                          const tb = { ...(form.taxBreakdown || {}) };
+                          delete tb.withholdingVat;
+                          setForm({ ...form, whtVatApplicable: false, taxBreakdown: tb });
+                        }
+                      }}
+                    >
+                      Withhold VAT (agent only)
+                    </Checkbox>
+                  </div>
+                </div>
+                {form.whtApplicable && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <Select
+                      size="sm"
+                      label="WHT category"
+                      selectedKeys={[form.whtCategory || 'SERVICE']}
+                      onSelectionChange={(keys) => {
+                        const category = Array.from(keys)[0] as PurchaseWhtCategory;
+                        const wht = computePurchaseWht(Number(form.subtotal || 0), category);
+                        setForm({
+                          ...form,
+                          whtCategory: category,
+                          taxBreakdown: { ...(form.taxBreakdown || {}), withholding: wht?.amount || 0 },
+                        });
+                      }}
+                    >
                       {PURCHASE_WHT_CATEGORIES.map((c) => (
                         <SelectItem key={c.key}>{c.label}</SelectItem>
                       ))}
                     </Select>
-                  )}
-                </div>
-              </div>
-              {/* VAT withholding is a separate, less-common mechanism from the category-based WHT
-                  above -- only a GRA-designated VAT-withholding agent does this, and it's
-                  independent of tax withholding (a purchase can have either, both, or neither). */}
-              <div className="flex gap-2 items-end">
-                <Checkbox isSelected={!!form.whtVatApplicable} onValueChange={(checked) => {
-                  const taxAmount = Number(form.taxAmount || 0);
-                  if (checked) {
-                    const whtVat = computePurchaseWhtVat(taxAmount);
-                    setForm({ ...form, whtVatApplicable: true, taxBreakdown: { ...(form.taxBreakdown || {}), withholdingVat: whtVat?.amount || 0 } });
-                  } else {
-                    const tb = { ...(form.taxBreakdown || {}) };
-                    delete tb.withholdingVat;
-                    setForm({ ...form, whtVatApplicable: false, taxBreakdown: tb });
-                  }
-                }}>Withhold VAT (designated agent only)</Checkbox>
-              </div>
-              {form.whtApplicable && (() => {
-                const category: PurchaseWhtCategory = form.whtCategory || 'SERVICE';
-                const wht = computePurchaseWht(Number(form.subtotal || 0), category);
-                if (!wht) {
-                  const label = PURCHASE_WHT_CATEGORIES.find((c) => c.key === category)?.label || category;
-                  return <div className="text-xs text-amber-600">No active WHT rule for {label} — configure one in Books &amp; Taxes → Tax Rate Builder (Purchases).</div>;
-                }
-                return (
-                  <div className="grid grid-cols-3 gap-4">
-                    <Input size="sm" isReadOnly label="WHT Rate" value={`${wht.rate}%`} />
-                    <Input size="sm" type="number" label="WHT Amount" value={form.taxBreakdown?.withholding ?? wht.amount}
-                      onChange={(e) => setForm({ ...form, taxBreakdown: { ...(form.taxBreakdown || {}), withholding: parseFloat(e.target.value) || 0 } })} />
-                    <div className="text-xs text-gray-500 flex items-center">Net payable: {formatAccountingCurrency((Number(form.subtotal || 0) + Number(form.taxAmount || 0) - Number(form.taxBreakdown?.withholding || 0) - Number(form.taxBreakdown?.withholdingVat || 0)))}</div>
-                  </div>
-                );
-              })()}
-              {form.whtVatApplicable && (() => {
-                const whtVat = computePurchaseWhtVat(Number(form.taxAmount || 0));
-                if (!whtVat) {
-                  return <div className="text-xs text-amber-600">Tax Amount is ₵0 — nothing to withhold VAT on.</div>;
-                }
-                return (
-                  <div className="grid grid-cols-3 gap-4">
-                    <Input size="sm" isReadOnly label="WHT-VAT Rate" value={`${whtVat.rate}%`} />
-                    <Input size="sm" type="number" label="WHT-VAT Amount" value={form.taxBreakdown?.withholdingVat ?? whtVat.amount}
-                      onChange={(e) => setForm({ ...form, taxBreakdown: { ...(form.taxBreakdown || {}), withholdingVat: parseFloat(e.target.value) || 0 } })} />
-                    {!form.whtApplicable && (
-                      <div className="text-xs text-gray-500 flex items-center">Net payable: {formatAccountingCurrency((Number(form.subtotal || 0) + Number(form.taxAmount || 0) - Number(form.taxBreakdown?.withholding || 0) - Number(form.taxBreakdown?.withholdingVat || 0)))}</div>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-
-                {/* Charges & Discounts */}
-                <div className="grid grid-cols-4 gap-4">
-              <Input size="sm" type="number" label="Discount Amount" value={form.discountAmount ?? 0} onChange={(e)=> setForm({ ...form, discountAmount: parseFloat(e.target.value)||0 })} />
-              <Input size="sm" type="number" label="Shipping/Handling" value={form.shippingCharges ?? 0} onChange={(e)=> setForm({ ...form, shippingCharges: parseFloat(e.target.value)||0 })} />
-              <Input size="sm" type="number" label="Other Charges" value={form.otherCharges ?? 0} onChange={(e)=> setForm({ ...form, otherCharges: parseFloat(e.target.value)||0 })} />
-              <Input size="sm" type="number" label="Amount Paid" value={form.paidAmount ?? 0} onChange={(e)=> setForm({ ...form, paidAmount: parseFloat(e.target.value)||0 })} />
-                </div>
-
-                {/* Approvals & Attachments moved below Line Items */}
-
-                {/* Line Items */}
-                <div>
-              <div className="flex justify-between items-center mb-2">
-                <h4 className="font-semibold">Line Items</h4>
-                <Button size="sm" variant="bordered" onClick={() => {
-                  const next = [...(form.lines || [])];
-                  next.push({ id: `INL-${Date.now()}`, description: '', quantity: 1, unitPrice: 0, taxPercent: 20, glAccountCode: '5100', uom: 'Each', costCenter: '' });
-                  const subtotal = next.reduce((s, l) => s + (Number(l.quantity||0)*Number(l.unitPrice||0)), 0);
-                  const taxAmount = next.reduce((s, l) => s + ((Number(l.quantity||0)*Number(l.unitPrice||0)) * Number(l.taxPercent||0) / 100), 0);
-                  setForm({ ...form, lines: next, subtotal: +subtotal.toFixed(2), taxAmount: +taxAmount.toFixed(2), total: +(subtotal+taxAmount).toFixed(2) });
-                }}>➕ Add Row</Button>
-              </div>
-              <Table aria-label="Invoice Lines" isStriped>
-                <TableHeader>
-                  <TableColumn width={240}>ITEM</TableColumn>
-                  <TableColumn width={420}>DESCRIPTION</TableColumn>
-                  <TableColumn width={90}>QTY</TableColumn>
-                  <TableColumn width={120}>UNIT PRICE</TableColumn>
-                  <TableColumn width={110}>UOM</TableColumn>
-                  <TableColumn width={100}>TAX %</TableColumn>
-                  <TableColumn width={200}>GL ACCOUNT</TableColumn>
-                  <TableColumn width={200}>COST CENTER</TableColumn>
-                  <TableColumn width={140}>LINE TOTAL</TableColumn>
-                  <TableColumn width={100}>ACTIONS</TableColumn>
-                </TableHeader>
-                <TableBody emptyContent="No lines">
-                  {(form.lines || []).map((ln: any, idx: number) => {
-                    const lineAmount: number = +(Number(ln.quantity || 0) * Number(ln.unitPrice || 0)).toFixed(2);
-                    return (
-                      <TableRow key={ln.id || idx}>
-                        <TableCell>
-                          <Autocomplete size="sm" selectedKey={ln.itemId || undefined} onSelectionChange={(key)=> {
-                            const item = stockItems.find(i => i.id === String(key||''));
-                            const next = [...(form.lines || [])];
-                            if (item) {
-                              next[idx] = {
-                                ...next[idx],
-                                itemId: item.id,
-                                itemCode: item.itemCode,
-                                description: next[idx]?.description || item.name,
-                                unitPrice: next[idx]?.unitPrice ?? item.unitCost,
-                                uom: next[idx]?.uom || item.unit
-                              };
-                              const subtotal: number = next.reduce((s: number, l: any) => s + (Number(l.quantity||0)*Number(l.unitPrice||0)), 0);
-                              const taxAmount: number = next.reduce((s: number, l: any) => s + ((Number(l.quantity||0)*Number(l.unitPrice||0)) * Number(l.taxPercent||0) / 100), 0);
-                              setForm({ ...form, lines: next, subtotal: +subtotal.toFixed(2), taxAmount: +taxAmount.toFixed(2), total: +(subtotal+taxAmount).toFixed(2) });
-                            } else {
-                              next[idx] = { ...next[idx], itemId: '', itemCode: '' };
-                              setForm({ ...form, lines: next });
+                    {(() => {
+                      const category: PurchaseWhtCategory = form.whtCategory || 'SERVICE';
+                      const wht = computePurchaseWht(Number(form.subtotal || 0), category);
+                      if (!wht) {
+                        const label = PURCHASE_WHT_CATEGORIES.find((c) => c.key === category)?.label || category;
+                        return (
+                          <div className="sm:col-span-2 text-xs text-amber-600 flex items-center">
+                            No active WHT rule for {label} — set one under Compliance taxes.
+                          </div>
+                        );
+                      }
+                      return (
+                        <>
+                          <Input size="sm" isReadOnly label="Rate" value={`${wht.rate}%`} />
+                          <Input
+                            size="sm"
+                            type="number"
+                            label="WHT amount"
+                            value={String(form.taxBreakdown?.withholding ?? wht.amount)}
+                            onChange={(e) =>
+                              setForm({
+                                ...form,
+                                taxBreakdown: { ...(form.taxBreakdown || {}), withholding: parseFloat(e.target.value) || 0 },
+                              })
                             }
-                          }} placeholder="Select item">
-                            {(stockItems||[]).filter(it => !form.businessPartnerId || it.supplierId === form.businessPartnerId).map(item => (
-                              <AutocompleteItem key={item.id} textValue={`${item.itemCode} ${item.name}`}>
-                                <div className="flex flex-col">
-                                  <span className="font-mono text-xs">{item.itemCode}</span>
-                                  <span className="text-xs text-gray-600">{item.name}</span>
-                                </div>
-                              </AutocompleteItem>
-                            ))}
-                          </Autocomplete>
-                        </TableCell>
-                        <TableCell><Input aria-label="Description" value={ln.description || ''} onChange={(e) => { const next = [...form.lines]; next[idx].description = e.target.value; setForm({ ...form, lines: next }); }} /></TableCell>
-                        <TableCell><Input type="number" aria-label="Quantity" value={ln.quantity ?? 1} onChange={(e) => { const next = [...form.lines]; next[idx].quantity = parseFloat(e.target.value) || 0; const subtotal: number = next.reduce((s: number, l: any) => s + (Number(l.quantity||0)*Number(l.unitPrice||0)), 0); const taxAmount: number = next.reduce((s: number, l: any) => s + ((Number(l.quantity||0)*Number(l.unitPrice||0)) * Number(l.taxPercent||0) / 100), 0); setForm({ ...form, lines: next, subtotal: +subtotal.toFixed(2), taxAmount: +taxAmount.toFixed(2), total: +(subtotal+taxAmount).toFixed(2) }); }} /></TableCell>
-                        <TableCell><Input type="number" aria-label="Unit Price" value={ln.unitPrice ?? 0} onChange={(e) => { const next = [...form.lines]; next[idx].unitPrice = parseFloat(e.target.value) || 0; const subtotal: number = next.reduce((s: number, l: any) => s + (Number(l.quantity||0)*Number(l.unitPrice||0)), 0); const taxAmount: number = next.reduce((s: number, l: any) => s + ((Number(l.quantity||0)*Number(l.unitPrice||0)) * Number(l.taxPercent||0) / 100), 0); setForm({ ...form, lines: next, subtotal: +subtotal.toFixed(2), taxAmount: +taxAmount.toFixed(2), total: +(subtotal+taxAmount).toFixed(2) }); }} /></TableCell>
-                        <TableCell><Input aria-label="UOM" value={ln.uom || 'Each'} onChange={(e)=> { const next = [...form.lines]; next[idx].uom = e.target.value; setForm({ ...form, lines: next }); }} /></TableCell>
-                        <TableCell><Input type="number" aria-label="Tax Percent" value={ln.taxPercent ?? 0} onChange={(e) => { const next = [...form.lines]; next[idx].taxPercent = parseFloat(e.target.value) || 0; const subtotal: number = next.reduce((s: number, l: any) => s + (Number(l.quantity||0)*Number(l.unitPrice||0)), 0); const taxAmount: number = next.reduce((s: number, l: any) => s + ((Number(l.quantity||0)*Number(l.unitPrice||0)) * Number(l.taxPercent||0) / 100), 0); setForm({ ...form, lines: next, subtotal: +subtotal.toFixed(2), taxAmount: +taxAmount.toFixed(2), total: +(subtotal+taxAmount).toFixed(2) }); }} /></TableCell>
-                        <TableCell>
-                          <Autocomplete size="sm" selectedKey={ln.glAccountCode || undefined} onSelectionChange={(key)=> { const next = [...form.lines]; next[idx].glAccountCode = String(key||''); setForm({ ...form, lines: next }); }} placeholder="GL code">
-                            {chartOfAccounts.map(acc => (
-                              <AutocompleteItem key={acc.code} textValue={`${acc.code} ${acc.name}`}>
-                                <div className="flex flex-col">
-                                  <span className="font-mono text-xs">{acc.code}</span>
-                                  <span className="text-xs text-gray-600">{acc.name}</span>
-                                </div>
-                              </AutocompleteItem>
-                            ))}
-                          </Autocomplete>
-                        </TableCell>
-                        <TableCell>
-                          <Autocomplete size="sm" selectedKey={ln.costCenter || undefined} onSelectionChange={(key)=> { const next = [...form.lines]; next[idx].costCenter = String(key||''); setForm({ ...form, lines: next }); }} placeholder="Cost center">
-                            {(costCenters||[]).map(cc => (
-                              <AutocompleteItem key={cc.code} textValue={`${cc.code} ${cc.name}`}>
-                                <div className="flex flex-col">
-                                  <span className="font-mono text-xs">{cc.code}</span>
-                                  <span className="text-xs text-gray-600">{cc.name}</span>
-                                </div>
-                              </AutocompleteItem>
-                            ))}
-                          </Autocomplete>
-                        </TableCell>
-                        <TableCell>{formatAccountingCurrency(lineAmount)}</TableCell>
-                        <TableCell><Button size="sm" color="danger" variant="bordered" onClick={() => { const next = (form.lines || []).filter((_: any, i: number) => i !== idx); const subtotal: number = next.reduce((s: number, l: any) => s + (Number(l.quantity||0)*Number(l.unitPrice||0)), 0); const taxAmount: number = next.reduce((s: number, l: any) => s + ((Number(l.quantity||0)*Number(l.unitPrice||0)) * Number(l.taxPercent||0) / 100), 0); setForm({ ...form, lines: next, subtotal: +subtotal.toFixed(2), taxAmount: +taxAmount.toFixed(2), total: +(subtotal+taxAmount).toFixed(2) }); }}>🗑️ Remove</Button></TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-                </div>
-                {/* Approvals & Attachments (placeholders) */}
-                <div className="grid grid-cols-3 gap-4 mt-4">
-                  <Input size="sm" label="Prepared By" value={form.preparedBy || ''} onChange={(e)=> setForm({ ...form, preparedBy: e.target.value })} />
-                  <Input size="sm" label="Checked By" value={form.checkedBy || ''} onChange={(e)=> setForm({ ...form, checkedBy: e.target.value })} />
-                  <Input size="sm" label="Approved By" value={form.approvedBy || ''} onChange={(e)=> setForm({ ...form, approvedBy: e.target.value })} />
-                  <Input size="sm" label="Authorized By" value={form.authorizedBy || ''} onChange={(e)=> setForm({ ...form, authorizedBy: e.target.value })} />
-                  <Input size="sm" label="Payment Approved By" value={form.paymentApprovedBy || ''} onChange={(e)=> setForm({ ...form, paymentApprovedBy: e.target.value })} />
-                  <AttachmentUpload attachments={form.attachments || []} onChange={(next) => setForm({ ...form, attachments: next })} />
-                </div>
-              </div>
+                          />
+                        </>
+                      );
+                    })()}
+                  </div>
+                )}
+                {form.whtVatApplicable && (() => {
+                  const whtVat = computePurchaseWhtVat(Number(form.taxAmount || 0));
+                  if (!whtVat) {
+                    return <div className="text-xs text-amber-600">Tax is ₵0 — nothing to withhold VAT on.</div>;
+                  }
+                  return (
+                    <div className="grid grid-cols-2 gap-3">
+                      <Input size="sm" isReadOnly label="WHT-VAT rate" value={`${whtVat.rate}%`} />
+                      <Input
+                        size="sm"
+                        type="number"
+                        label="WHT-VAT amount"
+                        value={String(form.taxBreakdown?.withholdingVat ?? whtVat.amount)}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            taxBreakdown: { ...(form.taxBreakdown || {}), withholdingVat: parseFloat(e.target.value) || 0 },
+                          })
+                        }
+                      />
+                    </div>
+                  );
+                })()}
+              </section>
+
+              {/* Advanced */}
+              <section className="space-y-3">
+                <button
+                  type="button"
+                  className="text-xs font-medium text-gray-500 hover:text-gray-800"
+                  onClick={() => setShowAdvancedInvoice((v) => !v)}
+                >
+                  {showAdvancedInvoice ? '▾ Hide advanced' : '▸ GL, cost center, charges, approvals & files'}
+                </button>
+                {showAdvancedInvoice && (
+                  <div className="space-y-3 rounded-lg border border-dashed border-gray-200 p-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <Input size="sm" label="Currency" value={form.currency || 'GHS'} onChange={(e) => setForm({ ...form, currency: e.target.value })} />
+                      <Input
+                        size="sm"
+                        type="number"
+                        label="Exchange rate"
+                        value={String(form.exchangeRate ?? 1)}
+                        onChange={(e) => setForm({ ...form, exchangeRate: parseFloat(e.target.value) || 1 })}
+                      />
+                      <Input
+                        size="sm"
+                        type="number"
+                        label="Discount"
+                        value={String(form.discountAmount ?? 0)}
+                        onChange={(e) => setForm({ ...form, discountAmount: parseFloat(e.target.value) || 0 })}
+                      />
+                      <Input
+                        size="sm"
+                        type="number"
+                        label="Shipping"
+                        value={String(form.shippingCharges ?? 0)}
+                        onChange={(e) => setForm({ ...form, shippingCharges: parseFloat(e.target.value) || 0 })}
+                      />
+                      <Input
+                        size="sm"
+                        type="number"
+                        label="Other charges"
+                        value={String(form.otherCharges ?? 0)}
+                        onChange={(e) => setForm({ ...form, otherCharges: parseFloat(e.target.value) || 0 })}
+                      />
+                      <Input
+                        size="sm"
+                        type="number"
+                        label="Already paid"
+                        value={String(form.paidAmount ?? 0)}
+                        onChange={(e) => setForm({ ...form, paidAmount: parseFloat(e.target.value) || 0 })}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      <Input size="sm" label="Prepared by" value={form.preparedBy || ''} onChange={(e) => setForm({ ...form, preparedBy: e.target.value })} />
+                      <Input size="sm" label="Checked by" value={form.checkedBy || ''} onChange={(e) => setForm({ ...form, checkedBy: e.target.value })} />
+                      <Input size="sm" label="Approved by" value={form.approvedBy || ''} onChange={(e) => setForm({ ...form, approvedBy: e.target.value })} />
+                      <Input size="sm" label="Authorized by" value={form.authorizedBy || ''} onChange={(e) => setForm({ ...form, authorizedBy: e.target.value })} />
+                      <Input size="sm" label="Payment approved by" value={form.paymentApprovedBy || ''} onChange={(e) => setForm({ ...form, paymentApprovedBy: e.target.value })} />
+                    </div>
+                    <AttachmentUpload attachments={form.attachments || []} onChange={(next) => setForm({ ...form, attachments: next })} />
+                  </div>
+                )}
+              </section>
+              {errors.total && <div className="text-red-600 text-xs">{errors.total}</div>}
             </div>
+
+            {/* Sticky totals rail */}
+            <aside className="lg:sticky lg:top-2 rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2 text-sm">
+              <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Totals</h4>
+              <div className="flex justify-between text-gray-600">
+                <span>Subtotal</span>
+                <span className="tabular-nums">{formatAccountingCurrency(Number(form.subtotal || 0))}</span>
+              </div>
+              <div className="flex justify-between text-gray-600">
+                <span>Tax</span>
+                <span className="tabular-nums">{formatAccountingCurrency(Number(form.taxAmount || 0))}</span>
+              </div>
+              {Number(form.discountAmount || 0) > 0 && (
+                <div className="flex justify-between text-gray-600">
+                  <span>Discount</span>
+                  <span className="tabular-nums">−{formatAccountingCurrency(Number(form.discountAmount || 0))}</span>
+                </div>
+              )}
+              {Number(form.shippingCharges || 0) > 0 && (
+                <div className="flex justify-between text-gray-600">
+                  <span>Shipping</span>
+                  <span className="tabular-nums">{formatAccountingCurrency(Number(form.shippingCharges || 0))}</span>
+                </div>
+              )}
+              {Number(form.otherCharges || 0) > 0 && (
+                <div className="flex justify-between text-gray-600">
+                  <span>Other</span>
+                  <span className="tabular-nums">{formatAccountingCurrency(Number(form.otherCharges || 0))}</span>
+                </div>
+              )}
+              {Number(form.taxBreakdown?.withholding || 0) > 0 && (
+                <div className="flex justify-between text-amber-700">
+                  <span>WHT</span>
+                  <span className="tabular-nums">−{formatAccountingCurrency(Number(form.taxBreakdown?.withholding || 0))}</span>
+                </div>
+              )}
+              {Number(form.taxBreakdown?.withholdingVat || 0) > 0 && (
+                <div className="flex justify-between text-amber-700">
+                  <span>WHT-VAT</span>
+                  <span className="tabular-nums">−{formatAccountingCurrency(Number(form.taxBreakdown?.withholdingVat || 0))}</span>
+                </div>
+              )}
+              {Number(form.paidAmount || 0) > 0 && (
+                <div className="flex justify-between text-gray-600">
+                  <span>Paid</span>
+                  <span className="tabular-nums">−{formatAccountingCurrency(Number(form.paidAmount || 0))}</span>
+                </div>
+              )}
+              <Divider className="my-1" />
+              <div className="flex justify-between font-semibold text-gray-900">
+                <span>Amount due</span>
+                <span className="tabular-nums">{formatAccountingCurrency(invoiceNetPayable)}</span>
+              </div>
+              <p className="text-[11px] text-gray-400 leading-snug pt-1">
+                Line amounts and tax update as you type.
+              </p>
+            </aside>
           </div>
         )}
         {dialogType === 'payment' && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-            <Select label="Supplier" selectedKeys={[form.businessPartnerId || suppliers[0]?.id]} onSelectionChange={(keys) => setForm({ ...form, businessPartnerId: Array.from(keys)[0], invoiceId: '' })}>
-              {suppliers.map(s => (<SelectItem key={s.id}>{s.name}</SelectItem>))}
-            </Select>
-            <div>
-              <Input type="date" label="Date" value={form.date || new Date().toISOString().slice(0,10)} onChange={(e) => setForm({ ...form, date: e.target.value })} />
-              {errors.date && <div className="text-red-600 text-xs mt-1">{errors.date}</div>}
-            </div>
-              {/* Optional invoice link (filtered by supplier) */}
-              <div className="col-span-2">
-                <label className="block text-sm font-medium mb-1">Invoice (optional)</label>
-                <Autocomplete
-                  allowsCustomValue={false}
-                  selectedKey={form.invoiceId || undefined}
-                  onSelectionChange={(key) => {
-                    const id = String(key || '');
-                    const inv = purchaseInvoices.find(i => i.id === id);
-                    if (!inv) { setForm({ ...form, invoiceId: '' }); return; }
-                    // Calculate outstanding using payments linked to the invoice (if any)
-                    const paidForInvoice = payments.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
-                    const outstanding = Math.max(0, (inv.total || 0) - paidForInvoice);
-                    const whtConfigured = Number(inv.taxBreakdown?.withholding || 0);
-                    const whtVatConfigured = Number(inv.taxBreakdown?.withholdingVat || 0);
-                    const whtAlreadyWithheld = payments
-                      .filter((p: any) => p.invoiceId === inv.id && p.isWHTCertificate)
-                      .reduce((s: number, p: any) => s + Number(p.whtAmount || 0), 0);
-                    const whtVatAlreadyWithheld = payments
-                      .filter((p: any) => p.invoiceId === inv.id && p.isWHTCertificate)
-                      .reduce((s: number, p: any) => s + Number(p.whtVatAmount || 0), 0);
-                    const whtRemaining = Math.min(outstanding, Math.max(0, whtConfigured - whtAlreadyWithheld));
-                    const whtVatRemaining = Math.min(Math.max(0, outstanding - whtRemaining), Math.max(0, whtVatConfigured - whtVatAlreadyWithheld));
-                    const applyWht = whtRemaining > 0 || whtVatRemaining > 0;
-                    const nextAmount = Math.max(0, outstanding - whtRemaining - whtVatRemaining);
-                    setForm({ ...form, invoiceId: inv.id, amount: nextAmount, applyWht, whtAmount: whtRemaining, whtVatAmount: whtVatRemaining, reference: form.reference || `Payment for invoice ${inv.invoiceNumber}` });
-                  }}
-                  placeholder={form.businessPartnerId ? 'Select purchase invoice' : 'Select supplier first'}
-                  isDisabled={!form.businessPartnerId}
-                >
-                  {purchaseInvoices
-                    .filter(inv => !form.businessPartnerId || inv.businessPartnerId === form.businessPartnerId)
-                    .map(inv => {
-                      const paid = payments.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
-                      const bal = Math.max(0, (inv.total || 0) - paid);
-                      return (
-                        <AutocompleteItem key={inv.id} textValue={`${inv.invoiceNumber}`}>
-                          <div className="flex items-center justify-between gap-3 w-full">
-                            <span className="font-mono text-xs">{inv.invoiceNumber}</span>
-                            <span className="text-xs text-gray-600">{formatAccountingCurrency(bal)} outstanding</span>
-                          </div>
-                        </AutocompleteItem>
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_200px] gap-4 items-start">
+            <div className="space-y-4 min-w-0">
+              <section className="space-y-3">
+                <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Pay to</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Autocomplete
+                    size="sm"
+                    label="Supplier"
+                    placeholder="Search or type a new supplier..."
+                    startContent={<span className="text-gray-400 text-sm">🔍</span>}
+                    selectedKey={form.businessPartnerId || null}
+                    inputValue={form.supplierName || ''}
+                    allowsCustomValue
+                    isInvalid={!!errors.businessPartnerId}
+                    errorMessage={errors.businessPartnerId}
+                    onInputChange={(v) => {
+                      const matched = suppliers.find((s) => s.name === v);
+                      setForm({
+                        ...form,
+                        supplierName: v,
+                        invoiceId: form.businessPartnerId && !matched ? '' : form.invoiceId,
+                        ...(form.businessPartnerId && !matched && v !== suppliers.find((s) => s.id === form.businessPartnerId)?.name
+                          ? { businessPartnerId: '' }
+                          : matched
+                            ? { businessPartnerId: matched.id }
+                            : {}),
+                      });
+                    }}
+                    onSelectionChange={(key) => {
+                      const id = String(key || '');
+                      const supplier = suppliers.find((s) => s.id === id);
+                      setForm({
+                        ...form,
+                        businessPartnerId: id,
+                        supplierName: supplier?.name || form.supplierName || '',
+                        invoiceId: '',
+                      });
+                    }}
+                  >
+                    {suppliers.map((s) => (
+                      <AutocompleteItem key={s.id} textValue={s.name}>
+                        <div className="flex flex-col">
+                          <span className="font-medium">{s.name}</span>
+                          <span className="text-xs text-gray-500">{s.code}</span>
+                        </div>
+                      </AutocompleteItem>
+                    ))}
+                  </Autocomplete>
+                  <Input
+                    size="sm"
+                    type="date"
+                    label="Payment date"
+                    value={form.date || new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => setForm({ ...form, date: e.target.value })}
+                    isInvalid={!!errors.date}
+                    errorMessage={errors.date}
+                  />
+                  {!form.businessPartnerId && form.supplierName?.trim() ? (
+                    <div className="sm:col-span-2 text-xs text-amber-700 -mt-1">
+                      New supplier — will be created when you record this payment
+                    </div>
+                  ) : null}
+                  <Autocomplete
+                    size="sm"
+                    label="Apply to bill"
+                    className="sm:col-span-2"
+                    allowsCustomValue={false}
+                    selectedKey={form.invoiceId || undefined}
+                    onSelectionChange={(key) => {
+                      const id = String(key || '');
+                      const inv = purchaseInvoices.find((i) => i.id === id);
+                      if (!inv) {
+                        setForm({ ...form, invoiceId: '' });
+                        return;
+                      }
+                      const paidForInvoice = payments.filter((p) => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
+                      const outstanding = Math.max(0, (inv.total || 0) - paidForInvoice);
+                      const whtConfigured = Number(inv.taxBreakdown?.withholding || 0);
+                      const whtVatConfigured = Number(inv.taxBreakdown?.withholdingVat || 0);
+                      const whtAlreadyWithheld = payments
+                        .filter((p: any) => p.invoiceId === inv.id && p.isWHTCertificate)
+                        .reduce((s: number, p: any) => s + Number(p.whtAmount || 0), 0);
+                      const whtVatAlreadyWithheld = payments
+                        .filter((p: any) => p.invoiceId === inv.id && p.isWHTCertificate)
+                        .reduce((s: number, p: any) => s + Number(p.whtVatAmount || 0), 0);
+                      const whtRemaining = Math.min(outstanding, Math.max(0, whtConfigured - whtAlreadyWithheld));
+                      const whtVatRemaining = Math.min(
+                        Math.max(0, outstanding - whtRemaining),
+                        Math.max(0, whtVatConfigured - whtVatAlreadyWithheld),
                       );
-                    })}
-                </Autocomplete>
-                {form.invoiceId && (() => {
-                  const inv = purchaseInvoices.find(i => i.id === form.invoiceId);
-                  if (!inv) return null;
-                  const paid = payments.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
-                  const bal = Math.max(0, (inv.total || 0) - paid);
-                  const settling = Number(form.amount || 0) + (form.applyWht ? Number(form.whtAmount || 0) + Number(form.whtVatAmount || 0) : 0);
-                  const newBal = Math.max(0, bal - settling);
-                  return (
-                    <div className="mt-1 text-xs text-gray-600">
-                      Outstanding: {formatAccountingCurrency(bal)} → New: <span className={newBal === 0 ? 'text-green-600' : 'text-orange-600'}>{formatAccountingCurrency(newBal)}</span>
-                    </div>
-                  );
-                })()}
-                {form.invoiceId && (() => {
-                  const inv = purchaseInvoices.find(i => i.id === form.invoiceId);
-                  if (!inv) return null;
-                  const whtConfigured = Number(inv.taxBreakdown?.withholding || 0);
-                  const whtVatConfigured = Number(inv.taxBreakdown?.withholdingVat || 0);
-                  if (whtConfigured <= 0 && whtVatConfigured <= 0) return null;
-                  const whtAlreadyWithheld = payments
-                    .filter((p: any) => p.invoiceId === inv.id && p.isWHTCertificate)
-                    .reduce((s: number, p: any) => s + Number(p.whtAmount || 0), 0);
-                  const whtVatAlreadyWithheld = payments
-                    .filter((p: any) => p.invoiceId === inv.id && p.isWHTCertificate)
-                    .reduce((s: number, p: any) => s + Number(p.whtVatAmount || 0), 0);
-                  const whtRemaining = Math.max(0, whtConfigured - whtAlreadyWithheld);
-                  const whtVatRemaining = Math.max(0, whtVatConfigured - whtVatAlreadyWithheld);
-                  if (whtRemaining <= 0 && whtVatRemaining <= 0) return null;
+                      const applyWht = whtRemaining > 0 || whtVatRemaining > 0;
+                      const nextAmount = Math.max(0, outstanding - whtRemaining - whtVatRemaining);
+                      setForm({
+                        ...form,
+                        invoiceId: inv.id,
+                        amount: nextAmount,
+                        applyWht,
+                        whtAmount: whtRemaining,
+                        whtVatAmount: whtVatRemaining,
+                        reference: form.reference || `Payment for invoice ${inv.invoiceNumber}`,
+                      });
+                    }}
+                    placeholder={form.businessPartnerId ? 'Optional — select open bill' : 'Select supplier first'}
+                    isDisabled={!form.businessPartnerId}
+                  >
+                    {purchaseInvoices
+                      .filter((inv) => !form.businessPartnerId || inv.businessPartnerId === form.businessPartnerId)
+                      .map((inv) => {
+                        const paid = payments.filter((p) => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
+                        const bal = Math.max(0, (inv.total || 0) - paid);
+                        return (
+                          <AutocompleteItem key={inv.id} textValue={`${inv.invoiceNumber}`}>
+                            <div className="flex items-center justify-between gap-3 w-full">
+                              <span className="font-mono text-xs">{inv.invoiceNumber}</span>
+                              <span className="text-xs text-gray-600">{formatAccountingCurrency(bal)} due</span>
+                            </div>
+                          </AutocompleteItem>
+                        );
+                      })}
+                  </Autocomplete>
+                </div>
+              </section>
 
-                  // Not every withholding agent withholds both -- flag which apply to this
-                  // payment, same pattern as the AR side. Each checkbox toggles its own amount
-                  // in/out of the cash split independently.
-                  const paidForInvoice = payments.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
-                  const outstanding = Math.max(0, (inv.total || 0) - paidForInvoice);
-                  const currentWht = Number(form.whtAmount || 0);
-                  const currentWhtVat = Number(form.whtVatAmount || 0);
+              <section className="space-y-3">
+                <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Payment</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Input
+                    size="sm"
+                    type="number"
+                    label="Cash to supplier"
+                    value={String(form.amount ?? 0)}
+                    onChange={(e) => setForm({ ...form, amount: parseFloat(e.target.value) || 0 })}
+                    isInvalid={!!errors.amount}
+                    errorMessage={errors.amount}
+                  />
+                  <Select
+                    size="sm"
+                    label="Method"
+                    selectedKeys={[form.paymentMethod || 'Bank']}
+                    onSelectionChange={(keys) => setForm({ ...form, paymentMethod: Array.from(keys)[0] })}
+                  >
+                    <SelectItem key="Cash">Cash</SelectItem>
+                    <SelectItem key="Bank">Bank</SelectItem>
+                    <SelectItem key="Check">Check</SelectItem>
+                    <SelectItem key="Card">Card</SelectItem>
+                    <SelectItem key="Mobile Money">Mobile Money</SelectItem>
+                  </Select>
+                  {(form.paymentMethod === 'Bank' || form.paymentMethod === 'Check') && (
+                    <>
+                      <Select
+                        size="sm"
+                        label="Bank account"
+                        selectedKeys={form.bankAccountId ? [form.bankAccountId] : []}
+                        onSelectionChange={(keys) => {
+                          const id = Array.from(keys)[0];
+                          setForm({ ...form, bankAccountId: id ? String(id) : '' });
+                        }}
+                        isInvalid={!!errors.bankAccountId}
+                        errorMessage={errors.bankAccountId}
+                      >
+                        {bankAccounts.map((acc) => (
+                          <SelectItem key={acc.id} textValue={`${acc.accountName} - ${acc.accountNumber}`}>
+                            {acc.accountName} - {acc.accountNumber}
+                          </SelectItem>
+                        ))}
+                      </Select>
+                      <Input
+                        size="sm"
+                        label="Cheque / ref no"
+                        value={form.checkNumber || ''}
+                        onChange={(e) => setForm({ ...form, checkNumber: e.target.value })}
+                      />
+                    </>
+                  )}
+                  <Input
+                    size="sm"
+                    label="Reference"
+                    placeholder="Optional note"
+                    value={form.reference || ''}
+                    onChange={(e) => setForm({ ...form, reference: e.target.value })}
+                    className="sm:col-span-2"
+                  />
+                </div>
+              </section>
 
-                  return (
-                    <div className="mt-2 flex flex-col gap-2">
-                      {whtRemaining > 0 && (
-                        <Checkbox isSelected={currentWht > 0} onValueChange={(checked) => {
+              {selectedPaymentInvoice && (() => {
+                const whtConfigured = Number(selectedPaymentInvoice.taxBreakdown?.withholding || 0);
+                const whtVatConfigured = Number(selectedPaymentInvoice.taxBreakdown?.withholdingVat || 0);
+                if (whtConfigured <= 0 && whtVatConfigured <= 0) return null;
+                const whtAlreadyWithheld = payments
+                  .filter((p: any) => p.invoiceId === selectedPaymentInvoice.id && p.isWHTCertificate)
+                  .reduce((s: number, p: any) => s + Number(p.whtAmount || 0), 0);
+                const whtVatAlreadyWithheld = payments
+                  .filter((p: any) => p.invoiceId === selectedPaymentInvoice.id && p.isWHTCertificate)
+                  .reduce((s: number, p: any) => s + Number(p.whtVatAmount || 0), 0);
+                const whtRemaining = Math.max(0, whtConfigured - whtAlreadyWithheld);
+                const whtVatRemaining = Math.max(0, whtVatConfigured - whtVatAlreadyWithheld);
+                if (whtRemaining <= 0 && whtVatRemaining <= 0) return null;
+                const currentWht = Number(form.whtAmount || 0);
+                const currentWhtVat = Number(form.whtVatAmount || 0);
+                return (
+                  <section className="rounded-lg border border-gray-200 p-3 space-y-2">
+                    <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Withholding</h4>
+                    {whtRemaining > 0 && (
+                      <Checkbox
+                        size="sm"
+                        isSelected={currentWht > 0}
+                        onValueChange={(checked) => {
                           const nextWht = checked ? whtRemaining : 0;
-                          const nextAmount = Math.max(0, outstanding - nextWht - currentWhtVat);
+                          const nextAmount = Math.max(0, paymentInvoiceOutstanding - nextWht - currentWhtVat);
                           setForm({ ...form, applyWht: nextWht > 0 || currentWhtVat > 0, whtAmount: nextWht, amount: nextAmount });
-                        }}>Tax withheld (WHT) ({formatAccountingCurrency(whtRemaining)})</Checkbox>
-                      )}
-                      {whtVatRemaining > 0 && (
-                        <Checkbox isSelected={currentWhtVat > 0} onValueChange={(checked) => {
+                        }}
+                      >
+                        Tax withheld (WHT) — {formatAccountingCurrency(whtRemaining)}
+                      </Checkbox>
+                    )}
+                    {whtVatRemaining > 0 && (
+                      <Checkbox
+                        size="sm"
+                        isSelected={currentWhtVat > 0}
+                        onValueChange={(checked) => {
                           const nextWhtVat = checked ? whtVatRemaining : 0;
-                          const nextAmount = Math.max(0, outstanding - currentWht - nextWhtVat);
+                          const nextAmount = Math.max(0, paymentInvoiceOutstanding - currentWht - nextWhtVat);
                           setForm({ ...form, applyWht: currentWht > 0 || nextWhtVat > 0, whtVatAmount: nextWhtVat, amount: nextAmount });
-                        }}>VAT withheld (WHT-VAT) ({formatAccountingCurrency(whtVatRemaining)})</Checkbox>
-                      )}
+                        }}
+                      >
+                        VAT withheld (WHT-VAT) — {formatAccountingCurrency(whtVatRemaining)}
+                      </Checkbox>
+                    )}
+                  </section>
+                );
+              })()}
+
+              <section className="space-y-3">
+                <button
+                  type="button"
+                  className="text-xs font-medium text-gray-500 hover:text-gray-800"
+                  onClick={() => setShowAdvancedInvoice((v) => !v)}
+                >
+                  {showAdvancedInvoice ? '▾ Hide advanced' : '▸ Receipt acknowledgement & files'}
+                </button>
+                {showAdvancedInvoice && (
+                  <div className="space-y-3 rounded-lg border border-dashed border-gray-200 p-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <Input size="sm" label="Received by" value={form.receivedBy || ''} onChange={(e) => setForm({ ...form, receivedBy: e.target.value })} />
+                      <Input size="sm" label="Receiver contact" value={form.receiverContact || ''} onChange={(e) => setForm({ ...form, receiverContact: e.target.value })} />
+                      <Select
+                        size="sm"
+                        label="ID type"
+                        selectedKeys={form.receiverIdType ? [form.receiverIdType] : []}
+                        onSelectionChange={(keys) => setForm({ ...form, receiverIdType: Array.from(keys)[0] as string })}
+                      >
+                        <SelectItem key="Ghana Card">Ghana Card</SelectItem>
+                        <SelectItem key="Passport">Passport</SelectItem>
+                        <SelectItem key="Driver's License">Driver&apos;s License</SelectItem>
+                        <SelectItem key="Voter ID">Voter ID</SelectItem>
+                        <SelectItem key="National ID">National ID</SelectItem>
+                        <SelectItem key="Other">Other</SelectItem>
+                      </Select>
+                      <Input size="sm" label="ID number" value={form.receiverIdNumber || ''} onChange={(e) => setForm({ ...form, receiverIdNumber: e.target.value })} />
+                      <Input size="sm" type="date" label="Received date" value={form.receivedDate || ''} onChange={(e) => setForm({ ...form, receivedDate: e.target.value })} />
                     </div>
-                  );
-                })()}
-              </div>
-            <div>
-              <Input type="number" label="Amount (cash to supplier)" value={form.amount ?? 0} onChange={(e) => setForm({ ...form, amount: parseFloat(e.target.value) || 0 })} />
-              {errors.amount && <div className="text-red-600 text-xs mt-1">{errors.amount}</div>}
-              {form.applyWht && Number(form.whtAmount || 0) > 0 && <div className="text-xs text-gray-500 mt-1">+ {formatAccountingCurrency(Number(form.whtAmount || 0))} withheld (WHT payable to GRA)</div>}
-              {form.applyWht && Number(form.whtVatAmount || 0) > 0 && <div className="text-xs text-gray-500 mt-1">+ {formatAccountingCurrency(Number(form.whtVatAmount || 0))} withheld (WHT-VAT payable to GRA)</div>}
-            </div>
-            <Select label="Method" selectedKeys={[form.paymentMethod || 'Bank']} onSelectionChange={(keys) => setForm({ ...form, paymentMethod: Array.from(keys)[0] })}>
-              <SelectItem key="Cash">Cash</SelectItem>
-              <SelectItem key="Bank">Bank</SelectItem>
-              <SelectItem key="Check">Check</SelectItem>
-              <SelectItem key="Card">Card</SelectItem>
-              <SelectItem key="Mobile Money">Mobile Money</SelectItem>
-            </Select>
-              <Input label="Reference" value={form.reference || ''} onChange={(e) => setForm({ ...form, reference: e.target.value })} />
-            {errors.businessPartnerId && <div className="text-red-600 text-xs">{errors.businessPartnerId}</div>}
+                    <AttachmentUpload attachments={form.attachments || []} onChange={(next) => setForm({ ...form, attachments: next })} />
+                  </div>
+                )}
+              </section>
+
+              <Checkbox size="sm" isSelected={postOnSave} onValueChange={setPostOnSave}>
+                Post payment to ledger on save
+              </Checkbox>
             </div>
 
-            {form.paymentMethod === 'Bank' && (
-              <div className="grid grid-cols-2 gap-4">
-                <Select label="Bank Account" selectedKeys={form.bankAccountId ? [form.bankAccountId] : []} onSelectionChange={(keys)=> {
-                  const id = Array.from(keys)[0];
-                  setForm({ ...form, bankAccountId: id ? String(id) : '' });
-                }}>
-                  {bankAccounts.map(acc => (
-                    <SelectItem key={acc.id} textValue={`${acc.accountName} - ${acc.accountNumber}`}>{acc.accountName} - {acc.accountNumber}</SelectItem>
-                  ))}
-                </Select>
-                <Input label="Cheque No" value={form.checkNumber || ''} onChange={(e)=> setForm({ ...form, checkNumber: e.target.value })} />
-              </div>
-            )}
-            {errors.bankAccountId && <div className="text-red-600 text-xs">{errors.bankAccountId}</div>}
-
-            <div className="space-y-2">
-              <div className="font-semibold text-sm">Receipt Acknowledgement</div>
-              <div className="grid grid-cols-3 gap-4">
-                <Input size="sm" label="Received By" value={form.receivedBy || ''} onChange={(e)=> setForm({ ...form, receivedBy: e.target.value })} />
-                <Input size="sm" label="Receiver Contact" value={form.receiverContact || ''} onChange={(e)=> setForm({ ...form, receiverContact: e.target.value })} />
-                <Select size="sm" label="Receiver ID Type" selectedKeys={form.receiverIdType ? [form.receiverIdType] : []} onSelectionChange={(keys)=> setForm({ ...form, receiverIdType: Array.from(keys)[0] as string })}>
-                  <SelectItem key="Ghana Card">Ghana Card</SelectItem>
-                  <SelectItem key="Passport">Passport</SelectItem>
-                  <SelectItem key="Driver's License">Driver's License</SelectItem>
-                  <SelectItem key="Voter ID">Voter ID</SelectItem>
-                  <SelectItem key="National ID">National ID</SelectItem>
-                  <SelectItem key="Other">Other</SelectItem>
-                </Select>
-                <Input size="sm" label="Receiver ID Number" value={form.receiverIdNumber || ''} onChange={(e)=> setForm({ ...form, receiverIdNumber: e.target.value })} />
-                <Input size="sm" type="date" label="Received Date" value={form.receivedDate || ''} onChange={(e)=> setForm({ ...form, receivedDate: e.target.value })} />
-                <Textarea size="sm" minRows={1} label="Receiver Signature (base64)" value={form.receiverSignature || ''} onChange={(e)=> setForm({ ...form, receiverSignature: e.target.value })} />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div className="font-semibold text-sm">Files</div>
-              <div className="grid grid-cols-3 gap-4">
-                <AttachmentUpload attachments={form.attachments || []} onChange={(next) => setForm({ ...form, attachments: next })} />
-                <Input size="sm" label="PDF URL" value={form.pdfUrl || ''} onChange={(e)=> setForm({ ...form, pdfUrl: e.target.value })} />
-                <Input size="sm" label="PDF File Name" value={form.pdfFileName || ''} onChange={(e)=> setForm({ ...form, pdfFileName: e.target.value })} />
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <Checkbox isSelected={postOnSave} onValueChange={setPostOnSave}>Post payment on save</Checkbox>
-            </div>
+            <aside className="sm:sticky sm:top-2 rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2 text-sm">
+              <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Settlement</h4>
+              {selectedPaymentInvoice ? (
+                <>
+                  <div className="flex justify-between text-gray-600">
+                    <span>Bill due</span>
+                    <span className="tabular-nums">{formatAccountingCurrency(paymentInvoiceOutstanding)}</span>
+                  </div>
+                  <div className="flex justify-between text-gray-600">
+                    <span>Cash</span>
+                    <span className="tabular-nums">−{formatAccountingCurrency(paymentCash)}</span>
+                  </div>
+                  {paymentWht > 0 && (
+                    <div className="flex justify-between text-amber-700">
+                      <span>WHT</span>
+                      <span className="tabular-nums">−{formatAccountingCurrency(paymentWht)}</span>
+                    </div>
+                  )}
+                  {paymentWhtVat > 0 && (
+                    <div className="flex justify-between text-amber-700">
+                      <span>WHT-VAT</span>
+                      <span className="tabular-nums">−{formatAccountingCurrency(paymentWhtVat)}</span>
+                    </div>
+                  )}
+                  <Divider className="my-1" />
+                  <div className="flex justify-between font-semibold text-gray-900">
+                    <span>New balance</span>
+                    <span className={`tabular-nums ${paymentNewBalance === 0 ? 'text-green-700' : ''}`}>
+                      {formatAccountingCurrency(paymentNewBalance || 0)}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex justify-between text-gray-600">
+                    <span>Cash</span>
+                    <span className="tabular-nums">{formatAccountingCurrency(paymentCash)}</span>
+                  </div>
+                  <p className="text-[11px] text-gray-400 leading-snug pt-1">
+                    Link a bill to see outstanding and withholding options.
+                  </p>
+                </>
+              )}
+            </aside>
           </div>
         )}
               </ModalBody>
-              <ModalFooter>
+              <ModalFooter className={dialogType === 'invoice' || dialogType === 'payment' ? 'border-t bg-white' : undefined}>
                 <Button variant="light" onPress={onClose}>Cancel</Button>
-                <Button color="primary" onPress={handleSave}>Save</Button>
+                <Button color="primary" onPress={handleSave}>
+                  {dialogType === 'invoice'
+                    ? (editing ? 'Update bill' : 'Save bill')
+                    : dialogType === 'payment'
+                      ? (editing ? 'Update payment' : 'Record payment')
+                      : 'Save'}
+                </Button>
               </ModalFooter>
             </>
           );
@@ -2190,7 +3204,7 @@ export default function AccountsPayablePage() {
 
             if (viewKind === 'supplier') {
               const outstanding = supplierAging.find((a) => a.id === viewItem.id)?.outstandingBalance ?? 0;
-              const statusLabel = outstanding > (viewItem.creditLimit || 0) ? 'Over Limit' : outstanding > 0 ? 'Outstanding' : 'Current';
+              const statusLabel = outstanding > (viewItem.creditLimit || 0) ? 'Over Limit' : outstanding > 0 ? 'Still owed' : 'Current';
               const statusColor = outstanding > (viewItem.creditLimit || 0) ? 'danger' : outstanding > 0 ? 'warning' : 'success';
               return (
                 <>
@@ -2251,7 +3265,7 @@ export default function AccountsPayablePage() {
               const dueDate = new Date(dueRaw);
               const dueValid = !Number.isNaN(dueDate.getTime());
               const daysOverdue = dueValid ? Math.floor((Date.now() - dueDate.getTime()) / 86400000) : 0;
-              const statusLabel = balance <= 0 ? 'Paid' : daysOverdue > 0 ? 'Overdue' : 'Outstanding';
+              const statusLabel = balance <= 0 ? 'Paid' : daysOverdue > 0 ? 'Overdue' : 'Still owed';
               const statusColor = balance <= 0 ? 'success' : daysOverdue > 0 ? 'danger' : 'warning';
               const lineItems = viewItem.lines || viewItem.items || viewItem.lineItems || [];
               return (
@@ -2321,12 +3335,31 @@ export default function AccountsPayablePage() {
                       </div>
                     )}
                   </ModalBody>
-                  <ModalFooter className="border-t bg-white">
-                    <Button variant="flat" onPress={onClose}>Close</Button>
-                    {balance > 0 && (
-                      <Button color="danger" variant="flat" onPress={() => { closeView(); openPaymentForInvoice(viewItem); }}>💳 Record Payment</Button>
+                  <ModalFooter className="border-t bg-white px-4 py-2.5">
+                    <Button variant="flat" size="sm" onPress={onClose}>Close</Button>
+                    {viewItem.status !== 'Void' && balance > 0 && (
+                      <Button color="danger" variant="flat" size="sm" onPress={() => { closeView(); openPaymentForInvoice(viewItem); }}>
+                        Record Payment
+                      </Button>
                     )}
-                    <Button color="primary" onPress={() => { closeView(); openBillEdit(viewItem); }}>✏️ Edit</Button>
+                    {viewItem.status !== 'Void' && (
+                      <Button color="primary" variant="flat" size="sm" onPress={() => { closeView(); openBillEdit(viewItem); }}>
+                        Edit
+                      </Button>
+                    )}
+                    {viewItem.status !== 'Void' && (
+                      <Button color="danger" variant="flat" size="sm" onPress={() => handleVoidBill(viewItem)}>
+                        Void
+                      </Button>
+                    )}
+                    {viewItem.status !== 'Void' && (
+                      <Button color="danger" variant="light" size="sm" onPress={() => handleDeleteBill(viewItem)}>
+                        Delete
+                      </Button>
+                    )}
+                    <Button color="primary" size="sm" onPress={() => printBillPDF(viewItem)}>
+                      Print PDF
+                    </Button>
                   </ModalFooter>
                 </>
               );
@@ -2378,12 +3411,31 @@ export default function AccountsPayablePage() {
                     </div>
                   </div>
                 </ModalBody>
-                <ModalFooter className="border-t bg-white">
-                  <Button variant="flat" onPress={onClose}>Close</Button>
+                <ModalFooter className="border-t bg-white px-4 py-2.5">
+                  <Button variant="flat" size="sm" onPress={onClose}>Close</Button>
                   {canApprove && (
-                    <Button color="success" variant="flat" onPress={() => { try { postPayment(viewItem.id); } catch {} closeView(); }}>✅ Approve &amp; Post</Button>
+                    <Button color="success" variant="flat" size="sm" onPress={() => { try { postPayment(viewItem.id); } catch {} closeView(); }}>
+                      Approve &amp; Post
+                    </Button>
                   )}
-                  <Button color="primary" onPress={() => { closeView(); openPaymentEdit(viewItem); }}>✏️ Edit</Button>
+                  {viewItem.status !== 'Void' && (
+                    <Button color="primary" variant="flat" size="sm" onPress={() => { closeView(); openPaymentEdit(viewItem); }}>
+                      Edit
+                    </Button>
+                  )}
+                  {viewItem.status !== 'Void' && (
+                    <Button color="danger" variant="flat" size="sm" onPress={() => handleVoidPayment(viewItem)}>
+                      Void
+                    </Button>
+                  )}
+                  {viewItem.status !== 'Void' && (
+                    <Button color="danger" variant="light" size="sm" onPress={() => handleDeletePayment(viewItem)}>
+                      Delete
+                    </Button>
+                  )}
+                  <Button color="primary" size="sm" onPress={() => printPaymentPDF(viewItem)}>
+                    Print PDF
+                  </Button>
                 </ModalFooter>
               </>
             );
@@ -2391,26 +3443,7 @@ export default function AccountsPayablePage() {
         </ModalContent>
       </Modal>
 
-      {/* View Totals Modal */}
-      <Modal isOpen={isTotalsOpen} onClose={() => setIsTotalsOpen(false)} size="md">
-        <ModalContent>
-          <ModalHeader>Invoice Totals</ModalHeader>
-          <ModalBody>
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm text-gray-600"><span>Subtotal</span><span>{formatAccountingCurrency(Number(form.subtotal||0))}</span></div>
-              <div className="flex justify-between text-sm text-gray-600"><span>Tax</span><span>{formatAccountingCurrency(Number(form.taxAmount||0))}</span></div>
-              <div className="flex justify-between text-sm text-gray-600"><span>Discount</span><span>{formatAccountingCurrency(Number(form.discountAmount||0))}</span></div>
-              <div className="flex justify-between text-sm text-gray-600"><span>Shipping</span><span>{formatAccountingCurrency(Number(form.shippingCharges||0))}</span></div>
-              <div className="flex justify-between text-sm text-gray-600"><span>Other</span><span>{formatAccountingCurrency(Number(form.otherCharges||0))}</span></div>
-              <Divider/>
-              <div className="flex justify-between font-semibold"><span>Total</span><span>{formatAccountingCurrency(Number(form.total||0))}</span></div>
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="bordered" onPress={() => setIsTotalsOpen(false)}>Close</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+      {/* end create/edit dialog */}
     </div>
   );
 }

@@ -183,7 +183,8 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
           hasImage: !!i.hasImage,
           imageVersion: Number(i.imageVersion || 0),
         };
-      })));
+      })))
+      .catch(() => setMenuItems([]));
   };
   useEffect(() => { reloadMenu(); }, []);
 
@@ -313,7 +314,8 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
         sellingPrice: Number(i.sellingPrice || 0),
         isActive: i.isActive,
         createdAt: i.createdAt,
-      }))));
+      }))))
+      .catch(() => setInventoryItems([]));
   };
   const reloadRestaurantLocations = () => {
     fetch('/api/inventory/stock-locations?activeOnly=1&department=restaurant', { headers: fbHeaders() })
@@ -357,7 +359,8 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
         status: req.status,
         notes: req.notes || '',
         items: (req.items || []).map((it: any) => ({ itemName: it.itemName, quantity: Number(it.quantity) })),
-      }))));
+      }))))
+      .catch(() => setRequisitions([]));
   };
 
   // Ledger on-hand for Restaurant (menu/requisition summary cards).
@@ -365,7 +368,8 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
   const reloadStockLevels = () => {
     fetch('/api/inventory/stock-levels?department=restaurant', { headers: fbHeaders() })
       .then((r) => (r.ok ? r.json() : { items: [] }))
-      .then((data) => setStockOnHand(Object.fromEntries((data.items || []).map((i: any) => [i.id, Number(i.onHand || 0)]))));
+      .then((data) => setStockOnHand(Object.fromEntries((data.items || []).map((i: any) => [i.id, Number(i.onHand || 0)]))))
+      .catch(() => setStockOnHand({}));
   };
 
   useEffect(() => { reloadInventoryItems(); reloadRestaurantLocations(); reloadRequisitions(); reloadStockLevels(); }, []);
@@ -533,7 +537,7 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
             {(!embedded || panel === 'menu') && (
             <Tab key="menu" title="🍽️ Menu Management">
               <div className="px-2 pb-3">
-                <div className="mb-[18px] flex flex-nowrap items-center gap-2 overflow-x-auto">
+                <div className="mb-[18px] flex flex-wrap items-center gap-2">
                   <Input
                     aria-label="Search menu"
                     placeholder="Search menu"
@@ -548,7 +552,7 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
                       setMenuQuery('');
                       setMenuPage(1);
                     }}
-                    className="w-56 shrink-0"
+                    className="w-full max-w-full sm:w-56 sm:max-w-[14rem] shrink-0"
                   />
                   <Select
                     aria-label="Category"
@@ -562,7 +566,7 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
                         setMenuPage(1);
                       }
                     }}
-                    className="w-44 shrink-0"
+                    className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
                   >
                     <SelectItem key="all">All categories</SelectItem>
                     <SelectItem key="food">Food</SelectItem>
@@ -571,8 +575,8 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
                     <SelectItem key="snack">Snack</SelectItem>
                     <SelectItem key="special">Special</SelectItem>
                   </Select>
-                  <div className="ml-auto flex shrink-0 items-center gap-2">
-                    <div className="flex rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+                  <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                    <div className="flex shrink-0 rounded-lg border border-gray-200 bg-gray-50 p-0.5">
                       <button
                         type="button"
                         className={`rounded-md px-3 min-h-8 text-sm ${menuLayout === 'cards' ? 'bg-white font-semibold text-ghana-black shadow-sm' : 'text-gray-600'}`}
@@ -588,7 +592,7 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
                         Table
                       </button>
                     </div>
-                    <Button size="sm" color="primary" className="bg-ghana-green text-white" onPress={openCreateMenu}>
+                    <Button size="sm" color="primary" className="shrink-0 bg-ghana-green text-white" onPress={openCreateMenu}>
                       + Add Menu Item
                     </Button>
                   </div>
@@ -693,13 +697,13 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
                     onValueChange={setRequisitionQuery}
                     isClearable
                     onClear={() => setRequisitionQuery('')}
-                    className="w-56 shrink-0"
+                    className="w-full max-w-full sm:w-56 sm:max-w-[14rem] shrink-0"
                   />
                   <Select
                     aria-label="Filter requisitions by status"
                     placeholder="All statuses"
                     size="sm"
-                    className="w-44 shrink-0"
+                    className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
                     selectedKeys={[requisitionStatusFilter]}
                     onSelectionChange={(keys) => {
                       const next = Array.from(keys)[0] as string;
@@ -876,7 +880,7 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
         </ModalContent>
       </Modal>
 
-      <Modal isOpen={!!openMenuItem} onClose={() => setViewingMenuId(null)} size="lg">
+      <Modal isOpen={!!openMenuItem} onClose={() => setViewingMenuId(null)} size="lg" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader className="flex items-center gap-3">
             <span>{openMenuItem?.name}</span>

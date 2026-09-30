@@ -45,6 +45,7 @@ import {
 import type { CoaAccountType } from './models';
 import { buildChartOfAccountsFromTemplate, resolveAccountingCountryCode, getChartTemplate } from './chartOfAccountsTemplates';
 import { buildOperationalAccountingSeed, EMPTY_TRANSACTION_SEED } from './operationalSeed';
+import { buildDemoTransactionSeed } from './demoAccountingSeed';
 import { computeCostCenterActual, computeRevenueCenterActual } from './costRevenueRollup';
 import { isAccountingDemoMode } from './tenantAccountingConfig';
 import { persistJournalEntry, persistJournalEntryStatus, fetchJournalEntries, fetchAccountingAuditTrail, persistInvoice, persistInvoicePatch, persistInvoiceDelete, fetchInvoices, persistPayment, persistPaymentPatch, fetchPayments, persistChartOfAccount, persistChartOfAccountsBulk, persistChartOfAccountDelete, fetchChartOfAccounts, persistBankAccount, persistBankAccountDelete, fetchBankAccounts, persistCostCenter, persistCostCenterDelete, fetchCostCenters, persistRevenueCenter, persistRevenueCenterDelete, fetchRevenueCenters, persistBusinessPartner, persistBusinessPartnerDelete, fetchBusinessPartners, persistBankTransaction, persistBankTransactionDelete, fetchBankTransactions } from './helpers/api';
@@ -160,7 +161,10 @@ interface AccountingState {
   setBankAccounts: (accounts: BankAccount[]) => void;
   addBankAccount: (account: BankAccount) => void;
   updateBankAccount: (id: string, updates: Partial<BankAccount>) => void;
-  deleteBankAccount: (id: string) => void;
+  /** Hard-deletes only when unused. Returns ok:false with reason when linked history exists. */
+  deleteBankAccount: (id: string) => { ok: true } | { ok: false; reason: string };
+  /** Re-adds demo sample banks/txns that are missing (e.g. after accidental delete). */
+  restoreMissingDemoBankAccounts: () => { restoredAccounts: number; restoredTransactions: number };
   ensureBankGlAccount: (params: {
     accountName: string;
     bankName?: string;
@@ -770,10 +774,54 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   },
 
   deleteBankAccount: (id) => {
-    set((state) => ({
-      bankAccounts: state.bankAccounts.filter(account => account.id !== id)
+    const state = get();
+    const account = state.bankAccounts.find((a) => a.id === id);
+    if (!account) {
+      return { ok: false as const, reason: 'Bank account not found.' };
+    }
+    const txnCount = state.bankTransactions.filter((t) => t.bankAccountId === id).length;
+    const paymentCount = state.payments.filter((p) => p.bankAccountId === id && p.status !== 'Void').length;
+    if (txnCount > 0 || paymentCount > 0) {
+      const parts: string[] = [];
+      if (txnCount > 0) parts.push(`${txnCount} bank transaction${txnCount === 1 ? '' : 's'}`);
+      if (paymentCount > 0) parts.push(`${paymentCount} payment${paymentCount === 1 ? '' : 's'}`);
+      return {
+        ok: false as const,
+        reason: `Cannot delete "${account.accountName}" — it has ${parts.join(' and ')}. Deactivate it instead so history is preserved.`,
+      };
+    }
+    if (Math.abs(Number(account.currentBalance || 0)) > 0.009) {
+      return {
+        ok: false as const,
+        reason: `Cannot delete "${account.accountName}" while it has a non-zero balance (${account.currentBalance}). Deactivate it instead, or clear the balance first.`,
+      };
+    }
+    set((s) => ({
+      bankAccounts: s.bankAccounts.filter((a) => a.id !== id),
     }));
     persistBankAccountDelete(id);
+    return { ok: true as const };
+  },
+
+  restoreMissingDemoBankAccounts: () => {
+    // Sample data belongs only to demo mode — never write it into a real hotel's books.
+    if (!isAccountingDemoMode()) return { restoredAccounts: 0, restoredTransactions: 0 };
+    const seed = buildDemoTransactionSeed();
+    const state = get();
+    const existingAccountIds = new Set(state.bankAccounts.map((a) => a.id));
+    const existingTxnIds = new Set(state.bankTransactions.map((t) => t.id));
+    const missingAccounts = seed.bankAccounts.filter((a) => !existingAccountIds.has(a.id));
+    const missingTxns = seed.bankTransactions.filter((t) => !existingTxnIds.has(t.id));
+    if (missingAccounts.length === 0 && missingTxns.length === 0) {
+      return { restoredAccounts: 0, restoredTransactions: 0 };
+    }
+    set((s) => ({
+      bankAccounts: [...s.bankAccounts, ...missingAccounts],
+      bankTransactions: [...s.bankTransactions, ...missingTxns],
+    }));
+    missingAccounts.forEach((a) => persistBankAccount(a));
+    missingTxns.forEach((t) => persistBankTransaction(t));
+    return { restoredAccounts: missingAccounts.length, restoredTransactions: missingTxns.length };
   },
 
   ensureBankGlAccount: (params) => {
@@ -1211,7 +1259,8 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   deleteInvoice: (id) => set((state) => {
     const inv = state.invoices.find(i => i.id === id);
     let partners = state.businessPartners;
-    if (inv) {
+    // Void already reduced the partner open balance — only adjust when removing a live invoice.
+    if (inv && inv.status !== 'Void') {
       partners = partners.map(p => {
         if (p.id !== inv.businessPartnerId) return p;
         if (inv.type === 'Purchase' && (p.type === 'Supplier' || p.type === 'Both')) return { ...p, balance: +(p.balance - inv.total).toFixed(2) };
@@ -2770,7 +2819,9 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   deleteCostCenter: (id) => {
     const state = get();
     const center = state.costCenters.find((c) => c.id === id);
-    const actual = center ? computeCostCenterActual(center, state.journalEntries) : 0;
+    const actual = center
+      ? computeCostCenterActual(center, state.journalEntries, state.costCenters, state.chartOfAccounts).amount
+      : 0;
     if (center && Math.abs(actual) > 0.01) {
       set({ error: `Cannot delete "${center.name}": it has ₵${actual.toLocaleString()} of recorded actual expenses. Reassign or clear those first.` });
       return;
@@ -2821,7 +2872,9 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   deleteRevenueCenter: (id) => {
     const state = get();
     const center = state.revenueCenters.find((c) => c.id === id);
-    const actual = center ? computeRevenueCenterActual(center, state.journalEntries) : 0;
+    const actual = center
+      ? computeRevenueCenterActual(center, state.journalEntries, state.revenueCenters, state.chartOfAccounts).amount
+      : 0;
     if (center && Math.abs(actual) > 0.01) {
       set({ error: `Cannot delete "${center.name}": it has ₵${actual.toLocaleString()} of recorded actual revenue. Reassign or clear those first.` });
       return;
@@ -3056,7 +3109,11 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       const mergeRevenueCenters = (seed: typeof sampleRevenueCenters, existing: typeof sampleRevenueCenters) => {
         const m = new Map<string, (typeof sampleRevenueCenters)[0]>();
         for (const rc of seed) m.set(rc.code, rc);
-        for (const rc of existing) m.set(rc.code, rc);
+        for (const rc of existing) {
+          const seeded = m.get(rc.code);
+          const splitSharedFb = seeded && rc.glAccountCode === '4200' && ['REST', 'BAR', 'RS'].includes(rc.code);
+          m.set(rc.code, splitSharedFb ? { ...rc, glAccountCode: seeded.glAccountCode } : rc);
+        }
         return Array.from(m.values());
       };
 
@@ -3249,6 +3306,9 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
           };
         });
       }
+      // Demo mode only: re-add the canonical demo bank accounts/txns if a user deleted them
+      // (ids 1/2, BT-1/BT-2). A real hotel's books must never get sample banks written into them.
+      if (demoMode) get().restoreMissingDemoBankAccounts();
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to initialize accounting' });
     } finally {

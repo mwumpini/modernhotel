@@ -5,6 +5,7 @@ import {
   Card, CardBody, Input, Select, SelectItem, Button, Spinner, Alert,
   Dropdown, DropdownTrigger, DropdownMenu, DropdownItem,
 } from '@heroui/react';
+import HeadingInfo from '../HeadingInfo';
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { buildCoaTree, subtreeMatchesFilter } from '@/app/lib/accounting/coaTree';
 import { toRollupCoa } from '@/app/lib/accounting/coaHierarchy';
@@ -16,6 +17,7 @@ import {
 import { COA_ACCOUNT_TYPES, type CoaAccountType, type CoaTreeNode } from '@/app/lib/accounting/models';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
+import { DeskKpiStrip } from './DeskKpiStrip';
 
 function flattenBalances(nodes: AccountNode[], out = new Map<string, number>()): Map<string, number> {
   for (const n of nodes) {
@@ -109,7 +111,7 @@ function InlineAddForm({
         value={isChild ? inheritType : type}
         onChange={(e) => setType(e.target.value as CoaAccountType)}
         disabled={isChild}
-        title={isChild ? 'A child account keeps its parent\'s type' : undefined}
+        title={isChild ? 'Keeps the same type as the account above it' : undefined}
         className="text-xs h-7 px-1.5 rounded-md border border-default-200 bg-content1 text-foreground disabled:opacity-60 disabled:cursor-not-allowed"
       >
         {COA_ACCOUNT_TYPES.map((t) => (
@@ -244,7 +246,7 @@ function CoaTreeNodeRow({
           className={`text-xs font-mono tabular-nums shrink-0 w-32 text-right ${
             balance < 0 ? 'text-danger' : balance > 0 ? 'text-foreground' : 'text-default-400'
           }`}
-          title="Rolled-up balance (includes child accounts)"
+          title="Balance including everything under this account"
         >
           {formatCoaBalance(balance, node.currency)}
         </span>
@@ -253,13 +255,13 @@ function CoaTreeNodeRow({
             <button
               type="button"
               className="opacity-0 group-hover:opacity-100 text-default-400 hover:text-foreground text-sm px-1 rounded shrink-0 transition-opacity"
-              title="Rename account"
+              title="Rename"
               onClick={(e) => {
                 e.stopPropagation();
                 onStartEdit(node.id);
               }}
             >
-              ✏️
+              Rename
             </button>
             <button
               type="button"
@@ -269,18 +271,18 @@ function CoaTreeNodeRow({
                 onStartAdd(node.id, node.type);
               }}
             >
-              + add child
+              + under this
             </button>
             <button
               type="button"
               className="opacity-0 group-hover:opacity-100 text-default-400 hover:text-danger text-sm px-1 rounded shrink-0 transition-opacity"
-              title="Delete account and all children"
+              title="Delete this and everything under it"
               onClick={(e) => {
                 e.stopPropagation();
                 onDelete(node.id, node.name);
               }}
             >
-              🗑
+              Delete
             </button>
           </>
         )}
@@ -374,6 +376,12 @@ export default function ChartOfAccountsPage() {
     return out;
   }, [tree, balanceByCode]);
 
+  const mainAccountCount = useMemo(() => flatRows.filter((r) => r.level === 1).length, [flatRows]);
+  const withBalanceCount = useMemo(
+    () => flatRows.filter((r) => Math.abs(r.balance) >= 0.005).length,
+    [flatRows],
+  );
+
   // Export mirrors whatever the tree is currently showing on screen: top-level accounts only
   // (with their already-rolled-up balances) in Summary view, every level in Detailed view.
   const exportRows = useMemo(
@@ -389,7 +397,7 @@ export default function ChartOfAccountsPage() {
         type: r.type,
         balance: r.balance.toFixed(2),
       })),
-      'chart_of_accounts',
+      'books_accounts',
       [
         { key: 'code', label: 'Code' },
         { key: 'name', label: 'Account' },
@@ -406,16 +414,17 @@ export default function ChartOfAccountsPage() {
       <td><span class="badge badge-info">${r.type}</span></td>
       <td class="amount">${formatCoaBalance(r.balance)}</td>
     </tr>`).join('');
-    const html = generatePdfHtml('Chart of Accounts', `
+    const viewLabel = isDetailedView ? 'All levels' : 'Main accounts';
+    const html = generatePdfHtml('Books', `
       <div class="header">
-        <h1>📊 Chart of Accounts — ${isDetailedView ? 'Detailed' : 'Summary'}</h1>
+        <h1>Books — ${viewLabel}</h1>
         <div class="subtitle">Generated on ${new Date().toLocaleString()}</div>
       </div>
       <table>
         <thead><tr><th>Code</th><th>Account</th><th>Type</th><th>Balance</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
-    `, 'Chart of Accounts');
+    `, 'Books');
     openPrintPreview(html);
   }, [exportRows, isDetailedView]);
 
@@ -456,7 +465,7 @@ export default function ChartOfAccountsPage() {
 
   const handleDelete = useCallback(
     (id: string, name: string) => {
-      if (!confirm(`Delete "${name}" and all its child accounts?`)) return;
+      if (!confirm(`Delete "${name}" and everything under it?`)) return;
       deleteChartOfAccount(id);
     },
     [deleteChartOfAccount]
@@ -488,9 +497,21 @@ export default function ChartOfAccountsPage() {
 
   return (
     <div className="px-3 pt-2 pb-3 md:px-4 md:pt-3 md:pb-4 w-full">
-      <div className="mb-2">
-        <h1 className="text-lg md:text-xl font-bold text-gray-800">Chart of Accounts</h1>
+      <div className="mb-2 flex items-center gap-1.5">
+        <h1 className="text-lg md:text-xl font-bold text-gray-800">Books</h1>
+        <HeadingInfo label="About the books">
+          The list of accounts money posts to. Bank, invoices, and journals all point here.
+        </HeadingInfo>
       </div>
+
+      <DeskKpiStrip
+        className="mb-3"
+        items={[
+          { id: 'coa.main', label: 'Main accounts', value: String(mainAccountCount), tone: 'text-blue-700' },
+          { id: 'coa.all', label: 'All accounts', value: String(flatRows.length), tone: 'text-gray-800' },
+          { id: 'coa.withBalance', label: 'With a balance', value: String(withBalanceCount), tone: 'text-green-700' },
+        ]}
+      />
 
       {error && (
         <Alert color="danger" className="mb-4">{error}</Alert>
@@ -498,69 +519,68 @@ export default function ChartOfAccountsPage() {
 
       <Card className="mb-3 w-full shadow-sm">
         <CardBody className="gap-2 py-3 px-3">
-          <div className="flex gap-2 items-center">
+          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto">
             <Input
-              placeholder="Search by name or code…"
+              aria-label="Search accounts"
+              placeholder="Search name or code"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               size="sm"
-              className="flex-1"
-              startContent={<span className="text-default-400 text-sm">🔍</span>}
+              className="w-56 shrink-0"
             />
             <Select
               size="sm"
               selectedKeys={[filterType]}
               onSelectionChange={(keys) => setFilterType(Array.from(keys)[0] as string)}
-              className="w-44"
+              className="w-44 shrink-0"
               aria-label="Filter by type"
               items={coaTypeFilterItems}
             >
               {(item) => <SelectItem key={item.key}>{item.label}</SelectItem>}
             </Select>
-          </div>
-          <div className="flex gap-2 items-center flex-wrap">
+            <div className="flex-1 min-w-2" />
+            <div className="inline-flex rounded-md border border-default-200 overflow-hidden shrink-0" role="group" aria-label="How much detail to show">
+              <button
+                type="button"
+                onClick={showSummaryView}
+                title="Show main accounts only — open one with the arrow"
+                className={`text-xs px-2.5 py-1.5 transition-colors ${
+                  !isDetailedView ? 'bg-primary text-white' : 'bg-content1 text-default-600 hover:bg-default-100'
+                }`}
+              >
+                Main only
+              </button>
+              <button
+                type="button"
+                onClick={showDetailedView}
+                title="Show every account under the mains"
+                className={`text-xs px-2.5 py-1.5 border-l border-default-200 transition-colors ${
+                  isDetailedView ? 'bg-primary text-white' : 'bg-content1 text-default-600 hover:bg-default-100'
+                }`}
+              >
+                Show all
+              </button>
+            </div>
+            <Dropdown>
+              <DropdownTrigger>
+                <Button size="sm" variant="bordered" className="shrink-0">Export</Button>
+              </DropdownTrigger>
+              <DropdownMenu>
+                <DropdownItem key="csv" onPress={exportCSV}>CSV spreadsheet</DropdownItem>
+                <DropdownItem key="pdf" onPress={printPDF}>Print PDF</DropdownItem>
+              </DropdownMenu>
+            </Dropdown>
             <Button
               size="sm"
-              variant="bordered"
+              color="primary"
+              className="shrink-0"
               onPress={() => {
                 setAddingAt(null);
                 setRootAdding(true);
               }}
             >
-              + Add top-level account
+              Add main account
             </Button>
-            <div className="flex-1" />
-            <div className="inline-flex rounded-md border border-default-200 overflow-hidden" role="group" aria-label="Tree detail level">
-              <button
-                type="button"
-                onClick={showSummaryView}
-                title="Collapse to top-level accounts — click an arrow to expand one at a time"
-                className={`text-xs px-2.5 py-1.5 transition-colors ${
-                  !isDetailedView ? 'bg-primary text-white' : 'bg-content1 text-default-600 hover:bg-default-100'
-                }`}
-              >
-                Summary
-              </button>
-              <button
-                type="button"
-                onClick={showDetailedView}
-                title="Expand every account's sub-accounts at once"
-                className={`text-xs px-2.5 py-1.5 border-l border-default-200 transition-colors ${
-                  isDetailedView ? 'bg-primary text-white' : 'bg-content1 text-default-600 hover:bg-default-100'
-                }`}
-              >
-                Detailed
-              </button>
-            </div>
-            <Dropdown>
-              <DropdownTrigger>
-                <Button size="sm" variant="bordered">📥 Export</Button>
-              </DropdownTrigger>
-              <DropdownMenu>
-                <DropdownItem key="csv" onPress={exportCSV}>CSV spreadsheet</DropdownItem>
-                <DropdownItem key="pdf" onPress={printPDF}>📑 Print PDF</DropdownItem>
-              </DropdownMenu>
-            </Dropdown>
           </div>
         </CardBody>
       </Card>
@@ -580,7 +600,7 @@ export default function ChartOfAccountsPage() {
           )}
           {tree.length === 0 && !rootAdding ? (
             <p className="text-sm text-default-400 px-2.5 py-2">
-              No accounts loaded. Open Accounting to initialize the prebuilt chart, or add a top-level account.
+              No accounts yet. Add a main account to start.
             </p>
           ) : (
             <>

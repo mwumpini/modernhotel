@@ -29,41 +29,48 @@ function inferTaxType(rule: TaxRule): TaxConfig['type'] {
   return 'Other';
 }
 
-/** NHIL, GETFund and Tourism are output-only levies — no input tax relief on purchases,
- *  matching GHANA_TAX_CODES / taxConfigsFromGhanaTemplate's documented creditability model. */
+/** Fallback when a rule has no explicit `isRecoverable` yet (legacy seeds / unedited rules). */
 function isNonCreditableLevy(type: TaxConfig['type']): boolean {
   return type === 'NHIL' || type === 'GETFund' || type === 'Tourism';
 }
 
-function mapApplyFlags(rule: TaxRule, type: TaxConfig['type']): Pick<TaxConfig, 'applyOnPurchases' | 'applyOnSales'> {
+function defaultIsRecoverable(rule: TaxRule, type: TaxConfig['type']): boolean {
+  if (type === 'Withholding') return false;
+  if (type === 'VAT') return true;
+  if (isNonCreditableLevy(type)) return false;
+  // Purchase-domain rates (other than WHT) default to claimable input.
+  return (rule.domain || 'sales') === 'purchases';
+}
+
+function resolveIsRecoverable(rule: TaxRule, type: TaxConfig['type']): boolean {
+  if (type === 'Withholding') return false;
+  if (typeof rule.isRecoverable === 'boolean') return rule.isRecoverable;
+  return defaultIsRecoverable(rule, type);
+}
+
+function mapApplyFlags(
+  rule: TaxRule,
+  type: TaxConfig['type'],
+  isRecoverable: boolean,
+): Pick<TaxConfig, 'applyOnPurchases' | 'applyOnSales'> {
   if (type === 'Withholding') {
     return { applyOnPurchases: false, applyOnSales: false };
   }
-  // VAT is charged — and reclaimable as input tax — on both sales and purchases, regardless
-  // of which domain the rule itself is scoped to (the compliance engine only has one VAT
-  // rule, tagged domain:'sales' for guest-billing purposes; that tag doesn't mean VAT is
-  // absent from supplier invoices).
-  if (type === 'VAT') {
-    return { applyOnPurchases: true, applyOnSales: true };
-  }
-  if (isNonCreditableLevy(type)) {
-    return { applyOnPurchases: false, applyOnSales: true };
-  }
   const domain = rule.domain || 'sales';
-  if (domain === 'purchases') {
-    return { applyOnPurchases: true, applyOnSales: false };
-  }
-  if (domain === 'sales') {
-    return { applyOnPurchases: false, applyOnSales: true };
-  }
-  return { applyOnPurchases: true, applyOnSales: true };
+  // Claimable taxes enter the purchase/input stack. Sales-domain VAT stays on sales too
+  // even when tagged domain:'sales' for guest billing — supplier invoices still carry VAT.
+  const applyOnPurchases = isRecoverable;
+  const applyOnSales =
+    type === 'VAT' || isNonCreditableLevy(type)
+      ? true
+      : domain !== 'purchases';
+  return { applyOnPurchases, applyOnSales };
 }
 
 export function mapRuleToTaxConfig(rule: TaxRule): TaxConfig {
   const type = inferTaxType(rule);
-  const { applyOnPurchases, applyOnSales } = mapApplyFlags(rule, type);
-  let isRecoverable = type !== 'Withholding' && !isNonCreditableLevy(type);
-  if (rule.domain === 'purchases') isRecoverable = true;
+  const isRecoverable = resolveIsRecoverable(rule, type);
+  const { applyOnPurchases, applyOnSales } = mapApplyFlags(rule, type, isRecoverable);
 
   return {
     id: rule.id,

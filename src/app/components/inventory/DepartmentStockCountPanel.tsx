@@ -44,6 +44,7 @@ import {
   toggleColumnSort,
   type ColumnSort,
 } from '../dashboard/deskTableUi';
+import { DateFilterPills, matchesDateFilter, useDateFilter } from '../fb/DateFilterPills';
 
 function invHeaders() {
   return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
@@ -112,12 +113,13 @@ export default function DepartmentStockCountPanel({
   const [statusFilter, setStatusFilter] = useState('all');
   const [listLocationFilter, setListLocationFilter] = useState('all');
   const [page, setPage] = useState(1);
-  const [sort, setSort] = useState<ColumnSort>({ column: 'started', direction: 'desc' });
+  const [sort, setSort] = useState<ColumnSort>({ column: 'date', direction: 'desc' });
+  const dates = useDateFilter();
   const cols = useResizableColumns({
     number: 128,
     location: 140,
     type: 96,
-    started: 108,
+    date: 108,
     lines: 72,
     variance: 64,
     status: 112,
@@ -237,17 +239,18 @@ export default function DepartmentStockCountPanel({
     return deptCounts.filter((c) => {
       if (statusFilter !== 'all' && c.status !== statusFilter) return false;
       if (listLocationFilter !== 'all' && c.location !== listLocationFilter) return false;
+      if (!matchesDateFilter(c.startDate, dates.mode, dates.single, dates.from, dates.to)) return false;
       if (!term) return true;
       return (
         c.countNumber.toLowerCase().includes(term) ||
         c.location.toLowerCase().includes(term)
       );
     });
-  }, [deptCounts, searchTerm, statusFilter, listLocationFilter]);
+  }, [deptCounts, searchTerm, statusFilter, listLocationFilter, dates.mode, dates.single, dates.from, dates.to]);
 
   const sorted = useMemo(() => {
     const dir = sort.direction === 'asc' ? 1 : -1;
-    const startedMs = (c: StockCount) => {
+    const dateMs = (c: StockCount) => {
       const d = c.startDate instanceof Date ? c.startDate : new Date(c.startDate);
       return d.getTime();
     };
@@ -265,12 +268,13 @@ export default function DepartmentStockCountPanel({
           return (a.varianceItems - b.varianceItems) * dir;
         case 'status':
           return a.status.localeCompare(b.status) * dir;
+        case 'date':
         case 'started':
         default:
-          return (startedMs(a) - startedMs(b)) * dir;
+          return (dateMs(a) - dateMs(b)) * dir;
       }
     });
-  }, [filtered, sort]);
+  }, [filtered, sort.column, sort.direction]);
 
   const pages = Math.max(1, Math.ceil(sorted.length / DESK_PAGE_SIZE));
   const pageSafe = Math.min(page, pages);
@@ -278,7 +282,7 @@ export default function DepartmentStockCountPanel({
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, statusFilter, listLocationFilter, sort.column, sort.direction]);
+  }, [searchTerm, statusFilter, listLocationFilter, dates.mode, dates.single, dates.from, dates.to, sort.column, sort.direction]);
 
   const openReview = (count: StockCount) => {
     setViewing(count);
@@ -496,30 +500,30 @@ export default function DepartmentStockCountPanel({
 
   return (
     <div className="space-y-3">
-      <div className="mb-[18px] flex flex-nowrap items-center justify-between gap-2 overflow-x-auto">
+      <div className="mb-[18px] flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-lg font-semibold text-ghana-black shrink-0">Stock Count</h3>
         {canRun && (
-          <Button size="sm" color="primary" className="bg-ghana-gold text-white" variant="flat" onPress={openNew}>
+          <Button size="sm" color="primary" className="min-h-10 bg-ghana-gold text-white" variant="flat" onPress={openNew}>
             + New Count
           </Button>
         )}
       </div>
 
-      <div className="mb-[18px] flex flex-nowrap items-center gap-2 overflow-x-auto">
+      <div className="mb-[18px] flex flex-wrap items-center gap-2">
         <Input
           size="sm"
           placeholder="Search count # or location..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           startContent={<span className="text-gray-400">🔍</span>}
-          className="w-64 shrink-0"
+          className="w-full max-w-full sm:w-64 sm:max-w-[16rem] shrink-0"
         />
         <Select
           size="sm"
           selectedKeys={[listLocationFilter]}
           onSelectionChange={(keys) => setListLocationFilter(Array.from(keys)[0] as string)}
           aria-label="Filter by location"
-          className="w-44 shrink-0"
+          className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
         >
           <>
             <SelectItem key="all">All locations</SelectItem>
@@ -533,7 +537,7 @@ export default function DepartmentStockCountPanel({
           selectedKeys={[statusFilter]}
           onSelectionChange={(keys) => setStatusFilter(Array.from(keys)[0] as string)}
           aria-label="Filter by status"
-          className="w-40 shrink-0"
+          className="w-full max-w-full sm:w-40 sm:max-w-[10rem] shrink-0"
         >
           <SelectItem key="all">All Status</SelectItem>
           <SelectItem key="planned">Planned</SelectItem>
@@ -541,6 +545,18 @@ export default function DepartmentStockCountPanel({
           <SelectItem key="completed">Completed</SelectItem>
           <SelectItem key="cancelled">Cancelled</SelectItem>
         </Select>
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <DateFilterPills
+            mode={dates.mode}
+            onMode={dates.setMode}
+            single={dates.single}
+            onSingle={dates.setSingle}
+            from={dates.from}
+            onFrom={dates.setFrom}
+            to={dates.to}
+            onTo={dates.setTo}
+          />
+        </div>
       </div>
 
       <Card className={deskTableCardClassName}>
@@ -551,7 +567,7 @@ export default function DepartmentStockCountPanel({
                 <TableColumn className="relative" style={cols.style('number')}>{<SortHeader label="Count #" column="number" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} />}{cols.sizer('number', 'Count #')}</TableColumn>
                 <TableColumn className="relative" style={cols.style('location')}>{<SortHeader label="Location" column="location" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} />}{cols.sizer('location', 'Location')}</TableColumn>
                 <TableColumn className="relative" style={cols.style('type')}>{<SortHeader label="Type" column="type" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} />}{cols.sizer('type', 'Type')}</TableColumn>
-                <TableColumn className="relative" style={cols.style('started')}>{<SortHeader label="Started" column="started" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} />}{cols.sizer('started', 'Started')}</TableColumn>
+                <TableColumn className="relative" style={cols.style('date')}>{<SortHeader label="Date" column="date" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} />}{cols.sizer('date', 'Date')}</TableColumn>
                 <TableColumn className="relative" style={cols.style('lines')}>{<SortHeader label="Lines" column="lines" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} align="right" />}{cols.sizer('lines', 'Lines')}</TableColumn>
                 <TableColumn className="relative" style={cols.style('variance')}>{<SortHeader label="Δ" column="variance" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} align="right" />}{cols.sizer('variance', 'Variance')}</TableColumn>
                 <TableColumn className="relative" style={cols.style('status')}>{<SortHeader label="Status" column="status" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} />}{cols.sizer('status', 'Status')}</TableColumn>

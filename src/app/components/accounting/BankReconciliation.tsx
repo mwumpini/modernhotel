@@ -160,6 +160,8 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
   const [accountId, setAccountId] = useState(initialAccountId || activeAccounts[0]?.id || '');
   const [periodEndDate, setPeriodEndDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [statementInput, setStatementInput] = useState('');
+  const [statementTouched, setStatementTouched] = useState(false);
+  const [calcOpen, setCalcOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [itemForm, setItemForm] = useState(defaultItemForm);
   const [itemFormErrors, setItemFormErrors] = useState<Record<string, string>>({});
@@ -240,6 +242,7 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
 
   const handleStatementBlur = () => {
     if (!recon || isReadOnly) return;
+    setStatementTouched(true);
     const val = parseFloat(statementInput) || 0;
     updateReconciliation(recon.id, { statementBalance: val });
   };
@@ -247,8 +250,16 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
   useEffect(() => {
     if (recon) {
       setStatementInput(String(recon.statementBalance ?? ''));
+      // New drafts default to 0 — don't treat that as "user entered a statement".
+      setStatementTouched((recon.statementBalance ?? 0) !== 0 || recon.status !== 'Draft');
     }
-  }, [recon?.id, recon?.statementBalance]);
+  }, [recon?.id]);
+
+  useEffect(() => {
+    if (recon && (recon.statementBalance ?? 0) !== 0) {
+      setStatementTouched(true);
+    }
+  }, [recon?.statementBalance, recon?.id]);
 
   const handleSyncCashbook = async () => {
     if (!recon) return;
@@ -408,23 +419,98 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
 
   const bankLines: Line[] = computed
     ? [
-        { label: 'Balance per bank statement', amount: computed.statementBalance, emphasis: true },
-        { label: 'Add: Deposits in transit', amount: computed.depositsInTransit },
-        { label: 'Less: Outstanding cheques', amount: computed.outstandingCheques, deduct: true },
-        { label: 'Add: Bank errors', amount: computed.bankErrorsAdd },
-        { label: 'Less: Bank errors', amount: computed.bankErrorsDeduct, deduct: true },
+        { label: 'What the bank statement shows', amount: computed.statementBalance, emphasis: true },
+        { label: 'Add deposits not yet on the statement', amount: computed.depositsInTransit },
+        { label: 'Less cheques not yet cleared by the bank', amount: computed.outstandingCheques, deduct: true },
+        { label: 'Add bank errors (in our favour)', amount: computed.bankErrorsAdd },
+        { label: 'Less bank errors (against us)', amount: computed.bankErrorsDeduct, deduct: true },
       ]
     : [];
 
   const bookLines: Line[] = computed
     ? [
-        { label: 'Balance per cashbook (GL)', amount: computed.cashbookBalance, emphasis: true },
-        { label: 'Add: Bank credits not in cashbook', amount: computed.bankCreditsNotInBook },
-        { label: 'Less: Bank charges not in cashbook', amount: computed.bankChargesNotInBook, deduct: true },
-        { label: 'Add: Cashbook errors', amount: computed.bookErrorsAdd },
-        { label: 'Less: Cashbook errors', amount: computed.bookErrorsDeduct, deduct: true },
+        { label: 'What your books show (GL)', amount: computed.cashbookBalance, emphasis: true },
+        { label: 'Add bank credits not yet in books', amount: computed.bankCreditsNotInBook },
+        { label: 'Less bank charges not yet in books', amount: computed.bankChargesNotInBook, deduct: true },
+        { label: 'Add book errors', amount: computed.bookErrorsAdd },
+        { label: 'Less book errors', amount: computed.bookErrorsDeduct, deduct: true },
       ]
     : [];
+
+  const hasStatement = statementTouched || items.length > 0;
+
+  const nextAction = (() => {
+    if (recon?.status === 'Approved') {
+      return {
+        tone: 'success' as const,
+        title: 'This period is locked',
+        body: 'No further changes. Download a copy if you need a record.',
+        cta: null as null | { label: string; onPress: () => void; color?: 'primary' | 'secondary' | 'success' },
+      };
+    }
+    if (recon?.status === 'Completed') {
+      return {
+        tone: 'success' as const,
+        title: 'Ready to lock',
+        body: 'Optional final step: approve to lock this reconciliation permanently.',
+        cta: { label: 'Approve & lock', onPress: handleApprove, color: 'success' as const },
+      };
+    }
+    if (!hasStatement) {
+      return {
+        tone: 'primary' as const,
+        title: 'Start here',
+        body: 'Enter the closing balance from your paper or PDF bank statement for this date, then tab out of the field.',
+        cta: null as null | { label: string; onPress: () => void; color?: 'primary' | 'secondary' | 'success' },
+      };
+    }
+    if (computed && !computed.isBalanced) {
+      return {
+        tone: 'warning' as const,
+        title: `Still ${fmt(Math.abs(computed.difference))} apart`,
+        body: 'Explain why: deposits/cheques the bank has not shown yet, or fees/credits on the statement not in your books yet.',
+        cta: {
+          label: 'Explain a difference',
+          onPress: () =>
+            openAddItem(
+              Math.abs(computed.adjustedBankBalance - computed.statementBalance) >=
+                Math.abs(computed.adjustedCashbookBalance - computed.cashbookBalance)
+                ? 'bank'
+                : 'book'
+            ),
+          color: 'primary' as const,
+        },
+      };
+    }
+    if (pendingBookPosts > 0) {
+      return {
+        tone: 'secondary' as const,
+        title: 'Post book entries next',
+        body: `${pendingBookPosts} item${pendingBookPosts === 1 ? '' : 's'} from the statement still need to hit the ledger before you can finish.`,
+        cta: {
+          label: `Post ${pendingBookPosts} to GL`,
+          onPress: () => {
+            void handlePostBookSide();
+          },
+          color: 'secondary' as const,
+        },
+      };
+    }
+    if (recon?.status === 'Draft' && computed?.isBalanced) {
+      return {
+        tone: 'success' as const,
+        title: 'They match',
+        body: 'Bank statement and books agree for this date. Mark the period complete when you are happy with the review.',
+        cta: { label: 'Mark complete', onPress: handleComplete, color: 'primary' as const },
+      };
+    }
+    return {
+      tone: 'primary' as const,
+      title: 'Set up this period',
+      body: 'Choose the account and period end, then enter the statement balance.',
+      cta: null,
+    };
+  })();
 
   const itemTypesForModal = addSide === 'bank' ? BANK_SIDE_TYPES : BOOK_SIDE_TYPES;
 
@@ -453,35 +539,44 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
 
   return (
     <div className={embedded ? '' : 'p-4 md:p-6 max-w-[1200px] mx-auto'}>
-      {!embedded && (
-        <div className="mb-4">
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-gray-900">Bank Reconciliation</h1>
-            <InfoTip label="About bank reconciliation">
-              <div className="space-y-2">
-                <p>Prove the <strong>bank statement</strong> agrees with your <strong>books</strong> at period end.</p>
-                <p><strong>Bank side</strong> — start from statement balance; adjust for timing (deposits in transit, outstanding cheques).</p>
-                <p><strong>Book side</strong> — start from GL/cashbook; adjust for items on the statement not yet in books (charges, credits).</p>
-                <p>When both adjusted balances match, mark complete. This is not where you record everyday receipts — use Transactions or AR/AP first.</p>
-              </div>
-            </InfoTip>
+      <div className="mb-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className={`${embedded ? 'text-base' : 'text-2xl'} font-bold text-gray-900`}>
+                {embedded ? 'Match statement to books' : 'Match bank statement'}
+              </h1>
+              <InfoTip label="About matching the statement">
+                <div className="space-y-2">
+                  <p>
+                    Make the closing balance on your bank statement agree with what your hotel books
+                    show for the same date.
+                  </p>
+                  <p>
+                    You only explain the differences — everyday receipts still go through Transactions
+                    or AR/AP.
+                  </p>
+                </div>
+              </InfoTip>
+            </div>
           </div>
-          <p className="text-sm text-gray-600 mt-1">
-            Adjusted bank balance must equal adjusted cashbook balance.
-          </p>
+          <Dropdown>
+            <DropdownTrigger>
+              <Button size="sm" variant="bordered">
+                Download
+              </Button>
+            </DropdownTrigger>
+            <DropdownMenu>
+              <DropdownItem key="csv" onPress={downloadCsv}>
+                CSV
+              </DropdownItem>
+              <DropdownItem key="pdf" onPress={printReconciliationPDF}>
+                Print PDF
+              </DropdownItem>
+            </DropdownMenu>
+          </Dropdown>
         </div>
-      )}
-
-      {embedded && (
-        <Alert color="primary" variant="flat" className="mb-4" title="Reconciliation workflow">
-          <ol className="list-decimal list-inside text-sm space-y-1 mt-1">
-            <li>Enter <strong>statement balance</strong> from the bank for the period end date.</li>
-            <li>Review register transactions below; clear or explain differences.</li>
-            <li>Add <strong>bank-side</strong> or <strong>book-side</strong> items until both blocks balance.</li>
-            <li>Post book-side items to GL, then <strong>Mark complete</strong> (locks register lines as reconciled).</li>
-          </ol>
-        </Alert>
-      )}
+      </div>
 
       {(notice || error) && (
         <Alert
@@ -496,181 +591,296 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
         </Alert>
       )}
 
-      <Card className="shadow-sm mb-4">
-        <CardBody className="gap-4">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <Select
-              label="Bank account"
-              selectedKeys={accountId ? [accountId] : []}
-              onSelectionChange={(k) => setAccountId(Array.from(k)[0] as string)}
-              isDisabled={isReadOnly}
-            >
-              {activeAccounts.map((a) => (
-                <SelectItem key={a.id} textValue={a.accountName}>
-                  {a.accountName} · {a.glAccountCode}
-                </SelectItem>
-              ))}
-            </Select>
-            <Input
-              type="date"
-              label={
-                <span className="inline-flex items-center gap-1">
-                  Period end
-                  <InfoTip label="Period end date">
-                    Last date covered by this reconciliation (usually month-end). Register transactions on or before this date can be marked reconciled when you complete.
-                  </InfoTip>
-                </span>
-              }
-              value={periodEndDate}
-              onValueChange={setPeriodEndDate}
-              isDisabled={isReadOnly}
-            />
-            <Input
-              type="number"
-              label={
-                <span className="inline-flex items-center gap-1">
-                  Statement balance
-                  <InfoTip label="Statement balance">
-                    Closing balance on the bank statement for this period end. This is the starting point for the bank side — not the same as opening balance on the account setup screen.
-                  </InfoTip>
-                </span>
-              }
-              value={statementInput}
-              onValueChange={setStatementInput}
-              onBlur={handleStatementBlur}
-              isDisabled={isReadOnly}
-              startContent={<span className="text-gray-400 text-sm">₵</span>}
-            />
-            <div className="flex items-end gap-2">
-              <Button size="sm" variant="bordered" className="flex-1" onPress={handleSyncCashbook} isDisabled={isReadOnly}>
-                Sync cashbook from GL
-              </Button>
-              <InfoTip label="Sync cashbook from GL">
-                Refreshes the book-side starting balance from posted journal entries on the linked GL account ({bankAccount?.glAccountCode || '—'}). Use after posting book-side reconciling items.
-              </InfoTip>
+      <Card className="shadow-sm mb-4 border border-slate-200">
+        <CardBody className="gap-4 p-3 md:p-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">1 · Which period?</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <Select
+                size="sm"
+                label="Bank account"
+                selectedKeys={accountId ? [accountId] : []}
+                onSelectionChange={(k) => setAccountId(Array.from(k)[0] as string)}
+                isDisabled={isReadOnly}
+              >
+                {activeAccounts.map((a) => (
+                  <SelectItem key={a.id} textValue={a.accountName}>
+                    {a.accountName} · {a.glAccountCode}
+                  </SelectItem>
+                ))}
+              </Select>
+              <Input
+                size="sm"
+                type="date"
+                label="As of date"
+                description="Usually month-end"
+                value={periodEndDate}
+                onValueChange={setPeriodEndDate}
+                isDisabled={isReadOnly}
+              />
+              <Input
+                size="sm"
+                type="number"
+                label="Closing balance on bank statement"
+                description="Copy from paper/PDF statement"
+                value={statementInput}
+                onValueChange={(v) => {
+                  setStatementInput(v);
+                  setStatementTouched(true);
+                }}
+                onBlur={handleStatementBlur}
+                isDisabled={isReadOnly}
+                startContent={<span className="text-gray-400 text-sm">₵</span>}
+                classNames={{
+                  inputWrapper: !hasStatement && !isReadOnly ? 'ring-2 ring-primary/40' : undefined,
+                }}
+              />
+            </div>
+          </div>
+
+          {computed && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">2 · Do they match?</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="rounded-lg border border-slate-200 bg-white px-3 py-3">
+                  <div className="text-xs text-slate-500">Bank statement says</div>
+                  <div className="text-lg font-semibold tabular-nums text-slate-900 mt-0.5">
+                    {hasStatement ? fmt(computed.adjustedBankBalance) : '—'}
+                  </div>
+                  {hasStatement && Math.abs(computed.adjustedBankBalance - computed.statementBalance) > 0.009 && (
+                    <div className="text-[11px] text-slate-400 mt-1">
+                      Statement {fmt(computed.statementBalance)} ± timing items
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white px-3 py-3">
+                  <div className="text-xs text-slate-500">Your books say</div>
+                  <div className="text-lg font-semibold tabular-nums text-slate-900 mt-0.5">
+                    {fmt(computed.adjustedCashbookBalance)}
+                  </div>
+                  {Math.abs(computed.adjustedCashbookBalance - computed.cashbookBalance) > 0.009 && (
+                    <div className="text-[11px] text-slate-400 mt-1">
+                      GL {fmt(computed.cashbookBalance)} ± book items
+                    </div>
+                  )}
+                </div>
+                <div
+                  className={`rounded-lg border px-3 py-3 ${
+                    !hasStatement
+                      ? 'border-slate-200 bg-slate-50'
+                      : computed.isBalanced
+                        ? 'border-emerald-200 bg-emerald-50'
+                        : 'border-amber-200 bg-amber-50'
+                  }`}
+                >
+                  <div className="text-xs text-slate-500">Difference</div>
+                  <div
+                    className={`text-lg font-semibold tabular-nums mt-0.5 ${
+                      !hasStatement
+                        ? 'text-slate-400'
+                        : computed.isBalanced
+                          ? 'text-emerald-800'
+                          : 'text-amber-800'
+                    }`}
+                  >
+                    {!hasStatement ? 'Enter statement first' : computed.isBalanced ? 'Matched' : fmt(Math.abs(computed.difference))}
+                  </div>
+                  {recon && (
+                    <div className="mt-1">
+                      <Chip
+                        size="sm"
+                        variant="flat"
+                        color={
+                          recon.status === 'Approved'
+                            ? 'success'
+                            : recon.status === 'Completed'
+                              ? 'primary'
+                              : 'default'
+                        }
+                      >
+                        {recon.status}
+                      </Chip>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div
+            className={`rounded-lg border px-3 py-3 flex flex-col sm:flex-row sm:items-center gap-3 ${
+              nextAction.tone === 'success'
+                ? 'border-emerald-200 bg-emerald-50'
+                : nextAction.tone === 'warning'
+                  ? 'border-amber-200 bg-amber-50'
+                  : nextAction.tone === 'secondary'
+                    ? 'border-violet-200 bg-violet-50'
+                    : 'border-blue-200 bg-blue-50'
+            }`}
+          >
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">What to do next</p>
+              <p className="text-sm font-semibold text-slate-900 mt-0.5">{nextAction.title}</p>
+              <p className="text-sm text-slate-600 mt-0.5">{nextAction.body}</p>
+            </div>
+            <div className="flex flex-wrap gap-2 shrink-0">
+              {nextAction.cta && (
+                <Button size="sm" color={nextAction.cta.color || 'primary'} onPress={nextAction.cta.onPress}>
+                  {nextAction.cta.label}
+                </Button>
+              )}
+              {hasStatement && !isReadOnly && (
+                <>
+                  <Button size="sm" variant="flat" onPress={() => openAddItem('bank')}>
+                    Bank timing…
+                  </Button>
+                  <Button size="sm" variant="flat" onPress={() => openAddItem('book')}>
+                    Statement item not in books…
+                  </Button>
+                </>
+              )}
+              {!isReadOnly && (
+                <Button size="sm" variant="light" onPress={handleSyncCashbook}>
+                  Refresh books from GL
+                </Button>
+              )}
             </div>
           </div>
 
           {ledgerLink && bankAccount && (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <Chip size="sm" variant="flat" color={ledgerLink.inSync ? 'success' : 'warning'}>
-                GL {bankAccount.glAccountCode}: {fmt(ledgerLink.glBalance)}
-              </Chip>
-              <Chip size="sm" variant="flat">
-                Bank record: {fmt(ledgerLink.bankRecordBalance)}
-              </Chip>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+              <span>
+                Linked GL {bankAccount.glAccountCode}: {fmt(ledgerLink.glBalance)}
+              </span>
               {!ledgerLink.inSync && (
-                <span className="text-amber-700">Register vs GL gap {fmt(Math.abs(ledgerLink.gap))}</span>
+                <span className="text-amber-700">
+                  Register balance differs from GL by {fmt(Math.abs(ledgerLink.gap))}
+                </span>
               )}
-              {recon && (
-                <Chip size="sm" variant="flat" color={recon.status === 'Approved' ? 'success' : recon.status === 'Completed' ? 'primary' : 'default'}>
-                  {recon.status}
-                </Chip>
-              )}
-              {computed && (
-                <Chip size="sm" variant="flat" color={computed.isBalanced ? 'success' : 'danger'}>
-                  {computed.isBalanced ? 'Balanced' : `Diff ${fmt(Math.abs(computed.difference))}`}
-                </Chip>
+              {!embedded && (
+                <Button
+                  size="sm"
+                  variant="light"
+                  className="h-6 min-w-0 px-1"
+                  onPress={() => navigateToBankReconciliation(accountId, 'banking')}
+                >
+                  Open in Bank & Cash
+                </Button>
               )}
             </div>
           )}
-
-          <div className="flex flex-wrap gap-2">
-            {pendingBookPosts > 0 && !isReadOnly && (
-              <Button size="sm" color="secondary" onPress={handlePostBookSide}>
-                Post {pendingBookPosts} book-side item{pendingBookPosts > 1 ? 's' : ''} to GL
-              </Button>
-            )}
-            {recon?.status === 'Draft' && computed?.isBalanced && pendingBookPosts === 0 && (
-              <Button size="sm" color="primary" onPress={handleComplete}>
-                Mark complete
-              </Button>
-            )}
-            {recon?.status === 'Completed' && (
-              <Button size="sm" color="success" onPress={handleApprove}>
-                Approve & lock
-              </Button>
-            )}
-            <Dropdown>
-              <DropdownTrigger>
-                <Button size="sm" variant="bordered">
-                  Download
-                </Button>
-              </DropdownTrigger>
-              <DropdownMenu>
-                <DropdownItem key="csv" onPress={downloadCsv}>
-                  CSV
-                </DropdownItem>
-                <DropdownItem key="pdf" onPress={printReconciliationPDF}>
-                  📑 Print PDF
-                </DropdownItem>
-              </DropdownMenu>
-            </Dropdown>
-            {!embedded && (
-              <Button
-                size="sm"
-                variant="light"
-                onPress={() => navigateToBankReconciliation(accountId, 'banking')}
-              >
-                Open in Bank & Cash
-              </Button>
-            )}
-          </div>
         </CardBody>
       </Card>
 
-      {computed && (
+      {computed && hasStatement && (
         <>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-            <ReconBlock
-              title="Bank side"
-              lines={bankLines}
-              adjustedLabel="Adjusted bank balance"
-              adjustedAmount={computed.adjustedBankBalance}
-            />
-            <ReconBlock
-              title="Cashbook side"
-              lines={bookLines}
-              adjustedLabel="Adjusted cashbook balance"
-              adjustedAmount={computed.adjustedCashbookBalance}
-            />
-          </div>
+          <details
+            className="mb-4 group rounded-lg border border-slate-200 bg-white open:shadow-sm"
+            open={calcOpen}
+            onToggle={(e) => setCalcOpen(e.currentTarget.open)}
+          >
+            <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between gap-2 select-none">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">How the totals were calculated</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Optional math worksheet — most people only need the three numbers above.
+                </p>
+              </div>
+              <span className="text-xs text-slate-400 group-open:hidden">Show</span>
+              <span className="text-xs text-slate-400 hidden group-open:inline">Hide</span>
+            </summary>
+            <div className="px-4 pb-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <ReconBlock
+                title="From the bank statement"
+                lines={bankLines}
+                adjustedLabel="Adjusted to match books"
+                adjustedAmount={computed.adjustedBankBalance}
+              />
+              <ReconBlock
+                title="From your books"
+                lines={bookLines}
+                adjustedLabel="Adjusted to match statement"
+                adjustedAmount={computed.adjustedCashbookBalance}
+              />
+            </div>
+          </details>
 
-          {!computed.isBalanced && (
-            <Alert color="warning" className="mb-4" title="Not yet balanced">
-              Adjusted balances differ by {fmt(Math.abs(computed.difference))}. Add reconciling items until both sides
-              match.
-            </Alert>
+          {!computed.isBalanced && items.length === 0 && !isReadOnly && (
+            <Card className="shadow-sm border border-amber-200 bg-amber-50/60 mb-4">
+              <CardBody className="gap-3 p-4">
+                <div>
+                  <p className="text-sm font-semibold text-amber-950">Why don’t they match?</p>
+                  <p className="text-sm text-amber-900/80 mt-1">
+                    Pick the situation that matches what you see on the statement. You only add an
+                    explanation when something is missing on one side — empty lists mean you have not
+                    explained anything yet.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => openAddItem('bank')}
+                    className="text-left rounded-lg border border-amber-200 bg-white px-3 py-3 hover:border-amber-400 transition-colors"
+                  >
+                    <p className="text-sm font-semibold text-slate-900">In our books, not on the statement yet</p>
+                    <p className="text-xs text-slate-600 mt-1">
+                      Example: a deposit you recorded yesterday that the bank has not shown, or a cheque
+                      that has not cleared.
+                    </p>
+                    <p className="text-xs font-medium text-primary mt-2">Add this kind of difference →</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openAddItem('book')}
+                    className="text-left rounded-lg border border-amber-200 bg-white px-3 py-3 hover:border-amber-400 transition-colors"
+                  >
+                    <p className="text-sm font-semibold text-slate-900">On the statement, not in our books yet</p>
+                    <p className="text-xs text-slate-600 mt-1">
+                      Example: a bank fee or interest credit printed on the statement that nobody has
+                      booked in the hotel yet.
+                    </p>
+                    <p className="text-xs font-medium text-primary mt-2">Add this kind of difference →</p>
+                  </button>
+                </div>
+              </CardBody>
+            </Card>
           )}
 
-          {computed.isBalanced && recon?.status === 'Draft' && (
-            <Alert color="success" className="mb-4" title="Ready to complete">
-              Adjusted bank and cashbook balances match. Mark complete when reviewed.
-            </Alert>
+          {items.length > 0 && (
+            <div className="mb-4">
+              <div className="mb-2">
+                <p className="text-sm font-semibold text-slate-900">Differences you explained</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  These close the gap between the statement and the books. Remove one if it was added by
+                  mistake.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <ItemsPanel
+                  title="In books, not on statement yet"
+                  side="bank"
+                  items={itemsForSide(items, 'bank')}
+                  isReadOnly={!!isReadOnly}
+                  onAdd={() => openAddItem('bank')}
+                  onDelete={deleteItem}
+                  onClearCheque={markChequeCleared}
+                  emptyHint="None yet — only add if a deposit/cheque is in the books but missing from the statement."
+                  infoTip="Use when the hotel already recorded money the bank has not shown yet."
+                />
+                <ItemsPanel
+                  title="On statement, not in books yet"
+                  side="book"
+                  items={itemsForSide(items, 'book')}
+                  isReadOnly={!!isReadOnly}
+                  onAdd={() => openAddItem('book')}
+                  onDelete={deleteItem}
+                  onClearCheque={markChequeCleared}
+                  emptyHint="None yet — only add if the statement shows a fee/credit the hotel has not booked."
+                  infoTip="Use when the statement shows a fee or credit that still needs to post to the ledger."
+                />
+              </div>
+            </div>
           )}
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <ItemsPanel
-              title="Bank-side items"
-              side="bank"
-              items={itemsForSide(items, 'bank')}
-              isReadOnly={!!isReadOnly}
-              onAdd={() => openAddItem('bank')}
-              onDelete={deleteItem}
-              onClearCheque={markChequeCleared}
-              infoTip="Timing differences on the statement: deposits not yet credited, cheques not yet cleared, bank errors."
-            />
-            <ItemsPanel
-              title="Book-side items"
-              side="book"
-              items={itemsForSide(items, 'book')}
-              isReadOnly={!!isReadOnly}
-              onAdd={() => openAddItem('book')}
-              onDelete={deleteItem}
-              onClearCheque={markChequeCleared}
-              infoTip="Items on the statement not yet in your books: bank charges, interest credits, or cashbook errors. Post to GL before completing."
-            />
-          </div>
 
           <RegisterTransactionsPanel
             transactions={registerTxns}
@@ -683,10 +893,17 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
 
       <Modal isOpen={isOpen} onClose={onClose}>
         <ModalContent>
-          <ModalHeader>Add {addSide === 'bank' ? 'bank-side' : 'book-side'} item</ModalHeader>
+          <ModalHeader>
+            {addSide === 'bank' ? 'Explain a bank timing difference' : 'Record something from the statement'}
+          </ModalHeader>
           <ModalBody className="gap-3">
+            <p className="text-sm text-slate-600">
+              {addSide === 'bank'
+                ? 'Use this when your books already know about money the bank has not shown yet.'
+                : 'Use this when the statement shows a fee or credit that is not in your books yet. It will post to the ledger.'}
+            </p>
             <Select
-              label="Type"
+              label="What kind of difference?"
               selectedKeys={[itemForm.itemType]}
               onSelectionChange={(k) => {
                 const nextType = Array.from(k)[0] as ReconcilingItemType;
@@ -755,7 +972,7 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
               Cancel
             </Button>
             <Button color="primary" onPress={handleSaveItem}>
-              Add
+              Add explanation
             </Button>
           </ModalFooter>
         </ModalContent>
@@ -773,6 +990,7 @@ function ItemsPanel({
   onDelete,
   onClearCheque,
   infoTip,
+  emptyHint,
 }: {
   title: string;
   side: ReconSide;
@@ -782,6 +1000,7 @@ function ItemsPanel({
   onDelete: (id: string) => void;
   onClearCheque: (id: string, date: string) => void;
   infoTip?: string;
+  emptyHint?: string;
 }) {
   type ItemSortKey = 'type' | 'description' | 'amount' | 'status';
   const meta = (type: ReconcilingItemType) => RECON_ITEM_TYPES.find((t) => t.type === type);
@@ -854,7 +1073,7 @@ function ItemsPanel({
                 {column('amount', 'Amount', 'right')}
                 {column('status', 'Status')}
               </TableHeader>
-              <TableBody emptyContent={`No ${side}-side items.`}>
+              <TableBody emptyContent={emptyHint || (side === 'bank' ? 'No timing differences yet.' : 'No statement-only items yet.')}>
                 {paged.map((item) => {
                   const m = meta(item.itemType);
                   const deduct = m?.effect === 'deduct';
@@ -935,7 +1154,17 @@ function ItemsPanel({
                     <Button color="primary" variant="flat" onPress={() => { onClearCheque(viewItem.id, new Date().toISOString().slice(0, 10)); setViewItem(null); }}>Clear cheque</Button>
                   )}
                   {!isReadOnly && (
-                    <Button color="danger" variant="flat" onPress={() => { onDelete(viewItem.id); setViewItem(null); }}>🗑️ Delete</Button>
+                    <Button
+                      color="danger"
+                      variant="flat"
+                      onPress={() => {
+                        if (!window.confirm(`Delete reconciling item "${viewItem.description || viewItem.itemType}"? This cannot be undone.`)) return;
+                        onDelete(viewItem.id);
+                        setViewItem(null);
+                      }}
+                    >
+                      Delete
+                    </Button>
                   )}
                 </ModalFooter>
               </>
@@ -1007,25 +1236,41 @@ function RegisterTransactionsPanel({
     status === 'Reconciled' ? 'success' : status === 'Cleared' ? 'primary' : 'warning';
 
   return (
-    <Card className="shadow-sm border border-slate-200 mt-4">
-      <CardBody className="p-0">
-        <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
-          <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-800">
-            Register transactions (through period end)
-            <InfoTip label="Register transactions">
-              Movements from Bank & Cash → Transactions for this account through the period end date.
-              Completing reconciliation marks them Reconciled. Mark cleared for pending items on the statement.
-            </InfoTip>
-          </span>
+    <details className="mt-4 group rounded-lg border border-slate-200 bg-white open:shadow-sm">
+      <summary className="cursor-pointer list-none px-4 py-3 flex flex-wrap items-center justify-between gap-2 select-none border-b border-transparent group-open:border-slate-100 group-open:bg-slate-50">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-900">
+            Optional · Hotel bank register
+            {transactions.length > 0 && (
+              <span className="ml-2 font-normal text-slate-500">({transactions.length})</span>
+            )}
+          </p>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Skip this if the statement already matches. This is only a checklist of movements already
+            recorded under Bank & Cash → Transactions — not where you fix the difference above.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
           {unreconciledCount > 0 && (
             <Chip size="sm" color="warning" variant="flat">
-              {unreconciledCount} not yet reconciled
+              {unreconciledCount} not marked reconciled
             </Chip>
           )}
+          <span className="text-xs text-slate-400 group-open:hidden">Show</span>
+          <span className="text-xs text-slate-400 hidden group-open:inline">Hide</span>
         </div>
-        <div className="px-2 pb-2">
+      </summary>
+
+      {transactions.length === 0 ? (
+        <div className="px-4 py-6 text-sm text-slate-600">
+          No hotel bank movements for this account through the as-of date. That is fine — finish matching
+          the statement balance first. When staff later record deposits or payments here, they will appear
+          in this list and get marked reconciled when you complete the period.
+        </div>
+      ) : (
+        <div className="px-2 pb-2 pt-2">
           <div ref={cols.frameRef} style={cols.frameStyle}>
-            <Table removeWrapper aria-label="Register transactions" classNames={deskResizableTableClassNames()}>
+            <Table removeWrapper aria-label="Hotel bank register" classNames={deskResizableTableClassNames()}>
               <TableHeader>
                 {column('date', 'Date')}
                 {column('reference', 'Reference')}
@@ -1033,7 +1278,7 @@ function RegisterTransactionsPanel({
                 {column('amount', 'Amount', 'right')}
                 {column('status', 'Status')}
               </TableHeader>
-              <TableBody emptyContent="No register transactions in this period.">
+              <TableBody>
                 {paged.map((txn) => (
                   <TableRow
                     key={txn.id}
@@ -1044,7 +1289,11 @@ function RegisterTransactionsPanel({
                       {new Date(txn.transactionDate).toLocaleDateString()}
                     </TableCell>
                     <TableCell className="font-mono text-xs truncate">{txn.reference}</TableCell>
-                    <TableCell><Chip size="sm" variant="flat">{txn.type}</Chip></TableCell>
+                    <TableCell>
+                      <Chip size="sm" variant="flat">
+                        {txn.type}
+                      </Chip>
+                    </TableCell>
                     <TableCell className="text-right tabular-nums text-sm">{fmt(txn.amount ?? 0)}</TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       {!isReadOnly && txn.status === 'Pending' ? (
@@ -1072,7 +1321,7 @@ function RegisterTransactionsPanel({
             <Pagination page={page} total={pages} onChange={setPage} showControls size="sm" />
           </div>
         </div>
-      </CardBody>
+      )}
 
       <Modal isOpen={!!viewTxn} onOpenChange={(open) => { if (!open) setViewTxn(null); }} size="lg">
         <ModalContent>
@@ -1082,28 +1331,47 @@ function RegisterTransactionsPanel({
               <>
                 <ModalHeader className="border-b bg-white px-6 py-4">
                   <div className="pr-6">
-                    <h3 className="text-xl font-bold text-gray-900">REGISTER TRANSACTION</h3>
+                    <h3 className="text-xl font-bold text-gray-900">BANK REGISTER LINE</h3>
                     <p className="text-lg text-gray-800 font-mono">{viewTxn.reference || viewTxn.id}</p>
                   </div>
                 </ModalHeader>
                 <ModalBody className="p-6 bg-white text-sm space-y-2">
-                  <div><span className="text-gray-500">Date:</span> <span className="font-medium">{new Date(viewTxn.transactionDate).toLocaleDateString()}</span></div>
-                  <div><span className="text-gray-500">Type:</span> <span className="font-medium">{viewTxn.type}</span></div>
-                  <div><span className="text-gray-500">Amount:</span> <span className="tabular-nums font-semibold">{fmt(viewTxn.amount ?? 0)}</span></div>
-                  <div><span className="text-gray-500">Status:</span>{' '}
-                    <Chip size="sm" variant="flat" color={statusColor(viewTxn.status) as any}>{viewTxn.status}</Chip>
+                  <div>
+                    <span className="text-gray-500">Date:</span>{' '}
+                    <span className="font-medium">{new Date(viewTxn.transactionDate).toLocaleDateString()}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Type:</span> <span className="font-medium">{viewTxn.type}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Amount:</span>{' '}
+                    <span className="tabular-nums font-semibold">{fmt(viewTxn.amount ?? 0)}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Status:</span>{' '}
+                    <Chip size="sm" variant="flat" color={statusColor(viewTxn.status) as any}>
+                      {viewTxn.status}
+                    </Chip>
                   </div>
                   {viewTxn.description && (
-                    <div><span className="text-gray-500">Description:</span> <span className="font-medium">{viewTxn.description}</span></div>
+                    <div>
+                      <span className="text-gray-500">Description:</span>{' '}
+                      <span className="font-medium">{viewTxn.description}</span>
+                    </div>
                   )}
                 </ModalBody>
                 <ModalFooter className="border-t bg-white">
-                  <Button variant="flat" onPress={onClose}>Close</Button>
+                  <Button variant="flat" onPress={onClose}>
+                    Close
+                  </Button>
                   {!isReadOnly && viewTxn.status === 'Pending' && (
                     <Button
                       color="primary"
                       variant="flat"
-                      onPress={() => { onMarkCleared(viewTxn.id); setViewTxn(null); }}
+                      onPress={() => {
+                        onMarkCleared(viewTxn.id);
+                        setViewTxn(null);
+                      }}
                     >
                       Mark cleared
                     </Button>
@@ -1114,6 +1382,6 @@ function RegisterTransactionsPanel({
           }}
         </ModalContent>
       </Modal>
-    </Card>
+    </details>
   );
 }

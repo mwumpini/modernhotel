@@ -76,6 +76,7 @@ import { useEmployeeStore } from '../lib/hr/employeeStore';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
 import ModuleExpandButton from './ModuleExpandButton';
 import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
+import { deskTableCardBodyClassName, deskTableCardClassName } from './dashboard/deskTableUi';
 import {
   buildIdSequence,
   nextSequenceLabel,
@@ -1271,8 +1272,15 @@ const EVENTS_REPORT_CATALOG: ReportCategory[] = [];
 
 export default function EventsConferencesMainDashboard({
   fullPage = false,
+  workspaceOnly = false,
+  externalEditEventId = null,
+  onWorkspaceClose,
 }: {
   fullPage?: boolean;
+  /** Render only the event edit modal (e.g. opened from Accounting over the AR screen). */
+  workspaceOnly?: boolean;
+  externalEditEventId?: string | null;
+  onWorkspaceClose?: () => void;
 } = {}) {
   const router = useRouter();
   const { costCenters, revenueCenters, initializeAccounting } = useAccountingStore();
@@ -1333,7 +1341,7 @@ export default function EventsConferencesMainDashboard({
   const [selectedTab, setSelectedTab] = useState('confirmed');
   const [venueSearchTerm, setVenueSearchTerm] = useState('');
   const [venueStatusFilter, setVenueStatusFilter] = useState('all');
-  const [reportsDateFilterMode, setReportsDateFilterMode] = useState<EventsDateFilterMode>('all');
+  const [reportsDateFilterMode, setReportsDateFilterMode] = useState<EventsDateFilterMode>('thisMonth');
   const [reportsDateFilterSingle, setReportsDateFilterSingle] = useState('');
   const [reportsDateFilterFrom, setReportsDateFilterFrom] = useState('');
   const [reportsDateFilterTo, setReportsDateFilterTo] = useState('');
@@ -1364,6 +1372,7 @@ export default function EventsConferencesMainDashboard({
   const [beoForm, setBeoForm] = useState<any>(null);
   const [selectedContractEventInfo, setSelectedContractEventInfo] = useState<any>(null);
   const [customEvents, setCustomEvents] = useState<any[]>([]);
+  const [eventsHydrated, setEventsHydrated] = useState(false);
   const [eventSubmitting, setEventSubmitting] = useState<boolean>(false);
   const [reportSearch, setReportSearch] = useState('');
   const [selectedReportKey, setSelectedReportKey] = useState(
@@ -1590,6 +1599,7 @@ export default function EventsConferencesMainDashboard({
     checkNumber?: string;
     recordedBy: string;
     notes?: string;
+    status?: 'Posted' | 'Void';
   }
   interface EventFolioEntry {
     id: string;
@@ -1608,7 +1618,7 @@ export default function EventsConferencesMainDashboard({
     eventId: string;
     eventName: string;
     clientName: string;
-    status: 'Open' | 'Closed';
+    status: 'Open' | 'Closed' | 'Void';
     openingBalance: number;
     entries: EventFolioEntry[];
     createdAt: string;
@@ -1848,7 +1858,11 @@ export default function EventsConferencesMainDashboard({
     (async () => {
       await initializeAccounting().catch(() => {});
       const rows = await fetchEventBookings().catch(() => []);
-      if (cancelled || !Array.isArray(rows) || !rows.length) return;
+      if (cancelled) return;
+      if (!Array.isArray(rows) || !rows.length) {
+        setEventsHydrated(true);
+        return;
+      }
       let liveIds: string[] = [];
       let quotes: any[] = [];
       setCustomEvents((prev) => {
@@ -1865,6 +1879,7 @@ export default function EventsConferencesMainDashboard({
         return next;
       });
       if (cancelled) return;
+      setEventsHydrated(true);
       if (liveIds.length) {
         await retireOrphanConferenceInvoices(liveIds).catch(() => {});
       }
@@ -1890,6 +1905,12 @@ export default function EventsConferencesMainDashboard({
 
   const [isFolioModalOpen, setIsFolioModalOpen] = useState(false);
   const [activeFolio, setActiveFolio] = useState<any>(null);
+  const [docCautionPrompt, setDocCautionPrompt] = useState<null | {
+    kind: 'void-folio' | 'delete-folio' | 'void-receipt' | 'delete-receipt';
+    title: string;
+    message: string;
+    confirmLabel: string;
+  }>(null);
 const [folioEntryForm, setFolioEntryForm] = useState<{
   type: 'charge' | 'payment';
   amount: number;
@@ -2129,7 +2150,7 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
   };
   const withFolioStatus = (folio: EventFolio): EventFolio => ({
     ...folio,
-    status: getFolioSettledStatus(folio),
+    status: folio.status === 'Void' ? 'Void' : getFolioSettledStatus(folio),
   });
   const conferenceInvoiceBelongsToEvent = (invoice: { reference?: string; description?: string }, eventId?: string) => {
     if (!eventId) return true;
@@ -3975,6 +3996,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     setIsCreatingInvoiceFromFolio(false);
     setHoveredGanttEventId(null);
     setEventSubmitting(false);
+    onWorkspaceClose?.();
   };
 
   const closeReceiptWorkspace = () => {
@@ -4748,6 +4770,22 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     }
     setIsEventModalOpen(true);
   };
+
+  // Open a specific event when hosted as an overlay (e.g. from Accounting).
+  const openedExternalEventRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!workspaceOnly || !externalEditEventId || !eventsHydrated) return;
+    if (openedExternalEventRef.current === String(externalEditEventId)) return;
+    const event = customEvents.find((ev) => String(ev.id) === String(externalEditEventId));
+    if (!event) {
+      window.alert(`Could not find event ${externalEditEventId} to edit.`);
+      onWorkspaceClose?.();
+      return;
+    }
+    openedExternalEventRef.current = String(externalEditEventId);
+    openEventForEdit(event);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceOnly, externalEditEventId, eventsHydrated, customEvents]);
 
   const openEventForView = (event: any) => {
     setIsCreatingEvent(false);
@@ -7507,7 +7545,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       reference: receiptForm.reference || '',
       checkNumber: receiptForm.checkNumber || '',
       recordedBy: receiptForm.recordedBy || 'Events Team',
-      notes: receiptForm.notes || ''
+      notes: receiptForm.notes || '',
+      status: 'Posted',
     };
 
     const isNewReceipt = receiptModalMode === 'create';
@@ -7967,6 +8006,140 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     setFolioEntryForm({ type: 'charge', amount: 0, description: '', reference: '', costCenter: '', revenueCenter: '', method: 'Cash', recordedBy: 'Events Team' });
     setFolioEntrySearch('');
     setFolioComposerOpen(false);
+  };
+
+  const voidActiveFolio = () => {
+    if (!activeFolio || activeFolio.status === 'Void') return;
+    setDocCautionPrompt({
+      kind: 'void-folio',
+      title: 'Void this folio?',
+      message: `${formatFolioNumber(activeFolio.id)} will stay on file as Void. No further charges or payments can be posted.`,
+      confirmLabel: 'Void folio',
+    });
+  };
+
+  const deleteActiveFolio = () => {
+    if (!activeFolio) return;
+    setDocCautionPrompt({
+      kind: 'delete-folio',
+      title: 'Delete this folio?',
+      message: `${formatFolioNumber(activeFolio.id)} will be permanently removed. This cannot be undone.`,
+      confirmLabel: 'Delete folio',
+    });
+  };
+
+  const reverseReceiptEffects = (receipt: EventReceipt) => {
+    const amount = Number(receipt.amount || 0);
+    if (receipt.invoiceId && amount > 0) {
+      setEventInvoices((prev) =>
+        prev.map((inv) => {
+          if (inv.id !== receipt.invoiceId) return inv;
+          const restoredBalance = Math.min(
+            Number(inv.total || 0),
+            Number(inv.balance || 0) + amount
+          );
+          return {
+            ...inv,
+            balance: restoredBalance,
+            status: deriveInvoiceStatus(inv.status, restoredBalance, inv.total),
+          };
+        })
+      );
+    }
+    setEventFolios((prev) =>
+      prev.map((folio) => {
+        if (folio.eventId !== receipt.eventId) return folio;
+        if (!(folio.entries || []).some((entry) => entry.reference === receipt.id)) return folio;
+        const without = (folio.entries || []).filter((entry) => entry.reference !== receipt.id);
+        let running = folio.openingBalance || 0;
+        const recalculated = without.map((entry) => {
+          running = running + (entry.debit || 0) - (entry.credit || 0);
+          return { ...entry, balance: running };
+        });
+        return withFolioStatus({
+          ...folio,
+          entries: recalculated,
+          updatedAt: new Date().toISOString(),
+        });
+      })
+    );
+  };
+
+  const voidActiveReceipt = () => {
+    if (receiptModalMode !== 'edit' || !receiptForm.id) return;
+    const existing = eventReceipts.find((rcpt) => rcpt.id === receiptForm.id);
+    if (!existing || existing.status === 'Void') return;
+    const label = getConferenceReceiptNumber(existing.id, existing.eventId) || existing.id;
+    setDocCautionPrompt({
+      kind: 'void-receipt',
+      title: 'Void this receipt?',
+      message: `${label} will stay on file as Void. The payment will be reversed on the invoice and folio.`,
+      confirmLabel: 'Void receipt',
+    });
+  };
+
+  const deleteActiveReceipt = () => {
+    if (receiptModalMode !== 'edit' || !receiptForm.id) return;
+    const existing = eventReceipts.find((rcpt) => rcpt.id === receiptForm.id);
+    if (!existing) return;
+    const label = getConferenceReceiptNumber(existing.id, existing.eventId) || existing.id;
+    setDocCautionPrompt({
+      kind: 'delete-receipt',
+      title: 'Delete this receipt?',
+      message: `${label} will be permanently removed and any payment effect reversed. This cannot be undone.`,
+      confirmLabel: 'Delete receipt',
+    });
+  };
+
+  const confirmDocCaution = () => {
+    if (!docCautionPrompt) return;
+    const kind = docCautionPrompt.kind;
+    setDocCautionPrompt(null);
+
+    if (kind === 'void-folio') {
+      if (!activeFolio || activeFolio.status === 'Void') return;
+      const updatedAt = new Date().toISOString();
+      setEventFolios((prev) =>
+        prev.map((folio) =>
+          folio.id === activeFolio.id ? { ...folio, status: 'Void', updatedAt } : folio
+        )
+      );
+      setActiveFolio((prev: EventFolio | null) => (prev ? { ...prev, status: 'Void', updatedAt } : prev));
+      setFolioComposerOpen(false);
+      trackEvent('Events.EventCreated', { action: 'folio_voided', folioId: activeFolio.id });
+      return;
+    }
+
+    if (kind === 'delete-folio') {
+      if (!activeFolio) return;
+      setEventFolios((prev) => prev.filter((folio) => folio.id !== activeFolio.id));
+      trackEvent('Events.EventCreated', { action: 'folio_deleted', folioId: activeFolio.id });
+      closeFolioModal();
+      return;
+    }
+
+    if (kind === 'void-receipt') {
+      const existing = eventReceipts.find((rcpt) => rcpt.id === receiptForm.id);
+      if (!existing || existing.status === 'Void') return;
+      reverseReceiptEffects(existing);
+      setEventReceipts((prev) =>
+        prev.map((rcpt) => (rcpt.id === existing.id ? { ...rcpt, status: 'Void' } : rcpt))
+      );
+      trackEvent('Events.EventCreated', { action: 'receipt_voided', receiptId: existing.id, eventId: existing.eventId });
+      closeReceiptWorkspace();
+      return;
+    }
+
+    if (kind === 'delete-receipt') {
+      const existing = eventReceipts.find((rcpt) => rcpt.id === receiptForm.id);
+      if (!existing) return;
+      if (existing.status !== 'Void') {
+        reverseReceiptEffects(existing);
+      }
+      setEventReceipts((prev) => prev.filter((rcpt) => rcpt.id !== existing.id));
+      trackEvent('Events.EventCreated', { action: 'receipt_deleted', receiptId: existing.id, eventId: existing.eventId });
+      closeReceiptWorkspace();
+    }
   };
 
   const handlePrintEventFolio = () => {
@@ -9879,7 +10052,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     [eventInvoices]
   );
   const receiptsTotal = useMemo(
-    () => eventReceipts.reduce((sum, receipt) => sum + (receipt.amount || 0), 0),
+    () => eventReceipts.reduce((sum, receipt) => sum + (receipt.status === 'Void' ? 0 : (receipt.amount || 0)), 0),
     [eventReceipts]
   );
   const openFolioCount = useMemo(
@@ -11478,7 +11651,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     const [rateGuestFilter, setRateGuestFilter] = useState<string>('all');
     const [rateGuestSearch, setRateGuestSearch] = useState('');
     const [rateEffectiveFilter, setRateEffectiveFilter] = useState<'all' | RateEffectiveStatus>('all');
-    const [rateDateFilterMode, setRateDateFilterMode] = useState<EventsDateFilterMode>('all');
+    const [rateDateFilterMode, setRateDateFilterMode] = useState<EventsDateFilterMode>('thisMonth');
     const [rateDateFilterSingle, setRateDateFilterSingle] = useState('');
     const [rateDateFilterFrom, setRateDateFilterFrom] = useState('');
     const [rateDateFilterTo, setRateDateFilterTo] = useState('');
@@ -11896,6 +12069,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
     const rateTableClassNames = {
       ...worksheetTableClassNames,
+      base: 'max-w-full overflow-x-auto',
       table: 'w-full min-w-max',
     };
 
@@ -11980,7 +12154,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 size="sm"
                 aria-label="Effective status"
                 placeholder="Effective status"
-                className="w-40 shrink-0"
+                className="min-w-[min(100%,9rem)] flex-1 basis-[9rem] max-w-full sm:max-w-[12rem]"
                 selectedKeys={[rateEffectiveFilter]}
                 onSelectionChange={(keys) => {
                   const value = Array.from(keys)[0] as typeof rateEffectiveFilter | undefined;
@@ -12009,7 +12183,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   setRateGuestFilter('all');
                 }
               }}
-              className="w-48 shrink-0"
+              className="min-w-[min(100%,11rem)] flex-1 basis-[11rem] max-w-full sm:max-w-[14rem]"
               allowsCustomValue
             >
               {(() => {
@@ -12056,8 +12230,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           }
         />
 
-        <Card className="border-0 shadow-lg">
-          <CardBody className="px-2 py-3">
+        <Card className={deskTableCardClassName}>
+          <CardBody className={deskTableCardBodyClassName}>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-base font-semibold text-slate-800">Rates</h3>
               <Button size="sm" color="primary" variant="solid" onPress={() => openRateModal('create')}>
@@ -12506,20 +12680,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
   // Event Management Component
   const EventManagementTab = () => {
-    const getManagementTabDefaultDateFilter = (tab: ManagementMainTabKey): EventsDateFilterMode => {
-      switch (tab) {
-        case 'events':
-        case 'active':
-          return 'thisMonth';
-        case 'completed':
-        case 'invoices':
-        case 'receipts':
-        case 'quotes':
-        case 'folios':
-          return 'monthToDate';
-        default:
-          return 'monthToDate';
-      }
+    const getManagementTabDefaultDateFilter = (_tab: ManagementMainTabKey): EventsDateFilterMode => {
+      return 'thisMonth';
     };
 
     const [managementSearchTerm, setManagementSearchTerm] = useState('');
@@ -13259,6 +13421,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
     const managementTableClassNames = {
       ...worksheetTableClassNames,
+      base: 'max-w-full overflow-x-auto',
       table: 'w-full min-w-max',
       th: `${worksheetTableClassNames.th} relative`,
     };
@@ -13766,8 +13929,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           }}
         >
           <Tab key="events" title={`📊 Event Master (${managementTabCounts.events})`}>
-            <Card className="mt-2 border-0 shadow-lg">
-              <CardBody className="px-2 py-3">
+            <Card className={`mt-2 ${deskTableCardClassName}`}>
+              <CardBody className={deskTableCardBodyClassName}>
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <h3 className="text-base font-semibold text-slate-800">Event Master</h3>
                   <div className="flex flex-wrap items-center justify-end gap-2">
@@ -14642,8 +14805,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </Card>
           </Tab>
           <Tab key="invoices" title={`🧾 Invoices (${managementTabCounts.invoices})`}>
-            <Card className="mt-2 border-0 shadow-lg">
-              <CardBody className="px-2 py-3">
+            <Card className={`mt-2 ${deskTableCardClassName}`}>
+              <CardBody className={deskTableCardBodyClassName}>
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-base font-semibold text-slate-800">Invoices</h3>
                   <Button size="sm" color="primary" variant="solid" onPress={openCreateInvoicePicker}>
@@ -14735,8 +14898,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </Card>
           </Tab>
           <Tab key="receipts" title={`💳 Receipts (${managementTabCounts.receipts})`}>
-            <Card className="mt-2 border-0 shadow-lg">
-              <CardBody className="px-2 py-3">
+            <Card className={`mt-2 ${deskTableCardClassName}`}>
+              <CardBody className={deskTableCardBodyClassName}>
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-base font-semibold text-slate-800">Receipts</h3>
                   <Button size="sm" color="primary" variant="solid" onPress={openCreateReceiptPicker}>
@@ -14782,6 +14945,11 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                           <TableCell>
                             <div className="font-mono text-xs text-slate-700">{getConferenceReceiptNumber(receipt.id, receipt.eventId) || receipt.id}</div>
                             <div className="text-xs text-slate-400">{receipt.recordedBy || receipt.id}</div>
+                            {receipt.status === 'Void' && (
+                              <Chip size="sm" variant="flat" color="danger" className="mt-1">
+                                Void
+                              </Chip>
+                            )}
                           </TableCell>
                           <TableCell>
                             <div className="min-w-[160px] max-w-[260px]">
@@ -14828,8 +14996,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </Card>
           </Tab>
           <Tab key="folios" title={`📂 Folios (${managementTabCounts.folios})`}>
-            <Card className="mt-2 border-0 shadow-lg">
-              <CardBody className="px-2 py-3">
+            <Card className={`mt-2 ${deskTableCardClassName}`}>
+              <CardBody className={deskTableCardBodyClassName}>
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-base font-semibold text-slate-800">Folios</h3>
                   <Button size="sm" color="primary" variant="solid" onPress={openCreateFolioPicker}>
@@ -14890,8 +15058,22 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                               </div>
                             </TableCell>
                             <TableCell>
-                              <Chip size="sm" variant="flat" color={getFolioSettledStatus(folio) === 'Open' ? 'warning' : 'success'}>
-                                {getFolioSettledStatus(folio) === 'Closed' ? 'Settled' : 'Open'}
+                              <Chip
+                                size="sm"
+                                variant="flat"
+                                color={
+                                  folio.status === 'Void'
+                                    ? 'danger'
+                                    : getFolioSettledStatus(folio) === 'Open'
+                                      ? 'warning'
+                                      : 'success'
+                                }
+                              >
+                                {folio.status === 'Void'
+                                  ? 'Void'
+                                  : getFolioSettledStatus(folio) === 'Closed'
+                                    ? 'Settled'
+                                    : 'Open'}
                               </Chip>
                             </TableCell>
                             <TableCell>
@@ -15014,6 +15196,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
   };
   return (
     <>
+      {!workspaceOnly && (
       <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
       {/* Removed top notices; bottom section contains notices & activities */}
       {!fullPage && <DeptMessenger from="events" mode="drawer" />}
@@ -15076,16 +15259,17 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 />
 
                 {/* Venues Table */}
-                <Card className="border-0 shadow-lg">
+                <Card className={deskTableCardClassName}>
                   <CardHeader className="px-3 pb-0">
                     <h4 className="font-semibold">All Venues ({filteredModernVenues.length})</h4>
                   </CardHeader>
-                  <CardBody className="px-2 py-3">
+                  <CardBody className={deskTableCardBodyClassName}>
                     <Table
                       aria-label="Venues table"
                       removeWrapper
                       classNames={{
                         ...worksheetTableClassNames,
+                        base: 'max-w-full overflow-x-auto',
                         table: 'w-full min-w-max',
                       }}
                     >
@@ -15207,6 +15391,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </Tab>
       </Tabs>
     </div>
+      )}
 
       <Modal
         isOpen={isEventModalOpen}
@@ -17024,7 +17209,16 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       {activeFolio.clientName ? ` · ${activeFolio.clientName}` : ''}
                     </p>
                   </div>
-                  <Badge color={activeFolio.status === 'Open' ? 'success' : 'default'} variant="flat">
+                  <Badge
+                    color={
+                      activeFolio.status === 'Void'
+                        ? 'danger'
+                        : activeFolio.status === 'Open'
+                          ? 'success'
+                          : 'default'
+                    }
+                    variant="flat"
+                  >
                     {activeFolio.status}
                   </Badge>
                 </div>
@@ -17069,6 +17263,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 {(() => {
                   const invoice = eventInvoices.find((inv: EventInvoice) => inv.eventId === activeFolio.eventId);
                   const event = allEvents.find((ev) => ev.id === activeFolio.eventId);
+                  const folioLocked = activeFolio.status === 'Void';
                   return (
                     <div className="flex w-full flex-wrap items-center gap-2">
                       {event && (
@@ -17080,6 +17275,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                         size="sm"
                         color="success"
                         variant="flat"
+                        isDisabled={folioLocked}
                         onPress={() => {
                           if (invoice) {
                             openReceiptFromInvoice(invoice);
@@ -17097,6 +17293,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                         size="sm"
                         color="primary"
                         variant="flat"
+                        isDisabled={folioLocked}
                         onPress={() => {
                           setFolioEntryForm((prev) => ({ ...prev, type: 'charge' }));
                           setFolioComposerOpen(true);
@@ -17104,7 +17301,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       >
                         Add charge
                       </Button>
-                      <Button size="sm" variant="flat" onPress={() => createDebitNote(activeFolio)}>
+                      <Button size="sm" variant="flat" isDisabled={folioLocked} onPress={() => createDebitNote(activeFolio)}>
                         Debit note
                       </Button>
                       <div className="ml-auto flex items-center gap-2">
@@ -17251,6 +17448,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                                   {formatCurrency(entry.balance)}
                                 </TableCell>
                                 <TableCell className="w-px">
+                                  {activeFolio.status === 'Void' ? (
+                                    <span className="text-slate-400">—</span>
+                                  ) : (
                                   <div className="flex items-center justify-end gap-1 whitespace-nowrap">
                                     {linkedInvoice && (
                                       <Tooltip content="Open invoice">
@@ -17301,6 +17501,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                                       </Button>
                                     </Tooltip>
                                   </div>
+                                  )}
                                 </TableCell>
                               </TableRow>
                             );
@@ -17318,6 +17519,21 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             )}
           </ModalBody>
           <ModalFooter>
+            {activeFolio && (
+              <>
+                <Button color="danger" variant="flat" onPress={deleteActiveFolio}>
+                  Delete
+                </Button>
+                <Button
+                  color="warning"
+                  variant="flat"
+                  isDisabled={activeFolio.status === 'Void'}
+                  onPress={voidActiveFolio}
+                >
+                  Void
+                </Button>
+              </>
+            )}
             <Button color="default" variant="flat" onPress={closeFolioModal}>
               Close
             </Button>
@@ -17697,6 +17913,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             <div>
               <h3 className="text-lg font-semibold text-ghana-black">
                 {receiptModalMode === 'edit' ? 'Edit Receipt' : 'Record Receipt'}
+                {receiptForm.status === 'Void' ? ' · Void' : ''}
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
                 {receiptModalMode === 'edit'
@@ -17909,6 +18126,28 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </div>
           </ModalBody>
           <ModalFooter>
+            <Button
+              size="sm"
+              color="danger"
+              variant="flat"
+              isDisabled={receiptModalMode !== 'edit' || !receiptForm.id}
+              onPress={deleteActiveReceipt}
+            >
+              Delete
+            </Button>
+            <Button
+              size="sm"
+              color="warning"
+              variant="flat"
+              isDisabled={
+                receiptModalMode !== 'edit' ||
+                !receiptForm.id ||
+                receiptForm.status === 'Void'
+              }
+              onPress={voidActiveReceipt}
+            >
+              Void
+            </Button>
             <Button size="sm" variant="flat" onPress={closeReceiptWorkspace}>
               Cancel
             </Button>
@@ -17916,7 +18155,10 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
               size="sm"
               color="primary"
               onPress={handleReceiptSave}
-              isDisabled={receiptModalMode === 'create' && receiptAmount <= 0}
+              isDisabled={
+                (receiptModalMode === 'create' && receiptAmount <= 0) ||
+                receiptForm.status === 'Void'
+              }
             >
               {receiptModalMode === 'edit' ? 'Save Changes' : 'Post Receipt'}
             </Button>
@@ -18103,6 +18345,33 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </Button>
             <Button color="primary" onPress={confirmCreateInvoiceForEvent}>
               Continue
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(docCautionPrompt)}
+        onClose={() => setDocCautionPrompt(null)}
+        size="sm"
+      >
+        <ModalContent>
+          <ModalHeader className="flex flex-col gap-1">
+            <span>{docCautionPrompt?.title || 'Please confirm'}</span>
+          </ModalHeader>
+          <ModalBody>
+            <p className="text-sm text-slate-600">{docCautionPrompt?.message}</p>
+          </ModalBody>
+          <ModalFooter>
+            <Button size="sm" variant="flat" onPress={() => setDocCautionPrompt(null)}>
+              Keep as is
+            </Button>
+            <Button
+              size="sm"
+              color={docCautionPrompt?.kind?.startsWith('delete') ? 'danger' : 'warning'}
+              onPress={confirmDocCaution}
+            >
+              {docCautionPrompt?.confirmLabel || 'Confirm'}
             </Button>
           </ModalFooter>
         </ModalContent>

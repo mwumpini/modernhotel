@@ -181,21 +181,21 @@ export default function PublicSpacesStatusGrid() {
 
   return (
     <div className="space-y-3">
-      <div className="mb-[18px] flex flex-nowrap items-center gap-2 overflow-x-auto">
+      <div className="mb-[18px] flex flex-wrap items-center gap-2">
         <Input
           size="sm"
           placeholder="Search public spaces..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           startContent={<span className="text-gray-400">🔍</span>}
-          className="w-52 shrink-0"
+          className="w-full max-w-full sm:w-52 sm:max-w-[13rem] shrink-0"
         />
         <Select
           size="sm"
           placeholder="Filter by status"
           selectedKeys={[statusFilter]}
           onSelectionChange={(keys) => setStatusFilter((Array.from(keys)[0] as string) || 'all')}
-          className="w-44 shrink-0"
+          className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
         >
           <SelectItem key="all">All statuses</SelectItem>
           <SelectItem key="clean">🟢 Clean</SelectItem>
@@ -217,7 +217,7 @@ export default function PublicSpacesStatusGrid() {
           No public spaces yet. Add them under Work → Cleaning areas.
         </p>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-2.5">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,10.5rem),1fr))] gap-2.5">
           {filtered.map((area) => {
             const status = area.status || 'clean';
             return (

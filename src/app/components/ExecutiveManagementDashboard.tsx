@@ -164,12 +164,12 @@ function SectionHeader({
   extra?: React.ReactNode;
 }) {
   return (
-    <CardHeader className="pb-1 flex items-center justify-between">
-      <div className="flex items-center gap-2">
+    <CardHeader className="pb-1 flex flex-wrap items-center justify-between gap-2">
+      <div className="flex min-w-0 items-center gap-2">
         <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${iconClass}`}>{icon}</span>
         <h3 className="font-semibold text-ghana-black">{title}</h3>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
         {extra}
         <HideCardButton onHide={onHide} label={hideLabel} />
       </div>
@@ -179,13 +179,12 @@ function SectionHeader({
 
 // Big-number-on-a-tile stat, matching the treatment Today's Financial Pulse
 // established — used to bring the same visual weight to the other cards'
-// metrics instead of plain text rows. Sticks to bg-gray-50/text-gray-600,
-// the only shades this app's dark-mode CSS (globals.css) has overrides for;
-// a colored tile background here would repeat the light-on-light bug fixed
-// in the first pass.
+// metrics instead of plain text rows. Uses bg-gray-100 (pearl gray) so tiles
+// read against white cards; dark-mode CSS in globals.css overrides both
+// gray-50 and gray-100.
 function StatTile({ label, value, sub }: { label: string; value: React.ReactNode; sub?: React.ReactNode }) {
   return (
-    <div className="rounded-lg bg-gray-50 p-2.5">
+    <div className="rounded-lg bg-gray-100 p-2.5">
       <div className="text-xs font-medium text-gray-600">{label}</div>
       <div className="mt-0.5 text-lg font-semibold tracking-tight text-ghana-black">{value}</div>
       {sub && <div className="mt-0.5 text-[11px] text-gray-600">{sub}</div>}
@@ -745,9 +744,9 @@ export default function ExecutiveManagementDashboard() {
     }`;
 
   return (
-    <div className="p-6">
+    <div className="px-3 pt-3 pb-6 sm:p-6">
       <div className="mb-4 flex flex-col gap-3">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-xl font-semibold tracking-tight text-ghana-black">Executive Management</h2>
           <Tooltip content="Rooms, guests, and performance for the selected day" placement="right">
             <button
@@ -815,7 +814,7 @@ export default function ExecutiveManagementDashboard() {
 
       {!isHidden('liveOps') && (
         <section className="mb-5" aria-label="Live Operations">
-          <div className="mb-2 flex items-center justify-between">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-xs font-medium uppercase tracking-wider text-gray-600">Live operations</h3>
             <HideCardButton onHide={() => hide('liveOps')} label="Live Operations" />
           </div>
@@ -897,7 +896,7 @@ export default function ExecutiveManagementDashboard() {
                   ['Dirty', hk.dirty, 'bg-yellow-500'],
                   ['Out of order', hk.outOfOrder, 'bg-red-600'],
                 ] as const).map(([label, count, color]) => (
-                  <div key={label} className="space-y-1 cursor-pointer rounded-lg bg-gray-50 p-2.5" onClick={() => go('/housekeeping')}>
+                  <div key={label} className="space-y-1 cursor-pointer rounded-lg bg-gray-100 p-2.5" onClick={() => go('/housekeeping')}>
                     <div className="flex justify-between"><span>{label}</span><span className="font-semibold text-ghana-black">{count} <span className="text-xs font-normal text-gray-500">· {Math.round((count / hk.total) * 100)}%</span></span></div>
                     <div className="h-1.5 bg-gray-200 rounded overflow-hidden"><div className={`h-1.5 ${color}`} style={{ width: `${(count / hk.total) * 100}%` }} /></div>
                   </div>
@@ -956,7 +955,7 @@ export default function ExecutiveManagementDashboard() {
                   Billed today, not yet posted: {formatCurrency(revenueToday)}
                 </div>
               </div>
-              <div className="flex items-center justify-between gap-4 rounded-xl bg-gray-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-gray-50 p-4 sm:gap-4">
                 <div>
                   <div className="text-xs font-medium text-gray-600">ADR</div>
                   <div className="mt-1 text-xl font-semibold tracking-tight text-ghana-black">{formatCurrency(adr)}</div>
@@ -1068,7 +1067,7 @@ export default function ExecutiveManagementDashboard() {
             <CardBody className="pt-2 space-y-3 text-sm">
               <div>
                 <div className="font-semibold mb-1.5">Restaurant/Bar</div>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                   <StatTile label="Total Orders" value={fbEff.total} />
                   <StatTile label="Served/Paid" value={fbEff.served} />
                   <StatTile label="Items in Queue" value={fbEff.queue} />
@@ -1078,7 +1077,7 @@ export default function ExecutiveManagementDashboard() {
               </div>
               <div>
                 <div className="font-semibold mb-1.5">Kitchen</div>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <StatTile label="Items Assigned" value={kitchEff.assigned} />
                   <StatTile label="Items Prepared" value={kitchEff.prepared} />
                   <StatTile label="Avg Prep Time" value={`${Math.round(kitchEff.avgPrep)} min`} />
@@ -1104,7 +1103,12 @@ export default function ExecutiveManagementDashboard() {
               <div>
                 <div className="font-semibold mb-2">🟢 Adequate</div>
                 <ul className="space-y-1 list-disc list-inside">
-                  {stockSummary.adequate.map(i => (<li key={i.id} className="flex justify-between items-center"><span>{i.name}</span><Button size="sm" variant="light" onPress={() => go('/?tab=overview')}>View</Button></li>))}
+                  {stockSummary.adequate.map(i => (
+                    <li key={i.id} className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="min-w-0">{i.name}</span>
+                      <Button size="sm" variant="light" className="min-h-9 shrink-0" onPress={() => go('/?tab=overview')}>View</Button>
+                    </li>
+                  ))}
                   {stockSummary.adequate.length === 0 && <li className="text-gray-600">No items</li>}
                 </ul>
               </div>
@@ -1112,9 +1116,9 @@ export default function ExecutiveManagementDashboard() {
                 <div className="font-semibold mb-2">🟡 Low (Reorder)</div>
                  <ul className="space-y-1 list-disc list-inside">
                   {stockSummary.low.map(i => (
-                    <li key={i.id} className="flex justify-between items-center gap-2">
-                      <span>{i.name}</span>
-                      <Button size="sm" variant="flat" onPress={() => {
+                    <li key={i.id} className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="min-w-0">{i.name}</span>
+                      <Button size="sm" variant="flat" className="min-h-9 shrink-0" onPress={() => {
                         try {
                           announcementStore.publish({ level: 'normal', message: `Reorder suggested for ${i.name} (low stock)`, departments: ['inventory'], from: 'Master' });
                           auditLogStore.add({ area: 'inventory' as any, action: 'status', entity: 'Stock', entityId: i.id, details: `Notified Inventory: Reorder ${i.name}` });
@@ -1129,9 +1133,9 @@ export default function ExecutiveManagementDashboard() {
                 <div className="font-semibold mb-2">🔴 Critical</div>
                 <ul className="space-y-1 list-disc list-inside">
                   {stockSummary.critical.map(i => (
-                    <li key={i.id} className="flex justify-between items-center gap-2">
-                      <span>{i.name}</span>
-                      <Button size="sm" color="danger" variant="flat" onPress={() => {
+                    <li key={i.id} className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="min-w-0">{i.name}</span>
+                      <Button size="sm" color="danger" variant="flat" className="min-h-9 shrink-0" onPress={() => {
                         try {
                           announcementStore.publish({ level: 'urgent', message: `URGENT: Critical stock for ${i.name}. Immediate action required.`, departments: ['inventory'], from: 'Master' });
                           auditLogStore.add({ area: 'inventory' as any, action: 'status', entity: 'Stock', entityId: i.id, details: `Notified Inventory: URGENT ${i.name}` });
@@ -1162,8 +1166,8 @@ export default function ExecutiveManagementDashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {!isHidden('recentActivities') && (
           <Card className="border border-gray-200/70 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md">
-            <CardHeader className="flex items-center justify-between px-3 py-2">
-              <div className="flex items-center gap-2">
+            <CardHeader className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+              <div className="flex min-w-0 items-center gap-2">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-600"><Activity className="h-3.5 w-3.5" /></span>
                 <h3 className="text-sm font-semibold text-ghana-black">Recent Activities</h3>
               </div>
@@ -1176,8 +1180,8 @@ export default function ExecutiveManagementDashboard() {
           )}
           {!isHidden('notices') && (
           <Card className="border border-gray-200/70 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md">
-            <CardHeader className="flex items-center justify-between px-3 py-2">
-              <div className="flex items-center gap-2">
+            <CardHeader className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+              <div className="flex min-w-0 items-center gap-2">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-600"><Bell className="h-3.5 w-3.5" /></span>
                 <h3 className="text-sm font-semibold text-ghana-black">Executive Notices</h3>
               </div>

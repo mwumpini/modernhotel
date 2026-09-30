@@ -16,6 +16,41 @@ import { DeskKpiStrip } from './DeskKpiStrip';
 
 type AuditSortKey = 'timestamp' | 'user' | 'action' | 'table' | 'recordId' | 'details';
 
+function plainAction(action: string): string {
+  switch (action) {
+    case 'Create': return 'Added';
+    case 'Update': return 'Changed';
+    case 'Delete': return 'Removed';
+    case 'Void': return 'Voided';
+    default: return action;
+  }
+}
+
+function plainArea(tableName: string): string {
+  const map: Record<string, string> = {
+    JournalEntry: 'Journal',
+    Invoice: 'Invoice',
+    Payment: 'Payment',
+    ChartOfAccount: 'Books',
+    ChartOfAccounts: 'Books',
+    BankAccount: 'Bank account',
+    BankTransaction: 'Bank transaction',
+    CostCenter: 'Spending area',
+    RevenueCenter: 'Income area',
+    BusinessPartner: 'Customer / supplier',
+    PpeAsset: 'Asset',
+    TaxRemittance: 'Tax remittance',
+  };
+  return map[tableName] || tableName.replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+
+function detailsPreview(entry: { oldValues?: unknown; newValues?: unknown }): string {
+  const payload = entry.newValues ?? entry.oldValues;
+  if (payload == null) return '—';
+  const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  return text.length > 80 ? `${text.slice(0, 80)}…` : text;
+}
+
 export default function AuditControlsPage() {
   const {
     auditTrail,
@@ -33,14 +68,20 @@ export default function AuditControlsPage() {
     timestamp: 160, user: 120, action: 100, table: 140, recordId: 120, details: 240,
   });
 
-  // Filter audit trail
   const filteredAuditTrail = useMemo(() => {
     const filtered = auditTrail.filter(entry => {
-      const matchesSearch = entry.action.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           entry.tableName.toLowerCase().includes(searchTerm.toLowerCase());
+      const haystack = [
+        entry.action,
+        plainAction(entry.action),
+        entry.tableName,
+        plainArea(entry.tableName),
+        entry.recordId,
+        entry.userId,
+      ].join(' ').toLowerCase();
+      const matchesSearch = !searchTerm.trim() || haystack.includes(searchTerm.trim().toLowerCase());
       const matchesAction = filterAction === 'all' || entry.action === filterAction;
       const matchesTable = filterTable === 'all' || entry.tableName === filterTable;
-      
+
       const entryDate = new Date(entry.timestamp);
       const matchesStart = !dateRange.start || entryDate >= new Date(dateRange.start);
       const matchesEnd = !dateRange.end || entryDate <= new Date(new Date(dateRange.end).setHours(23, 59, 59, 999));
@@ -51,10 +92,10 @@ export default function AuditControlsPage() {
       switch (sortKey) {
         case 'timestamp': return new Date(entry.timestamp).getTime();
         case 'user': return (entry.userId || '').toLowerCase();
-        case 'action': return entry.action;
-        case 'table': return entry.tableName.toLowerCase();
+        case 'action': return plainAction(entry.action).toLowerCase();
+        case 'table': return plainArea(entry.tableName).toLowerCase();
         case 'recordId': return (entry.recordId || '').toLowerCase();
-        case 'details': return JSON.stringify(entry.newValues || entry.oldValues || '').toLowerCase();
+        case 'details': return detailsPreview(entry).toLowerCase();
         default: return '';
       }
     };
@@ -87,7 +128,6 @@ export default function AuditControlsPage() {
     </TableColumn>
   );
 
-  // Get unique actions and tables for filters
   const actions = useMemo(() => {
     const acts = [...new Set(auditTrail.map(entry => entry.action))];
     return acts.sort();
@@ -95,8 +135,11 @@ export default function AuditControlsPage() {
 
   const tables = useMemo(() => {
     const tabs = [...new Set(auditTrail.map(entry => entry.tableName))];
-    return tabs.sort();
+    return tabs.sort((a, b) => plainArea(a).localeCompare(plainArea(b)));
   }, [auditTrail]);
+
+  const addedCount = auditTrail.filter((entry) => entry.action === 'Create').length;
+  const changedCount = auditTrail.filter((entry) => entry.action === 'Update').length;
 
   if (isLoading) {
     return (
@@ -109,124 +152,127 @@ export default function AuditControlsPage() {
   return (
     <div className="px-3 pt-2 pb-3 md:px-4 md:pt-3 md:pb-4">
       <div className="mb-2 flex items-center gap-1.5">
-        <h1 className="text-lg md:text-xl font-bold text-gray-800">🔍 Audit & Controls</h1>
-        <HeadingInfo label="About audit and controls">Monitor system activities, audit trails, and internal controls</HeadingInfo>
+        <h1 className="text-lg md:text-xl font-bold text-gray-800">Activity log</h1>
+        <HeadingInfo label="About the activity log">
+          Who changed what in accounting — adds, edits, voids, and removals.
+        </HeadingInfo>
       </div>
 
-      {/* Summary Cards */}
       <DeskKpiStrip
         className="mb-3"
         items={[
-          { id: 'audit.total', label: 'Total Audit Entries', value: auditTrail.length, tone: 'text-blue-700' },
-          { id: 'audit.create', label: 'Create Operations', value: auditTrail.filter((entry) => entry.action === 'Create').length, tone: 'text-green-700' },
-          { id: 'audit.update', label: 'Update Operations', value: auditTrail.filter((entry) => entry.action === 'Update').length, tone: 'text-orange-700' },
+          { id: 'audit.total', label: 'Entries', value: auditTrail.length, tone: 'text-blue-700' },
+          { id: 'audit.create', label: 'Added', value: addedCount, tone: 'text-green-700' },
+          { id: 'audit.update', label: 'Changed', value: changedCount, tone: 'text-orange-700' },
         ]}
       />
 
-      {/* Filters */}
-      <Card className="mb-3 shadow-sm">
-        <CardBody className="py-2.5 px-3">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-            <Input
-              size="sm"
-              placeholder="Search audit trail..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              startContent={<span className="text-gray-400">🔍</span>}
-            />
-            
-            <Select
-              size="sm"
-              placeholder="Filter by Action"
-              selectedKeys={[filterAction]}
-              onSelectionChange={(keys) => setFilterAction(Array.from(keys)[0] as string)}
-            >
-              {['all', ...actions].map(action => (
-                <SelectItem key={action}>{action === 'all' ? 'All Actions' : action}</SelectItem>
-              ))}
-            </Select>
-
-            <Select
-              size="sm"
-              placeholder="Filter by Table"
-              selectedKeys={[filterTable]}
-              onSelectionChange={(keys) => setFilterTable(Array.from(keys)[0] as string)}
-            >
-              {['all', ...tables].map(table => (
-                <SelectItem key={table}>{table === 'all' ? 'All Tables' : table}</SelectItem>
-              ))}
-            </Select>
-
-            <div className="flex gap-2">
-              <Input
-                size="sm"
-                type="date"
-                placeholder="Start Date"
-                value={dateRange.start}
-                onChange={(e) => setDateRange({...dateRange, start: e.target.value})}
-              />
-              <Input
-                size="sm"
-                type="date"
-                placeholder="End Date"
-                value={dateRange.end}
-                onChange={(e) => setDateRange({...dateRange, end: e.target.value})}
-              />
-            </div>
-          </div>
-        </CardBody>
-      </Card>
-
-      {/* Error Alert */}
       {error && (
         <Alert color="danger" className="mb-3">
           {error}
         </Alert>
       )}
 
+      <Card className="mb-3 shadow-sm">
+        <CardBody className="py-2.5 px-3">
+          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-2">
+            <h3 className="text-sm font-semibold text-gray-800 shrink-0 mr-auto">
+              Changes ({filteredAuditTrail.length})
+            </h3>
+            <Button
+              size="sm"
+              color="primary"
+              variant="bordered"
+              className="shrink-0"
+              onPress={() => downloadCSV(
+                filteredAuditTrail.map(entry => ({
+                  when: entry.timestamp,
+                  user: entry.userId,
+                  action: plainAction(entry.action),
+                  area: plainArea(entry.tableName),
+                  record: entry.recordId,
+                  details: detailsPreview(entry),
+                })),
+                'activity_log',
+                [
+                  { key: 'when', label: 'When' },
+                  { key: 'user', label: 'Who' },
+                  { key: 'action', label: 'Action' },
+                  { key: 'area', label: 'Area' },
+                  { key: 'record', label: 'Record' },
+                  { key: 'details', label: 'Details' },
+                ]
+              )}
+            >
+              Export
+            </Button>
+          </div>
+
+          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto">
+            <Input
+              size="sm"
+              aria-label="Search activity"
+              placeholder="Search who, action, area, record"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-56 shrink-0"
+            />
+            <Select
+              size="sm"
+              aria-label="Filter by action"
+              selectedKeys={[filterAction]}
+              onSelectionChange={(keys) => setFilterAction(Array.from(keys)[0] as string)}
+              className="w-40 shrink-0"
+            >
+              {['all', ...actions].map(action => (
+                <SelectItem key={action}>{action === 'all' ? 'All actions' : plainAction(action)}</SelectItem>
+              ))}
+            </Select>
+            <Select
+              size="sm"
+              aria-label="Filter by area"
+              selectedKeys={[filterTable]}
+              onSelectionChange={(keys) => setFilterTable(Array.from(keys)[0] as string)}
+              className="w-44 shrink-0"
+            >
+              {['all', ...tables].map(table => (
+                <SelectItem key={table}>{table === 'all' ? 'All areas' : plainArea(table)}</SelectItem>
+              ))}
+            </Select>
+            <Input
+              size="sm"
+              type="date"
+              aria-label="From date"
+              value={dateRange.start}
+              onChange={(e) => setDateRange({...dateRange, start: e.target.value})}
+              className="w-36 shrink-0"
+            />
+            <Input
+              size="sm"
+              type="date"
+              aria-label="To date"
+              value={dateRange.end}
+              onChange={(e) => setDateRange({...dateRange, end: e.target.value})}
+              className="w-36 shrink-0"
+            />
+          </div>
+        </CardBody>
+      </Card>
+
       <Card className="shadow-sm">
         <CardBody className="p-0">
               <div className="px-3 pt-2 pb-3 md:px-4 md:pb-4">
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="text-sm font-semibold text-gray-800">
-                    Audit Trail ({filteredAuditTrail.length})
-                  </h3>
-                  <Button
-                    size="sm"
-                    color="primary"
-                    variant="bordered"
-                    startContent={<span>📥</span>}
-                    onPress={() => downloadCSV(
-                      filteredAuditTrail.map(entry => ({
-                        ...entry,
-                        details: entry.newValues ? JSON.stringify(entry.newValues) : (entry.oldValues ? JSON.stringify(entry.oldValues) : ''),
-                      })),
-                      'audit_trail',
-                      [
-                        { key: 'timestamp', label: 'Timestamp' },
-                        { key: 'userId', label: 'User' },
-                        { key: 'action', label: 'Action' },
-                        { key: 'tableName', label: 'Table' },
-                        { key: 'recordId', label: 'Record ID' },
-                        { key: 'details', label: 'Details' },
-                      ]
-                    )}
-                  >
-                    Export
-                  </Button>
-                </div>
-
                 <div ref={cols.frameRef} style={cols.frameStyle}>
-                  <Table aria-label="Audit Trail" removeWrapper classNames={deskResizableTableClassNames()}>
+                  <Table aria-label="Activity log" removeWrapper classNames={deskResizableTableClassNames()}>
                     <TableHeader>
-                      {column('timestamp', 'Timestamp')}
-                      {column('user', 'User')}
+                      {column('timestamp', 'When')}
+                      {column('user', 'Who')}
                       {column('action', 'Action')}
-                      {column('table', 'Table')}
-                      {column('recordId', 'Record ID')}
+                      {column('table', 'Area')}
+                      {column('recordId', 'Record')}
                       {column('details', 'Details')}
                     </TableHeader>
-                    <TableBody emptyContent="No audit trail entries found.">
+                    <TableBody emptyContent="No activity for this search.">
                       {paginatedAuditTrail.map((entry) => (
                         <TableRow key={entry.id}>
                           <TableCell>
@@ -238,38 +284,29 @@ export default function AuditControlsPage() {
                             <span className="font-medium truncate block">{entry.userId}</span>
                           </TableCell>
                           <TableCell>
-                            <Chip 
+                            <Chip
                               color={
-                                entry.action === 'Create' ? 'success' : 
-                                entry.action === 'Update' ? 'warning' : 
-                                entry.action === 'Delete' ? 'danger' : 
+                                entry.action === 'Create' ? 'success' :
+                                entry.action === 'Update' ? 'warning' :
+                                entry.action === 'Delete' || entry.action === 'Void' ? 'danger' :
                                 'primary'
-                              } 
-                              variant="flat" 
+                              }
+                              variant="flat"
                               size="sm"
                             >
-                              {entry.action}
+                              {plainAction(entry.action)}
                             </Chip>
                           </TableCell>
                           <TableCell>
-                            <span className="font-mono text-sm truncate block">{entry.tableName}</span>
+                            <span className="text-sm truncate block">{plainArea(entry.tableName)}</span>
                           </TableCell>
                           <TableCell>
                             <span className="font-mono text-sm truncate block">{entry.recordId}</span>
                           </TableCell>
                           <TableCell>
-                            <div className="max-w-xs">
-                              {entry.oldValues && (
-                                <div className="text-xs text-gray-500 mb-1 truncate">
-                                  Old: {JSON.stringify(entry.oldValues).substring(0, 50)}...
-                                </div>
-                              )}
-                              {entry.newValues && (
-                                <div className="text-xs text-gray-500 truncate">
-                                  New: {JSON.stringify(entry.newValues).substring(0, 50)}...
-                                </div>
-                              )}
-                            </div>
+                            <span className="text-xs text-gray-500 truncate block" title={detailsPreview(entry)}>
+                              {detailsPreview(entry)}
+                            </span>
                           </TableCell>
                         </TableRow>
                       ))}

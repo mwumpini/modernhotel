@@ -16,7 +16,6 @@ import {
   ModalBody, 
   ModalFooter,
   Textarea,
-  Tooltip
 } from "@heroui/react";
 import { housekeepingStore } from '../../lib/housekeeping/store';
 import { frontOfficeStore } from '../../lib/frontoffice/store';
@@ -225,22 +224,22 @@ export default function RoomStatusGrid() {
 
   return (
     <div className="space-y-3">
-      {/* Filters and Search */}
-      <div className="mb-[18px] flex flex-nowrap items-center gap-2 overflow-x-auto">
+      {/* Filters and Search — wrap on phone / zoomed tablet */}
+      <div className="mb-[18px] flex flex-wrap items-center gap-2">
         <Input
           size="sm"
           placeholder="Search room numbers..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           startContent={<span className="text-gray-400">🔍</span>}
-          className="w-52 shrink-0"
+          className="w-full max-w-full sm:w-52 sm:max-w-[13rem] shrink-0"
         />
         <Select
           size="sm"
           placeholder="Filter by status"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="w-44 shrink-0"
+          className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
         >
           <SelectItem key="all">All Statuses</SelectItem>
           <SelectItem key="occupied">🟢 Occupied</SelectItem>
@@ -256,7 +255,7 @@ export default function RoomStatusGrid() {
           placeholder="Filter by floor"
           value={floorFilter}
           onChange={(e) => setFloorFilter(e.target.value)}
-          className="w-36 shrink-0"
+          className="w-full max-w-full sm:w-36 sm:max-w-[9rem] shrink-0"
         >
           <SelectItem key="all">All Floors</SelectItem>
           <SelectItem key="1">Floor 1</SelectItem>
@@ -269,8 +268,8 @@ export default function RoomStatusGrid() {
         </div>
       </div>
 
-      {/* Room Grid — slightly wider cards so status + actions don’t collide */}
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-2.5">
+      {/* Room Grid — phone-friendly cards with finger-sized status actions */}
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,10.5rem),1fr))] gap-2.5">
         {filteredRooms.map((room) => (
           <Card
             key={room.roomNumber}
@@ -324,55 +323,43 @@ export default function RoomStatusGrid() {
                 <span className="text-[11px] tabular-nums text-gray-400">
                   {new Date(room.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </span>
-                <div className="flex flex-wrap gap-1" onClick={(e) => e.stopPropagation()}>
-                  <Tooltip content="Mark dirty">
-                    <Button
-                      size="sm"
-                      color="warning"
-                      variant="flat"
-                      isIconOnly
-                      className="min-w-7 w-7 h-7"
-                      onPress={() => handleQuickAction('dirty', room)}
-                    >
-                      🧹
-                    </Button>
-                  </Tooltip>
-                  <Tooltip content="In progress">
-                    <Button
-                      size="sm"
-                      color="primary"
-                      variant="flat"
-                      isIconOnly
-                      className="min-w-7 w-7 h-7"
-                      onPress={() => handleQuickAction('progress', room)}
-                    >
-                      🔄
-                    </Button>
-                  </Tooltip>
-                  <Tooltip content="Mark clean">
-                    <Button
-                      size="sm"
-                      color="success"
-                      variant="flat"
-                      isIconOnly
-                      className="min-w-7 w-7 h-7"
-                      onPress={() => handleQuickAction('ready', room)}
-                    >
-                      ✅
-                    </Button>
-                  </Tooltip>
-                  <Tooltip content="Mark inspected">
-                    <Button
-                      size="sm"
-                      color="secondary"
-                      variant="flat"
-                      isIconOnly
-                      className="min-w-7 w-7 h-7"
-                      onPress={() => handleQuickAction('inspected', room)}
-                    >
-                      🔍
-                    </Button>
-                  </Tooltip>
+                <div className="grid grid-cols-2 gap-1.5" onClick={(e) => e.stopPropagation()}>
+                  <Button
+                    size="sm"
+                    color="warning"
+                    variant="flat"
+                    className="min-h-10 h-10 px-1 text-[11px]"
+                    onPress={() => handleQuickAction('dirty', room)}
+                  >
+                    🧹 Dirty
+                  </Button>
+                  <Button
+                    size="sm"
+                    color="primary"
+                    variant="flat"
+                    className="min-h-10 h-10 px-1 text-[11px]"
+                    onPress={() => handleQuickAction('progress', room)}
+                  >
+                    🔄 Start
+                  </Button>
+                  <Button
+                    size="sm"
+                    color="success"
+                    variant="flat"
+                    className="min-h-10 h-10 px-1 text-[11px]"
+                    onPress={() => handleQuickAction('ready', room)}
+                  >
+                    ✅ Clean
+                  </Button>
+                  <Button
+                    size="sm"
+                    color="secondary"
+                    variant="flat"
+                    className="min-h-10 h-10 px-1 text-[11px]"
+                    onPress={() => handleQuickAction('inspected', room)}
+                  >
+                    🔍 Inspect
+                  </Button>
                 </div>
               </div>
             </CardBody>
@@ -381,7 +368,7 @@ export default function RoomStatusGrid() {
       </div>
 
       {/* Room Status Update Modal */}
-      <Modal isOpen={statusModalOpen} onClose={() => setStatusModalOpen(false)} size="2xl">
+      <Modal isOpen={statusModalOpen} onClose={() => setStatusModalOpen(false)} size="2xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>Update Room {selectedRoom?.roomNumber} Status</ModalHeader>
           <ModalBody>
@@ -438,7 +425,7 @@ export default function RoomStatusGrid() {
                 </div>
 
                 {/* Room Information */}
-                <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
                   <div>
                     <span className="font-medium text-gray-700">Room Number:</span>
                     <span className="ml-2">{selectedRoom.roomNumber}</span>
