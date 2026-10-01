@@ -29,6 +29,7 @@ export function HideCardButton({
       onClick={onHide}
       title={`Hide ${label}`}
       aria-label={`Hide ${label}`}
+      data-hide-card=""
       className={
         // The glyph stays small; the hit area does not (9px was untappable).
         size === 'sm'

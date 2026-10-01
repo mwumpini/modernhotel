@@ -824,7 +824,7 @@ html[data-tiles="custom"] .bg-gray-100 {
    class on a component still wins. */
 @layer base {
   @media (max-width: 767px), (pointer: coarse) {
-    .acct-desk :is(button, [role="button"], [role="tab"]):not([aria-label^="Hide "]):not([data-slot="clear-button"]) {
+    .acct-desk :is(button, [role="button"], [role="tab"]):not([data-hide-card]):not([data-slot="clear-button"]) {
       min-height: 40px;
       min-width: 40px;
     }
