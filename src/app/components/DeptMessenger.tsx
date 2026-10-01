@@ -126,8 +126,8 @@ export default function DeptMessenger({ from, mode = 'inline' }: DeptMessengerPr
       try {
         const resp = await fetch('/api/ai/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: content, context: aiThread.slice(-6), desk: brief.label, deskKey: from, snapshot: brief.snapshot, notices: brief.notices }) });
         if (resp.ok) {
-          const ct = resp.headers.get('content-type') || '';
-          if (ct.includes('text/event-stream') && (resp as any).body?.getReader) {
+          // Stream the reply as it arrives (AI or the local fallback, both plain text).
+          if ((resp as any).body?.getReader) {
             const reader = (resp as any).body.getReader();
             const decoder = new TextDecoder();
             let acc = '';

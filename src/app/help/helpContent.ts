@@ -568,6 +568,97 @@ export const helpTopics: HelpTopic[] = [
     keywords: ['keyboard', 'shortcut', 'f12', 'f1', 'escape'],
     category: 'general',
   },
+  // —— Fixing mistakes: void, delete, edit ——
+  {
+    id: 'void-customer-invoice',
+    title: 'Void or delete a customer invoice',
+    description:
+      'Void keeps the invoice on file marked Void and posts a reversing entry, so the books stay correct. Delete removes it for good and is only for drafts, proformas, and invoices typed in by hand.',
+    keywords: ['void invoice', 'cancel invoice', 'delete invoice', 'wrong invoice', 'reverse invoice', 'receivable', 'customer invoice'],
+    category: 'finance',
+    section: 'accounting-management',
+    steps: [
+      'Accounting → Accounts Receivable → Invoices, then open the invoice.',
+      'If money was received on it, void those receipts first (Receipts tab → open the receipt → Void).',
+      'Press Void on the invoice and confirm. It stays listed as Void.',
+      'Use Delete only for a draft, a proforma, or a manual invoice you never need to see again.',
+    ],
+    notHere:
+      'Needs the "void transactions" permission on your role. A guest folio charge is voided on the folio in Front Office, not here.',
+  },
+  {
+    id: 'void-customer-receipt',
+    title: 'Void a customer receipt (payment received)',
+    description:
+      'Voiding a receipt reverses the money in the books and reopens the balance on its invoice. A receipt taken on a guest folio is also taken off the folio.',
+    keywords: ['void receipt', 'cancel payment', 'wrong payment', 'reverse receipt', 'refund', 'receivable'],
+    category: 'finance',
+    section: 'accounting-management',
+    steps: [
+      'Accounting → Accounts Receivable → Receipts, then open the receipt.',
+      'Press Void and confirm.',
+      'The invoice shows the amount as owed again.',
+    ],
+    notHere: 'Only receipts typed in by hand or taken on an in-house folio can be voided here.',
+  },
+  {
+    id: 'void-supplier-bill',
+    title: 'Void a supplier bill or a payment to a supplier',
+    description:
+      'Voiding a bill or a supplier payment posts a reversing entry. A voided payment puts the amount back on the bill as owed.',
+    keywords: ['void bill', 'cancel bill', 'wrong bill', 'supplier payment', 'void payment', 'payable', 'supplier'],
+    category: 'finance',
+    section: 'accounting-management',
+    steps: [
+      'Accounting → Accounts Payable → Bills, then open the bill.',
+      'Void any payments made on it first (open the payment → Void).',
+      'Press Void on the bill and confirm.',
+    ],
+  },
+  {
+    id: 'void-journal-entry',
+    title: 'Void a journal entry',
+    description:
+      'A posted journal entry is not deleted. Voiding it posts the opposite entry so the two cancel out, and both stay on record.',
+    keywords: ['void journal', 'reverse journal', 'wrong journal', 'cancel entry', 'journal entry', 'ledger'],
+    category: 'finance',
+    section: 'accounting-management',
+    steps: [
+      'Accounting → Journal, then open the entry.',
+      'Press Void, then Confirm void.',
+      'A draft entry that was never posted can simply be deleted.',
+    ],
+    notHere:
+      'Entries posted from another screen (invoices, receipts, POS, payroll) are voided on that screen. The Journal tells you which one.',
+  },
+  {
+    id: 'void-folio-charge',
+    title: 'Void a charge on a guest folio',
+    description: 'Removes a wrong charge from a guest bill by posting a reversing entry. It cannot be undone.',
+    keywords: ['void charge', 'folio', 'guest bill', 'wrong charge', 'remove charge', 'cancel charge', 'guest'],
+    category: 'operations',
+    section: 'frontdesk',
+    steps: [
+      'Front Office → Invoices & Payments, then choose the guest folio.',
+      'Find the charge and press Void on its line.',
+      'Confirm. The folio total updates straight away.',
+    ],
+    notHere: 'Customer invoices for companies are voided in Accounting → Accounts Receivable.',
+  },
+  {
+    id: 'pos-cancel-order',
+    title: 'Cancel an item or delete an order on the POS',
+    description:
+      'Cancel one item that was ordered by mistake, or delete a whole order. Deleting an order needs a manager PIN.',
+    keywords: ['delete order', 'cancel order', 'cancel item', 'void order', 'wrong order', 'pos', 'restaurant', 'bar'],
+    category: 'operations',
+    section: 'food-beverage',
+    steps: [
+      'On the POS, open the Orders tab (next to Current order).',
+      'Pick Open or Paid today, then tap the item on the order.',
+      'Press Cancel item, or Delete order and enter the manager PIN.',
+    ],
+  },
   {
     id: 'help-maintain',
     title: 'Updating this Help page (for admins & developers)',

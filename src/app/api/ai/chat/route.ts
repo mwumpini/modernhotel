@@ -29,7 +29,39 @@ async function streamTextFromOpenAI(messages: Array<{ role: 'user'|'assistant'|'
     })
   });
   if (!resp.ok || !resp.body) throw new Error('OpenAI response error');
-  return resp.body as ReadableStream<Uint8Array>;
+  return plainTextFromSse(resp.body as ReadableStream<Uint8Array>);
+}
+
+/** OpenAI streams `data: {json}` lines; the chat window wants just the words. */
+function plainTextFromSse(body: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = '';
+  const emit = (line: string, controller: TransformStreamDefaultController<Uint8Array>) => {
+    const data = line.trim();
+    if (!data.startsWith('data:')) return;
+    const payload = data.slice(5).trim();
+    if (!payload || payload === '[DONE]') return;
+    try {
+      const text = JSON.parse(payload)?.choices?.[0]?.delta?.content;
+      if (typeof text === 'string' && text) controller.enqueue(encoder.encode(text));
+    } catch {
+      // A partial or non-JSON line carries no reply text.
+    }
+  };
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        buffer += decoder.decode(chunk, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) emit(line, controller);
+      },
+      flush(controller) {
+        if (buffer) emit(buffer, controller);
+      },
+    }),
+  );
 }
 
 export async function POST(req: NextRequest) {
@@ -62,7 +94,7 @@ export async function POST(req: NextRequest) {
 
     try {
       const stream = await streamTextFromOpenAI(messages as any);
-      return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+      return new Response(stream, { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Mamani-Source': 'ai' } });
     } catch (e) {
       const fallback = localMamaniReply(prompt, { label: desk, snapshot, notices, help: help.map((h) => h.text) });
       return new Response(fallback, { headers: { 'Content-Type': 'text/plain' } });
