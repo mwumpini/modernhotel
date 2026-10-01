@@ -10,7 +10,8 @@ function asLines(value: unknown, limit: number): string[] {
 
 async function streamTextFromOpenAI(messages: Array<{ role: 'user'|'assistant'|'system'; content: string }>) {
   const apiKey = process.env.OPENAI_API_KEY;
-  const baseUrl = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+  // Any OpenAI-compatible provider (OpenAI, Google Gemini, Groq). A trailing slash is fine.
+  const baseUrl = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
   const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
   if (!apiKey) throw new Error('Missing OPENAI_API_KEY');
 
