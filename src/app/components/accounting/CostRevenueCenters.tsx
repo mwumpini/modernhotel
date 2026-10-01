@@ -22,7 +22,8 @@ import {
 import HeadingInfo from '../HeadingInfo';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { useDeskPagination } from '../dashboard/deskTableUi';
-import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName } from './DeskKpiStrip';
+import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName, useAccountingDeskPeriod } from './DeskKpiStrip';
+import { isInPeriod } from '@/app/lib/dashboard/useDashboardPeriod';
 import { useAccountingStore } from '../../lib/accounting/store';
 import type { CostCenter, RevenueCenter } from '../../lib/accounting/models';
 import { formatAccountingCurrency } from '../../lib/accounting/tenantAccountingConfig';
@@ -146,9 +147,15 @@ export default function CostRevenueCenters() {
     deleteRevenueCenter(center.id);
   };
 
+  const { period: kpiPeriod, todayISO: kpiToday } = useAccountingDeskPeriod();
+  const periodJournals = useMemo(
+    () => journalEntries.filter((je) => isInPeriod(je.date, kpiPeriod, kpiToday)),
+    [journalEntries, kpiPeriod, kpiToday],
+  );
+
   const costRows = useMemo(() => {
     const enriched: CostCenterRow[] = costCenters.map((center) => {
-      const rolled = computeCostCenterActual(center, journalEntries, costCenters, chartOfAccounts);
+      const rolled = computeCostCenterActual(center, periodJournals, costCenters, chartOfAccounts);
       const actual = rolled.amount;
       const variance = (center.budget || 0) - actual;
       const variancePercent = center.budget ? (variance / center.budget * 100).toFixed(1) : '';
@@ -174,11 +181,11 @@ export default function CostRevenueCenters() {
       return String(av).localeCompare(String(bv));
     });
     return sortDir === 'asc' ? sorted : sorted.reverse();
-  }, [costCenters, journalEntries, chartOfAccounts, sortKey, sortDir]);
+  }, [costCenters, periodJournals, chartOfAccounts, sortKey, sortDir]);
 
   const revenueRows = useMemo(() => {
     const enriched: RevenueCenterRow[] = revenueCenters.map((center) => {
-      const rolled = computeRevenueCenterActual(center, journalEntries, revenueCenters, chartOfAccounts);
+      const rolled = computeRevenueCenterActual(center, periodJournals, revenueCenters, chartOfAccounts);
       const actual = rolled.amount;
       const variance = actual - (center.budget || 0);
       const variancePercent = center.budget ? (variance / center.budget * 100).toFixed(1) : '';
@@ -204,7 +211,7 @@ export default function CostRevenueCenters() {
       return String(av).localeCompare(String(bv));
     });
     return sortDir === 'asc' ? sorted : sorted.reverse();
-  }, [revenueCenters, journalEntries, chartOfAccounts, sortKey, sortDir]);
+  }, [revenueCenters, periodJournals, chartOfAccounts, sortKey, sortDir]);
 
   const {
     page: costPage,
@@ -265,7 +272,7 @@ export default function CostRevenueCenters() {
     if (activeTab === 'cost') {
       downloadCSV(
         costCenters.map((c) => {
-          const actual = computeCostCenterActual(c, journalEntries, costCenters, chartOfAccounts).amount;
+          const actual = computeCostCenterActual(c, periodJournals, costCenters, chartOfAccounts).amount;
           return {
             code: c.code,
             name: c.name,
@@ -290,7 +297,7 @@ export default function CostRevenueCenters() {
     } else {
       downloadCSV(
         revenueCenters.map((c) => {
-          const actual = computeRevenueCenterActual(c, journalEntries, revenueCenters, chartOfAccounts).amount;
+          const actual = computeRevenueCenterActual(c, periodJournals, revenueCenters, chartOfAccounts).amount;
           return {
             code: c.code,
             name: c.name,
@@ -319,8 +326,8 @@ export default function CostRevenueCenters() {
     const isCost = activeTab === 'cost';
     const rows = (isCost ? costCenters : revenueCenters).map((c: any) => {
       const actual = isCost
-        ? computeCostCenterActual(c, journalEntries, costCenters, chartOfAccounts).amount
-        : computeRevenueCenterActual(c, journalEntries, revenueCenters, chartOfAccounts).amount;
+        ? computeCostCenterActual(c, periodJournals, costCenters, chartOfAccounts).amount
+        : computeRevenueCenterActual(c, periodJournals, revenueCenters, chartOfAccounts).amount;
       const variance = isCost ? (c.budget || 0) - actual : actual - (c.budget || 0);
       return `<tr>
         <td>${c.code}</td>
@@ -544,7 +551,7 @@ export default function CostRevenueCenters() {
         </div>
       )}
 
-      <Modal isOpen={isViewOpen} onOpenChange={(open) => { if (!open) closeView(); }} size="2xl">
+      <Modal isOpen={isViewOpen} onOpenChange={(open) => { if (!open) closeView(); }} size="2xl" scrollBehavior="inside">
         <ModalContent>
           {(onClose) => {
             if (!viewRow || !viewKind) return null;
@@ -573,7 +580,7 @@ export default function CostRevenueCenters() {
                   </div>
                 </ModalHeader>
                 <ModalBody className="p-6 bg-white text-sm">
-                  <div className="grid grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                     <div className="space-y-1">
                       <div><span className="text-gray-500">Department:</span> <span className="font-medium">{humanize(center.department)}</span></div>
                       <div><span className="text-gray-500">{isCost ? 'Budget:' : 'Target:'}</span> <span className="tabular-nums font-medium">{fmt(center.budget || 0)}</span></div>
@@ -632,7 +639,7 @@ function CostCenterForm({ center, onSave, onCancel, departments, types }: any) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Code</label>
           <input
@@ -678,7 +685,7 @@ function CostCenterForm({ center, onSave, onCancel, departments, types }: any) {
         />
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
           <select
@@ -767,7 +774,7 @@ function RevenueCenterForm({ center, onSave, onCancel, departments, types }: any
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Code</label>
           <input
@@ -813,7 +820,7 @@ function RevenueCenterForm({ center, onSave, onCancel, departments, types }: any
         />
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
           <select

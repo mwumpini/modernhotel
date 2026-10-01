@@ -1108,6 +1108,8 @@ export interface ModuleSettings {
   compliance: boolean;
   maintenance: boolean;
   analytics: boolean;
+  /** Kitchen display and Send to kitchen. Off: the hotel prints tickets from the POS instead. */
+  kitchenTerminal: boolean;
 }
 
 export interface RoomManagementSettings {
@@ -4193,6 +4195,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     compliance: true,
     maintenance: true,
     analytics: true,
+    kitchenTerminal: true,
   },
   
   // Room Management - Clean Slate Configuration

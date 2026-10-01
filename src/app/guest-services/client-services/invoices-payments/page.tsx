@@ -35,7 +35,9 @@ import { InformationCircleIcon } from '@heroicons/react/24/outline';
 import { usePathname } from 'next/navigation';
 import FrontOfficeBackButton from '../../../components/FrontOfficeBackButton';
 import { HideCardButton } from '../../../components/dashboard/CustomizeViewControl';
-import { FoDeskKpiCustomize, FO_INVOICES_KPI_SECTIONS, useFrontOfficeDeskVisibility } from '../../../components/frontoffice/foDeskKpi';
+import { FoDeskKpiCustomize, FO_INVOICES_KPI_SECTIONS, useFrontOfficeDeskVisibility, useFrontOfficeDeskPeriod } from '../../../components/frontoffice/foDeskKpi';
+import { useHostSummaryCollapsed } from '../../../lib/dashboard/useSummaryCollapsed';
+import { periodToDateFilter } from '../../../lib/dashboard/useDashboardPeriod';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
 import { useSettingsStore } from '../../../lib/settings/store';
 import { useCurrentUserName } from '../../../lib/auth/useCurrentUserName';
@@ -122,6 +124,8 @@ export default function InvoicesPaymentsPage() {
   const currentUserName = useCurrentUserName();
   const { isHidden, hide, hiddenCount: hiddenStatsCount, isHosted } =
     useFrontOfficeDeskVisibility(FO_INVOICES_KPI_SECTIONS);
+  const summaryCollapsed = useHostSummaryCollapsed();
+  const { period: kpiPeriod, todayISO: kpiToday } = useFrontOfficeDeskPeriod();
   const [activeTab, setActiveTab] = useState('folios');
   const [companyFocus, setCompanyFocus] = useState<{ key: string; name: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -130,6 +134,14 @@ export default function InvoicesPaymentsPage() {
   const [dateFilterSingle, setDateFilterSingle] = useState('');
   const [dateFilterFrom, setDateFilterFrom] = useState('');
   const [dateFilterTo, setDateFilterTo] = useState('');
+
+  useEffect(() => {
+    const mapped = periodToDateFilter(kpiPeriod, kpiToday);
+    setDateFilterMode(mapped.mode);
+    setDateFilterSingle(mapped.single);
+    setDateFilterFrom(mapped.from);
+    setDateFilterTo(mapped.to);
+  }, [kpiPeriod, kpiToday]);
   const [sortBy, setSortBy] = useState('createdAt');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const settings = useSettingsStore();
@@ -994,7 +1006,7 @@ export default function InvoicesPaymentsPage() {
         </div>
       </div>
 
-      {hiddenStatsCount < INVOICES_PAYMENTS_DASHBOARD_SECTIONS.length && (
+      {!summaryCollapsed && hiddenStatsCount < INVOICES_PAYMENTS_DASHBOARD_SECTIONS.length && (
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         {!isHidden('inv.totalInvoices') && (
         <Card className="relative border border-gray-200 shadow-none">

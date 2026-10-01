@@ -20,7 +20,8 @@ import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accoun
 import BankAccountOptionLabel from '@/app/components/shared/BankAccountOptionLabel';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { useDeskPagination } from '../dashboard/deskTableUi';
-import { DeskKpiStrip } from './DeskKpiStrip';
+import { DeskKpiStrip, useAccountingDeskPeriod } from './DeskKpiStrip';
+import { getPeriodBounds } from '@/app/lib/dashboard/useDashboardPeriod';
 
 const fmt = (n: number) => (n < 0 ? '-' : '') + formatAccountingCurrency(n);
 const fmtNum = (n: number) => (n < 0 ? '-' : '') + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -138,6 +139,8 @@ export default function BooksTaxes() {
 		</TableColumn>
 	);
 
+	const { period: kpiPeriod, todayISO: kpiToday } = useAccountingDeskPeriod();
+
 	const totals = rows.reduce(
 		(acc, r) => {
 			acc.outputCollected += r.outputCollected;
@@ -151,6 +154,29 @@ export default function BooksTaxes() {
 		},
 		{ outputCollected: 0, withholding: 0, inputOffset: 0, payrollWithheld: 0, remitted: 0, remittedUnconfirmed: 0, netPosition: 0 }
 	);
+
+	// KPI strip follows Customize period (tax rows are YYYY-MM); table keeps its own filters.
+	const kpiTotals = useMemo(() => {
+		const bounds = getPeriodBounds(kpiPeriod, kpiToday);
+		const startMonth = bounds?.start.slice(0, 7);
+		const endMonth = bounds?.end.slice(0, 7);
+		const scoped = rows.filter((r) => {
+			if (!startMonth || !endMonth) return true;
+			return r.period >= startMonth && r.period <= endMonth;
+		});
+		return scoped.reduce(
+			(acc, r) => {
+				acc.outputCollected += r.outputCollected;
+				acc.withholding += r.withholding;
+				acc.inputOffset += r.inputOffset;
+				acc.payrollWithheld += r.payrollWithheld;
+				acc.remitted += r.remitted;
+				acc.netPosition += r.netPosition;
+				return acc;
+			},
+			{ outputCollected: 0, withholding: 0, inputOffset: 0, payrollWithheld: 0, remitted: 0, netPosition: 0 },
+		);
+	}, [rows, kpiPeriod, kpiToday]);
 
 	const periodOptions = ['All', ...summary.periods];
 	const owingCount = rows.filter((r) => r.netPosition > 0.004).length;
@@ -433,12 +459,12 @@ export default function BooksTaxes() {
 			<DeskKpiStrip
 				className="mb-0"
 				items={[
-					{ id: 'tax.output', label: 'From sales', value: fmt(totals.outputCollected), tone: 'text-green-700' },
-					{ id: 'tax.withholding', label: 'Withheld from suppliers', value: fmt(totals.withholding), tone: 'text-purple-700' },
-					{ id: 'tax.input', label: 'On purchases', value: fmt(totals.inputOffset), tone: 'text-blue-700' },
-					{ id: 'tax.payroll', label: 'From payroll', value: fmt(totals.payrollWithheld), tone: 'text-orange-700' },
-					{ id: 'tax.remitted', label: 'Paid to GRA', value: fmt(totals.remitted), tone: 'text-red-700' },
-					{ id: 'tax.net', label: 'Still to pay', value: fmt(totals.netPosition), tone: 'text-gray-900' },
+					{ id: 'tax.output', label: 'From sales', value: fmt(kpiTotals.outputCollected), tone: 'text-green-700' },
+					{ id: 'tax.withholding', label: 'Withheld from suppliers', value: fmt(kpiTotals.withholding), tone: 'text-purple-700' },
+					{ id: 'tax.input', label: 'On purchases', value: fmt(kpiTotals.inputOffset), tone: 'text-blue-700' },
+					{ id: 'tax.payroll', label: 'From payroll', value: fmt(kpiTotals.payrollWithheld), tone: 'text-orange-700' },
+					{ id: 'tax.remitted', label: 'Paid to GRA', value: fmt(kpiTotals.remitted), tone: 'text-red-700' },
+					{ id: 'tax.net', label: 'Still to pay', value: fmt(kpiTotals.netPosition), tone: 'text-gray-900' },
 				]}
 			/>
 
@@ -492,7 +518,7 @@ export default function BooksTaxes() {
 				<Pagination page={page} total={pages} onChange={setPage} showControls size="sm" />
 			</div>
 
-			<Modal isOpen={isOpen} onClose={onClose}>
+			<Modal isOpen={isOpen} onClose={onClose} scrollBehavior="inside">
 				<ModalContent>
 					<ModalHeader>{editingRemittanceId ? 'Edit tax payment' : 'Record a tax payment'}</ModalHeader>
 					<ModalBody className="gap-3">
@@ -602,6 +628,7 @@ export default function BooksTaxes() {
 					}
 				}}
 				size="2xl"
+				scrollBehavior="inside"
 			>
 				<ModalContent>
 					{(closeView) => {

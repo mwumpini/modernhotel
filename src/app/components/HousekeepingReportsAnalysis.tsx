@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Card, CardBody, CardHeader, Button, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
+  Card, CardBody, CardHeader, Button,
   Tabs, Tab, Select, SelectItem, Input, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
   useDisclosure, Textarea, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Chip
 } from '@heroui/react';
@@ -10,6 +10,8 @@ import {
   ArrowDownToLine, BarChart3, CalendarDays, FileSpreadsheet, FileText,
   Filter, Printer, RefreshCw, RotateCcw, Search, SlidersHorizontal, StickyNote, TrendingUp, X
 } from 'lucide-react';
+import ReportPageInfoTip from './dashboard/ReportPageInfoTip';
+import { SortableReportTable } from './reports/SortableReportTable';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { useSettingsStore } from '../lib/settings/store';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
@@ -40,8 +42,16 @@ function dayOf(iso?: string) {
   return (iso || '').slice(0, 10);
 }
 
-function formatWhen(iso?: string) {
-  return iso ? new Date(iso).toLocaleString('en-GH') : '—';
+/** Local calendar day, plus the clock when the record has a real time. Date-only values stay as written. */
+function formatWhen(value?: string | null) {
+  if (!value) return '—';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const day = `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
+  const clock = `${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+  return clock === '00:00' ? day : `${day} ${clock}`;
 }
 
 function taskDay(task: HousekeepingTask) {
@@ -61,9 +71,9 @@ function staffName(id?: string, name?: string) {
 }
 
 const RANGE_REPORT_KEYS = new Set([
-  'room-work', 'room-history', 'tasks', 'attendants', 'usage', 'usage-items', 'inspections', 'maintenance',
+  'room-work', 'room-history', 'tasks', 'attendants', 'usage', 'usage-items', 'inspections', 'maintenance', 'requisitions',
 ]);
-const NO_DATE_REPORT_KEYS = new Set(['rooms', 'onhand']);
+const NO_DATE_REPORT_KEYS = new Set(['rooms', 'onhand', 'inventory']);
 
 const REPORT_GROUPS = {
   rooms: {
@@ -76,34 +86,24 @@ const REPORT_GROUPS = {
     ],
   },
   work: {
-    title: 'Work',
-    description: 'Task history and who did it.',
+    title: 'Works & Quality',
+    description: 'Tasks, who did them, inspections and maintenance orders.',
     reports: [
       ['tasks', 'Task history'],
       ['attendants', 'Who did the work'],
+      ['inspections', 'Inspections'],
+      ['maintenance', 'Maintenance orders'],
     ],
   },
   supplies: {
     title: 'Supplies',
-    description: 'What rooms used, and what is still on hand.',
+    description: 'What rooms used, what is on hand, and what Housekeeping asked Stores for.',
     reports: [
       ['usage', 'Usage by room'],
       ['usage-items', 'Usage by item'],
       ['onhand', 'On hand'],
-    ],
-  },
-  quality: {
-    title: 'Quality',
-    description: 'Room inspections and scores on file.',
-    reports: [
-      ['inspections', 'Inspections'],
-    ],
-  },
-  maintenance: {
-    title: 'Maintenance',
-    description: 'Work orders and recorded cost.',
-    reports: [
-      ['maintenance', 'Work orders'],
+      ['inventory', 'Inventory'],
+      ['requisitions', 'Requisitions'],
     ],
   },
 } as const;
@@ -136,8 +136,10 @@ const REPORT_DESCRIPTIONS: Record<string, string> = {
   usage: 'Each supply a finished task took from housekeeping stock, room by room.',
   'usage-items': 'How much of each item rooms have used.',
   onhand: 'Soap, towels and the rest currently sitting in housekeeping.',
+  inventory: 'Housekeeping catalog with on-hand quantity, unit cost and stock value.',
+  requisitions: 'Stock requests Housekeeping sent to Stores, with status.',
   inspections: 'Recorded room inspections, scores and follow-up.',
-  maintenance: 'Maintenance work orders, status and recorded cost.',
+  maintenance: 'Maintenance orders, status and recorded cost.',
 };
 
 const EMPTY_REPORT_COPY: Record<string, string> = {
@@ -148,8 +150,10 @@ const EMPTY_REPORT_COPY: Record<string, string> = {
   usage: 'No supplies have been recorded on finished tasks in this period. Marking a task completed and entering what the room used fills this table.',
   'usage-items': 'No supply usage in this period.',
   onhand: 'Nothing is on hand. Stock appears here after Stores marks a housekeeping requisition Ready.',
+  inventory: 'No housekeeping stock is on file.',
+  requisitions: 'No housekeeping requisitions in this period.',
   inspections: 'No inspections in this period.',
-  maintenance: 'No work orders in this period.',
+  maintenance: 'No maintenance orders in this period.',
   rooms: 'No rooms are on file yet.',
 };
 
@@ -234,6 +238,24 @@ const REPORT_COLUMNS: Record<string, ReportColumnDefinition[]> = {
     { key: 'onHand', label: 'On hand' },
     { key: 'unit', label: 'Unit' },
   ],
+  inventory: [
+    { key: 'code', label: 'Code' },
+    { key: 'name', label: 'Item' },
+    { key: 'category', label: 'Category' },
+    { key: 'onHand', label: 'On hand' },
+    { key: 'unit', label: 'Unit' },
+    { key: 'unitCost', label: 'Unit cost' },
+    { key: 'stockValue', label: 'Value' },
+  ],
+  requisitions: [
+    { key: 'requisitionNumber', label: 'Requisition' },
+    { key: 'requestedDate', label: 'Requested' },
+    { key: 'requestedBy', label: 'Requested by' },
+    { key: 'status', label: 'Status' },
+    { key: 'itemCount', label: 'Lines' },
+    { key: 'items', label: 'Items' },
+    { key: 'notes', label: 'Notes', defaultVisible: false },
+  ],
   inspections: [
     { key: 'id', label: 'Inspection' },
     { key: 'roomNumber', label: 'Room' },
@@ -245,7 +267,7 @@ const REPORT_COLUMNS: Record<string, ReportColumnDefinition[]> = {
     { key: 'notes', label: 'Notes', defaultVisible: false },
   ],
   maintenance: [
-    { key: 'id', label: 'Work order' },
+    { key: 'id', label: 'Maintenance order' },
     { key: 'roomNumber', label: 'Room' },
     { key: 'category', label: 'Category' },
     { key: 'priority', label: 'Priority' },
@@ -265,7 +287,15 @@ export default function HousekeepingReportsAnalysis({ embedded = false }: { embe
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [reportDateMode, setReportDateMode] = useState<'all' | 'today' | 'specific' | 'range'>('all');
-  const [stockRows, setStockRows] = useState<{ code: string; name: string; category: string; unit: string; onHand: number }[]>([]);
+  const [stockRows, setStockRows] = useState<{ code: string; name: string; category: string; unit: string; onHand: number; unitCost: number }[]>([]);
+  const [requisitionRows, setRequisitionRows] = useState<{
+    requisitionNumber: string;
+    requestedDate: string;
+    requestedBy: string;
+    status: string;
+    notes: string;
+    items: { itemName: string; quantity: number }[];
+  }[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [reportNotes, setReportNotes] = useState('');
@@ -300,11 +330,9 @@ export default function HousekeepingReportsAnalysis({ embedded = false }: { embe
     }
   }, []);
 
-  const loadStock = () => {
-    fetch('/api/inventory/stock-levels?department=housekeeping', {
-      headers: { 'x-tenant-subdomain': getClientTenantSubdomain() },
-      cache: 'no-store',
-    })
+  const loadSupplies = () => {
+    const headers = { 'x-tenant-subdomain': getClientTenantSubdomain() };
+    fetch('/api/inventory/stock-levels?department=housekeeping', { headers, cache: 'no-store' })
       .then((response) => (response.ok ? response.json() : { items: [] }))
       .then((data) => {
         setStockRows(
@@ -314,15 +342,31 @@ export default function HousekeepingReportsAnalysis({ embedded = false }: { embe
             category: item.category || '—',
             unit: item.unit || '—',
             onHand: Number(item.onHand || 0),
+            unitCost: Number(item.defaultCost || 0),
           })),
         );
       })
       .catch(() => setStockRows([]));
+    fetch('/api/inventory/requisitions?department=housekeeping', { headers, cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : { requisitions: [] }))
+      .then((data) => {
+        setRequisitionRows(
+          (data.requisitions || []).map((req: any) => ({
+            requisitionNumber: req.requisitionNumber,
+            requestedDate: req.requestedDate || req.createdAt || '',
+            requestedBy: req.requestedBy || '—',
+            status: req.status,
+            notes: req.notes || '',
+            items: (req.items || []).map((item: any) => ({ itemName: item.itemName, quantity: Number(item.quantity) })),
+          })),
+        );
+      })
+      .catch(() => setRequisitionRows([]));
   };
 
   useEffect(() => {
     housekeepingStore.hydrateFromApi();
-    loadStock();
+    loadSupplies();
     const unsub = housekeepingStore.subscribe(() => setStoreTick((tick) => tick + 1));
     return unsub;
   }, []);
@@ -352,7 +396,7 @@ export default function HousekeepingReportsAnalysis({ embedded = false }: { embe
   };
 
   const handleRefresh = () => {
-    loadStock();
+    loadSupplies();
     housekeepingStore.hydrateFromApi().then(() => {
       setRefreshVersion((version) => version + 1);
       setGeneratedAt(new Date().toLocaleString('en-GH'));
@@ -537,6 +581,28 @@ export default function HousekeepingReportsAnalysis({ embedded = false }: { embe
             onHand: row.onHand,
             unit: row.unit,
           }));
+      case 'inventory':
+        return stockRows.map((row) => ({
+          code: row.code,
+          name: row.name,
+          category: row.category,
+          onHand: row.onHand,
+          unit: row.unit,
+          unitCost: row.unitCost,
+          stockValue: row.onHand * row.unitCost,
+        }));
+      case 'requisitions':
+        return requisitionRows
+          .filter((row) => inPeriod(dayOf(row.requestedDate)))
+          .map((row) => ({
+            requisitionNumber: row.requisitionNumber,
+            requestedDate: formatWhen(row.requestedDate),
+            requestedBy: row.requestedBy || '—',
+            status: row.status,
+            itemCount: row.items.length,
+            items: row.items.map((item) => `${item.quantity}× ${item.itemName}`).join(', ') || '—',
+            notes: row.notes || '—',
+          }));
       case 'inspections':
         return inspections.map((row) => ({
           id: row.id,
@@ -579,7 +645,7 @@ export default function HousekeepingReportsAnalysis({ embedded = false }: { embe
   const filterOptions = {
     status: uniqueValues(['status']),
     roomType: uniqueValues(['roomType', 'taskType']),
-    staff: uniqueValues(['assignedTo', 'inspectorName', 'name', 'reportedBy']),
+    staff: uniqueValues(['assignedTo', 'inspectorName', 'name', 'reportedBy', 'requestedBy']),
     category: uniqueValues(['category', 'role']),
     priority: uniqueValues(['priority']),
   };
@@ -592,7 +658,7 @@ export default function HousekeepingReportsAnalysis({ embedded = false }: { embe
     return matchesQuery
       && (filters.status === 'all' || fieldValue(row, ['status']) === filters.status)
       && (filters.roomType === 'all' || fieldValue(row, ['roomType', 'taskType']) === filters.roomType)
-      && (filters.staff === 'all' || fieldValue(row, ['assignedTo', 'inspectorName', 'name', 'reportedBy']) === filters.staff)
+      && (filters.staff === 'all' || fieldValue(row, ['assignedTo', 'inspectorName', 'name', 'reportedBy', 'requestedBy']) === filters.staff)
       && (filters.category === 'all' || fieldValue(row, ['category', 'role']) === filters.category)
       && (filters.priority === 'all' || fieldValue(row, ['priority']) === filters.priority);
   });
@@ -660,7 +726,7 @@ export default function HousekeepingReportsAnalysis({ embedded = false }: { embe
     if (selectedReport === 'maintenance') {
       const cost = rows.reduce((sum, row) => sum + Number(row.cost || 0), 0);
       return [
-        { label: 'Work orders', value: count.toLocaleString(), hint: 'In period' },
+        { label: 'Maintenance orders', value: count.toLocaleString(), hint: 'In period' },
         { label: 'Open', value: rows.filter((row) => row.status === 'reported' || row.status === 'assigned' || row.status === 'in-progress').length.toLocaleString(), hint: 'Not finished' },
         { label: 'Completed', value: rows.filter((row) => row.status === 'completed' || row.status === 'verified').length.toLocaleString(), hint: 'Closed' },
         { label: 'Recorded cost', value: money(cost), hint: 'Actual, else estimate' },
@@ -714,6 +780,22 @@ export default function HousekeepingReportsAnalysis({ embedded = false }: { embe
         { label: 'Source', value: 'Ready requisitions', hint: 'Stores marks them Ready' },
       ];
     }
+    if (selectedReport === 'inventory') {
+      return [
+        { label: 'Catalog items', value: count.toLocaleString(), hint: 'Housekeeping floor' },
+        { label: 'In stock', value: rows.filter((row) => Number(row.onHand || 0) > 0).length.toLocaleString(), hint: 'On-hand above zero' },
+        { label: 'Zero stock', value: rows.filter((row) => Number(row.onHand || 0) <= 0).length.toLocaleString(), hint: 'Nothing on the floor' },
+        { label: 'Stock value', value: money(rows.reduce((sum, row) => sum + Number(row.stockValue || 0), 0)), hint: 'On-hand cost' },
+      ];
+    }
+    if (selectedReport === 'requisitions') {
+      return [
+        { label: 'Requisitions', value: count.toLocaleString(), hint: 'Sent to Stores' },
+        { label: 'Pending', value: rows.filter((row) => row.status === 'pending').length.toLocaleString(), hint: 'Awaiting approval' },
+        { label: 'Approved', value: rows.filter((row) => row.status === 'approved' || row.status === 'ready').length.toLocaleString(), hint: 'Approved or ready' },
+        { label: 'Lines', value: rows.reduce((sum, row) => sum + Number(row.itemCount || 0), 0).toLocaleString(), hint: 'Requested items' },
+      ];
+    }
     return [
       { label: 'Records', value: count.toLocaleString(), hint: 'Matching the filters' },
       { label: 'Period start', value: NO_DATE_REPORT_KEYS.has(selectedReport) ? '—' : startDate, hint: 'Business date' },
@@ -721,7 +803,7 @@ export default function HousekeepingReportsAnalysis({ embedded = false }: { embe
       { label: 'Status', value: 'Current', hint: generatedAt ? `Refreshed ${generatedAt}` : 'Preparing report' },
     ];
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedReport, startDate, endDate, reportDateMode, generatedAt, refreshVersion, mounted, filters, storeTick, stockRows]);
+  }, [selectedReport, startDate, endDate, reportDateMode, generatedAt, refreshVersion, mounted, filters, storeTick, stockRows, requisitionRows]);
 
   const hiddenKpiLabels = hiddenKpisByReport[selectedReport] || [];
   const visibleReportKpis = reportKpis.filter((kpi) => !hiddenKpiLabels.includes(kpi.label));
@@ -809,56 +891,46 @@ export default function HousekeepingReportsAnalysis({ embedded = false }: { embe
       );
     }
     return (
-      <Table aria-label={`${selectedReport} report table`} classNames={{ base: 'overflow-x-auto', table: 'min-w-max' }}>
-        <TableHeader>
-          {visibleColumns.map((column) => (
-            <TableColumn key={column.key}>{column.label}</TableColumn>
-          ))}
-        </TableHeader>
-        <TableBody>
-          {rows.map((row: any, index: number) => (
-            <TableRow key={index}>
-              {visibleColumns.map((column) => (
-                <TableCell key={column.key}>
-                  {typeof row[column.key] === 'number' && /(cost|amount|value|price)/i.test(column.key)
-                    ? money(row[column.key])
-                    : typeof row[column.key] === 'number' && /(efficiency)/i.test(column.key)
-                    ? `${row[column.key].toLocaleString('en-GH', { maximumFractionDigits: 1 })}%`
-                    : typeof row[column.key] === 'boolean'
-                    ? (row[column.key] ? 'Yes' : 'No')
-                    : row[column.key] === null || row[column.key] === undefined
-                    ? '—'
-                    : formatReportValue(row[column.key])}
-                </TableCell>
-              ))}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+      <SortableReportTable
+        ariaLabel={`${selectedReport} report table`}
+        columns={visibleColumns}
+        rows={rows}
+        renderCell={(row, column) => (
+          typeof row[column.key] === 'number' && /(cost|amount|value|price)/i.test(column.key)
+            ? money(row[column.key] as number)
+            : typeof row[column.key] === 'number' && /(efficiency)/i.test(column.key)
+            ? `${(row[column.key] as number).toLocaleString('en-GH', { maximumFractionDigits: 1 })}%`
+            : typeof row[column.key] === 'boolean'
+            ? (row[column.key] ? 'Yes' : 'No')
+            : row[column.key] === null || row[column.key] === undefined
+            ? '—'
+            : formatReportValue(row[column.key])
+        )}
+      />
     );
   };
 
   return (
     <div className={embedded ? 'p-2' : 'min-h-screen bg-slate-50/70 p-4 md:p-6'}>
-      <div className="mx-auto max-w-[1600px] space-y-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="mx-auto max-w-[1600px] space-y-3">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-700">
-              <BarChart3 size={18} />
+            <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-blue-700">
+              <BarChart3 size={16} />
               HOUSEKEEPING INTELLIGENCE
             </div>
-            <h1 className="text-3xl font-bold tracking-tight text-slate-950">Reports & Analysis</h1>
-            <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              Room-by-room history, who did the work, and the supplies each task took off housekeeping stock.
-            </p>
+            <div className="flex items-center gap-1.5">
+              <h1 className="text-2xl font-bold tracking-tight text-slate-950 md:text-3xl">Reports & Analysis</h1>
+              <ReportPageInfoTip text="Room-by-room history, who did the work, and the supplies each task took off housekeeping stock." />
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="flat" startContent={<RefreshCw size={16} />} onPress={handleRefresh}>Refresh</Button>
-            <Button variant="bordered" startContent={<StickyNote size={16} />} onPress={onOpen}>Notes</Button>
-            <Button variant="bordered" startContent={<Printer size={16} />} onPress={() => window.print()}>Print</Button>
+          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto shrink-0">
+            <Button size="sm" variant="flat" className="shrink-0" startContent={<RefreshCw size={16} />} onPress={handleRefresh}>Refresh</Button>
+            <Button size="sm" variant="bordered" className="shrink-0" startContent={<StickyNote size={16} />} onPress={onOpen}>Notes</Button>
+            <Button size="sm" variant="bordered" className="shrink-0" startContent={<Printer size={16} />} onPress={() => window.print()}>Print</Button>
             <Dropdown>
               <DropdownTrigger>
-                <Button color="primary" startContent={<ArrowDownToLine size={16} />} isLoading={isGenerating}>Export</Button>
+                <Button size="sm" color="primary" className="shrink-0" startContent={<ArrowDownToLine size={16} />} isLoading={isGenerating}>Export</Button>
               </DropdownTrigger>
               <DropdownMenu aria-label="Export report">
                 <DropdownItem key="pdf" startContent={<FileText size={16} />} onPress={() => handleExportReport(exportableReportData, 'pdf')}>Download PDF</DropdownItem>
@@ -870,24 +942,22 @@ export default function HousekeepingReportsAnalysis({ embedded = false }: { embe
         </div>
 
         <Card className="border border-slate-200 shadow-sm">
-          <CardBody className="gap-4 p-4">
+          <CardBody className="gap-2 p-3">
             <Tabs
               selectedKey={selectedTab}
               onSelectionChange={handleTabChange}
               aria-label="Report categories"
               color="primary"
               variant="underlined"
-              classNames={{ tabList: 'gap-5', cursor: 'w-full', tab: 'px-0 h-10' }}
+              classNames={{ tabList: 'gap-3', cursor: 'w-full', tab: 'px-0 h-8' }}
             >
               {Object.entries(REPORT_GROUPS).map(([key, group]) => (
                 <Tab key={key} title={group.title} />
               ))}
             </Tabs>
 
-            <div className="grid gap-4 lg:grid-cols-[minmax(260px,1fr)_2fr]">
-              <Select
-                label="Report"
-                selectedKeys={[selectedReport]}
+            <div className="grid gap-3 lg:grid-cols-[minmax(180px,0.75fr)_2fr]">
+              <Select label="Report" className="w-full max-w-[75%]" selectedKeys={[selectedReport]}
                 onSelectionChange={(keys) => {
                   const next = Array.from(keys)[0] as string;
                   if (next) setSelectedReport(next);
@@ -901,7 +971,7 @@ export default function HousekeepingReportsAnalysis({ embedded = false }: { embe
 
               {!NO_DATE_REPORT_KEYS.has(selectedReport) && (
                 <div>
-                  <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                     <CalendarDays size={14} /> Reporting period
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -1024,19 +1094,19 @@ export default function HousekeepingReportsAnalysis({ embedded = false }: { embe
         </Card>
 
         <Card className="border border-slate-200 shadow-sm">
-          <CardBody className="overflow-x-auto px-4 py-3">
-            <div className="flex min-w-max items-center gap-4">
+          <CardBody className="overflow-x-auto px-3 py-1.5">
+            <div className="flex min-w-max items-center gap-3">
               <div className="flex flex-1 items-center divide-x divide-slate-200">
                 {visibleReportKpis.length > 0 ? visibleReportKpis.map((kpi) => (
-                  <div key={kpi.label} className="flex items-baseline gap-2 px-4 first:pl-0 last:pr-0">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</span>
-                    <span className="text-base font-bold text-slate-950">{kpi.value}</span>
+                  <div key={kpi.label} className="flex items-baseline gap-1.5 px-3 first:pl-0 last:pr-0">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</span>
+                    <span className="text-sm font-bold text-slate-950">{kpi.value}</span>
                   </div>
                 )) : (
-                  <p className="pr-4 text-sm text-slate-500">All summary metrics are hidden.</p>
+                  <p className="pr-3 text-sm text-slate-500">All summary metrics are hidden.</p>
                 )}
               </div>
-              <div className="ml-auto flex shrink-0 items-center gap-2 border-l border-slate-200 pl-4">
+              <div className="ml-auto flex shrink-0 items-center gap-1.5 border-l border-slate-200 pl-3">
                 {summaryCustomizationControls}
               </div>
             </div>
@@ -1056,7 +1126,6 @@ export default function HousekeepingReportsAnalysis({ embedded = false }: { embe
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-xl font-bold text-slate-950">{reportLabel}</h2>
-                <Chip size="sm" color="primary" variant="flat">{REPORT_GROUPS[selectedTab].title}</Chip>
               </div>
               <p className="mt-1 text-sm text-slate-500">{REPORT_DESCRIPTIONS[selectedReport]}</p>
             </div>

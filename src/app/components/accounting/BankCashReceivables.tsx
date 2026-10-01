@@ -23,7 +23,8 @@ import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingC
 import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { useDeskPagination } from '../dashboard/deskTableUi';
-import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName } from './DeskKpiStrip';
+import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName, useAccountingDeskPeriod } from './DeskKpiStrip';
+import { isInPeriod } from '@/app/lib/dashboard/useDashboardPeriod';
 
 // formatAccountingCurrency always shows a magnitude (and the ₵ symbol), so the sign is
 // reattached in front of it here (balances/net cash flow can be negative).
@@ -341,23 +342,27 @@ export default function BankCashManagementPage() {
   }, []);
 
   // Calculate totals
+  const { period: kpiPeriod, todayISO: kpiToday } = useAccountingDeskPeriod();
+
   const totalBankBalance = useMemo(() => {
     return bankAccounts.reduce((sum, account) => sum + (account.currentBalance ?? 0), 0);
   }, [bankAccounts]);
 
+  // Net movement follows Customize KPI period; balances stay current.
   const totalCashFlow = useMemo(() => {
-    const inflow = bankTransactions
-      .filter(t => t.type === 'Deposit' || t.type === 'Interest')
+    const inPeriod = bankTransactions.filter((t) => isInPeriod(t.transactionDate || t.createdAt, kpiPeriod, kpiToday));
+    const inflow = inPeriod
+      .filter((t) => t.type === 'Deposit' || t.type === 'Interest')
       .reduce((sum, t) => sum + (t.amount ?? 0), 0);
-    const outflow = bankTransactions
-      .filter(t => t.type === 'Withdrawal' || t.type === 'Charge')
+    const outflow = inPeriod
+      .filter((t) => t.type === 'Withdrawal' || t.type === 'Charge')
       .reduce((sum, t) => sum + (t.amount ?? 0), 0);
     return inflow - outflow;
-  }, [bankTransactions]);
+  }, [bankTransactions, kpiPeriod, kpiToday]);
 
   const totalCash = useMemo(() => {
     return bankAccounts
-      .filter(account => account.accountName.toLowerCase().includes('cash'))
+      .filter((account) => account.accountName.toLowerCase().includes('cash'))
       .reduce((sum, account) => sum + (account.currentBalance ?? 0), 0);
   }, [bankAccounts]);
 
@@ -800,7 +805,7 @@ export default function BankCashManagementPage() {
       </Card>
 
       {/* Add/Edit Modals */}
-      <Modal isOpen={isOpen} onClose={closeModal} size="lg">
+      <Modal isOpen={isOpen} onClose={closeModal} size="lg" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>
             {modalMode === 'account'
@@ -809,7 +814,7 @@ export default function BankCashManagementPage() {
           </ModalHeader>
           <ModalBody>
             {modalMode === 'account' ? (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Select
                   label="Account type"
                   selectedKeys={[editingItem?.accountKind || 'bank']}
@@ -904,7 +909,7 @@ export default function BankCashManagementPage() {
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Select
                   label="Type"
                   selectedKeys={[txnForm?.type || 'Deposit']}
@@ -1114,7 +1119,7 @@ export default function BankCashManagementPage() {
                     </div>
                   </ModalHeader>
                   <ModalBody className="p-6 bg-white">
-                    <div className="grid grid-cols-2 gap-6 text-sm">
+                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 text-sm">
                       <div className="space-y-1">
                         <div><span className="text-gray-500">Bank:</span> <span className="font-medium">{viewItem.bankName || '—'}</span></div>
                         <div><span className="text-gray-500">Currency:</span> <span className="font-mono">{viewItem.currency || '—'}</span></div>
@@ -1208,7 +1213,7 @@ export default function BankCashManagementPage() {
                   </div>
                 </ModalHeader>
                 <ModalBody className="p-6 bg-white">
-                  <div className="grid grid-cols-2 gap-6 text-sm">
+                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 text-sm">
                     <div className="space-y-1">
                       <div><span className="text-gray-500">Account:</span> <span className="font-medium">{accountName}</span></div>
                       <div><span className="text-gray-500">Date:</span> <span>{new Date(viewItem.transactionDate).toLocaleDateString()}</span></div>

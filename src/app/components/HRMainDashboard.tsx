@@ -14,7 +14,10 @@ import DeptMessenger from './DeptMessenger';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import ModuleExpandButton from './ModuleExpandButton';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import { useDashboardPeriod, isInPeriod, getPeriodBounds } from '../lib/dashboard/useDashboardPeriod';
 import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
+import { useSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
+import { SummaryToggle } from './dashboard/SummaryToggle';
 
 // Hideable summary/widget cards on this dashboard — the "Operations Overview"
 // tabs are core navigation, not clutter, so they're deliberately not included.
@@ -47,7 +50,6 @@ import LaborCompliancePanel from './hr/LaborCompliancePanel';
 import ComplianceReportsPanel from './hr/ComplianceReportsPanel';
 import PayrollProcessingPanel from './hr/PayrollProcessingPanel';
 import BenefitsManagementPanel from './hr/BenefitsManagementPanel';
-import SalaryAnalyticsPanel from './hr/SalaryAnalyticsPanel';
 import StaffDebtsPanel from './hr/StaffDebtsPanel';
 import HRReportsAnalysis from './HRReportsAnalysis';
 import RecentActivities from './RecentActivities';
@@ -95,9 +97,9 @@ const HR_TARGETS: Record<string, { book: HrBook; panel: string }> = {
   shifts: { book: 'time', panel: 'shifts' },
   overtime: { book: 'time', panel: 'overtime' },
   payroll: { book: 'payroll', panel: 'payroll' },
-  // Legacy deep-links: payslips folded into Staff Payroll (print from a line); salary under Reports.
+  // Legacy deep-links: payslips and the old salary summary both open the payroll book or reports.
   payslips: { book: 'payroll', panel: 'payroll' },
-  salary: { book: 'reports', panel: 'salary' },
+  salary: { book: 'reports', panel: 'analysis' },
   debts: { book: 'payroll', panel: 'debts' },
   'staff-debts': { book: 'payroll', panel: 'debts' },
   benefits: { book: 'benefits', panel: 'benefits' },
@@ -157,7 +159,9 @@ export default function HRMainDashboard({
   const initialTarget = resolveHrTarget(initialTab);
   const [book, setBook] = useState<HrBook>(initialTarget.book);
   const [panel, setPanel] = useState(initialTarget.panel);
+  const { collapsed: summaryCollapsed, toggle: toggleSummary } = useSummaryCollapsed('hr.summaryCollapsed');
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.hr', HR_DASHBOARD_SECTIONS);
+  const deskPeriod = useDashboardPeriod('dashboard.period.hr', 'today');
 
   useEffect(() => {
     const apply = () => {
@@ -221,11 +225,13 @@ export default function HRMainDashboard({
     hydrateStaffDebts();
   }, [hydrateEmployees, hydratePayroll, hydrateLeave, hydrateTraining, hydrateBenefits, hydratePerformance, hydrateEmployeeChanges, hydrateOnboarding, hydrateStaffDebts]);
 
-  const today = new Date().toISOString().slice(0, 10);
-  const isSameMonth = (d: Date | string) => {
-    const date = new Date(d);
-    const now = new Date();
-    return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+  const today = deskPeriod.todayISO;
+  const periodBounds = getPeriodBounds(deskPeriod.period, today);
+  const isInPayrollPeriod = (d: Date | string) => {
+    if (deskPeriod.period === 'all') return true;
+    const day = new Date(d).toISOString().slice(0, 10);
+    if (!periodBounds) return true;
+    return day >= periodBounds.start && day <= periodBounds.end;
   };
 
   const activeEmployees = employees.filter((e) => e.status === 'active').length;
@@ -242,7 +248,7 @@ export default function HRMainDashboard({
   const sickOnLeave = activeLeave.filter((r) => r.leaveType === 'sick').length;
   const maternityOnLeave = activeLeave.filter((r) => r.leaveType === 'maternity' || r.leaveType === 'paternity').length;
 
-  const currentMonthPeriods = payrollPeriods.filter((p) => isSameMonth(p.startDate));
+  const currentMonthPeriods = payrollPeriods.filter((p) => isInPayrollPeriod(p.startDate));
   const monthlyPayroll = currentMonthPeriods.reduce((sum, p) => sum + (p.totalNetPay || 0), 0);
   const processedPayroll = currentMonthPeriods
     .filter((p) => p.status === 'approved' || p.status === 'paid' || p.status === 'closed')
@@ -253,8 +259,8 @@ export default function HRMainDashboard({
 
   const pendingLeaveRequests = leaveRequests.filter((r) => r.status === 'pending').length;
 
-  const newHiresToday = employees.filter((e) => e.hireDate && new Date(e.hireDate).toISOString().slice(0, 10) === today).length;
-  const payrollProcessedToday = payrollRecords.filter((r) => r.createdAt && new Date(r.createdAt).toISOString().slice(0, 10) === today).length;
+  const newHiresToday = employees.filter((e) => e.hireDate && isInPeriod(e.hireDate, deskPeriod.period, today)).length;
+  const payrollProcessedToday = payrollRecords.filter((r) => r.createdAt && isInPeriod(r.createdAt, deskPeriod.period, today)).length;
 
   const openBook = (value: string) => {
     const next = resolveHrTarget(value);
@@ -272,12 +278,16 @@ export default function HRMainDashboard({
           {fullPage ? '👥 HR' : '👥 HR & Payroll'}
         </h2>
         <div className="flex items-center gap-2">
+          {!fullPage && <SummaryToggle collapsed={summaryCollapsed} onToggle={toggleSummary} />}
           <CustomizeViewControl
             sections={HR_DASHBOARD_SECTIONS}
             isHidden={isHidden}
             toggle={toggleSection}
             showAll={showAll}
             hiddenCount={hiddenCount}
+            period={deskPeriod.period}
+            onPeriodChange={deskPeriod.setPeriod}
+            defaultPeriod={deskPeriod.defaultPeriod}
           />
           {!fullPage && (
             <ModuleExpandButton
@@ -288,13 +298,13 @@ export default function HRMainDashboard({
         </div>
       </div>
 
-      {!fullPage && (
+      {!fullPage && !summaryCollapsed && (
       <>
-      <div className="mb-6">
+      <div className="mb-3">
 
         {/* Status Cards - Matching Uniform Design */}
         {(!isHidden('activeEmployees') || !isHidden('onLeave') || !isHidden('payrollStatus')) && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-3">
           {/* Active Employees */}
           {!isHidden('activeEmployees') && (
           <Card className="border-0 shadow-lg border-l-4 border-l-green-500">
@@ -377,7 +387,7 @@ export default function HRMainDashboard({
                   <span className="font-medium">₵{(pendingPayroll / 1000).toFixed(0)}K</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>This Month</span>
+                  <span>{deskPeriod.label}</span>
                   <span className="font-medium">₵{(monthlyPayroll / 1000).toFixed(0)}K</span>
                 </div>
               </div>
@@ -387,24 +397,24 @@ export default function HRMainDashboard({
         </div>
         )}
 
-        {/* Today's Operations - Matching Uniform Pattern */}
+        {/* Period operations */}
         {!isHidden('todayOps') && (
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">📅</span>
-              <h4 className="text-lg font-semibold text-ghana-black">Today's Operations</h4>
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+            <div className="flex items-center gap-1.5">
+              <span className="text-base">📅</span>
+              <h4 className="text-sm font-semibold text-ghana-black lg:text-base">Operations · {deskPeriod.label}</h4>
             </div>
-            <div className="flex items-center gap-6 text-sm">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+              <div className="flex items-center gap-1.5">
                 <span className="text-green-600 font-medium">{newHiresToday} New Hires</span>
-                <span className="text-gray-500">Added today</span>
+                <span className="text-gray-500">Hired</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <span className="text-blue-600 font-medium">{payrollProcessedToday} Payroll</span>
-                <span className="text-gray-500">Processed today</span>
+                <span className="text-gray-500">Processed</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <span className="text-orange-600 font-medium">{pendingLeaveRequests} Leave</span>
                 <span className="text-gray-500">Pending approval</span>
               </div>
@@ -416,30 +426,30 @@ export default function HRMainDashboard({
       </div>
 
       {!isHidden('quickActions') && (
-      <Card className="border-0 shadow-lg mb-6">
-        <CardHeader className="pb-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-xl">🚀</span>
-            <h3 className="text-lg font-semibold text-ghana-black">Quick Actions</h3>
+      <Card className="border-0 shadow-lg mb-3">
+        <CardHeader className="flex items-center justify-between px-3 py-1.5">
+          <div className="flex items-center gap-1.5">
+            <span className="text-base">🚀</span>
+            <h3 className="text-sm font-semibold text-ghana-black lg:text-base">Quick Actions</h3>
           </div>
           <HideCardButton onHide={() => hide('quickActions')} label="Quick Actions" />
         </CardHeader>
-        <CardBody>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Button color="primary" variant="flat" className="h-24 flex flex-col items-center justify-center gap-2 p-4" onClick={() => openBook('records')}>
-              <span className="text-2xl">👥</span>
-              <span className="font-medium">Employees</span>
-              <span className="text-xs text-center opacity-80">Open the staff file</span>
+        <CardBody className="px-3 py-2">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-1.5 md:gap-2">
+            <Button color="primary" variant="flat" className="h-auto min-h-14 flex flex-col items-center justify-center gap-0.5 px-2 py-2" onClick={() => openBook('records')}>
+              <span className="text-lg">👥</span>
+              <span className="font-medium text-sm leading-tight">Employees</span>
+              <span className="text-xs text-center opacity-80 leading-tight">Open the staff file</span>
             </Button>
-            <Button color="warning" variant="flat" className="h-24 flex flex-col items-center justify-center gap-2 p-4" onClick={() => openBook('leave')}>
-              <span className="text-2xl">🌴</span>
-              <span className="font-medium">Leave</span>
-              <span className="text-xs text-center opacity-80">Review time-off requests</span>
+            <Button color="warning" variant="flat" className="h-auto min-h-14 flex flex-col items-center justify-center gap-0.5 px-2 py-2" onClick={() => openBook('leave')}>
+              <span className="text-lg">🌴</span>
+              <span className="font-medium text-sm leading-tight">Leave</span>
+              <span className="text-xs text-center opacity-80 leading-tight">Review time-off requests</span>
             </Button>
-            <Button color="secondary" variant="flat" className="h-24 flex flex-col items-center justify-center gap-2 p-4" onClick={() => openBook('payroll')}>
-              <span className="text-2xl">💰</span>
-              <span className="font-medium">Run Payroll</span>
-              <span className="text-xs text-center opacity-80">Prepare this month’s pay</span>
+            <Button color="secondary" variant="flat" className="h-auto min-h-14 flex flex-col items-center justify-center gap-0.5 px-2 py-2" onClick={() => openBook('payroll')}>
+              <span className="text-lg">💰</span>
+              <span className="font-medium text-sm leading-tight">Run Payroll</span>
+              <span className="text-xs text-center opacity-80 leading-tight">Prepare this month’s pay</span>
             </Button>
           </div>
         </CardBody>
@@ -583,18 +593,8 @@ export default function HRMainDashboard({
             </Tab>
             <Tab key="reports" title="📈 Reports & Analysis">
               {book === 'reports' && (
-                <div className={`${deskBookTabPanelClassName} space-y-3`}>
-                  <SectionTabs
-                    label="Reports sections"
-                    selected={panel === 'salary' ? 'salary' : 'analysis'}
-                    onChange={setPanel}
-                    tabs={[
-                      { key: 'analysis', title: 'Analysis' },
-                      { key: 'salary', title: 'Salary' },
-                    ]}
-                  />
-                  {(panel === 'analysis' || panel === 'reports') && <HRReportsAnalysis embedded />}
-                  {panel === 'salary' && <SalaryAnalyticsPanel />}
+                <div className={deskBookTabPanelClassName}>
+                  <HRReportsAnalysis embedded />
                 </div>
               )}
             </Tab>

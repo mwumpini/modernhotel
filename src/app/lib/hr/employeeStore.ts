@@ -9,6 +9,42 @@ function hrTenantHeaders(): HeadersInit {
   return { 'x-tenant-subdomain': sub, 'x-tenant-id': sub, 'Content-Type': 'application/json' };
 }
 
+/** Same display name twice (a second Front Office, a second Housekeeping) is one department in the UI. Staff and positions on a dropped copy follow the one that is kept. */
+function collapseSameNameDepartments(departments: Department[], employees: Employee[], positions: Position[]) {
+  const keeperByName = new Map<string, Department>();
+  const idRemap = new Map<string, string>();
+  const kept: Department[] = [];
+  for (const department of departments) {
+    const key = String(department.name || '').trim().toLowerCase();
+    if (!key) {
+      kept.push(department);
+      continue;
+    }
+    const keeper = keeperByName.get(key);
+    if (!keeper) {
+      keeperByName.set(key, department);
+      kept.push(department);
+    } else if (department.id !== keeper.id) {
+      idRemap.set(department.id, keeper.id);
+    }
+  }
+  if (idRemap.size === 0) return { departments, employees, positions };
+  const remap = (id: string) => idRemap.get(id) || id;
+  return {
+    departments: kept,
+    employees: employees.map((employee) =>
+      employee.departmentId && idRemap.has(employee.departmentId)
+        ? { ...employee, departmentId: remap(employee.departmentId) }
+        : employee
+    ),
+    positions: positions.map((position) =>
+      position.departmentId && idRemap.has(position.departmentId)
+        ? { ...position, departmentId: remap(position.departmentId) }
+        : position
+    ),
+  };
+}
+
 // Best-effort background persistence — the store stays synchronous/in-memory for the UI
 // (same interaction model as before), but every mutation now also durably persists
 // tenant-scoped to the database, same pattern as supplierStore.ts/bankReconStore.ts.
@@ -353,6 +389,9 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
           set({ positions: data.positions.map(toDates) });
         }
       }
+      const current = get();
+      const collapsed = collapseSameNameDepartments(current.departments, current.employees, current.positions);
+      if (collapsed.departments.length !== current.departments.length) set(collapsed);
     } catch (e) {
       console.warn('[HR] Failed to hydrate employees/departments/positions from server:', e);
     }

@@ -1,7 +1,8 @@
 'use client';
 
 import React from 'react';
-import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Select, SelectItem, Autocomplete, AutocompleteItem, Chip } from '@heroui/react';
+import { Select, SelectItem, Autocomplete, AutocompleteItem, Chip } from '@heroui/react';
+import { SortableReportTable } from './reports/SortableReportTable';
 
 export interface TransactionRow {
   transactionId: string;
@@ -69,15 +70,6 @@ export default function DailyTransactionReportView({
       (filters.category === 'all' || r.category === filters.category)
     );
   }, [transactions, filters]);
-
-  const totals = React.useMemo(() => {
-    let charges = 0, payments = 0;
-    for (const r of filteredRows) {
-      if (r.transactionType === 'charge') charges += r.amount;
-      else payments += r.amount;
-    }
-    return { charges, payments, net: charges - payments };
-  }, [filteredRows]);
 
   const setFilter = (key: keyof Filters) => (keys: any) => {
     setFilters((f) => ({ ...f, [key]: (Array.from(keys)[0] as string) || 'all' }));
@@ -157,25 +149,12 @@ export default function DailyTransactionReportView({
         </Select>
       </div>}
 
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <Chip size="sm" variant="flat">{filteredRows.length} transaction{filteredRows.length === 1 ? '' : 's'}</Chip>
-        <Chip size="sm" variant="flat" color="warning">Charges {money(totals.charges)}</Chip>
-        <Chip size="sm" variant="flat" color="success">Payments {money(totals.payments)}</Chip>
-        <Chip size="sm" variant="flat" color={totals.net === 0 ? 'default' : totals.net > 0 ? 'danger' : 'primary'}>Net {money(totals.net)}</Chip>
-      </div>
-
-      <Table aria-label="Daily transactions">
-        <TableHeader>
-          {columns.map(([key, label]) => <TableColumn key={key}>{label}</TableColumn>) as any}
-        </TableHeader>
-        <TableBody emptyContent="No transactions match the selected filters">
-          {filteredRows.map((r) => (
-            <TableRow key={r.transactionId}>
-              {columns.map(([key]) => <TableCell key={key}>{renderCell(r, key)}</TableCell>) as any}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+      <SortableReportTable
+        ariaLabel="Daily transactions"
+        columns={columns.map(([key, label]) => ({ key, label }))}
+        rows={filteredRows as unknown as Record<string, unknown>[]}
+        renderCell={(row, column) => renderCell(row as unknown as TransactionRow, column.key)}
+      />
     </div>
   );
 }

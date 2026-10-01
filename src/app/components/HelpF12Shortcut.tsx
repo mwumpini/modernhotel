@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { openMessengerFromShell } from '../lib/openMessenger';
+import { openMessengerFromShell, requestAskMamani } from '../lib/openMessenger';
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -22,6 +22,7 @@ export default function HelpF12Shortcut() {
         if (isEditableTarget(e.target)) return;
         e.preventDefault();
         if (pathname === '/help') return;
+        if (requestAskMamani()) return;
         router.push('/help');
         return;
       }

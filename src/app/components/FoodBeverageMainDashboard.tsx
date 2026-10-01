@@ -16,11 +16,14 @@ import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import { useDashboardPeriod, isInPeriod } from '../lib/dashboard/useDashboardPeriod';
 import {
   STOCK_KPI_SECTIONS,
   deptInventoryVisibilityKey,
 } from './inventory/DepartmentInventoryPanel';
 import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
+import { SummaryCollapsedProvider, useSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
+import { SummaryToggle } from './dashboard/SummaryToggle';
 
 // Hideable summary cards. The service tabs (tables, reservations, menu,
 // stock, requisitions, reports) stay visible.
@@ -97,12 +100,14 @@ export default function FoodBeverageMainDashboard({
 } = {}) {
   const [, setTick] = useState(0);
   const [selectedTab, setSelectedTab] = useState(resolveFbTab(initialTab || null) || 'tables');
+  const { collapsed: summaryCollapsed, toggle: toggleSummary } = useSummaryCollapsed('restaurant.summaryCollapsed');
   const [suppliesView, setSuppliesView] = useState<SuppliesView>(() => resolveSuppliesView(initialTab));
   const [showPOS, setShowPOS] = useState(false);
   const [posEditOrderId, setPosEditOrderId] = useState<string | null>(null);
 
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.restaurantBar', FB_DASHBOARD_SECTIONS);
   const stockVisibility = useDashboardVisibility(deptInventoryVisibilityKey('restaurant'), STOCK_KPI_SECTIONS);
+  const deskPeriod = useDashboardPeriod('dashboard.period.restaurantBar', 'today');
   const onInventoryKpis = selectedTab === 'supplies' && suppliesView === 'inventory';
   const customizeSections = onInventoryKpis ? STOCK_KPI_SECTIONS : FB_DASHBOARD_SECTIONS;
   const customizeApi = onInventoryKpis ? stockVisibility : { isHidden, toggle: toggleSection, showAll, hiddenCount };
@@ -145,10 +150,11 @@ export default function FoodBeverageMainDashboard({
   const pendingOrders = activeOrders.filter(o => o.status === 'pending').length;
   const preparingOrders = activeOrders.filter(o => o.status === 'preparing').length;
 
-  // Today's operations
-  const today = new Date().toISOString().slice(0, 10);
-  const todayOrders = completedOrders.filter(o => o.createdAt?.startsWith(today));
-  const todayRevenue = todayOrders.reduce((sum, order) => sum + (order.total || 0), 0);
+  // Period-scoped completed orders (Customize → KPI period)
+  const periodOrders = completedOrders.filter((o) => isInPeriod(o.createdAt, deskPeriod.period, deskPeriod.todayISO));
+  const periodRevenue = periodOrders.reduce((sum, order) => sum + (order.total || 0), 0);
+  const periodKitchenDone = periodOrders.filter((o) => o.items.some((i) => i.route === 'kitchen')).length;
+  const periodBarDone = periodOrders.filter((o) => o.items.some((i) => i.route === 'bar')).length;
 
   if (showPOS) {
     return (
@@ -163,11 +169,13 @@ export default function FoodBeverageMainDashboard({
   }
 
   return (
+    <SummaryCollapsedProvider collapsed={!fullPage && summaryCollapsed}>
     <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
       {!fullPage && <DeptMessenger from="f&b" mode="drawer" />}
       <div className={`flex items-center justify-between ${fullPage ? 'mb-2' : 'mb-6'}`}>
         <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>🍽️ Restaurant & Bar</h2>
         <div className="flex items-center gap-2">
+          {!fullPage && <SummaryToggle collapsed={summaryCollapsed} onToggle={toggleSummary} />}
           {!fullPage && (
             <Button
               color="success"
@@ -187,6 +195,9 @@ export default function FoodBeverageMainDashboard({
             toggle={customizeApi.toggle}
             showAll={customizeApi.showAll}
             hiddenCount={customizeApi.hiddenCount}
+            period={deskPeriod.period}
+            onPeriodChange={deskPeriod.setPeriod}
+            defaultPeriod={deskPeriod.defaultPeriod}
           />
           {!fullPage && (
             <ModuleExpandButton
@@ -199,17 +210,18 @@ export default function FoodBeverageMainDashboard({
       </div>
 
       {/* Order Status Overview - Following Uniform Pattern */}
-      {!fullPage && (
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
+      {!fullPage && !summaryCollapsed && (
+      <div className="mb-4">
+        <div className="flex items-center justify-between mb-3">
           <h3 className="text-xl font-semibold text-ghana-black flex items-center gap-2">
             📊 Order Status Overview ({activeOrders.length} Active Orders)
           </h3>
+          <span className="text-xs text-gray-500">Live queue · completed {deskPeriod.label}</span>
         </div>
 
         {/* Status Cards - Matching Uniform Design */}
         {(!isHidden('activeOrders') || !isHidden('kitchenOrders') || !isHidden('barOrders')) && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-3">
           {/* Active Orders */}
           {!isHidden('activeOrders') && (
           <Card className="border-0 shadow-lg border-l-4 border-l-blue-500">
@@ -234,6 +246,10 @@ export default function FoodBeverageMainDashboard({
                 <div className="flex justify-between">
                   <span>Ready</span>
                   <span className="font-medium">{activeOrders.filter(o => o.status === 'ready').length}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Completed ({deskPeriod.label})</span>
+                  <span className="font-medium text-green-700">{periodOrders.length}</span>
                 </div>
               </div>
             </CardBody>
@@ -265,6 +281,10 @@ export default function FoodBeverageMainDashboard({
                   <span>Ready</span>
                   <span className="font-medium">{kitchenOrders.filter(o => o.status === 'ready').length}</span>
                 </div>
+                <div className="flex justify-between">
+                  <span>Completed ({deskPeriod.label})</span>
+                  <span className="font-medium text-green-700">{periodKitchenDone}</span>
+                </div>
               </div>
             </CardBody>
           </Card>
@@ -295,6 +315,10 @@ export default function FoodBeverageMainDashboard({
                   <span>Ready</span>
                   <span className="font-medium">{barOrders.filter(o => o.status === 'ready').length}</span>
                 </div>
+                <div className="flex justify-between">
+                  <span>Completed ({deskPeriod.label})</span>
+                  <span className="font-medium text-green-700">{periodBarDone}</span>
+                </div>
               </div>
             </CardBody>
           </Card>
@@ -304,28 +328,28 @@ export default function FoodBeverageMainDashboard({
 
         {/* Today's Operations - Matching Uniform Pattern */}
         {!isHidden('todayOps') && (
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">📅</span>
-              <h4 className="text-lg font-semibold text-ghana-black">Today's Operations</h4>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+            <div className="flex items-center gap-1.5">
+              <span className="text-base">📅</span>
+              <h4 className="text-sm font-semibold text-ghana-black lg:text-base">Operations · {deskPeriod.label}</h4>
             </div>
-            <div className="flex items-center gap-6 text-sm">
-              <div className="flex items-center gap-2">
-                <span className="text-green-600 font-medium">{todayOrders.length} Orders</span>
-                <span className="text-gray-500">Completed today</span>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+              <div className="flex items-center gap-1.5">
+                <span className="text-green-600 font-medium">{periodOrders.length} Orders</span>
+                <span className="text-gray-500">Completed</span>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-blue-600 font-medium">₵{todayRevenue.toFixed(2)}</span>
-                <span className="text-gray-500">Revenue today</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-blue-600 font-medium">₵{periodRevenue.toFixed(2)}</span>
+                <span className="text-gray-500">Revenue</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <span className="text-orange-600 font-medium">{activeOrders.length} Active</span>
                 <span className="text-gray-500">In progress</span>
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <HideCardButton onHide={() => hide('todayOps')} label="Today's Operations" />
           </div>
         </div>
@@ -426,5 +450,6 @@ export default function FoodBeverageMainDashboard({
       </div>
       )}
     </div>
+    </SummaryCollapsedProvider>
   );
 }

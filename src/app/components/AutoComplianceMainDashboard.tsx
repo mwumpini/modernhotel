@@ -29,6 +29,8 @@ import TaxRateBuilder from './TaxRateBuilder';
 import PayrollBuilderPanel from './PayrollBuilderPanel';
 import { syncOpenSalesTaxFilings } from '../lib/compliance/salesFilingSync';
 import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
+import { useSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
+import { SummaryToggle } from './dashboard/SummaryToggle';
 
 const VALID_TABS = ['tax', 'payroll', 'reports'] as const;
 type ComplianceTab = (typeof VALID_TABS)[number];
@@ -54,6 +56,7 @@ function resolveInitialTab(): ComplianceTab {
 
 export default function AutoComplianceMainDashboard() {
   const [selectedTab, setSelectedTab] = useState<ComplianceTab>(resolveInitialTab);
+  const { collapsed: summaryCollapsed, toggle: toggleSummary } = useSummaryCollapsed('compliance.summaryCollapsed');
   const { country, taxRules, reportingRules, reports, getComplianceScore, isLoading, error } =
     useComplianceStore();
   const { isOpen, onOpen, onClose } = useDisclosure();
@@ -83,6 +86,7 @@ export default function AutoComplianceMainDashboard() {
       const tab = (ev as CustomEvent<{ tab?: string }>).detail?.tab;
       if (tab === 'tax' || tab === 'payroll' || tab === 'reports') {
         setSelectedTab(tab);
+        try { localStorage.removeItem('compliance.tab'); } catch {}
       }
     };
     window.addEventListener('compliance.openTab', handler);
@@ -142,9 +146,10 @@ export default function AutoComplianceMainDashboard() {
         </Card>
       )}
 
-      <div className="mb-2 flex items-center justify-between gap-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-xl font-bold text-ghana-black">⚖️ Compliance & Reports</h2>
         <div className="flex flex-wrap items-center gap-2">
+          <SummaryToggle collapsed={summaryCollapsed} onToggle={toggleSummary} />
           <CountrySelector />
           <Button size="sm" variant="bordered" onPress={openSettings}>
             Rooms &amp; company
@@ -155,6 +160,7 @@ export default function AutoComplianceMainDashboard() {
         </div>
       </div>
 
+      {!summaryCollapsed && (
       <Card className="border border-slate-200 shadow-none">
         <CardBody className="px-3 py-2">
           <div className="flex flex-wrap items-baseline gap-y-1 divide-x divide-slate-200">
@@ -177,6 +183,7 @@ export default function AutoComplianceMainDashboard() {
           </div>
         </CardBody>
       </Card>
+      )}
 
       <Card className="border border-slate-200 shadow-sm">
         <CardBody className="p-3 pt-2">

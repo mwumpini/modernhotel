@@ -5,19 +5,24 @@ import {
   Card, CardBody, CardHeader, Button, Tabs, Tab, Select, SelectItem, Input,
   Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure,
   Textarea, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Chip,
-  Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
 } from '@heroui/react';
 import {
-  ArrowDownToLine, CalendarDays, FileSpreadsheet, FileText,
-  Printer, RefreshCw, StickyNote, TrendingUp,
+  ArrowDownToLine, BarChart3, CalendarDays, FileSpreadsheet, FileText,
+  Filter, Printer, RefreshCw, RotateCcw, Search, SlidersHorizontal, StickyNote, TrendingUp, X,
 } from 'lucide-react';
+import ReportPageInfoTip from '../dashboard/ReportPageInfoTip';
+import { SortableReportTable } from '../reports/SortableReportTable';
 import { useAccountingStore } from '@/app/lib/accounting/store';
-import { buildAccountingIntelligenceReport } from '@/app/lib/accounting/accountingIntelligenceReports';
+import { buildAccountingIntelligenceReport, type IntelColumn } from '@/app/lib/accounting/accountingIntelligenceReports';
+import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
+import { useSettingsStore } from '@/app/lib/settings/store';
+import { buildOrgProfile } from '@/app/lib/print/buildOrgProfile';
+import { reportDataToSections, sectionsToCSV, sectionsToExcelHtml, sectionsToPdfBlob } from '@/app/lib/frontoffice/reportExportFormat';
 
 const REPORT_GROUPS = {
   performance: {
     title: 'Performance',
-    description: 'Where income, cost and department profit came from.',
+    description: 'Posted income, spend and department contribution.',
     reports: [
       ['revenue-department', 'Income by department'],
       ['revenue-account', 'Income by books account'],
@@ -33,7 +38,6 @@ const REPORT_GROUPS = {
       ['expense-ratio', 'Spend as % of income'],
       ['top-expenses', 'Top 10 spends'],
       ['gop', 'Operating profit & margin'],
-      ['ebitda', 'EBITDA'],
       ['departmental-profit', 'Department profit'],
       ['rooms-pl', 'Rooms profit'],
       ['restaurant-pl', 'Restaurant profit'],
@@ -42,21 +46,19 @@ const REPORT_GROUPS = {
   },
   plan: {
     title: 'Plan vs result',
-    description: 'Budget, forecast and why the difference moved.',
+    description: 'Stored budgets and the same period last year.',
     reports: [
       ['budget-vs-actual', 'Budget vs actual'],
       ['budget-department', 'Department budget vs actual'],
       ['prior-year', 'Same period last year'],
-      ['forecast-vs-actual', 'Forecast vs actual'],
-      ['forecast-accuracy', 'Forecast accuracy'],
       ['variance', 'Why it moved'],
-      ['food-cost-variance', 'Food cost % vs budget'],
-      ['labor-cost-variance', 'Labour cost % vs budget'],
+      ['food-cost-variance', 'Food cost % of income'],
+      ['labor-cost-variance', 'Labour cost % of income'],
     ],
   },
   'working-capital': {
     title: 'Cash & bills',
-    description: 'Money owed, bills to pay, cash and how fast they turn.',
+    description: 'Open bills, cash on the register, and bank lines.',
     reports: [
       ['ar-aging', 'Money owed by age'],
       ['ar-customer', 'Who still owes'],
@@ -74,7 +76,7 @@ const REPORT_GROUPS = {
   },
   control: {
     title: 'Checks',
-    description: 'Tax, ratios, and whether the books match each desk.',
+    description: 'Tax on the ledger, and whether each desk matches the books.',
     reports: [
       ['tax-collected', 'Tax collected'],
       ['tax-payable', 'Tax still owed'],
@@ -97,74 +99,127 @@ const REPORT_GROUPS = {
 
 type ReportGroupKey = keyof typeof REPORT_GROUPS;
 
-const REPORT_QUESTIONS: Record<string, string> = {
-  'revenue-department': 'Where is room, restaurant, bar and events revenue coming from?',
-  'revenue-account': 'Which revenue accounts posted in this period?',
-  'revenue-date': 'How did revenue land by day?',
-  'revenue-payment': 'Cash, card, MoMo, bank or room charge?',
-  'revenue-outlet': 'Which outlet produced the revenue?',
-  'revenue-trend': 'How does this period compare with the previous one?',
-  'revenue-mix': 'What share of revenue did each department contribute?',
-  'expense-account': 'Which expense accounts absorbed the spend?',
-  'expense-department': 'Which department spent the money?',
-  'expense-vendor': 'Which vendors received the spend?',
-  'expense-trend': 'Is spend rising or falling versus the prior period?',
-  'expense-ratio': 'What share of revenue did expenses consume?',
-  'top-expenses': 'Which ten lines dominate the spend?',
-  gop: 'Gross operating profit and margin for the period.',
-  ebitda: 'Earnings before interest, tax, depreciation and amortisation.',
-  'departmental-profit': 'Revenue less direct cost by department.',
-  'rooms-pl': 'Financial result of rooms operations.',
-  'restaurant-pl': 'Financial result of restaurant operations — not the operational restaurant report.',
-  'bar-pl': 'Financial result of bar operations.',
-  'budget-vs-actual': 'Account, budget, actual, variance and variance %.',
-  'budget-department': 'Same comparison rolled up by department.',
-  'prior-year': 'Actual versus the same period last year.',
-  'forecast-vs-actual': 'Latest forecast against what actually posted.',
-  'forecast-accuracy': 'How close the forecast was.',
-  variance: 'Why the result moved — revenue versus cost.',
-  'food-cost-variance': 'Food cost % against budget.',
-  'labor-cost-variance': 'Labor cost % against budget.',
-  'ar-aging': 'How old outstanding receivables are.',
-  'ar-customer': 'Who still owes the hotel.',
-  dso: 'How many days of sales sit in receivables.',
-  'ap-aging': 'How old vendor bills are.',
-  'ap-forecast': 'What is due to be paid next.',
-  dpo: 'How many days the hotel takes to pay vendors.',
-  'cash-position': 'Cash and bank on hand.',
-  'cash-movement': 'Where cash came from and went.',
-  'bank-balances': 'Balance by bank account.',
-  'bank-recon-summary': 'Which accounts are reconciled for the period.',
-  unreconciled: 'Bank lines still open.',
-  'working-capital': 'DSO, DPO and cash conversion.',
-  'tax-collected': 'Output tax collected in the period.',
-  'tax-payable': 'Tax still owed.',
-  vat: 'VAT collected, input and net.',
-  wht: 'Withholding tax withheld and still payable.',
-  'tax-recon': 'Tax ledger versus the tax report.',
-  ratios: 'Liquidity, margin and turnover ratios.',
-  'pms-gl': 'Front office totals versus the books.',
-  'pos-gl': 'POS sales versus the books.',
-  'ar-gl': 'Receivables desk versus the books.',
-  'ap-gl': 'Payables desk versus the books.',
-  'bank-gl': 'Bank register versus the books.',
-  'journal-register': 'Journals posted in the period.',
-  adjustments: 'Manual adjusting entries.',
-  reversals: 'Reversed and voided entries.',
-  unposted: 'Transactions that have not hit the books.',
+/** Current file. The period does not change these rows. */
+const NO_DATE_REPORT_KEYS = new Set([
+  'ar-customer',
+  'ap-forecast',
+  'bank-balances',
+  'working-capital',
+]);
+
+const RANGE_REPORT_KEYS = new Set<string>(
+  Object.values(REPORT_GROUPS).flatMap((group) => group.reports.map(([key]) => key)).filter((key) => !NO_DATE_REPORT_KEYS.has(key)),
+);
+
+const REPORT_DESCRIPTIONS: Record<string, string> = {
+  'revenue-department': 'Posted revenue and direct cost by the department or cost centre on each journal line.',
+  'revenue-account': 'Revenue accounts with a balance in the selected period.',
+  'revenue-date': 'Posted revenue, spend and net by day.',
+  'revenue-payment': 'Posted receipts by payment method. This is collections, not GL revenue.',
+  'revenue-outlet': 'Revenue centres and the posted revenue mapped to each one.',
+  'revenue-trend': 'Daily posted revenue against the prior days in the same range.',
+  'revenue-mix': 'Each revenue account as a share of period revenue.',
+  'expense-account': 'Expense accounts with a balance in the selected period.',
+  'expense-department': 'Posted spend by the department or cost centre on each journal line.',
+  'expense-vendor': 'Purchase bills in the period, grouped by supplier.',
+  'expense-trend': 'Daily posted spend in the selected period.',
+  'expense-ratio': 'Period spend as a share of period revenue.',
+  'top-expenses': 'The ten expense accounts with the largest posted balance.',
+  gop: 'Period revenue less period expenses, and the resulting margin.',
+  'departmental-profit': 'Revenue less direct cost for every tagged department.',
+  'rooms-pl': 'Contribution on journal lines tagged to rooms.',
+  'restaurant-pl': 'Contribution on journal lines tagged to restaurant or food.',
+  'bar-pl': 'Contribution on journal lines tagged to bar or beverage.',
+  'budget-vs-actual': 'Each revenue and cost centre against the budget stored on that centre.',
+  'budget-department': 'Those centre budgets rolled up by department.',
+  'prior-year': 'Period revenue, spend and net against the same dates last year.',
+  variance: 'Expense accounts and each one as a share of period revenue.',
+  'food-cost-variance': 'Expense accounts whose name mentions food, as a share of revenue.',
+  'labor-cost-variance': 'Expense accounts whose name mentions wages, salary or labour.',
+  'ar-aging': 'Each open sales invoice, aged from its due date to the end of the selected period.',
+  'ar-customer': 'One row per customer with an open balance: invoice count, oldest due date and the amount still open.',
+  dso: 'Each customer still owing. Days overdue is counted from the due date. The DSO figure in the strip is open receivables against posted revenue for the selected dates.',
+  'ap-aging': 'Each open purchase bill, aged from its due date to the end of the selected period.',
+  'ap-forecast': 'Each open purchase bill, soonest due date first.',
+  dpo: 'Each supplier still to be paid. Days overdue is counted from the due date. The DPO figure in the strip is open bills against posted expenses for the selected dates.',
+  'cash-position': 'Opening, money in, money out and closing for each register in the selected period. Closing through today is the register balance. An earlier end date uses the last line on or before that day.',
+  'cash-movement': 'Each bank register line in the selected period, split into money in and money out.',
+  'bank-balances': 'Active registers, with the stored opening balance and the balance now.',
+  'bank-recon-summary': 'Register lines through the period end, with how many are reconciled and the amount still open.',
+  unreconciled: 'Register lines in the period that are not reconciled.',
+  'working-capital': 'Each register, then open receivables and open payables, then cash plus receivables minus payables.',
+  'tax-collected': 'Tax ledger rows for the months covered by the period.',
+  'tax-payable': 'The same tax ledger, including what is still owed.',
+  vat: 'VAT rows from that tax ledger.',
+  wht: 'Withholding rows from that tax ledger.',
+  'tax-recon': 'Collected, withheld, remitted and net payable from the tax ledger.',
+  ratios: 'Period margin plus current assets and liabilities from the books through the period end.',
+  'pms-gl': 'Open front-office sales invoices against the receivables accounts.',
+  'pos-gl': 'Posted outlet receipts in the period against matching revenue accounts.',
+  'ar-gl': 'Open sales invoices against the receivables accounts.',
+  'ap-gl': 'Open purchase bills against the payables accounts.',
+  'bank-gl': 'Bank register total against the bank GL accounts.',
+  'journal-register': 'Journals posted in the selected period.',
+  adjustments: 'Posted journals whose source or description says manual or adjustment.',
+  reversals: 'Voided journals, and entries whose description says reversal or void.',
+  unposted: 'Draft and pending-approval journals dated in the period.',
 };
 
-export default function ReportsAnalysis() {
-  const today = new Date().toISOString().slice(0, 10);
+const FACET_SKIP = /amount|balance|revenue|expense|profit|budget|actual|variance|mix|pct|value|debit|collected|withheld|remitted|net|date|description|reference|number|due|note|lines|open|days|gl|\bin\b|\bout\b/i;
+
+const MONEY_KEYS = new Set(['opening', 'in', 'out', 'closing', 'balance', 'total', 'paid', 'open', 'amount', 'openAmount', 'billed']);
+
+function reportCell(value: unknown, key: string): string {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'number' && MONEY_KEYS.has(key)) return formatAccountingCurrency(value);
+  if (typeof value === 'number') return value.toLocaleString('en-GH', { maximumFractionDigits: 2 });
+  return String(value);
+}
+
+function localToday() {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+function buildFacets(columns: IntelColumn[], rows: Record<string, string | number>[]) {
+  const facets: { key: string; label: string; options: string[] }[] = [];
+  for (const column of columns) {
+    if (FACET_SKIP.test(column.key)) continue;
+    const values = [...new Set(rows.map((row) => String(row[column.key] || '').trim()).filter(Boolean))];
+    if (values.length < 2 || values.length > 12) continue;
+    if (values.some((value) => value.length > 48)) continue;
+    facets.push({ key: column.key, label: column.label, options: values.sort((a, b) => a.localeCompare(b)) });
+    if (facets.length >= 6) break;
+  }
+  return facets;
+}
+
+export default function ReportsAnalysis({ embedded = false }: { embedded?: boolean } = {}) {
+  const today = localToday();
   const monthStart = `${today.slice(0, 7)}-01`;
   const [selectedTab, setSelectedTab] = useState<ReportGroupKey>('performance');
   const [selectedReport, setSelectedReport] = useState('revenue-account');
   const [startDate, setStartDate] = useState(monthStart);
   const [endDate, setEndDate] = useState(today);
   const [reportDateMode, setReportDateMode] = useState<'today' | 'specific' | 'range'>('range');
-  const [generatedAt, setGeneratedAt] = useState(() => new Date().toLocaleString());
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   const [reportNotes, setReportNotes] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [query, setQuery] = useState('');
+  const [facetValues, setFacetValues] = useState<Record<string, string>>({});
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [hiddenKpisByReport, setHiddenKpisByReport] = useState<Record<string, string[]>>({});
+  const [hiddenColumnsByReport, setHiddenColumnsByReport] = useState<Record<string, string[]>>({});
   const { isOpen, onOpen, onClose } = useDisclosure();
+
+  const settings = useSettingsStore();
+  const orgProfile = buildOrgProfile(settings);
+  const currentUserLabel = settings.currentUser
+    ? `${settings.currentUser.firstName} ${settings.currentUser.lastName}`.trim() || settings.currentUser.email
+    : 'System';
+
   const initializeAccounting = useAccountingStore((s) => s.initializeAccounting);
   const journalEntries = useAccountingStore((s) => s.journalEntries);
   const chartOfAccounts = useAccountingStore((s) => s.chartOfAccounts);
@@ -177,19 +232,30 @@ export default function ReportsAnalysis() {
   const revenueCenters = useAccountingStore((s) => s.revenueCenters);
 
   useEffect(() => {
+    setGeneratedAt(new Date().toLocaleString());
     initializeAccounting().catch(() => {});
+    try {
+      const kpis = localStorage.getItem('accounting.report-summary-preferences');
+      const columns = localStorage.getItem('accounting.report-column-preferences');
+      if (kpis) setHiddenKpisByReport(JSON.parse(kpis));
+      if (columns) setHiddenColumnsByReport(JSON.parse(columns));
+    } catch { /* ignore */ }
   }, [initializeAccounting]);
 
   const reportLabel = useMemo(
     () => REPORT_GROUPS[selectedTab].reports.find(([key]) => key === selectedReport)?.[1] || 'Report',
-    [selectedTab, selectedReport]
+    [selectedTab, selectedReport],
   );
+
+  const snapshot = NO_DATE_REPORT_KEYS.has(selectedReport);
+  const effectiveStart = snapshot ? today : startDate;
+  const effectiveEnd = snapshot ? today : endDate;
 
   const report = useMemo(
     () => buildAccountingIntelligenceReport({
       reportKey: selectedReport,
-      startDate,
-      endDate,
+      startDate: effectiveStart,
+      endDate: effectiveEnd,
       journalEntries,
       chartOfAccounts,
       invoices,
@@ -200,13 +266,55 @@ export default function ReportsAnalysis() {
       costCenters,
       revenueCenters,
     }),
-    [selectedReport, startDate, endDate, journalEntries, chartOfAccounts, invoices, payments, bankAccounts, bankTransactions, businessPartners, costCenters, revenueCenters]
+    [selectedReport, effectiveStart, effectiveEnd, journalEntries, chartOfAccounts, invoices, payments, bankAccounts, bankTransactions, businessPartners, costCenters, revenueCenters],
   );
+
+  const rawRows = report.rows;
+  const facetDefinitions = useMemo(() => buildFacets(report.columns, rawRows), [report.columns, rawRows]);
+  const activeFacetCount = facetDefinitions.filter((facet) => facetValues[facet.key] && facetValues[facet.key] !== 'all').length;
+  const activeFilterCount = activeFacetCount + (query.trim() ? 1 : 0);
+
+  const rows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return rawRows.filter((row) => {
+      if (needle && !Object.values(row).some((value) => String(value).toLowerCase().includes(needle))) return false;
+      return facetDefinitions.every((facet) => {
+        const selected = facetValues[facet.key];
+        return !selected || selected === 'all' || String(row[facet.key] || '') === selected;
+      });
+    });
+  }, [rawRows, query, facetValues, facetDefinitions]);
+
+  const hiddenColumnKeys = hiddenColumnsByReport[selectedReport] || [];
+  const visibleColumns = report.columns.filter((column) => !hiddenColumnKeys.includes(column.key));
+  const hiddenKpiLabels = hiddenKpisByReport[selectedReport] || [];
+  const visibleKpis = report.kpis.filter((kpi) => !hiddenKpiLabels.includes(kpi.label));
+
+  const saveKpiPreferences = (hiddenLabels: string[]) => {
+    const next = { ...hiddenKpisByReport, [selectedReport]: hiddenLabels };
+    setHiddenKpisByReport(next);
+    try { localStorage.setItem('accounting.report-summary-preferences', JSON.stringify(next)); } catch { /* ignore */ }
+  };
+
+  const saveColumnPreferences = (hiddenKeys: string[]) => {
+    const next = { ...hiddenColumnsByReport, [selectedReport]: hiddenKeys };
+    setHiddenColumnsByReport(next);
+    try { localStorage.setItem('accounting.report-column-preferences', JSON.stringify(next)); } catch { /* ignore */ }
+  };
+
+  const clearFilters = () => {
+    setQuery('');
+    setFacetValues({});
+    setFiltersExpanded(false);
+  };
 
   const handleTabChange = (key: React.Key) => {
     const groupKey = key as ReportGroupKey;
+    const nextReport = REPORT_GROUPS[groupKey].reports[0][0];
     setSelectedTab(groupKey);
-    setSelectedReport(REPORT_GROUPS[groupKey].reports[0][0]);
+    setSelectedReport(nextReport);
+    clearFilters();
+    if (reportDateMode === 'range' && NO_DATE_REPORT_KEYS.has(nextReport)) setReportDateMode('today');
   };
 
   const handleRefresh = () => {
@@ -214,205 +322,345 @@ export default function ReportsAnalysis() {
     initializeAccounting().catch(() => {});
   };
 
-  const handleExport = (format: 'csv' | 'excel') => {
-    const header = report.columns.map((column) => column.label);
-    const body = report.rows.map((row) => report.columns.map((column) => row[column.key] || ''));
-    const csv = [header, ...body].map((line) => line.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: format === 'excel' ? 'application/vnd.ms-excel' : 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `accounting_${selectedReport}_${startDate}.${format === 'excel' ? 'xls' : 'csv'}`;
-    link.click();
-    URL.revokeObjectURL(url);
+  const exportRows = rows.map((row) => {
+    const out: Record<string, string> = {};
+    for (const column of (visibleColumns.length ? visibleColumns : report.columns)) out[column.label] = reportCell(row[column.key], column.key);
+    return out;
+  });
+
+  const handleExportReport = async (format: 'pdf' | 'excel' | 'csv') => {
+    setIsGenerating(true);
+    try {
+      const extension = format === 'excel' ? 'xls' : format;
+      const filename = `accounting_${selectedReport}_${effectiveStart}.${extension}`;
+      const generatedLabel = generatedAt ? `Generated on ${generatedAt} by ${currentUserLabel}` : undefined;
+      const sections = reportDataToSections(exportRows);
+      const blob = format === 'csv'
+        ? new Blob([sectionsToCSV(sections, orgProfile, generatedLabel)], { type: 'text/csv' })
+        : format === 'excel'
+        ? new Blob([sectionsToExcelHtml(reportLabel, sections, orgProfile, generatedLabel)], { type: 'application/vnd.ms-excel' })
+        : await sectionsToPdfBlob(reportLabel, sections, orgProfile, generatedLabel);
+      const fileUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = fileUrl;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(fileUrl);
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
+  const showDateControls = !snapshot;
+  const rangeAllowed = RANGE_REPORT_KEYS.has(selectedReport);
+
   return (
-    <div className="px-3 pt-2 pb-3 md:px-4 md:pt-3 md:pb-4">
-      <div className="mx-auto max-w-[1600px] space-y-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+    <div className={embedded ? 'px-2 py-1' : 'min-h-screen bg-slate-50/70 p-4 md:p-6'}>
+      <div className="mx-auto max-w-[1600px] space-y-2">
+        <div className="flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
-            <div className="mb-1 flex items-center gap-1.5">
-              <h1 className="text-lg md:text-xl font-bold text-gray-800">Reports</h1>
+            <div className="mb-0.5 flex items-center gap-2 text-sm font-semibold text-blue-700">
+              <BarChart3 size={16} />
+              ACCOUNTING INTELLIGENCE
             </div>
-            <p className="max-w-2xl text-sm text-slate-600">
-              Why the numbers moved, where money came from or went, and what needs attention.
-              Official statements stay under Statements.
-            </p>
+            <div className="flex items-center gap-1.5">
+              <h1 className="text-2xl font-bold tracking-tight text-slate-950 md:text-3xl">Reports & Analysis</h1>
+              <ReportPageInfoTip text="Posted journals, open bills, bank lines and tax on the ledger. Official statements stay under Statements." />
+            </div>
           </div>
-          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto shrink-0">
-            <Button size="sm" variant="flat" className="shrink-0" startContent={<RefreshCw size={16} />} onPress={handleRefresh}>
-              Refresh
-            </Button>
-            <Button size="sm" variant="bordered" className="shrink-0" startContent={<StickyNote size={16} />} onPress={onOpen}>
-              Notes
-            </Button>
-            <Button size="sm" variant="bordered" className="shrink-0" startContent={<Printer size={16} />} onPress={() => window.print()}>
-              Print
-            </Button>
+          <div className="flex shrink-0 flex-nowrap items-center gap-1.5 overflow-x-auto">
+            <Button size="sm" variant="flat" className="shrink-0" startContent={<RefreshCw size={16} />} onPress={handleRefresh}>Refresh</Button>
+            <Button size="sm" variant="bordered" className="shrink-0" startContent={<StickyNote size={16} />} onPress={onOpen}>Notes</Button>
+            <Button size="sm" variant="bordered" className="shrink-0" startContent={<Printer size={16} />} onPress={() => window.print()}>Print</Button>
             <Dropdown>
               <DropdownTrigger>
-                <Button size="sm" color="primary" className="shrink-0" startContent={<ArrowDownToLine size={16} />}>
-                  Export
-                </Button>
+                <Button size="sm" color="primary" className="shrink-0" startContent={<ArrowDownToLine size={16} />} isLoading={isGenerating}>Export</Button>
               </DropdownTrigger>
               <DropdownMenu aria-label="Export report">
-                <DropdownItem key="excel" startContent={<FileSpreadsheet size={16} />} onPress={() => handleExport('excel')}>
-                  Spreadsheet
-                </DropdownItem>
-                <DropdownItem key="csv" startContent={<ArrowDownToLine size={16} />} onPress={() => handleExport('csv')}>
-                  CSV
-                </DropdownItem>
-                <DropdownItem key="pdf" startContent={<FileText size={16} />} onPress={() => window.print()}>
-                  Print PDF
-                </DropdownItem>
+                <DropdownItem key="pdf" startContent={<FileText size={16} />} onPress={() => handleExportReport('pdf')}>Download PDF</DropdownItem>
+                <DropdownItem key="excel" startContent={<FileSpreadsheet size={16} />} onPress={() => handleExportReport('excel')}>Download Excel</DropdownItem>
+                <DropdownItem key="csv" startContent={<ArrowDownToLine size={16} />} onPress={() => handleExportReport('csv')}>Download CSV</DropdownItem>
               </DropdownMenu>
             </Dropdown>
           </div>
         </div>
 
         <Card className="border border-slate-200 shadow-sm">
-          <CardBody className="gap-4 p-4">
+          <CardBody className="gap-2 px-3 py-2">
             <Tabs
               selectedKey={selectedTab}
               onSelectionChange={handleTabChange}
-              aria-label="Accounting report categories"
+              aria-label="Report categories"
               color="primary"
               variant="underlined"
-              classNames={{ tabList: 'gap-5', cursor: 'w-full', tab: 'px-0 h-10' }}
+              classNames={{ tabList: 'gap-3', cursor: 'w-full', tab: 'px-0 h-8' }}
             >
               {Object.entries(REPORT_GROUPS).map(([key, group]) => (
                 <Tab key={key} title={group.title} />
               ))}
             </Tabs>
 
-            <div className="grid gap-4 lg:grid-cols-[minmax(260px,1fr)_2fr]">
+            <div className="flex flex-col gap-2 min-[900px]:flex-row min-[900px]:items-end min-[900px]:justify-between min-[900px]:gap-3">
               <Select
                 label="Report"
+                className="w-full max-w-full min-[900px]:w-64 min-[900px]:max-w-[16rem] min-[900px]:shrink-0"
+                classNames={{ trigger: 'min-h-[48px] h-[48px] py-1', label: 'text-xs', value: 'text-sm' }}
                 selectedKeys={[selectedReport]}
                 onSelectionChange={(keys) => {
                   const next = Array.from(keys)[0] as string;
-                  if (next) setSelectedReport(next);
+                  const allowed: string[] = REPORT_GROUPS[selectedTab].reports.map(([key]) => key);
+                  if (next && allowed.includes(next)) {
+                    setSelectedReport(next);
+                    clearFilters();
+                    if (reportDateMode === 'range' && NO_DATE_REPORT_KEYS.has(next)) setReportDateMode('today');
+                  }
                 }}
-                startContent={<TrendingUp size={16} className="text-slate-400" />}
+                startContent={<TrendingUp size={15} className="text-slate-400" />}
               >
                 {REPORT_GROUPS[selectedTab].reports.map(([key, label]) => (
-                  <SelectItem key={key}>{label}</SelectItem>
+                  <SelectItem key={key} textValue={label}>{label}</SelectItem>
                 ))}
               </Select>
 
-              <div>
-                <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  <CalendarDays size={14} /> Reporting period
+              {showDateControls && (
+                <div className="flex min-w-0 flex-col items-stretch min-[900px]:items-end">
+                  <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500 min-[900px]:justify-end">
+                    <CalendarDays size={14} /> Reporting period
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 min-[900px]:flex-nowrap min-[900px]:justify-end">
+                    {(['today', 'specific', 'range'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => {
+                          if (mode === 'today') {
+                            const day = localToday();
+                            setStartDate(day);
+                            setEndDate(day);
+                          }
+                          setReportDateMode(mode);
+                        }}
+                        disabled={mode === 'range' && !rangeAllowed}
+                        className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
+                          reportDateMode === mode
+                            ? 'border-blue-600 bg-blue-600 text-white'
+                            : mode === 'range' && !rangeAllowed
+                            ? 'cursor-not-allowed border-slate-200 bg-slate-50 text-slate-300'
+                            : 'border-slate-200 bg-white text-slate-600 hover:border-blue-400'
+                        }`}
+                      >
+                        {mode === 'today' ? 'Today' : mode === 'specific' ? 'Specific date' : 'Date range'}
+                      </button>
+                    ))}
+                    {reportDateMode === 'specific' && (
+                      <Input
+                        aria-label="Report date"
+                        type="date"
+                        value={startDate}
+                        onChange={(event) => {
+                          setStartDate(event.target.value);
+                          setEndDate(event.target.value);
+                        }}
+                        className="w-[8.5rem] max-w-[8.5rem] shrink-0"
+                        classNames={{ inputWrapper: 'w-[8.5rem] max-w-[8.5rem]', input: 'text-xs' }}
+                        size="sm"
+                      />
+                    )}
+                    {reportDateMode === 'range' && rangeAllowed && (
+                      <>
+                        <Input
+                          aria-label="Start date"
+                          type="date"
+                          value={startDate}
+                          onChange={(event) => setStartDate(event.target.value)}
+                          className="w-[8.5rem] max-w-[8.5rem] shrink-0"
+                          classNames={{ inputWrapper: 'w-[8.5rem] max-w-[8.5rem]', input: 'text-xs' }}
+                          size="sm"
+                        />
+                        <span className="shrink-0 text-sm text-slate-400">to</span>
+                        <Input
+                          aria-label="End date"
+                          type="date"
+                          value={endDate}
+                          min={startDate}
+                          onChange={(event) => setEndDate(event.target.value)}
+                          className="w-[8.5rem] max-w-[8.5rem] shrink-0"
+                          classNames={{ inputWrapper: 'w-[8.5rem] max-w-[8.5rem]', input: 'text-xs' }}
+                          size="sm"
+                        />
+                      </>
+                    )}
+                  </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {(['today', 'specific', 'range'] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => {
-                        if (mode === 'today') {
-                          const day = new Date().toISOString().slice(0, 10);
-                          setStartDate(day);
-                          setEndDate(day);
-                        }
-                        setReportDateMode(mode);
-                      }}
-                      className={`rounded-lg border px-3 py-2 text-xs font-semibold transition ${
-                        reportDateMode === mode
-                          ? 'border-blue-600 bg-blue-600 text-white'
-                          : 'border-slate-200 bg-white text-slate-600 hover:border-blue-400'
-                      }`}
-                    >
-                      {mode === 'today' ? 'Today' : mode === 'specific' ? 'Specific date' : 'Date range'}
-                    </button>
-                  ))}
-                  {reportDateMode === 'specific' && (
-                    <Input
-                      aria-label="Report date"
-                      type="date"
-                      value={startDate}
-                      onChange={(event) => {
-                        setStartDate(event.target.value);
-                        setEndDate(event.target.value);
-                      }}
-                      className="w-44"
-                      size="sm"
-                    />
-                  )}
-                  {reportDateMode === 'range' && (
-                    <>
-                      <Input aria-label="Start date" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className="w-44" size="sm" />
-                      <span className="text-sm text-slate-400">to</span>
-                      <Input aria-label="End date" type="date" value={endDate} min={startDate} onChange={(event) => setEndDate(event.target.value)} className="w-44" size="sm" />
-                    </>
-                  )}
-                </div>
-              </div>
+              )}
             </div>
+
+            {(rawRows.length > 0 || facetDefinitions.length > 0) && (
+              <div className="border-t border-slate-100 pt-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    aria-label="Search report results"
+                    placeholder="Account, supplier, reference..."
+                    value={query}
+                    onValueChange={setQuery}
+                    startContent={<Search size={16} className="text-slate-400" />}
+                    size="sm"
+                    className="w-full sm:w-64 lg:w-72"
+                  />
+                  {facetDefinitions.length > 0 && (
+                    <Button
+                      size="sm"
+                      variant={filtersExpanded ? 'solid' : 'bordered'}
+                      color={filtersExpanded ? 'primary' : 'default'}
+                      startContent={<Filter size={14} />}
+                      onPress={() => setFiltersExpanded((expanded) => !expanded)}
+                    >
+                      Filters{activeFacetCount ? ` (${activeFacetCount})` : ''}
+                    </Button>
+                  )}
+                  {facetDefinitions.filter((facet) => facetValues[facet.key] && facetValues[facet.key] !== 'all').map((facet) => (
+                    <Chip
+                      key={facet.key}
+                      size="sm"
+                      variant="flat"
+                      color="primary"
+                      onClose={() => setFacetValues((current) => ({ ...current, [facet.key]: 'all' }))}
+                    >
+                      {facet.label}: {facetValues[facet.key]}
+                    </Chip>
+                  ))}
+                  <span className="ml-auto text-xs text-slate-500">Showing {rows.length} of {rawRows.length}</span>
+                  {activeFilterCount > 0 && (
+                    <Button size="sm" variant="light" color="danger" startContent={<X size={14} />} onPress={clearFilters}>Clear</Button>
+                  )}
+                </div>
+                {filtersExpanded && facetDefinitions.length > 0 && (
+                  <div className="mt-3 grid gap-2 border-t border-slate-100 pt-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+                    {facetDefinitions.map((facet) => (
+                      <Select
+                        key={facet.key}
+                        aria-label={facet.label}
+                        label={facet.label}
+                        size="sm"
+                        selectedKeys={[facetValues[facet.key] || 'all']}
+                        onSelectionChange={(keys) => {
+                          const value = (Array.from(keys)[0] as string) || 'all';
+                          setFacetValues((current) => ({ ...current, [facet.key]: value }));
+                          setFiltersExpanded(false);
+                        }}
+                      >
+                        <SelectItem key="all">All {facet.label.toLocaleLowerCase()}s</SelectItem>
+                        {facet.options.map((option) => <SelectItem key={option}>{option}</SelectItem>) as any}
+                      </Select>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </CardBody>
         </Card>
 
         <Card className="border border-slate-200 shadow-sm">
-          <CardBody className="overflow-x-auto px-4 py-3">
-            <div className="flex min-w-max items-center divide-x divide-slate-200">
-              {(report.kpis.length ? report.kpis : [{ label: 'Rows', value: String(report.rows.length) }]).map((kpi) => (
-                <div key={kpi.label} className="flex items-baseline gap-2 px-4 first:pl-0 last:pr-0">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</span>
-                  <span className="text-base font-bold text-slate-950">{kpi.value}</span>
+          <CardBody className="overflow-x-auto px-3 py-1.5">
+            <div className="flex min-w-max items-center gap-3">
+              <div className="flex flex-1 items-center divide-x divide-slate-200">
+                {(visibleKpis.length ? visibleKpis : [{ label: 'Rows', value: String(rows.length) }]).map((kpi) => (
+                  <div key={kpi.label} className="flex items-baseline gap-1.5 px-3 first:pl-0 last:pr-0">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</span>
+                    <span className="text-sm font-bold text-slate-950">{kpi.value}</span>
+                  </div>
+                ))}
+              </div>
+              {report.kpis.length > 0 && (
+                <div className="ml-auto flex shrink-0 items-center gap-1.5 border-l border-slate-200 pl-3">
+                  {hiddenKpiLabels.length > 0 && (
+                    <Button size="sm" variant="light" startContent={<RotateCcw size={14} />} onPress={() => saveKpiPreferences([])}>Restore metrics</Button>
+                  )}
+                  <Dropdown closeOnSelect={false}>
+                    <DropdownTrigger>
+                      <Button size="sm" variant="bordered" startContent={<SlidersHorizontal size={14} />}>Customize summary</Button>
+                    </DropdownTrigger>
+                    <DropdownMenu
+                      aria-label="Choose summary metrics"
+                      selectionMode="multiple"
+                      selectedKeys={new Set(visibleKpis.map((kpi) => kpi.label))}
+                      onSelectionChange={(keys) => {
+                        const visibleLabels = keys === 'all' ? report.kpis.map((kpi) => kpi.label) : Array.from(keys).map(String);
+                        saveKpiPreferences(report.kpis.filter((kpi) => !visibleLabels.includes(kpi.label)).map((kpi) => kpi.label));
+                      }}
+                    >
+                      {report.kpis.map((kpi) => <DropdownItem key={kpi.label}>{kpi.label}</DropdownItem>) as any}
+                    </DropdownMenu>
+                  </Dropdown>
                 </div>
-              ))}
+              )}
             </div>
           </CardBody>
         </Card>
 
         <Card id="report-print-area" className="border border-slate-200 shadow-sm">
-          <CardHeader className="flex flex-col items-start gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-xl font-bold text-slate-950">{reportLabel}</h2>
-                <Chip size="sm" color="primary" variant="flat">{REPORT_GROUPS[selectedTab].title}</Chip>
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-slate-100 px-4 py-1.5">
+            <div className="min-w-0">
+              <div className="hidden print:block">
+                <h2 className="text-xl font-bold">{orgProfile.name}</h2>
+                {(orgProfile.address || orgProfile.phone || orgProfile.email) && (
+                  <p className="text-xs text-slate-500">
+                    {[orgProfile.address, orgProfile.phone, orgProfile.email].filter(Boolean).join(' · ')}
+                  </p>
+                )}
               </div>
-              <p className="mt-1 text-sm text-slate-500">
-                {REPORT_QUESTIONS[selectedReport] || REPORT_GROUPS[selectedTab].description}
-              </p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <h2 className="text-lg font-bold text-slate-950">{reportLabel}</h2>
+                <ReportPageInfoTip text={REPORT_DESCRIPTIONS[selectedReport] || REPORT_GROUPS[selectedTab].description} label={`About ${reportLabel}`} />
+              </div>
             </div>
-            <div className="text-left text-xs text-slate-500 sm:text-right">
-              <div>{startDate === endDate ? startDate : `${startDate} – ${endDate}`}</div>
-              <div>Generated {generatedAt}</div>
+            <div className="flex shrink-0 items-center gap-2">
+              <div className="whitespace-nowrap text-[11px] text-slate-500">
+                {snapshot ? 'Current snapshot' : effectiveStart === effectiveEnd ? effectiveStart : `${effectiveStart} – ${effectiveEnd}`}
+                <span className="mx-1.5 text-slate-300">·</span>
+                Generated {generatedAt ?? '…'} by {currentUserLabel}
+              </div>
+              {report.columns.length > 0 && (
+                <Dropdown closeOnSelect={false}>
+                  <DropdownTrigger>
+                    <Button size="sm" variant="bordered" startContent={<SlidersHorizontal size={14} />}>Columns</Button>
+                  </DropdownTrigger>
+                  <DropdownMenu
+                    aria-label="Choose table columns"
+                    selectionMode="multiple"
+                    disallowEmptySelection
+                    selectedKeys={new Set((visibleColumns.length ? visibleColumns : report.columns).map((column) => column.key))}
+                    onSelectionChange={(keys) => {
+                      const selected = keys === 'all' ? report.columns.map((column) => column.key) : Array.from(keys).map(String);
+                      saveColumnPreferences(report.columns.filter((column) => !selected.includes(column.key)).map((column) => column.key));
+                    }}
+                  >
+                    {report.columns.map((column) => <DropdownItem key={column.key}>{column.label}</DropdownItem>) as any}
+                  </DropdownMenu>
+                </Dropdown>
+              )}
             </div>
           </CardHeader>
-          <CardBody className="p-5">
-            {report.rows.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center">
-                <p className="text-sm font-medium text-slate-700">No rows for this period</p>
-                <p className="mt-1 text-xs text-slate-500">{report.emptyHint}</p>
+          <CardBody className="p-3 sm:p-5">
+            {rows.length === 0 ? (
+              <div className="py-8 text-center">
+                <p className="text-gray-500">
+                  {activeFilterCount > 0
+                    ? 'No records match the active filters. Clear or adjust the filters to continue.'
+                    : report.emptyHint || 'No data available for the selected report and date.'}
+                </p>
               </div>
             ) : (
-              <Table removeWrapper aria-label={reportLabel}>
-                <TableHeader>
-                  {report.columns.map((column) => (
-                    <TableColumn key={column.key} className={column.align === 'right' ? 'text-right' : ''}>
-                      {column.label}
-                    </TableColumn>
-                  ))}
-                </TableHeader>
-                <TableBody>
-                  {report.rows.map((row, index) => (
-                    <TableRow key={`${selectedReport}-${index}`}>
-                      {report.columns.map((column) => (
-                        <TableCell key={column.key} className={column.align === 'right' ? 'text-right font-mono text-sm' : 'text-sm'}>
-                          {row[column.key]}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <SortableReportTable
+                ariaLabel={reportLabel}
+                columns={visibleColumns.length ? visibleColumns : report.columns}
+                rows={rows as Record<string, unknown>[]}
+                renderCell={(row, column) => reportCell(row[column.key], column.key)}
+              />
             )}
             {reportNotes && (
-              <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">Report notes</div>
+              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">Notes</p>
                 <p className="mt-1 whitespace-pre-wrap text-sm text-amber-950">{reportNotes}</p>
               </div>
             )}
@@ -422,19 +670,19 @@ export default function ReportsAnalysis() {
 
       <Modal isOpen={isOpen} onClose={onClose} size="2xl">
         <ModalContent>
-          <ModalHeader>Notes for this report</ModalHeader>
+          <ModalHeader>Add Report Notes</ModalHeader>
           <ModalBody>
             <Textarea
-              label="Notes"
-              placeholder="Anything to remember about this report…"
+              label="Report Notes"
+              placeholder="Add any additional notes or observations about this report..."
               value={reportNotes}
-              onValueChange={setReportNotes}
+              onChange={(event) => setReportNotes(event.target.value)}
               minRows={4}
             />
           </ModalBody>
           <ModalFooter>
             <Button variant="bordered" onPress={onClose}>Cancel</Button>
-            <Button color="primary" onPress={onClose}>Save notes</Button>
+            <Button color="primary" onPress={onClose}>Save Notes</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

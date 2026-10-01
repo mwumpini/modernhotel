@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Card, CardBody, CardHeader, Button, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
+  Card, CardBody, CardHeader, Button,
   Tabs, Tab, Select, SelectItem, Input, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
   useDisclosure, Textarea, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Chip
 } from '@heroui/react';
@@ -10,12 +10,14 @@ import {
   ArrowDownToLine, BarChart3, CalendarDays, FileSpreadsheet, FileText,
   Filter, Printer, RefreshCw, RotateCcw, Search, SlidersHorizontal, StickyNote, TrendingUp, X
 } from 'lucide-react';
+import ReportPageInfoTip from './dashboard/ReportPageInfoTip';
 import { fetchFbOrders, fbTenantHeaders, type FbOrderDto } from '../lib/fb/api';
 import { kitchenOpsStore } from '../lib/fb/kitchenOpsStore';
 import { buildLiveStationBoard, stationForItem } from '../lib/fb/kitchenStations';
 import { useSettingsStore } from '../lib/settings/store';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
 import { reportDataToSections, sectionsToCSV, sectionsToExcelHtml, sectionsToPdfBlob } from '../lib/frontoffice/reportExportFormat';
+import { SortableReportTable } from './reports/SortableReportTable';
 
 function labelize(key: string): string {
   return key.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
@@ -25,7 +27,22 @@ function formatReportValue(value: unknown): React.ReactNode {
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'number') return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  return String(value);
+  return shortStamp(String(value));
+}
+
+/** Local calendar day, plus the clock when the record has a real time. */
+function stamp(value?: string | null) {
+  if (!value) return '—';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const day = `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
+  const clock = `${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+  return clock === '00:00' ? day : `${day} ${clock}`;
+}
+
+function shortStamp(text: string) {
+  return /^\d{4}-\d{2}-\d{2}T/.test(text) ? stamp(text) : text;
 }
 
 function money(value: number) {
@@ -64,17 +81,11 @@ const NO_DATE_REPORT_KEYS = new Set(['stations', 'inventory', 'recipes']);
 
 const REPORT_GROUPS = {
   board: {
-    title: 'Board',
-    description: 'Kitchen tickets and actual prep times from the pass.',
+    title: 'Board & Stations',
+    description: 'Kitchen tickets, prep times, station load and the operations log.',
     reports: [
       ['tickets', 'Tickets'],
       ['prep-times', 'Prep Times'],
-    ],
-  },
-  stations: {
-    title: 'Stations',
-    description: 'Live station load and the operations log from the KDS.',
-    reports: [
       ['stations', 'Station Load'],
       ['operations-log', 'Operations Log'],
     ],
@@ -242,7 +253,7 @@ function ticketRows(orders: FbOrderDto[], startDate: string, endDate: string) {
       const items = kitchenItems(order);
       return {
         orderNumber: order.orderNumber,
-        createdAt: order.createdAt ? new Date(order.createdAt).toLocaleString('en-GH') : '—',
+        createdAt: stamp(order.createdAt),
         venue: order.venue || '—',
         table: order.tableNumber || order.roomNumber || '—',
         guestName: order.guestName || '—',
@@ -264,10 +275,8 @@ function prepTimeRows(orders: FbOrderDto[], startDate: string, endDate: string) 
       orderNumber: order.orderNumber,
       cook: order.assignedToName || 'Unassigned',
       items: kitchenItems(order).map((item) => `${item.quantity}× ${item.name}`).join(', '),
-      startedAt: (order.preparingAt || order.createdAt)
-        ? new Date(order.preparingAt || order.createdAt).toLocaleString('en-GH')
-        : '—',
-      servedAt: order.servedAt ? new Date(order.servedAt).toLocaleString('en-GH') : '—',
+      startedAt: stamp(order.preparingAt || order.createdAt),
+      servedAt: stamp(order.servedAt),
       prepMinutes: prepMinutes(order),
       status: order.status,
     }))
@@ -434,7 +443,7 @@ export default function KitchenReportsAnalysis({ embedded = false }: { embedded?
         return kitchenOpsStore.all()
           .filter((row) => inDateRange(dayOf(row.at), startDate, endDate))
           .map((row) => ({
-            at: new Date(row.at).toLocaleString('en-GH'),
+            at: stamp(row.at),
             orderId: row.orderId,
             table: row.table || '—',
             itemName: row.itemName,
@@ -712,63 +721,50 @@ export default function KitchenReportsAnalysis({ embedded = false }: { embedded?
     }
 
     return (
-      <Table
-        aria-label={`${selectedReport} report table`}
-        classNames={{ base: 'overflow-x-auto', table: 'min-w-max' }}
-      >
-        <TableHeader>
-          {visibleColumns.map((column) => (
-            <TableColumn key={column.key}>{column.label}</TableColumn>
-          ))}
-        </TableHeader>
-        <TableBody>
-          {rows.map((row: any, index: number) => (
-            <TableRow key={index}>
-              {visibleColumns.map((column) => (
-                <TableCell key={column.key}>
-                  {typeof row[column.key] === 'number' && /(amount|total|cost|value|price)/i.test(column.key)
-                    ? money(row[column.key])
-                    : typeof row[column.key] === 'boolean'
-                    ? (row[column.key] ? 'Yes' : 'No')
-                    : row[column.key] === null || row[column.key] === undefined
-                    ? '—'
-                    : formatReportValue(row[column.key])}
-                </TableCell>
-              ))}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+      <SortableReportTable
+        ariaLabel={`${selectedReport} report table`}
+        columns={visibleColumns}
+        rows={rows}
+        renderCell={(row, column) => (
+          typeof row[column.key] === 'number' && /(amount|total|cost|value|price)/i.test(column.key)
+            ? money(row[column.key] as number)
+            : typeof row[column.key] === 'boolean'
+            ? (row[column.key] ? 'Yes' : 'No')
+            : row[column.key] === null || row[column.key] === undefined
+            ? '—'
+            : formatReportValue(row[column.key])
+        )}
+      />
     );
   };
 
   return (
-    <div className={embedded ? 'p-2' : 'min-h-screen bg-slate-50/70 p-4 md:p-6'}>
-      <div className="mx-auto max-w-[1600px] space-y-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-700">
-              <BarChart3 size={18} />
+    <div className={embedded ? 'px-2 py-1' : 'min-h-screen bg-slate-50/70 p-4 md:p-6'}>
+      <div className="mx-auto max-w-[1600px] space-y-2">
+        <div className="flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <div className="mb-0.5 flex items-center gap-2 text-sm font-semibold text-blue-700">
+              <BarChart3 size={16} />
               KITCHEN INTELLIGENCE
             </div>
-            <h1 className="text-3xl font-bold tracking-tight text-slate-950">Reports & Analysis</h1>
-            <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              Pass control, station load and kitchen stock from one workspace.
-            </p>
+            <div className="flex items-center gap-1.5">
+              <h1 className="text-2xl font-bold tracking-tight text-slate-950 md:text-3xl">Reports & Analysis</h1>
+              <ReportPageInfoTip text="Pass control, station load and kitchen stock from one workspace." />
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="flat" startContent={<RefreshCw size={16} />} onPress={handleRefresh}>
+          <div className="flex shrink-0 flex-nowrap items-center gap-1.5 overflow-x-auto">
+            <Button size="sm" variant="flat" className="shrink-0" startContent={<RefreshCw size={16} />} onPress={handleRefresh}>
               Refresh
             </Button>
-            <Button variant="bordered" startContent={<StickyNote size={16} />} onPress={onOpen}>
+            <Button size="sm" variant="bordered" className="shrink-0" startContent={<StickyNote size={16} />} onPress={onOpen}>
               Notes
             </Button>
-            <Button variant="bordered" startContent={<Printer size={16} />} onPress={() => window.print()}>
+            <Button size="sm" variant="bordered" className="shrink-0" startContent={<Printer size={16} />} onPress={() => window.print()}>
               Print
             </Button>
             <Dropdown>
               <DropdownTrigger>
-                <Button color="primary" startContent={<ArrowDownToLine size={16} />} isLoading={isGenerating}>
+                <Button size="sm" color="primary" className="shrink-0" startContent={<ArrowDownToLine size={16} />} isLoading={isGenerating}>
                   Export
                 </Button>
               </DropdownTrigger>
@@ -788,29 +784,35 @@ export default function KitchenReportsAnalysis({ embedded = false }: { embedded?
         </div>
 
         <Card className="border border-slate-200 shadow-sm">
-          <CardBody className="gap-4 p-4">
+          <CardBody className="gap-2 px-3 py-2">
             <Tabs
               selectedKey={selectedTab}
               onSelectionChange={handleTabChange}
               aria-label="Report categories"
               color="primary"
               variant="underlined"
-              classNames={{ tabList: 'gap-5', cursor: 'w-full', tab: 'px-0 h-10' }}
+              classNames={{ tabList: 'gap-3', cursor: 'w-full', tab: 'px-0 h-8' }}
             >
               {Object.entries(REPORT_GROUPS).map(([key, group]) => (
                 <Tab key={key} title={group.title} />
               ))}
             </Tabs>
 
-            <div className="grid gap-4 lg:grid-cols-[minmax(260px,1fr)_2fr]">
+            <div className="flex flex-col gap-2 min-[900px]:flex-row min-[900px]:items-end min-[900px]:justify-between min-[900px]:gap-3">
               <Select
                 label="Report"
+                className="w-full max-w-full min-[900px]:w-64 min-[900px]:max-w-[16rem] min-[900px]:shrink-0"
+                classNames={{
+                  trigger: 'min-h-[48px] h-[48px] py-1',
+                  label: 'text-xs',
+                  value: 'text-sm',
+                }}
                 selectedKeys={[selectedReport]}
                 onSelectionChange={(keys) => {
                   const next = Array.from(keys)[0] as string;
                   if (next) setSelectedReport(next);
                 }}
-                startContent={<TrendingUp size={16} className="text-slate-400" />}
+                startContent={<TrendingUp size={15} className="text-slate-400" />}
               >
                 {REPORT_GROUPS[selectedTab].reports.map(([key, label]) => (
                   <SelectItem key={key}>{label}</SelectItem>
@@ -818,11 +820,11 @@ export default function KitchenReportsAnalysis({ embedded = false }: { embedded?
               </Select>
 
               {!NO_DATE_REPORT_KEYS.has(selectedReport) && (
-                <div>
-                  <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <div className="flex min-w-0 flex-col items-stretch min-[900px]:items-end">
+                  <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500 min-[900px]:justify-end">
                     <CalendarDays size={14} /> Reporting period
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5 min-[900px]:flex-nowrap min-[900px]:justify-end">
                     {(['today', 'specific', 'range'] as const).map((mode) => (
                       <button
                         key={mode}
@@ -836,7 +838,7 @@ export default function KitchenReportsAnalysis({ embedded = false }: { embedded?
                           setReportDateMode(mode);
                         }}
                         disabled={mode === 'range' && !RANGE_REPORT_KEYS.has(selectedReport)}
-                        className={`rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+                        className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
                           reportDateMode === mode
                             ? 'border-blue-600 bg-blue-600 text-white'
                             : mode === 'range' && !RANGE_REPORT_KEYS.has(selectedReport)
@@ -856,15 +858,33 @@ export default function KitchenReportsAnalysis({ embedded = false }: { embedded?
                           setStartDate(event.target.value);
                           setEndDate(event.target.value);
                         }}
-                        className="w-44"
+                        className="w-[8.5rem] max-w-[8.5rem] shrink-0"
+                        classNames={{ inputWrapper: 'w-[8.5rem] max-w-[8.5rem]', input: 'text-xs' }}
                         size="sm"
                       />
                     )}
                     {reportDateMode === 'range' && RANGE_REPORT_KEYS.has(selectedReport) && (
                       <>
-                        <Input aria-label="Start date" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className="w-44" size="sm" />
-                        <span className="text-sm text-slate-400">to</span>
-                        <Input aria-label="End date" type="date" value={endDate} min={startDate} onChange={(event) => setEndDate(event.target.value)} className="w-44" size="sm" />
+                        <Input
+                          aria-label="Start date"
+                          type="date"
+                          value={startDate}
+                          onChange={(event) => setStartDate(event.target.value)}
+                          className="w-[8.5rem] max-w-[8.5rem] shrink-0"
+                          classNames={{ inputWrapper: 'w-[8.5rem] max-w-[8.5rem]', input: 'text-xs' }}
+                          size="sm"
+                        />
+                        <span className="shrink-0 text-sm text-slate-400">to</span>
+                        <Input
+                          aria-label="End date"
+                          type="date"
+                          value={endDate}
+                          min={startDate}
+                          onChange={(event) => setEndDate(event.target.value)}
+                          className="w-[8.5rem] max-w-[8.5rem] shrink-0"
+                          classNames={{ inputWrapper: 'w-[8.5rem] max-w-[8.5rem]', input: 'text-xs' }}
+                          size="sm"
+                        />
                       </>
                     )}
                   </div>
@@ -872,7 +892,7 @@ export default function KitchenReportsAnalysis({ embedded = false }: { embedded?
               )}
             </div>
 
-            {rawRows.length > 0 && (
+            {(rawRows.length > 0 || facetDefinitions.length > 0) && (
               <div className="border-t border-slate-100 pt-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <Input
@@ -953,19 +973,19 @@ export default function KitchenReportsAnalysis({ embedded = false }: { embedded?
         </Card>
 
         <Card className="border border-slate-200 shadow-sm">
-          <CardBody className="overflow-x-auto px-4 py-3">
-            <div className="flex min-w-max items-center gap-4">
+          <CardBody className="overflow-x-auto px-3 py-1.5">
+            <div className="flex min-w-max items-center gap-3">
               <div className="flex flex-1 items-center divide-x divide-slate-200">
                 {visibleReportKpis.length > 0 ? visibleReportKpis.map((kpi) => (
-                  <div key={kpi.label} className="flex items-baseline gap-2 px-4 first:pl-0 last:pr-0">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</span>
-                    <span className="text-base font-bold text-slate-950">{kpi.value}</span>
+                  <div key={kpi.label} className="flex items-baseline gap-1.5 px-3 first:pl-0 last:pr-0">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</span>
+                    <span className="text-sm font-bold text-slate-950">{kpi.value}</span>
                   </div>
                 )) : (
-                  <p className="pr-4 text-sm text-slate-500">All summary metrics are hidden.</p>
+                  <p className="pr-3 text-sm text-slate-500">All summary metrics are hidden.</p>
                 )}
               </div>
-              <div className="ml-auto flex shrink-0 items-center gap-2 border-l border-slate-200 pl-4">
+              <div className="ml-auto flex shrink-0 items-center gap-1.5 border-l border-slate-200 pl-3">
                 {summaryCustomizationControls}
               </div>
             </div>
@@ -973,8 +993,8 @@ export default function KitchenReportsAnalysis({ embedded = false }: { embedded?
         </Card>
 
         <Card id="report-print-area" className="border border-slate-200 shadow-sm">
-          <CardHeader className="flex flex-col items-start gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-slate-100 px-4 py-1.5">
+            <div className="min-w-0">
               <div className="hidden print:block">
                 <h2 className="text-xl font-bold">{orgProfile.name}</h2>
                 {(orgProfile.address || orgProfile.phone || orgProfile.email) && (
@@ -983,16 +1003,23 @@ export default function KitchenReportsAnalysis({ embedded = false }: { embedded?
                   </p>
                 )}
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-xl font-bold text-slate-950">{reportLabel}</h2>
-                <Chip size="sm" color="primary" variant="flat">{REPORT_GROUPS[selectedTab].title}</Chip>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <h2 className="text-lg font-bold text-slate-950">{reportLabel}</h2>
+                <ReportPageInfoTip
+                  text={REPORT_DESCRIPTIONS[selectedReport] || REPORT_GROUPS[selectedTab].description}
+                  label={`About ${reportLabel}`}
+                />
               </div>
-              <p className="mt-1 text-sm text-slate-500">{REPORT_DESCRIPTIONS[selectedReport]}</p>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="text-left text-xs text-slate-500 sm:text-right">
-                <div>{NO_DATE_REPORT_KEYS.has(selectedReport) ? 'Current snapshot' : startDate === endDate ? startDate : `${startDate} – ${endDate}`}</div>
-                <div>Generated {generatedAt ?? '…'} by {currentUserLabel}</div>
+            <div className="flex shrink-0 items-center gap-2">
+              <div className="whitespace-nowrap text-[11px] text-slate-500">
+                {NO_DATE_REPORT_KEYS.has(selectedReport)
+                  ? 'Current snapshot'
+                  : startDate === endDate
+                    ? startDate
+                    : `${startDate} – ${endDate}`}
+                <span className="mx-1.5 text-slate-300">·</span>
+                Generated {generatedAt ?? '…'} by {currentUserLabel}
               </div>
               {Array.isArray(reportData) && availableColumns.length > 0 && (
                 <Dropdown closeOnSelect={false}>
@@ -1019,11 +1046,11 @@ export default function KitchenReportsAnalysis({ embedded = false }: { embedded?
               )}
             </div>
           </CardHeader>
-          <CardBody className="p-5">
+          <CardBody className="p-3 sm:p-5">
             {renderReportTable()}
             {reportNotes && (
-              <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">Report notes</div>
+              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">Notes</p>
                 <p className="mt-1 whitespace-pre-wrap text-sm text-amber-950">{reportNotes}</p>
               </div>
             )}

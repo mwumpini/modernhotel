@@ -31,6 +31,7 @@ export function useDepartmentStaff(
   alsoStaffNames: string[] = [],
 ) {
   const [staff, setStaff] = useState<DepartmentStaffMember[]>([]);
+  const [hasDepartment, setHasDepartment] = useState(false);
 
   useEffect(() => {
     if (!enabled) return;
@@ -56,6 +57,7 @@ export function useDepartmentStaff(
           })
           .map((d: any) => d.id)
       );
+      setHasDepartment(matchingDeptIds.size > 0);
       const deptById = new Map<string, string>(departments.map((d: any) => [d.id, d.name]));
       const posById = new Map<string, string>(positions.map((p: any) => [p.id, p.title]));
       const employees = (empData.employees || []) as any[];
@@ -78,5 +80,5 @@ export function useDepartmentStaff(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [departmentNameHints.join(','), excludeNameHints.join(','), alsoStaffNames.join(','), enabled]);
 
-  return staff;
+  return { members: staff, hasDepartment };
 }

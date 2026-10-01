@@ -29,7 +29,9 @@ import { Autocomplete, AutocompleteItem } from "@heroui/react";
 import GuestSearchEmptyState from './frontoffice/GuestSearchEmptyState';
 import AttachmentUpload from './shared/AttachmentUpload';
 import { HideCardButton } from './dashboard/CustomizeViewControl';
-import { FoDeskKpiCustomize, FO_RESERVATIONS_KPI_SECTIONS, useFrontOfficeDeskVisibility } from './frontoffice/foDeskKpi';
+import { FoDeskKpiCustomize, FO_RESERVATIONS_KPI_SECTIONS, useFrontOfficeDeskVisibility, useFrontOfficeDeskPeriod } from './frontoffice/foDeskKpi';
+import { useHostSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
+import { stayOverlapsPeriod } from '../lib/dashboard/useDashboardPeriod';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { resolveGuestAddress } from '../lib/frontoffice/helpers/guests';
 import { autoAssignRoomsEnabled, useSettingsStore } from '../lib/settings/store';
@@ -211,6 +213,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   const router = useRouter();
   const { isHidden, hide, hiddenCount: hiddenStatsCount, isHosted } =
     useFrontOfficeDeskVisibility(FO_RESERVATIONS_KPI_SECTIONS);
+  const summaryCollapsed = useHostSummaryCollapsed();
+  const { period: kpiPeriod, todayISO: kpiToday } = useFrontOfficeDeskPeriod();
   // Starts null (matching SSR) and is only ever set from an effect — see the
   // load-reservations effect below — so this component's first render can't
   // diverge from the server-rendered HTML.
@@ -1366,18 +1370,22 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         </div>
       </div>
 
-      {/* Quick Stats */}
-      {hiddenStatsCount < RESERVATIONS_DASHBOARD_SECTIONS.length && (
+      {/* Quick Stats — stay-overlap follows Customize KPI period; checked-in is current snapshot */}
+      {!summaryCollapsed && hiddenStatsCount < RESERVATIONS_DASHBOARD_SECTIONS.length && (
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4 xl:grid-cols-7">
-        {([
-          ['res.totalReservations', reservations.length, 'text-gray-900'],
-          ['res.confirmed', reservations.filter(r => r.status === 'confirmed').length, 'text-green-700'],
-          ['res.checkedIn', reservations.filter(r => r.status === 'checked-in').length, 'text-blue-700'],
-          ['res.businessStays', reservations.filter(r => ['business', 'corporate', 'conference', 'training'].includes(r.stayReason || 'personal')).length, 'text-purple-700'],
-          ['res.thirdPartyBilling', reservations.filter(r => r.billingPersonId).length, 'text-orange-700'],
-          ['res.internationalGuests', reservations.filter(r => frontOfficeStore.guests.find(g => g.id === r.guestId)?.nationality !== 'ghanaian').length, 'text-indigo-700'],
-          ['res.pending', reservations.filter(r => r.status === 'pending').length, 'text-yellow-700'],
-        ] as const).map(([id, value, tone]) => {
+        {(() => {
+          const inPeriod = (r: Reservation) =>
+            stayOverlapsPeriod(r.arrival, r.departure, kpiPeriod, kpiToday);
+          const periodRes = reservations.filter(inPeriod);
+          return ([
+            ['res.totalReservations', periodRes.length, 'text-gray-900'],
+            ['res.confirmed', periodRes.filter((r) => r.status === 'confirmed').length, 'text-green-700'],
+            ['res.checkedIn', reservations.filter((r) => r.status === 'checked-in').length, 'text-blue-700'],
+            ['res.businessStays', periodRes.filter((r) => ['business', 'corporate', 'conference', 'training'].includes(r.stayReason || 'personal')).length, 'text-purple-700'],
+            ['res.thirdPartyBilling', periodRes.filter((r) => r.billingPersonId).length, 'text-orange-700'],
+            ['res.internationalGuests', periodRes.filter((r) => frontOfficeStore.guests.find((g) => g.id === r.guestId)?.nationality !== 'ghanaian').length, 'text-indigo-700'],
+            ['res.pending', periodRes.filter((r) => r.status === 'pending').length, 'text-yellow-700'],
+          ] as const).map(([id, value, tone]) => {
           if (isHidden(id)) return null;
           const label = RESERVATIONS_DASHBOARD_SECTIONS.find((card) => card.id === id)?.label || id;
           return (
@@ -1391,7 +1399,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
               </CardBody>
             </Card>
           );
-        })}
+        });
+        })()}
       </div>
       )}
 

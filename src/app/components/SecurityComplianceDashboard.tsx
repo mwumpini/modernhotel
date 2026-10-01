@@ -28,6 +28,7 @@ import { SortLabel, unifiedTableClassNames, rowClassNames, useResizableColumns }
 import { DetailGrid, DetailField } from './frontoffice/detailView';
 import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
 import SecurityReportsAnalysis from './SecurityReportsAnalysis';
+import { useDashboardPeriod, isInPeriod } from '../lib/dashboard/useDashboardPeriod';
 
 // Hideable summary cards for the whole Security module — the Recent
 // Activities/Notices cards that live outside this component, in
@@ -48,12 +49,15 @@ interface SecurityComplianceDashboardProps {
   fullPage?: boolean;
   initialTab?: string;
   onTabChange?: (tab: string) => void;
+  /** Phone, tablet, and short screens start with the patrol/shift status tiles hidden. */
+  summaryCollapsed?: boolean;
 }
 
 export default function SecurityComplianceDashboard({
   fullPage = false,
   initialTab,
   onTabChange,
+  summaryCollapsed = false,
 }: SecurityComplianceDashboardProps) {
   const { data: session } = useSession();
   const currentUserName = session?.user?.name || 'User';
@@ -69,6 +73,8 @@ export default function SecurityComplianceDashboard({
   // patrol can also save a checkpoint/route they typed fresh while starting one.
   const canManageCheckpoints = settings.hasPermission('security.manage-checkpoints') || canManagePatrols;
   const canManageRoutes = settings.hasPermission('security.manage-routes') || canManagePatrols;
+
+  const deskPeriod = useDashboardPeriod('dashboard.period.security', 'today');
 
   const [selectedTab, setSelectedTab] = useState(initialTab || 'patrols');
 
@@ -178,7 +184,7 @@ export default function SecurityComplianceDashboard({
 
   const { incidents, hydrateFromApi: hydrateIncidents, addIncident, updateIncident, assignIncident, resolveIncident } = useIncidentStore();
   const { visitors, hydrateFromApi: hydrateVisitors, addVisitor, updateVisitor, checkOutVisitor } = useVisitorStore();
-  const { patrols, hydrateFromApi: hydratePatrols, startPatrol, updatePatrol, endPatrol, completeCheckpoint, missCheckpoint, getPatrolAnalytics } = usePatrolStore();
+  const { patrols, hydrateFromApi: hydratePatrols, startPatrol, updatePatrol, endPatrol, completeCheckpoint, missCheckpoint } = usePatrolStore();
   const { personnel, hydrateFromApi: hydratePersonnel, addPersonnel, updatePersonnel, setPersonnelActive } = usePersonnelStore();
   const { locations: checkpointLocations, hydrateFromApi: hydrateCheckpointLocations, addLocation: addCheckpointLocation, setLocationActive: setCheckpointLocationActive } = useCheckpointLocationStore();
   const { routes: patrolRoutes, hydrateFromApi: hydratePatrolRoutes, addRoute: addPatrolRoute, setRouteActive: setPatrolRouteActive } = usePatrolRouteStore();
@@ -482,9 +488,9 @@ export default function SecurityComplianceDashboard({
     <div className="space-y-3">
       <Card className="shadow-sm border border-slate-200">
         <CardHeader className="px-3 py-2">
-          <div className="flex items-center justify-between w-full gap-2">
-            <h3 className="text-sm font-semibold text-gray-800">🚨 Security Incident Management</h3>
-            <Button size="sm" color="primary" className="bg-red-500 text-white" variant="flat" onClick={() => { setViewingIncident(null); setIsIncidentModalOpen(true); }}>
+          <div className="flex flex-wrap items-center justify-between w-full gap-2">
+            <h3 className="min-w-0 text-sm font-semibold text-gray-800">🚨 Security Incident Management</h3>
+            <Button size="sm" color="primary" className="bg-red-500 text-white shrink-0" variant="flat" onClick={() => { setViewingIncident(null); setIsIncidentModalOpen(true); }}>
               🚨 Report Incident
             </Button>
           </div>
@@ -550,9 +556,9 @@ export default function SecurityComplianceDashboard({
     <div className="space-y-3">
       <Card className="shadow-sm border border-slate-200">
         <CardHeader className="px-3 py-2">
-          <div className="flex items-center justify-between w-full gap-2">
-            <h3 className="text-sm font-semibold text-gray-800">👥 Visitor Management</h3>
-            <Button size="sm" color="primary" className="bg-blue-500 text-white" variant="flat" onClick={() => { setViewingVisitor(null); setIsVisitorModalOpen(true); }}>
+          <div className="flex flex-wrap items-center justify-between w-full gap-2">
+            <h3 className="min-w-0 text-sm font-semibold text-gray-800">👥 Visitor Management</h3>
+            <Button size="sm" color="primary" className="bg-blue-500 text-white shrink-0" variant="flat" onClick={() => { setViewingVisitor(null); setIsVisitorModalOpen(true); }}>
               👤 Register Visitor
             </Button>
           </div>
@@ -621,11 +627,22 @@ export default function SecurityComplianceDashboard({
   );
 
   const renderPatrolManagement = () => {
-    const todayAnalytics = getPatrolAnalytics('daily');
-    const activePatrolsCount = patrols.filter(p => p.status === 'active').length;
+    const periodPatrols = patrols.filter((p) =>
+      isInPeriod(p.startTime, deskPeriod.period, deskPeriod.todayISO),
+    );
+    const completedPatrols = periodPatrols.filter((p) => p.status === 'completed').length;
+    let checkpointsCompleted = 0;
+    let checkpointsTotal = 0;
+    periodPatrols.forEach((p) => {
+      checkpointsTotal += p.checkpoints.length;
+      checkpointsCompleted += p.checkpoints.filter((c) => c.status === 'completed').length;
+    });
+    const complianceRate = checkpointsTotal > 0 ? (checkpointsCompleted / checkpointsTotal) * 100 : 0;
+    const activePatrolsCount = patrols.filter((p) => p.status === 'active').length;
 
     return (
     <div className="space-y-3">
+      {!summaryCollapsed && (
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
         <Card className="border border-gray-200 shadow-none">
           <CardBody className="px-2 py-1.5 text-center">
@@ -635,24 +652,27 @@ export default function SecurityComplianceDashboard({
         </Card>
         <Card className="border border-gray-200 shadow-none">
           <CardBody className="px-2 py-1.5 text-center">
-            <div className="text-base font-semibold tabular-nums text-gray-900">{todayAnalytics.totalPatrols}</div>
-            <div className="text-xs leading-tight text-gray-500">Patrols Today · {todayAnalytics.completedPatrols} done</div>
+            <div className="text-base font-semibold tabular-nums text-gray-900">{periodPatrols.length}</div>
+            <div className="text-xs leading-tight text-gray-500">
+              Patrols · {deskPeriod.label} · {completedPatrols} done
+            </div>
           </CardBody>
         </Card>
         <Card className="border border-gray-200 shadow-none">
           <CardBody className="px-2 py-1.5 text-center">
-            <div className="text-base font-semibold tabular-nums text-green-700">{todayAnalytics.complianceRate.toFixed(0)}%</div>
+            <div className="text-base font-semibold tabular-nums text-green-700">{complianceRate.toFixed(0)}%</div>
             <div className="text-xs leading-tight text-gray-500">Checkpoint Compliance</div>
           </CardBody>
         </Card>
       </div>
+      )}
 
       <Card className="shadow-sm border border-slate-200">
         <CardHeader className="px-3 py-2">
-          <div className="flex items-center justify-between w-full gap-2">
-            <h3 className="text-sm font-semibold text-gray-800">🚶 Patrol Log</h3>
+          <div className="flex flex-wrap items-center justify-between w-full gap-2">
+            <h3 className="min-w-0 text-sm font-semibold text-gray-800">🚶 Patrol Log</h3>
             {canManagePatrols && (
-              <Button size="sm" color="primary" className="bg-ghana-green text-white" variant="flat" onClick={openPatrolModal}>
+              <Button size="sm" color="primary" className="bg-ghana-green text-white shrink-0" variant="flat" onClick={openPatrolModal}>
                 🚶 Start Patrol
               </Button>
             )}
@@ -716,12 +736,13 @@ export default function SecurityComplianceDashboard({
   };
 
   const renderShiftLog = () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const checkedInToday = shifts.filter((s) => s.checkInTime >= today).length;
+    const checkedInPeriod = shifts.filter((s) =>
+      isInPeriod(s.checkInTime, deskPeriod.period, deskPeriod.todayISO),
+    ).length;
 
     return (
     <div className="space-y-3">
+      {!summaryCollapsed && (
       <div className="grid grid-cols-2 gap-2">
         <Card className="border border-gray-200 shadow-none">
           <CardBody className="px-2 py-1.5 text-center">
@@ -731,15 +752,16 @@ export default function SecurityComplianceDashboard({
         </Card>
         <Card className="border border-gray-200 shadow-none">
           <CardBody className="px-2 py-1.5 text-center">
-            <div className="text-base font-semibold tabular-nums text-gray-900">{checkedInToday}</div>
-            <div className="text-xs leading-tight text-gray-500">Checked In Today</div>
+            <div className="text-base font-semibold tabular-nums text-gray-900">{checkedInPeriod}</div>
+            <div className="text-xs leading-tight text-gray-500">Checked In · {deskPeriod.label}</div>
           </CardBody>
         </Card>
       </div>
+      )}
 
       <Card className="shadow-sm border border-slate-200">
         <CardHeader className="px-3 py-2">
-          <div className="flex items-center justify-between w-full gap-2">
+          <div className="flex flex-wrap items-center justify-between w-full gap-2">
             <div className="min-w-0">
               <h3 className="text-sm font-semibold text-gray-800">🕒 Shift / Attendance Log</h3>
               <p className="text-xs text-gray-500 truncate">Who's on site now, and when everyone came and left.</p>
@@ -815,10 +837,10 @@ export default function SecurityComplianceDashboard({
       />
       <Card className="shadow-sm border border-slate-200">
         <CardHeader className="px-3 py-2">
-          <div className="flex items-center justify-between w-full gap-2">
+          <div className="flex flex-wrap items-center justify-between w-full gap-2">
             <div className="min-w-0">
               <h3 className="text-sm font-semibold text-gray-800">🧑‍✈️ Outsourced / Contracted Security Personnel</h3>
-              <p className="text-xs text-gray-500 truncate">Guards without a system login — not on payroll.</p>
+              <p className="hidden text-xs text-gray-500 truncate sm:block">Guards without a system login — not on payroll.</p>
             </div>
             {canManagePersonnel && (
               <Button size="sm" color="primary" className="bg-ghana-green text-white shrink-0" variant="flat" onClick={() => setIsPersonnelModalOpen(true)}>
@@ -1011,18 +1033,66 @@ export default function SecurityComplianceDashboard({
               setSelectedTab(next);
               onTabChange?.(next);
             }}
-            className="w-full"
+            className="w-full max-w-full"
             size="sm"
             variant="solid"
             classNames={deskBookTabsClassNames}
             aria-label="Security operations"
           >
-            <Tab key="patrols" title="Patrol Log" />
-            <Tab key="incidents" title="Incident Management" />
-            <Tab key="visitors" title="Visitor Management" />
-            <Tab key="shifts" title="Shift Log" />
-            <Tab key="staff" title="Staff Management" />
-            <Tab key="reports" title="📈 Reports & Analysis" />
+            <Tab
+              key="patrols"
+              title={
+                <>
+                  <span className="sm:hidden">Patrols</span>
+                  <span className="hidden sm:inline">Patrol Log</span>
+                </>
+              }
+            />
+            <Tab
+              key="incidents"
+              title={
+                <>
+                  <span className="sm:hidden">Incidents</span>
+                  <span className="hidden sm:inline">Incident Management</span>
+                </>
+              }
+            />
+            <Tab
+              key="visitors"
+              title={
+                <>
+                  <span className="sm:hidden">Visitors</span>
+                  <span className="hidden sm:inline">Visitor Management</span>
+                </>
+              }
+            />
+            <Tab
+              key="shifts"
+              title={
+                <>
+                  <span className="sm:hidden">Shifts</span>
+                  <span className="hidden sm:inline">Shift Log</span>
+                </>
+              }
+            />
+            <Tab
+              key="staff"
+              title={
+                <>
+                  <span className="sm:hidden">Staff</span>
+                  <span className="hidden sm:inline">Staff Management</span>
+                </>
+              }
+            />
+            <Tab
+              key="reports"
+              title={
+                <>
+                  <span className="sm:hidden">📈 Reports</span>
+                  <span className="hidden sm:inline">📈 Reports & Analysis</span>
+                </>
+              }
+            />
           </Tabs>
 
           <div className={deskBookTabPanelClassName}>
@@ -1041,7 +1111,7 @@ export default function SecurityComplianceDashboard({
         <ModalContent>
           <ModalHeader>Report Security Incident</ModalHeader>
           <ModalBody className="gap-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Select label="Type" selectedKeys={[incidentForm.type]} onSelectionChange={(k) => setIncidentForm(f => ({ ...f, type: Array.from(k as Set<string>)[0] as SecurityIncident['type'] }))}>
                 <SelectItem key="theft">Theft</SelectItem>
                 <SelectItem key="vandalism">Vandalism</SelectItem>
@@ -1062,7 +1132,7 @@ export default function SecurityComplianceDashboard({
               </Select>
             </div>
             <Input label="Location" placeholder="e.g. Main Lobby" value={incidentForm.location} onChange={(e) => setIncidentForm(f => ({ ...f, location: e.target.value }))} isRequired />
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Input label="Floor" placeholder="Optional" value={incidentForm.floor} onChange={(e) => setIncidentForm(f => ({ ...f, floor: e.target.value }))} />
               <Input label="Room" placeholder="Optional" value={incidentForm.room} onChange={(e) => setIncidentForm(f => ({ ...f, room: e.target.value }))} />
             </div>
@@ -1082,11 +1152,11 @@ export default function SecurityComplianceDashboard({
         <ModalContent>
           <ModalHeader>Register New Visitor</ModalHeader>
           <ModalBody className="gap-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Input label="Full Name" value={visitorForm.name} onChange={(e) => setVisitorForm(f => ({ ...f, name: e.target.value }))} isRequired />
               <Input label="Phone" value={visitorForm.phone} onChange={(e) => setVisitorForm(f => ({ ...f, phone: e.target.value }))} />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Select label="ID Type" selectedKeys={[visitorForm.idType]} onSelectionChange={(k) => setVisitorForm(f => ({ ...f, idType: Array.from(k as Set<string>)[0] as any }))}>
                 <SelectItem key="ghana-card">Ghana Card</SelectItem>
                 <SelectItem key="passport">Passport</SelectItem>
@@ -1096,11 +1166,11 @@ export default function SecurityComplianceDashboard({
               <Input label="ID Number" value={visitorForm.idNumber} onChange={(e) => setVisitorForm(f => ({ ...f, idNumber: e.target.value }))} />
             </div>
             <Input label="Purpose of Visit" value={visitorForm.purpose} onChange={(e) => setVisitorForm(f => ({ ...f, purpose: e.target.value }))} isRequired />
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Input label="Host Name" placeholder="Staff member or guest" value={visitorForm.hostName} onChange={(e) => setVisitorForm(f => ({ ...f, hostName: e.target.value }))} />
               <Input label="Host Room" placeholder="Optional" value={visitorForm.hostRoom} onChange={(e) => setVisitorForm(f => ({ ...f, hostRoom: e.target.value }))} />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Input label="Vehicle Number" placeholder="Optional" value={visitorForm.vehicleNumber} onChange={(e) => setVisitorForm(f => ({ ...f, vehicleNumber: e.target.value }))} />
               <Select label="Escort Required" selectedKeys={[visitorForm.escortRequired]} onSelectionChange={(k) => setVisitorForm(f => ({ ...f, escortRequired: Array.from(k as Set<string>)[0] as string }))}>
                 <SelectItem key="no">No</SelectItem>
@@ -1122,7 +1192,7 @@ export default function SecurityComplianceDashboard({
         <ModalContent>
           <ModalHeader>Start Security Patrol</ModalHeader>
           <ModalBody className="gap-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Select
                 label="Officer"
                 placeholder="Select officer"
@@ -1227,11 +1297,11 @@ export default function SecurityComplianceDashboard({
         <ModalContent>
           <ModalHeader>Add Security Personnel</ModalHeader>
           <ModalBody className="gap-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Input label="Full Name" value={personnelForm.name} onChange={(e) => setPersonnelForm(f => ({ ...f, name: e.target.value }))} isRequired />
               <Input label="Phone" placeholder="Optional" value={personnelForm.phone} onChange={(e) => setPersonnelForm(f => ({ ...f, phone: e.target.value }))} />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Input
                 label="Agency / Company"
                 placeholder="Leave blank if independently contracted"
@@ -1310,7 +1380,7 @@ export default function SecurityComplianceDashboard({
             )}
             {openIncident && isEditingIncident && incidentEditForm && (
               <>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Select label="Type" selectedKeys={[incidentEditForm.type]} onSelectionChange={(k) => setIncidentEditForm((f) => f && ({ ...f, type: Array.from(k as Set<string>)[0] as SecurityIncident['type'] }))}>
                     <SelectItem key="theft">Theft</SelectItem>
                     <SelectItem key="vandalism">Vandalism</SelectItem>
@@ -1338,7 +1408,7 @@ export default function SecurityComplianceDashboard({
                   <SelectItem key="escalated">Escalated</SelectItem>
                 </Select>
                 <Input label="Location" value={incidentEditForm.location} onChange={(e) => setIncidentEditForm((f) => f && ({ ...f, location: e.target.value }))} isRequired />
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Input label="Floor" value={incidentEditForm.floor} onChange={(e) => setIncidentEditForm((f) => f && ({ ...f, floor: e.target.value }))} />
                   <Input label="Room" value={incidentEditForm.room} onChange={(e) => setIncidentEditForm((f) => f && ({ ...f, room: e.target.value }))} />
                 </div>
@@ -1395,11 +1465,11 @@ export default function SecurityComplianceDashboard({
             )}
             {openVisitor && isEditingVisitor && visitorEditForm && (
               <>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Input label="Full Name" value={visitorEditForm.name} onChange={(e) => setVisitorEditForm((f) => f && ({ ...f, name: e.target.value }))} isRequired />
                   <Input label="Phone" value={visitorEditForm.phone} onChange={(e) => setVisitorEditForm((f) => f && ({ ...f, phone: e.target.value }))} />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Select label="ID Type" selectedKeys={[visitorEditForm.idType]} onSelectionChange={(k) => setVisitorEditForm((f) => f && ({ ...f, idType: Array.from(k as Set<string>)[0] as any }))}>
                     <SelectItem key="ghana-card">Ghana Card</SelectItem>
                     <SelectItem key="passport">Passport</SelectItem>
@@ -1409,7 +1479,7 @@ export default function SecurityComplianceDashboard({
                   <Input label="ID Number" value={visitorEditForm.idNumber} onChange={(e) => setVisitorEditForm((f) => f && ({ ...f, idNumber: e.target.value }))} />
                 </div>
                 <Input label="Purpose of Visit" value={visitorEditForm.purpose} onChange={(e) => setVisitorEditForm((f) => f && ({ ...f, purpose: e.target.value }))} isRequired />
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Input label="Host Name" placeholder="Optional" value={visitorEditForm.hostName} onChange={(e) => setVisitorEditForm((f) => f && ({ ...f, hostName: e.target.value }))} />
                   <Input label="Host Room" placeholder="Optional" value={visitorEditForm.hostRoom} onChange={(e) => setVisitorEditForm((f) => f && ({ ...f, hostRoom: e.target.value }))} />
                 </div>
@@ -1580,11 +1650,11 @@ export default function SecurityComplianceDashboard({
             )}
             {openPersonnel && isEditingPersonnel && personnelEditForm && (
               <>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Input label="Full Name" value={personnelEditForm.name} onChange={(e) => setPersonnelEditForm((f) => f && ({ ...f, name: e.target.value }))} isRequired />
                   <Input label="Phone" placeholder="Optional" value={personnelEditForm.phone} onChange={(e) => setPersonnelEditForm((f) => f && ({ ...f, phone: e.target.value }))} />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Input label="Agency / Company" placeholder="Leave blank if independently contracted" value={personnelEditForm.agency} onChange={(e) => setPersonnelEditForm((f) => f && ({ ...f, agency: e.target.value }))} />
                   <Input label="Role" placeholder="e.g. Guard, Supervisor" value={personnelEditForm.role} onChange={(e) => setPersonnelEditForm((f) => f && ({ ...f, role: e.target.value }))} />
                 </div>

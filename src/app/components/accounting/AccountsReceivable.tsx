@@ -56,7 +56,8 @@ import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accoun
 import AttachmentUpload from '@/app/components/shared/AttachmentUpload';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { useDeskPagination } from '../dashboard/deskTableUi';
-import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName } from './DeskKpiStrip';
+import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName, useAccountingDeskPeriod } from './DeskKpiStrip';
+import { isInPeriod } from '@/app/lib/dashboard/useDashboardPeriod';
 
 // Shared by the New Invoice form's "new customer" payment-terms select and the due-date
 // auto-calc below it — keeps both in sync with the one mapping instead of two copies.
@@ -283,10 +284,20 @@ export default function AccountsReceivable() {
 	}, [scopedCustomerAging, searchQuery]);
 	const customerAging = allCustomerAging;
 
-	// Totals — finance AR subledger (posted sales invoices only)
+	// Totals — finance AR subledger (posted sales invoices only).
+	// Invoiced / received follow Customize KPI period; outstanding stays current open balance.
+	const { period: kpiPeriod, todayISO: kpiToday } = useAccountingDeskPeriod();
 	const financeInvoices = useMemo(() => filterFinanceArInvoices(salesInvoices), [salesInvoices]);
-	const totalRevenue = financeInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0);
-	const totalReceived = financeInvoices.reduce((s: number, i: any) => s + (i.paidAmount || 0), 0);
+	const periodFinanceInvoices = useMemo(
+		() => financeInvoices.filter((i: any) => isInPeriod(i.date || i.createdAt, kpiPeriod, kpiToday)),
+		[financeInvoices, kpiPeriod, kpiToday],
+	);
+	const periodReceipts = useMemo(
+		() => receipts.filter((p: any) => isInPeriod(p.date || p.createdAt, kpiPeriod, kpiToday)),
+		[receipts, kpiPeriod, kpiToday],
+	);
+	const totalRevenue = periodFinanceInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0);
+	const totalReceived = periodReceipts.reduce((s: number, p: any) => s + (p.amount || 0), 0);
 	const totalOutstanding = totalFinanceReceivables(salesInvoices);
 	const totalProforma = proformaInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0);
 
@@ -496,7 +507,9 @@ export default function AccountsReceivable() {
 	}, [whtCertificates, statusFilter, dateFrom, dateTo, searchQuery]);
 
 	// WHT totals
-	const totalWHTReceivable = (whtCertificates || []).reduce((s: number, c: any) => s + (c.totalWithheld || 0), 0);
+	const totalWHTReceivable = (whtCertificates || [])
+		.filter((c: any) => isInPeriod(c.receivedDate || c.date || c.taxPeriod || c.createdAt, kpiPeriod, kpiToday))
+		.reduce((s: number, c: any) => s + (c.totalWithheld || 0), 0);
 
 	const whtCertRates = useMemo(() => getWhtCertificateRates(taxConfigs), [taxConfigs]);
 	const whtLabels = useMemo(() => whtFormLabels(whtCertRates), [whtCertRates]);
@@ -2973,7 +2986,7 @@ export default function AccountsReceivable() {
 			</Card>
 
 			{/* WHT Payment Modal */}
-			<Modal isOpen={isWHTPaymentOpen} onOpenChange={setIsWHTPaymentOpen} size="2xl">
+			<Modal isOpen={isWHTPaymentOpen} onOpenChange={setIsWHTPaymentOpen} size="2xl" scrollBehavior="inside">
                 <ModalContent>
                     {(onClose) => (
                         <>
@@ -2999,7 +3012,7 @@ export default function AccountsReceivable() {
 								{/* Invoice Info */}
 								<Card className="mb-4 bg-blue-50 border border-blue-200">
 									<CardBody className="py-3">
-										<div className="grid grid-cols-4 gap-4 text-sm">
+										<div className="grid grid-cols-2 gap-4 sm:grid-cols-4 text-sm">
 											<div>
 												<div className="text-gray-500">Invoice</div>
 												<div className="font-bold">{whtPaymentForm.invoiceNumber}</div>
@@ -3021,7 +3034,7 @@ export default function AccountsReceivable() {
 								</Card>
 
 								{/* Payment Breakdown */}
-								<div className="grid grid-cols-2 gap-4 mb-4">
+								<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mb-4">
 									<Input 
 										type="number"
 										label="Cash/Bank Amount Received"
@@ -3064,7 +3077,7 @@ export default function AccountsReceivable() {
 									<CardBody>
 										<h4 className="font-semibold text-amber-800 mb-1">Withholding Tax Deducted by Customer</h4>
 										<p className="text-xs text-amber-700 mb-3">Not every payer withholds both — flag which apply to this payment.</p>
-										<div className="grid grid-cols-2 gap-4">
+										<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
 											<div>
 												<Checkbox
 													size="sm"
@@ -3115,7 +3128,7 @@ export default function AccountsReceivable() {
 								<Card className="mb-4 bg-gray-50">
 									<CardBody>
 										<h4 className="font-semibold text-gray-700 mb-3">GRA Certificate Details (Optional - fill when received)</h4>
-										<div className="grid grid-cols-2 gap-4">
+										<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
 											<Input 
 												label="Certificate Number"
 												placeholder="e.g., WHT-2026-001234"
@@ -3138,7 +3151,7 @@ export default function AccountsReceivable() {
 								<Card className="bg-green-50 border border-green-200">
 									<CardBody>
 										<h4 className="font-semibold text-green-800 mb-2">Payment Summary</h4>
-										<div className="grid grid-cols-4 gap-4 text-sm">
+										<div className="grid grid-cols-2 gap-4 sm:grid-cols-4 text-sm">
 											<div>
 												<div className="text-gray-500">Cash Received</div>
 												<div className="font-bold text-green-600">{formatAccountingCurrency(Number(whtPaymentForm.cashAmount || 0))}</div>
@@ -3211,7 +3224,7 @@ export default function AccountsReceivable() {
 							</ModalHeader>
 							<ModalBody className="px-4 py-3 bg-white">
 								<div className="space-y-3">
-									<div className="grid grid-cols-2 gap-3 pb-3 border-b">
+									<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 pb-3 border-b">
 										<div>
 											<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">
 												Certificate Information
@@ -3301,7 +3314,7 @@ export default function AccountsReceivable() {
 										<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
 											Tax Credit Usage
 										</h4>
-										<div className="grid grid-cols-3 gap-2 text-sm">
+										<div className="grid grid-cols-1 gap-2 sm:grid-cols-3 text-sm">
 											<div className="bg-gray-50 rounded-md p-2.5">
 												<div className="text-[11px] text-gray-500 uppercase">Total Credit</div>
 												<div className="font-semibold">
@@ -3353,7 +3366,7 @@ export default function AccountsReceivable() {
 												Enter the official certificate details when the customer/GRA provides them.
 											</p>
 											{formError && <div className="text-red-600 text-sm mb-2">{formError}</div>}
-											<div className="grid grid-cols-2 gap-3">
+											<div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
 												<Input
 													size="sm"
 													label="Certificate Number *"
@@ -3423,6 +3436,7 @@ export default function AccountsReceivable() {
 					}
 				}}
 				size="2xl"
+				scrollBehavior="inside"
 			>
                 <ModalContent>
                     {(onClose) => (
@@ -3449,7 +3463,7 @@ export default function AccountsReceivable() {
                                         </div>
 								)}
 
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
 									<Autocomplete
 										label="Customer Name *"
 										placeholder="Search existing or type a new customer..."
@@ -3492,7 +3506,7 @@ export default function AccountsReceivable() {
 
 								{/* Tax Options — mirrors AP's Standard/Custom/No-Tax selector so a tax-exempt
 								    or non-standard-rate sale has a clean way in, not just hand-editing the amount. */}
-								<div className="grid grid-cols-4 gap-4 p-3 mt-4 border rounded items-end">
+								<div className="grid grid-cols-2 gap-4 sm:grid-cols-4 p-3 mt-4 border rounded items-end">
 									<Select
 										label="Tax Type"
 										className="col-span-2"
@@ -3535,7 +3549,7 @@ export default function AccountsReceivable() {
 									>Apply Tax</Button>
 								</div>
 
-								<div className="grid grid-cols-2 gap-4 mt-4">
+								<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mt-4">
 									<Input type="number" isReadOnly label="Total" value={(Number(invoiceForm.subtotal || 0) + Number(invoiceForm.taxAmount || 0)).toString()} description="Subtotal + Tax — not independently editable" />
 									<Input label="Description" value={invoiceForm.description || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, description: e.target.value })} />
 								</div>
@@ -3545,7 +3559,7 @@ export default function AccountsReceivable() {
 										<div className="text-sm font-medium text-gray-700 mb-3">
 											New customer — additional details (optional)
 										</div>
-										<div className="grid grid-cols-2 gap-4">
+										<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
 											<Input label="Phone" value={invoiceForm.customerPhone || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, customerPhone: e.target.value })} />
 											<Input label="Email" value={invoiceForm.customerEmail || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, customerEmail: e.target.value })} />
 											<Input label="Address" value={invoiceForm.customerAddress || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, customerAddress: e.target.value })} className="col-span-2" />
@@ -3597,6 +3611,7 @@ export default function AccountsReceivable() {
 					}
 				}}
 				size="2xl"
+				scrollBehavior="inside"
 			>
                 <ModalContent>
                     {(onClose) => (
@@ -3634,7 +3649,7 @@ export default function AccountsReceivable() {
                             <ModalBody>
 								{formError && <div className="text-red-600 text-sm mb-3 p-2 bg-red-50 rounded">{formError}</div>}
 
-								<div className="grid grid-cols-2 gap-4 mb-4">
+								<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mb-4">
 									<Autocomplete
 										label="Customer"
 										placeholder="Search customer..."
@@ -3724,7 +3739,7 @@ export default function AccountsReceivable() {
 								{selectedReceiptTarget?.kind === 'folio' && (
 									<Card className="mb-4 bg-emerald-50 border border-emerald-200">
 										<CardBody className="py-3">
-											<div className="grid grid-cols-3 gap-3 text-sm">
+											<div className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-sm">
 												<div>
 													<div className="text-gray-500">Guest</div>
 													<div className="font-bold">{selectedReceiptTarget.customerName}</div>
@@ -3753,7 +3768,7 @@ export default function AccountsReceivable() {
 								{selectedReceiptInvoice && (
 									<Card className="mb-4 bg-blue-50 border border-blue-200">
 										<CardBody className="py-3">
-											<div className="grid grid-cols-4 gap-3 text-sm">
+											<div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
 												<div>
 													<div className="text-gray-500">Invoice</div>
 													<div className="font-mono font-bold">{selectedReceiptInvoice.invoiceNumber}</div>
@@ -3786,7 +3801,7 @@ export default function AccountsReceivable() {
 									</Card>
 								)}
 
-								<div className="grid grid-cols-2 gap-4 mb-4">
+								<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mb-4">
 									{(receiptForm.paymentKind === 'standard' ||
 										selectedReceiptTarget?.kind !== 'invoice' ||
 										editingReceiptId) && (
@@ -3994,7 +4009,7 @@ export default function AccountsReceivable() {
 			</Modal>
 
 			{/* Print Receipt Modal — same folio/invoice picker as Record Receipt */}
-			<Modal isOpen={isPrintReceiptOpen} onOpenChange={setIsPrintReceiptOpen} size="2xl">
+			<Modal isOpen={isPrintReceiptOpen} onOpenChange={setIsPrintReceiptOpen} size="2xl" scrollBehavior="inside">
 				<ModalContent>
 					{(onClose) => (
 						<>
@@ -4128,7 +4143,7 @@ export default function AccountsReceivable() {
 								<ModalBody className="px-4 py-3 bg-white">
 									<div className="space-y-3">
 										{/* Header Info Grid */}
-										<div className="grid grid-cols-3 gap-3 pb-3 border-b">
+										<div className="grid grid-cols-1 gap-3 sm:grid-cols-3 pb-3 border-b">
 											{/* Bill To */}
 											<div>
 												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Bill To</h4>
@@ -4213,7 +4228,7 @@ export default function AccountsReceivable() {
 										</div>
 
 										{/* Financial Summary with Tax Breakdown */}
-										<div className="grid grid-cols-2 gap-3">
+										<div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
 											{/* Tax Breakdown */}
 											<div>
 												<div className="flex items-center justify-between mb-1.5">
@@ -4400,7 +4415,7 @@ export default function AccountsReceivable() {
 										</div>
 
 										{/* Receipt Details Grid */}
-										<div className="grid grid-cols-2 gap-3 pb-3 border-b">
+										<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 pb-3 border-b">
 											{/* Received From */}
 											<div>
 												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Received From</h4>

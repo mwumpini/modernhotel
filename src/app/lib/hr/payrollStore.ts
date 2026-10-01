@@ -94,16 +94,6 @@ interface PayrollStore {
    * Resolves to whether the server accepted all of it. */
   markRecordsPaid: (periodId: string, recordIds: string[], paidAt: Date) => Promise<boolean>;
 
-  // Totals over all paid records.
-  getPayrollAnalytics: () => {
-    totalPayroll: number;
-    totalGrossPay: number;
-    totalDeductions: number;
-    averageSalary: number;
-    payrollByDepartment: Record<string, number>;
-    deductionsBreakdown: Record<string, number>;
-  };
-
   hydrateFromApi: () => Promise<void>;
 }
 
@@ -238,39 +228,6 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
     const results = await Promise.all(changed.map(syncPayrollRecordToApi));
     const periodOk = updatedPeriod ? await syncPayrollPeriodToApi(updatedPeriod) : true;
     return periodOk && results.every(Boolean);
-  },
-
-  getPayrollAnalytics: () => {
-    const records = get().payrollRecords.filter(record => record.status === 'paid');
-
-    const totalPayroll = records.reduce((sum, record) => sum + record.netPay, 0);
-    const totalGrossPay = records.reduce((sum, record) => sum + record.grossPay, 0);
-    const totalDeductions = records.reduce((sum, record) => {
-      const recordDeductions = Object.values(record.deductions).reduce((a, b) => a + b, 0);
-      return sum + recordDeductions;
-    }, 0);
-    const averageSalary = records.length > 0 ? totalGrossPay / records.length : 0;
-
-    const payrollByDepartment: Record<string, number> = {};
-    const deductionsBreakdown: Record<string, number> = {};
-
-    records.forEach(record => {
-      const { department } = payrollRecordLabels(record);
-      payrollByDepartment[department] = (payrollByDepartment[department] || 0) + record.netPay;
-
-      Object.entries(record.deductions).forEach(([key, value]) => {
-        deductionsBreakdown[key] = (deductionsBreakdown[key] || 0) + value;
-      });
-    });
-
-    return {
-      totalPayroll,
-      totalGrossPay,
-      totalDeductions,
-      averageSalary,
-      payrollByDepartment,
-      deductionsBreakdown,
-    };
   },
 
   hydrateFromApi: async () => {

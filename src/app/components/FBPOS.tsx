@@ -174,6 +174,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
   }, []);
   const lockAfterOrder = () => { if (waiterSwitchOn) setVerifiedWaiter(null); };
   const needsWaiter = waiterSwitchOn && !verifiedWaiter;
+  const kitchenTerminalOn = useSettingsStore((s) => s.moduleSettings.kitchenTerminal !== false);
   const [search, setSearch] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [discountPercent, setDiscountPercent] = useState<number>(0);
@@ -466,20 +467,27 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     }
   });
 
+  const aliasTokens = (m: MenuItem) => {
+    const split = (value: string) => value.split(/[,;/]+/).map((part) => part.trim()).filter(Boolean);
+    return [
+      ...split(m.alias || ''),
+      ...(m.aliases || []).flatMap((entry) => split(String(entry))),
+      ...(aliases[m.id] || []),
+    ];
+  };
+
   const aliasMatches = (m: MenuItem, q: string) => {
     const qs = q.trim().toLowerCase();
     if (!qs) return true;
     if (m.name.toLowerCase().includes(qs)) return true;
-    if ((m.alias || '').toLowerCase().includes(qs)) return true;
-    const a = aliases[m.id] || [];
-    return a.some(x => x.toLowerCase().includes(qs));
+    if ((m.code || '').toLowerCase().includes(qs)) return true;
+    return aliasTokens(m).some((token) => token.toLowerCase().includes(qs));
   };
 
-  const visibleMenu = useMemo(() => {
-    const filtered = menu.filter(m => aliasMatches(m, search));
-    if (venue === 'Restaurant') return filtered;
-    return filtered.filter(m => m.route === 'bar' || m.category === 'Desserts');
-  }, [menu, search, venue, aliases]);
+  const visibleMenu = useMemo(
+    () => menu.filter((m) => aliasMatches(m, search)),
+    [menu, search, aliases],
+  );
 
 
 
@@ -1233,6 +1241,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     const handler = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key.toLowerCase() === 'enter') {
         e.preventDefault();
+        if (useSettingsStore.getState().moduleSettings.kitchenTerminal === false) return;
         sendOrder();
       }
       if (e.ctrlKey && e.key.toLowerCase() === 'p') {
@@ -1438,33 +1447,9 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
   return (
     <div className="min-h-screen bg-slate-50 p-3 pb-24 md:p-4 lg:pb-4">
       <div className="mx-auto max-w-[1600px]">
-        {/* Top bar: title, venue, menu search, shortcuts */}
+        {/* Top bar: title, menu search, shortcuts */}
         <div className="mb-3 flex flex-wrap items-center gap-2 md:gap-3">
           <h1 className="text-xl font-bold text-ghana-black md:text-2xl">POS Terminal</h1>
-          <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1" role="group" aria-label="Venue">
-            {(['Restaurant', 'Bar'] as VenueMode[]).map(v => (
-              <button
-                key={v}
-                type="button"
-                aria-pressed={venue === v}
-                onClick={() => setVenue(v)}
-                className={`h-9 rounded-lg px-3 text-sm font-medium transition-colors ${venue === v ? 'bg-ghana-green text-white' : 'text-slate-600 hover:bg-slate-100'}`}
-              >
-                {v}
-              </button>
-            ))}
-          </div>
-          <Input
-            aria-label="Search menu"
-            placeholder="Search menu or short name…"
-            value={search}
-            onValueChange={setSearch}
-            isClearable
-            onClear={() => setSearch('')}
-            startContent={<Search size={18} className="text-slate-400" aria-hidden />}
-            className="order-last w-full md:order-none md:w-auto md:min-w-[16rem] md:flex-1"
-            classNames={{ inputWrapper: 'h-11 bg-white border border-slate-200 shadow-none' }}
-          />
           <div className="ml-auto flex items-center gap-2">
             {cashierName && (
               <span className="hidden items-center gap-1.5 text-xs text-slate-500 sm:inline-flex" title="The account signed in on this terminal. Payments go to this person's till.">
@@ -1517,6 +1502,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                     <div>
                       <Input
                         size="sm"
+                        label="Guest"
                         startContent={<Search size={16} className="text-slate-400" aria-hidden />}
                         classNames={{ inputWrapper: 'h-10' }}
                         aria-label="Room number or guest name"
@@ -1555,6 +1541,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                     <div>
                       <Input
                         size="sm"
+                        label="Customer"
                         startContent={<Search size={16} className="text-slate-400" aria-hidden />}
                         classNames={{ inputWrapper: 'h-10' }}
                         aria-label="Walk-in customer"
@@ -1652,6 +1639,17 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
 
           {/* Menu */}
           <section className="flex min-h-0 flex-1 flex-col rounded-2xl border border-slate-200 bg-white p-3 md:p-4" aria-label="Menu">
+            <Input
+              aria-label="Search menu"
+              placeholder="Search menu or short name…"
+              value={search}
+              onValueChange={setSearch}
+              isClearable
+              onClear={() => setSearch('')}
+              startContent={<Search size={18} className="text-slate-400" aria-hidden />}
+              className="mb-3"
+              classNames={{ inputWrapper: 'h-11 bg-slate-50 border-2 border-slate-300 shadow-none' }}
+            />
             <div className="mb-3 flex items-center justify-between gap-3">
               {searching ? (
                 <p className="text-sm text-slate-600">Results for “{search.trim()}”</p>
@@ -1848,6 +1846,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                 )}
 
                 <div className="mt-3 shrink-0 space-y-2">
+                  {kitchenTerminalOn ? (
                   <div className="grid grid-cols-[1fr_auto] gap-2">
                     <Button
                       size="lg"
@@ -1878,13 +1877,39 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                         }}
                       >
                         <DropdownItem key="preview" startContent={<Receipt size={16} />}>Preview receipt</DropdownItem>
-                        <DropdownItem key="kot" startContent={<Printer size={16} />}>Print kitchen ticket (KOT)</DropdownItem>
-                        <DropdownItem key="bot" startContent={<Printer size={16} />}>Print bar ticket (BOT)</DropdownItem>
+                        <DropdownItem key="kot" startContent={<Printer size={16} />}>Print KOT</DropdownItem>
+                        <DropdownItem key="bot" startContent={<Printer size={16} />}>Print BOT</DropdownItem>
                         <DropdownItem key="discounts">{showItemDiscounts ? 'Hide item discounts' : 'Item discounts'}</DropdownItem>
                         <DropdownItem key="clear" className="text-danger" color="danger" startContent={<Trash2 size={16} />}>Clear order</DropdownItem>
                       </DropdownMenu>
                     </Dropdown>
                   </div>
+                  ) : (
+                  <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                    <Button size="sm" variant="flat" className="h-10 bg-slate-100" startContent={<Receipt size={16} />} isDisabled={cart.length === 0} onPress={previewCartReceipt}>Preview receipt</Button>
+                    <Button size="sm" variant="flat" color="danger" className="h-10" startContent={<Trash2 size={16} />} isDisabled={cart.length === 0} onPress={() => clearCart()}>Clear order</Button>
+                    <Dropdown placement="top-end">
+                      <DropdownTrigger>
+                        <Button isIconOnly size="sm" variant="flat" className="h-10 w-10 bg-slate-100" aria-label="More order actions">
+                          <MoreHorizontal size={20} />
+                        </Button>
+                      </DropdownTrigger>
+                      <DropdownMenu
+                        aria-label="More order actions"
+                        disabledKeys={cart.length === 0 ? ['discounts'] : []}
+                        onAction={(key) => {
+                          if (key === 'kot') previewStationTicket('kot');
+                          if (key === 'bot') previewStationTicket('bot');
+                          if (key === 'discounts') setShowItemDiscounts(v => !v);
+                        }}
+                      >
+                        <DropdownItem key="kot" startContent={<Printer size={16} />}>Print KOT</DropdownItem>
+                        <DropdownItem key="bot" startContent={<Printer size={16} />}>Print BOT</DropdownItem>
+                        <DropdownItem key="discounts">{showItemDiscounts ? 'Hide item discounts' : 'Item discounts'}</DropdownItem>
+                      </DropdownMenu>
+                    </Dropdown>
+                  </div>
+                  )}
                   <Button
                     size="lg"
                     className="h-14 w-full bg-ghana-green text-base font-semibold text-white"
@@ -1894,7 +1919,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                   >
                     Process payment
                   </Button>
-                  <p className="hidden text-center text-[11px] text-slate-400 lg:block">Ctrl+Enter send · Ctrl+P pay</p>
+                  <p className="hidden text-center text-[11px] text-slate-400 lg:block">{kitchenTerminalOn ? 'Ctrl+Enter send · Ctrl+P pay' : 'Ctrl+P pay'}</p>
                 </div>
               </div>
             ) : (
@@ -2205,7 +2230,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                         </div>
                       )}
                       <div className="mt-2 text-xs text-gray-600">
-                        Can't find customer? <a className="text-blue-600 underline" href="/manage-clients" target="_blank" rel="noopener noreferrer">Register new client</a>
+                        Can't find customer? <a className="text-blue-600 underline" href="/guest-services/client-services/clients-services" target="_blank" rel="noopener noreferrer">Register new client</a>
                       </div>
                     </div>
 

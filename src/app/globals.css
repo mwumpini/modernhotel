@@ -5,6 +5,8 @@
 
 /* Use class-based dark mode so theme is controlled by ThemeProvider, not OS alone */
 @custom-variant dark (&:where(.dark, .dark *));
+/* Short viewports: a 1366x768 laptop at 200% zoom is ~320px tall. */
+@custom-variant short (@media (max-height: 600px));
 
 :root {
   color-scheme: light;
@@ -767,6 +769,39 @@ html[data-tiles="custom"] .bg-gray-100 {
   max-width: 18rem;
 }
 
+/* Dialog header and footer stay put; only the body scrolls. On a short
+   (zoomed) screen the Save button must never scroll out of reach. */
+[data-slot="wrapper"] > [role="dialog"]:has(> [data-slot="body"], > form > [data-slot="body"]) {
+  overflow-y: hidden;
+}
+[data-slot="wrapper"] > [role="dialog"] > form:has(> [data-slot="body"]) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+[role="dialog"] > [data-slot="body"],
+[role="dialog"] > form > [data-slot="body"] {
+  min-height: 0;
+  overflow-y: auto;
+}
+[role="dialog"] > :is(header, footer),
+[role="dialog"] > form > :is(header, footer) {
+  flex-shrink: 0;
+}
+[role="dialog"] > footer,
+[role="dialog"] > form > footer {
+  flex-wrap: wrap;
+}
+
+/* Short (zoomed) screens: slimmer dialog header and footer, more room for the form. */
+@media (max-height: 600px) {
+  [role="dialog"] > :is(header, footer),
+  [role="dialog"] > form > :is(header, footer) {
+    padding-block: 0.5rem;
+  }
+}
+
 @media (max-width: 639px) {
   [data-slot="wrapper"]:has(> [role="dialog"]) {
     align-items: stretch;
@@ -780,6 +815,55 @@ html[data-tiles="custom"] .bg-gray-100 {
     height: 100dvh;
     max-height: 100dvh;
     border-radius: 0;
+  }
+}
+
+/* Accounting desks on touch screens, phones and 200% zoom: every control is
+   at least 40px tall so it can be tapped. The ✕ hide buttons keep their own
+   28px box so they don't crowd the KPI tiles. Base layer: any min-h / min-w
+   class on a component still wins. */
+@layer base {
+  @media (max-width: 767px), (pointer: coarse) {
+    .acct-desk :is(button, [role="button"], [role="tab"]):not([aria-label^="Hide "]):not([data-slot="clear-button"]) {
+      min-height: 40px;
+      min-width: 40px;
+    }
+  }
+}
+/* Fields: HeroUI's small size pins min-h-8 itself, so this one sits outside the layer. */
+@media (max-width: 767px), (pointer: coarse) {
+  .acct-desk :is([data-slot="input-wrapper"], [data-slot="trigger"]) {
+    min-height: 40px;
+  }
+}
+
+/* Page numbers wrap instead of running off a phone screen. */
+.acct-desk nav ul:has(> li[role="button"]) {
+  flex-wrap: wrap;
+  height: auto;
+  row-gap: 0.25rem;
+}
+
+/* "Hide summary" on the Accounting header also folds every book's KPI tiles. */
+.acct-summary-off .acct-kpi {
+  display: none;
+}
+
+/* Wide accounting tables scroll sideways on narrow screens; the first column
+   (account, invoice no., name) stays in view so each row keeps its label. */
+@media (max-width: 1023px) {
+  .acct-desk table > :is(thead, tbody, tfoot) > tr > :first-child:not([colspan]) {
+    position: sticky;
+    left: 0;
+    z-index: 11;
+    max-width: min(14rem, 45vw);
+    background-color: var(--card-background);
+    box-shadow: inset -1px 0 0 var(--card-border, rgba(0, 0, 0, 0.08));
+  }
+  .acct-desk table > thead > tr > :first-child:not([colspan]) {
+    z-index: 12;
+    /* match the other header cells */
+    background-color: hsl(var(--heroui-default-100));
   }
 }
 

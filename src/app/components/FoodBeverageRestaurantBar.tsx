@@ -336,7 +336,7 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
     }
   };
 
-  const staff = useDepartmentStaff(RESTAURANT_STAFF_DEPT_HINTS, RESTAURANT_STAFF_EXCLUDE_HINTS);
+  const staff = useDepartmentStaff(RESTAURANT_STAFF_DEPT_HINTS, RESTAURANT_STAFF_EXCLUDE_HINTS).members;
   const availableTablesCount = tables.filter((t) => t.status === 'available').length;
   const availablePct = tables.length > 0 ? ((availableTablesCount / tables.length) * 100).toFixed(1) : '0.0';
   const todayStr = new Date().toISOString().slice(0, 10);

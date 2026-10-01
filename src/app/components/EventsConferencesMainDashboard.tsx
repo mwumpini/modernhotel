@@ -75,6 +75,7 @@ import EventsModuleFilters, {
 import { useEmployeeStore } from '../lib/hr/employeeStore';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
 import ModuleExpandButton from './ModuleExpandButton';
+import EventsReportsAnalysis from './EventsReportsAnalysis';
 import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 import { deskTableCardBodyClassName, deskTableCardClassName } from './dashboard/deskTableUi';
 import {
@@ -1380,28 +1381,33 @@ export default function EventsConferencesMainDashboard({
   );
   const [reportFilters, setReportFilters] = useState<ReportFiltersState>(() => buildInitialReportFilters());
   useEffect(() => {
-    try {
-      const tab = localStorage.getItem('events.tab');
-      const mgmtTab = localStorage.getItem('events.managementTab');
-      if (tab === 'reports') {
-        localStorage.removeItem('events.tab');
-        router.replace('/events/reports');
-        return;
+    const apply = () => {
+      try {
+        const tab = localStorage.getItem('events.tab');
+        const mgmtTab = localStorage.getItem('events.managementTab');
+        if (tab === 'reports') {
+          setSelectedTab('reports');
+          localStorage.removeItem('events.tab');
+          return;
+        }
+        if (tab) {
+          setSelectedTab(tab);
+          localStorage.removeItem('events.tab');
+        }
+        if (mgmtTab) {
+          const folded = mgmtTab === 'people' || mgmtTab === 'active' || mgmtTab === 'completed' || mgmtTab === 'quotes';
+          setManagementMainTab(folded ? 'events' : (mgmtTab as ManagementMainTabKey));
+          if (mgmtTab === 'quotes') setManagementStatusFilter('quote');
+          else if (mgmtTab === 'active' || mgmtTab === 'completed') setManagementStatusFilter(mgmtTab);
+          localStorage.removeItem('events.managementTab');
+        }
+      } catch {
+        /* ignore */
       }
-      if (tab) {
-        setSelectedTab(tab);
-        localStorage.removeItem('events.tab');
-      }
-      if (mgmtTab) {
-        const folded = mgmtTab === 'people' || mgmtTab === 'active' || mgmtTab === 'completed' || mgmtTab === 'quotes';
-        setManagementMainTab(folded ? 'events' : (mgmtTab as ManagementMainTabKey));
-        if (mgmtTab === 'quotes') setManagementStatusFilter('quote');
-        else if (mgmtTab === 'active' || mgmtTab === 'completed') setManagementStatusFilter(mgmtTab);
-        localStorage.removeItem('events.managementTab');
-      }
-    } catch {
-      /* ignore */
-    }
+    };
+    apply();
+    window.addEventListener('events-navigate', apply);
+    return () => window.removeEventListener('events-navigate', apply);
   }, []);
 
   const updateReportFilter = useCallback((key: keyof ReportFiltersState, value: string) => {
@@ -15212,13 +15218,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       </div>
       <Tabs 
             selectedKey={selectedTab} 
-            onSelectionChange={(key) => {
-              if (String(key) === 'reports') {
-                router.push('/events/reports');
-                return;
-              }
-              setSelectedTab(key as string);
-            }}
+            onSelectionChange={(key) => setSelectedTab(String(key))}
             className="w-full"
             size="sm"
             variant="solid"
@@ -15368,15 +15368,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
               <ConferenceRateManagement onFilteredCountChange={setGuestRatesFilteredCount} />
             </Tab>
             <Tab key="reports" title="📊 Reports & Analysis">
-              <Card className="mt-4 border border-slate-200">
-                <CardBody className="p-6 space-y-3">
-                  <h3 className="text-lg font-semibold text-slate-900">Reports & Analysis</h3>
-                  <p className="text-sm text-slate-600">Official Events reports live on the Reports & Analysis page.</p>
-                  <Button size="sm" color="primary" onPress={() => router.push('/events/reports')}>
-                    Open reports
-                  </Button>
-                </CardBody>
-              </Card>
+              <div className="mt-2">
+                <EventsReportsAnalysis embedded />
+              </div>
             </Tab>
 
             <Tab key="staff" title="👥 Staff Management">

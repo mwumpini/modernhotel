@@ -24,7 +24,8 @@ import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accoun
 import AttachmentUpload from '@/app/components/shared/AttachmentUpload';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { useDeskPagination } from '../dashboard/deskTableUi';
-import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName } from './DeskKpiStrip';
+import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName, useAccountingDeskPeriod } from './DeskKpiStrip';
+import { isInPeriod } from '@/app/lib/dashboard/useDashboardPeriod';
 
 type AgingSortKey = 'supplier' | 'outstanding' | 'current' | 'overdue30' | 'overdue60' | 'overdue90' | 'overdue90Plus' | 'lastActivity';
 type SupplierSortKey = 'supplier' | 'contact' | 'address' | 'creditLimit' | 'balance' | 'paymentTerms' | 'lastActivity' | 'status';
@@ -147,18 +148,20 @@ export default function AccountsPayablePage() {
     return Object.keys(e).length === 0;
   };
 
-  // Calculate totals — derive from invoices and per-invoice payments to avoid double-counting
+  // Activity totals follow Customize KPI period; still-to-pay / overdue stay current open balance.
+  const { period: kpiPeriod, todayISO: kpiToday } = useAccountingDeskPeriod();
+
   const totalInvoices = useMemo(() => {
     return invoices
-      .filter(invoice => invoice.type === 'Purchase')
+      .filter((invoice) => invoice.type === 'Purchase' && isInPeriod(invoice.date || invoice.createdAt, kpiPeriod, kpiToday))
       .reduce((sum, invoice) => sum + invoice.total, 0);
-  }, [invoices]);
+  }, [invoices, kpiPeriod, kpiToday]);
 
   const totalPayments = useMemo(() => {
     return payments
-      .filter(payment => payment.type === 'Payment')
+      .filter((payment) => payment.type === 'Payment' && isInPeriod(payment.date || payment.createdAt, kpiPeriod, kpiToday))
       .reduce((sum, payment) => sum + payment.amount, 0);
-  }, [payments]);
+  }, [payments, kpiPeriod, kpiToday]);
 
   // Filter purchase invoices — excludes Draft/Void, which have no GL impact and
   // shouldn't count toward payables/aging any more than a Draft/Void sale counts
@@ -1957,7 +1960,7 @@ export default function AccountsPayablePage() {
               )}
               <ModalBody className={dialogType === 'invoice' || dialogType === 'payment' ? 'px-4 py-3 bg-white' : undefined}>
         {dialogType === 'supplier' && (
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input
               label="Supplier Code"
               value={form.code || ''}
@@ -2715,7 +2718,7 @@ export default function AccountsPayablePage() {
                     return <div className="text-xs text-amber-600">Tax is ₵0 — nothing to withhold VAT on.</div>;
                   }
                   return (
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <Input size="sm" isReadOnly label="WHT-VAT rate" value={`${whtVat.rate}%`} />
                       <Input
                         size="sm"
@@ -3221,7 +3224,7 @@ export default function AccountsPayablePage() {
                     </div>
                   </ModalHeader>
                   <ModalBody className="p-6 bg-white">
-                    <div className="grid grid-cols-2 gap-6 text-sm">
+                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 text-sm">
                       <div>
                         <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Contact</h4>
                         <div className="space-y-1">
@@ -3287,7 +3290,7 @@ export default function AccountsPayablePage() {
                     </div>
                   </ModalHeader>
                   <ModalBody className="p-6 bg-white">
-                    <div className="grid grid-cols-3 gap-6 pb-6 border-b text-sm">
+                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-3 pb-6 border-b text-sm">
                       <div>
                         <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Supplier</h4>
                         <div className="font-semibold">{supplier?.name || 'Unknown'}</div>
@@ -3396,7 +3399,7 @@ export default function AccountsPayablePage() {
                   </div>
                 </ModalHeader>
                 <ModalBody className="p-6 bg-white">
-                  <div className="grid grid-cols-2 gap-6 text-sm">
+                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 text-sm">
                     <div>
                       <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Paid To</h4>
                       <div className="font-semibold">{paySupplier?.name || viewItem.businessPartnerId}</div>

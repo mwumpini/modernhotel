@@ -7,7 +7,12 @@ import {
   useDashboardVisibility,
   type DashboardSectionDef,
 } from '../../lib/dashboard/useDashboardVisibility';
+import {
+  useDashboardPeriod,
+  type DashboardPeriod,
+} from '../../lib/dashboard/useDashboardPeriod';
 import { deskBookTabsClassNames, deskBookTabPanelClassName } from '../dashboard/deskTabsUi';
+import { useHostSummaryCollapsed } from '../../lib/dashboard/useSummaryCollapsed';
 
 export { deskBookTabsClassNames, deskBookTabPanelClassName };
 
@@ -106,7 +111,18 @@ export type DeskVisibilityApi = {
   hiddenCount: number;
 };
 
+export type DeskPeriodApi = {
+  period: DashboardPeriod;
+  setPeriod: (period: DashboardPeriod) => void;
+  defaultPeriod: DashboardPeriod;
+  todayISO: string;
+  label: string;
+  isDefault: boolean;
+  bounds: { start: string; end: string } | null;
+};
+
 const DeskVisibilityContext = createContext<DeskVisibilityApi | null>(null);
+const DeskPeriodContext = createContext<DeskPeriodApi | null>(null);
 
 export function AccountingDeskVisibilityProvider({
   value,
@@ -122,6 +138,20 @@ export function AccountingDeskVisibilityProvider({
   );
 }
 
+export function AccountingDeskPeriodProvider({
+  value,
+  children,
+}: {
+  value: DeskPeriodApi;
+  children: React.ReactNode;
+}) {
+  return (
+    <DeskPeriodContext.Provider value={value}>
+      {children}
+    </DeskPeriodContext.Provider>
+  );
+}
+
 /** Prefer dashboard-provided visibility so ✕ and header Customize share state. */
 export function useAccountingDeskVisibility(
   fallbackSections: DashboardSectionDef[] = ALL_BOOKS_KPI_SECTIONS,
@@ -130,6 +160,25 @@ export function useAccountingDeskVisibility(
   const ctx = useContext(DeskVisibilityContext);
   const local = useDashboardVisibility(fallbackKey, fallbackSections);
   return ctx ?? local;
+}
+
+/** Prefer shell-provided period so Customize and book KPI strips share one window. */
+export function useAccountingDeskPeriod(
+  fallbackKey = 'dashboard.period.accounting',
+  fallbackDefault: DashboardPeriod = 'month',
+): DeskPeriodApi {
+  const ctx = useContext(DeskPeriodContext);
+  const local = useDashboardPeriod(fallbackKey, fallbackDefault);
+  if (ctx) return ctx;
+  return {
+    period: local.period,
+    setPeriod: local.setPeriod,
+    defaultPeriod: local.defaultPeriod,
+    todayISO: local.todayISO,
+    label: local.label,
+    isDefault: local.isDefault,
+    bounds: local.bounds,
+  };
 }
 
 export type DeskKpiItem = {
@@ -147,18 +196,23 @@ export function DeskKpiStrip({
   className?: string;
 }) {
   const { isHidden, hide } = useAccountingDeskVisibility();
+  const summaryCollapsed = useHostSummaryCollapsed();
   const visible = items.filter((item) => !isHidden(item.id));
-  if (visible.length === 0) return null;
+  if (summaryCollapsed || visible.length === 0) return null;
 
   return (
-    <div className={`grid grid-cols-2 gap-2 lg:grid-cols-4 xl:grid-cols-7 ${className}`}>
+    // Phones / tablets: 2-3 per row. Short (zoomed) screens: one swipeable row
+    // so the KPIs never push the book's table below the fold.
+    <div
+      className={`acct-kpi grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 short:flex short:snap-x short:overflow-x-auto short:pb-1 ${className}`}
+    >
       {visible.map((item) => (
-        <Card key={item.id} className="relative border border-gray-200 shadow-none">
-          <CardBody className="px-2 py-1.5 text-center">
-            <div className="absolute right-1 top-0.5">
+        <Card key={item.id} className="relative min-w-0 border border-gray-200 shadow-none short:min-w-[9.5rem] short:shrink-0 short:snap-start">
+          <CardBody className="px-6 py-1.5 text-center short:py-1">
+            <div className="absolute right-0 top-0">
               <HideCardButton size="sm" onHide={() => hide(item.id)} label={item.label} />
             </div>
-            <div className={`text-base font-semibold tabular-nums ${item.tone || 'text-gray-900'}`}>
+            <div className={`whitespace-nowrap text-sm font-semibold tabular-nums sm:text-base ${item.tone || 'text-gray-900'}`}>
               {item.value}
             </div>
             <div className="text-xs leading-tight text-gray-500">{item.label}</div>
@@ -178,6 +232,7 @@ export function DeskKpiCustomize({
   className?: string;
 }) {
   const { isHidden, show, toggle, showAll } = useAccountingDeskVisibility();
+  const { period, setPeriod, defaultPeriod } = useAccountingDeskPeriod();
   const hiddenCount = useMemo(
     () => sections.filter((s) => isHidden(s.id)).length,
     [sections, isHidden],
@@ -201,6 +256,9 @@ export function DeskKpiCustomize({
       showAll={showAllInScope}
       hiddenCount={hiddenCount}
       className={className}
+      period={period}
+      onPeriodChange={setPeriod}
+      defaultPeriod={defaultPeriod}
     />
   );
 }

@@ -100,15 +100,17 @@ export function buildLiveStationBoard(orders: FbOrderDto[]): LiveStationView[] {
   });
 }
 
-export function kitchenStats(orders: FbOrderDto[]) {
+export function kitchenStats(orders: FbOrderDto[], servedInWindow?: FbOrderDto[]) {
   const active = orders.filter(o => ACTIVE.has(o.status));
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const servedToday = orders.filter(o => {
-    if (o.status !== 'served' && o.status !== 'billed') return false;
-    return new Date(o.servedAt || o.createdAt) >= today;
-  });
-  const prepTimes = servedToday
+  const served =
+    servedInWindow ??
+    orders.filter((o) => {
+      if (o.status !== 'served' && o.status !== 'billed') return false;
+      return new Date(o.servedAt || o.createdAt) >= today;
+    });
+  const prepTimes = served
     .map(o => {
       const start = o.preparingAt ? new Date(o.preparingAt).getTime() : new Date(o.createdAt).getTime();
       const end = o.servedAt ? new Date(o.servedAt).getTime() : Date.now();
@@ -120,5 +122,5 @@ export function kitchenStats(orders: FbOrderDto[]) {
       ? Math.round(prepTimes.reduce((a, b) => a + b, 0) / prepTimes.length)
       : 0;
   const urgent = active.filter(o => o.priority === 'urgent').length;
-  return { activeCount: active.length, avgPrep, urgent, servedToday: servedToday.length };
+  return { activeCount: active.length, avgPrep, urgent, servedToday: served.length };
 }

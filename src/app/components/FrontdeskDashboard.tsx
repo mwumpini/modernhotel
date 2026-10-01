@@ -25,9 +25,13 @@ import {
   FO_OVERVIEW_SECTIONS,
   FoDeskKpiCustomize,
   FrontOfficeDeskVisibilityProvider,
+  FrontOfficeDeskPeriodProvider,
   useFrontOfficeDeskVisibility,
 } from './frontoffice/foDeskKpi';
+import { useDashboardPeriod, isInPeriod } from '../lib/dashboard/useDashboardPeriod';
 import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
+import { SummaryCollapsedProvider, useSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
+import { SummaryToggle } from './dashboard/SummaryToggle';
 const panelFallback = <div className="p-6 text-center text-gray-500">Loading...</div>;
 const ReservationsBookingsManager = dynamic(() => import('./ReservationsBookingsManager'), { ssr: false, loading: () => panelFallback });
 const ServiceChargesPage = dynamic(() => import('../guest-services/service-charges/page'), { ssr: false, loading: () => panelFallback });
@@ -43,10 +47,12 @@ const FrontOfficeReportsAnalysis = dynamic(() => import('./FrontOfficeReportsAna
 const FO_TABS = new Set(['reservations', 'rooms', 'desk', 'transfer', 'servicecharges', 'billing', 'cashiering', 'clients', 'night-audit', 'reports']);
 const FO_TAB_ALIASES: Record<string, string> = {
   overview: 'reservations',
+  guests: 'reservations',
   'guest-services': 'desk',
   checkins: 'desk',
   checkouts: 'desk',
   staff: 'reservations',
+  night: 'night-audit',
 };
 
 function resolveFoTab(raw: string | null) {
@@ -63,6 +69,7 @@ export default function FrontdeskDashboard({
   fullPage?: boolean;
 } = {}) {
   const [selectedTab, setSelectedTab] = useState(resolveFoTab(initialTab || null) || 'reservations');
+  const { collapsed: summaryCollapsed, toggle: toggleSummary } = useSummaryCollapsed('frontdesk.summaryCollapsed');
   const [openNewReservation, setOpenNewReservation] = useState(false);
   const [, setRefreshTrigger] = useState(0);
 
@@ -70,10 +77,22 @@ export default function FrontdeskDashboard({
     ALL_FO_DESK_SECTIONS,
     'dashboard.hidden.frontoffice',
   );
+  const deskPeriod = useDashboardPeriod('dashboard.period.frontoffice', 'today');
 
   const deskVisibility = useMemo(
     () => ({ isHidden, hide, show, toggle: toggleSection, showAll, hiddenCount }),
     [isHidden, hide, show, toggleSection, showAll, hiddenCount],
+  );
+  const deskPeriodApi = useMemo(
+    () => ({
+      period: deskPeriod.period,
+      setPeriod: deskPeriod.setPeriod,
+      defaultPeriod: deskPeriod.defaultPeriod,
+      todayISO: deskPeriod.todayISO,
+      label: deskPeriod.label,
+      isDefault: deskPeriod.isDefault,
+    }),
+    [deskPeriod.period, deskPeriod.setPeriod, deskPeriod.defaultPeriod, deskPeriod.todayISO, deskPeriod.label, deskPeriod.isDefault],
   );
 
   const customizeSections = FO_KPI_SECTIONS_BY_TAB[selectedTab]
@@ -118,17 +137,21 @@ export default function FrontdeskDashboard({
   const dirtyRooms = hkAllRooms.filter(r => r.status === 'dirty').length;
   const maintenanceOpen = housekeepingStore.getMaintenanceRequests().filter(m => m.status !== 'completed').length;
   const readySoon = hkAllRooms.filter(r => r.status === 'inspected').length;
-  const todayIso = new Date().toISOString().slice(0,10);
-  const checkingOutToday = reservations.filter(r => r.status === 'checked-in' && r.departure.slice(0,10) === todayIso).length;
-  // "Extended" = still checked-in past their scheduled departure date (not today's departures).
-  const extendedStays = reservations.filter(r => r.status === 'checked-in' && r.departure.slice(0,10) < todayIso).length;
+  const todayIso = deskPeriod.todayISO;
+  const checkingOutToday = reservations.filter((r) => r.status === 'checked-in' && isInPeriod(r.departure, deskPeriod.period, todayIso)).length;
+  // "Extended" = still checked-in past their scheduled departure date (not period departures).
+  const extendedStays = reservations.filter((r) => r.status === 'checked-in' && r.departure.slice(0, 10) < todayIso).length;
   const roomTypes = (settings as any)?.roomManagement?.roomTypes || [];
   const availableByType = (typeId: string) =>
-    hkAllRooms.filter(r => r.roomTypeId === typeId && ['vacant', 'clean', 'inspected'].includes(r.status as any)).length;
-  const todayCheckIns = reservations.filter(r => (r.status === 'confirmed' || r.status === 'pending') && r.arrival.slice(0,10) === todayIso).length;
+    hkAllRooms.filter((r) => r.roomTypeId === typeId && ['vacant', 'clean', 'inspected'].includes(r.status as any)).length;
+  const todayCheckIns = reservations.filter(
+    (r) => (r.status === 'confirmed' || r.status === 'pending') && isInPeriod(r.arrival, deskPeriod.period, todayIso),
+  ).length;
   const todayCheckOuts = checkingOutToday;
   return (
     <FrontOfficeDeskVisibilityProvider value={deskVisibility}>
+    <FrontOfficeDeskPeriodProvider value={deskPeriodApi}>
+    <SummaryCollapsedProvider collapsed={!fullPage && summaryCollapsed}>
     <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
       {!fullPage && <DeptMessenger from="frontdesk" mode="drawer" />}
       <div className={`flex flex-wrap items-center justify-between gap-2 ${fullPage ? 'mb-2' : 'mb-6'}`}>
@@ -136,6 +159,7 @@ export default function FrontdeskDashboard({
           {fullPage ? '🏨 Front Office' : '🏨 Front Office Operations'}
         </h2>
         <div className="flex flex-wrap items-center gap-2">
+          {!fullPage && <SummaryToggle collapsed={summaryCollapsed} onToggle={toggleSummary} />}
           <FoDeskKpiCustomize sections={customizeSections} />
           {!fullPage && (
             <ModuleExpandButton
@@ -148,17 +172,17 @@ export default function FrontdeskDashboard({
       </div>
 
       {/* Room Status Overview */}
-      {!fullPage && (
-      <div className="mb-7">
+      {!fullPage && !summaryCollapsed && (
+      <div className="mb-4">
         {(!isHidden('availableRooms') || !isHidden('occupiedRooms') || !isHidden('maintenance')) && (
         <>
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-3">
           <h3 className="text-xl font-semibold text-ghana-black flex items-center gap-2">
             🏠 Room Status Overview ({totalRooms} Rooms)
           </h3>
         </div>
 
-        <div className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-3">
+        <div className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-3">
           {/* Available Rooms */}
           {!isHidden('availableRooms') && (
           <Card className="border border-gray-200 border-l-2 border-l-green-500 shadow-none">
@@ -188,7 +212,10 @@ export default function FrontdeskDashboard({
           <Card className="border border-gray-200 border-l-2 border-l-red-500 shadow-none">
             <CardBody className="px-3 py-2">
               <div className="mb-1 flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-ghana-black">Occupied Rooms</h4>
+                <div>
+                  <h4 className="text-sm font-semibold text-ghana-black">Occupied Rooms</h4>
+                  <span className="text-[11px] text-gray-500">House now · departures {deskPeriod.label}</span>
+                </div>
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 bg-red-500 rounded-full"></div>
                   <HideCardButton onHide={() => hide('occupiedRooms')} label="Occupied Rooms" />
@@ -197,7 +224,7 @@ export default function FrontdeskDashboard({
               <div className="mb-1 text-base font-semibold tabular-nums text-red-700">{occupiedTotal}</div>
               <div className="space-y-1 text-sm text-gray-600">
                 <div className="flex justify-between">
-                  <span>Checking Out Today</span>
+                  <span>Checking out ({deskPeriod.label})</span>
                   <span className="font-medium">{checkingOutToday}</span>
                 </div>
                 <div className="flex justify-between">
@@ -205,8 +232,8 @@ export default function FrontdeskDashboard({
                   <span className="font-medium">{extendedStays}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>VIP Guests</span>
-                  <span className="font-medium">0</span>
+                  <span>Arrivals ({deskPeriod.label})</span>
+                  <span className="font-medium">{todayCheckIns}</span>
                 </div>
               </div>
             </CardBody>
@@ -249,23 +276,23 @@ export default function FrontdeskDashboard({
         {/* Today's Room Operations */}
         {!isHidden('todayOps') && (
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">📅</span>
-              <h4 className="text-lg font-semibold text-ghana-black">Today's Room Operations</h4>
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+            <div className="flex items-center gap-1.5">
+              <span className="text-base">📅</span>
+              <h4 className="text-sm font-semibold text-ghana-black lg:text-base">Room Operations · {deskPeriod.label}</h4>
             </div>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-green-600 font-medium">{todayCheckIns} Check-ins</span>
-                <span className="text-gray-500">Starting 2:00 PM</span>
+                <span className="text-gray-500">Arrivals</span>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-blue-600 font-medium">{todayCheckOuts} Check-outs</span>
-                <span className="text-gray-500">By 12:00 PM</span>
+                <span className="text-gray-500">Departures</span>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-orange-600 font-medium">{maintenanceOpen} Maintenance</span>
-                <span className="text-gray-500">Scheduled</span>
+                <span className="text-gray-500">Open</span>
               </div>
             </div>
           </div>
@@ -361,6 +388,8 @@ export default function FrontdeskDashboard({
       </div>
       )}
     </div>
+    </SummaryCollapsedProvider>
+    </FrontOfficeDeskPeriodProvider>
     </FrontOfficeDeskVisibilityProvider>
   );
 }

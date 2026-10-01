@@ -14,6 +14,7 @@ export interface MenuItemRef {
 
 export interface OrderItem extends MenuItemRef {
   qty: number;
+  menuItemId?: string;
   category?: string;
   status?: 'pending' | 'preparing' | 'ready' | 'served' | 'cancelled';
   prepMinutes?: number;
@@ -66,6 +67,8 @@ export interface FBOrder {
   billedAt?: string;
   folioId?: string;
   guestId?: string;
+  /** Cash, Card, Mobile Money, or Room Charge. Empty until the order is settled. */
+  paymentMethod?: string;
 }
 
 class OrdersStore {
@@ -178,6 +181,7 @@ class OrdersStore {
             price: unitPrice,
             route: it.route === 'bar' ? 'bar' : 'kitchen',
             qty,
+            menuItemId: it.menuItemId || undefined,
             category: it.category || undefined,
             discountPerUnit,
             serviceChargePerUnit,
@@ -212,6 +216,7 @@ class OrdersStore {
           billedAt: o.billedAt || undefined,
           folioId: o.folioId || undefined,
           guestId: o.guestId || undefined,
+          paymentMethod: o.paymentMethod || undefined,
         };
       });
       this.listeners.forEach((l) => l());

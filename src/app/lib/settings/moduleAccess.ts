@@ -7,8 +7,9 @@ export function moduleEnabled(navKey: string, modules: Partial<ModuleSettings> |
     case 'frontdesk':
       return on('frontOffice');
     case 'restaurant':
-    case 'kitchen':
       return on('foodBeverage');
+    case 'kitchen':
+      return on('foodBeverage') && on('kitchenTerminal');
     case 'housekeeping':
       return on('housekeeping') || on('maintenance');
     case 'inventory':

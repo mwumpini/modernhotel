@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   Alert,
   Button,
@@ -31,7 +31,7 @@ import { migrateCoaParentIds } from '../../lib/accounting/coaTree';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { useDeskPagination } from '../dashboard/deskTableUi';
 import HeadingInfo from '../HeadingInfo';
-import { DeskKpiStrip } from './DeskKpiStrip';
+import { DeskKpiStrip, useAccountingDeskPeriod } from './DeskKpiStrip';
 
 type JournalSortKey = 'entry' | 'date' | 'reference' | 'description' | 'source' | 'status' | 'debit' | 'credit';
 
@@ -164,6 +164,7 @@ export default function JournalRegister() {
   const updateJournalEntry = useAccountingStore((s) => s.updateJournalEntry);
   const deleteJournalEntry = useAccountingStore((s) => s.deleteJournalEntry);
   const voidJournalEntry = useAccountingStore((s) => s.voidJournalEntry);
+  const { period: kpiPeriod, todayISO: kpiToday, bounds: kpiBounds } = useAccountingDeskPeriod();
   const [query, setQuery] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
@@ -184,6 +185,17 @@ export default function JournalRegister() {
   const cols = useResizableColumns<JournalSortKey>({
     entry: 110, date: 100, reference: 120, description: 200, source: 120, status: 88, debit: 100, credit: 100,
   });
+
+  // Keep the register date window aligned with Customize → KPI period.
+  useEffect(() => {
+    if (kpiPeriod === 'all') {
+      setFromDate('');
+      setToDate('');
+      return;
+    }
+    setFromDate(kpiBounds?.start ?? '');
+    setToDate(kpiBounds?.end ?? kpiToday);
+  }, [kpiPeriod, kpiBounds, kpiToday]);
 
   const accountName = useMemo(() => {
     const names = new Map<string, string>();
@@ -683,7 +695,7 @@ export default function JournalRegister() {
                   </div>
                 </ModalHeader>
                 <ModalBody className="p-6 bg-white space-y-4">
-                  <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 text-sm">
                     <div><span className="text-gray-500">Date:</span> <span className="font-medium">{dayOf(liveViewEntry.date)}</span></div>
                     <div><span className="text-gray-500">Reference:</span> <span className="font-mono text-xs">{liveViewEntry.reference || '—'}</span></div>
                     <div><span className="text-gray-500">Source:</span> <span className="font-medium">{sourceInfo(liveViewEntry.sourceModule).label}</span></div>

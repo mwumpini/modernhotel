@@ -9,6 +9,28 @@ import { useComplianceStore } from '../lib/compliance/store';
 import { useSettingsStore } from '../lib/settings/store';
 import { moduleEnabled, reportsEnabled } from '../lib/settings/moduleAccess';
 import { openMessengerFromShell } from '../lib/openMessenger';
+import SidebarSticky from './SidebarSticky';
+
+/** After a dev-server restart the old chunk URLs 404. Reload once so the new build is picked up. */
+function isChunkLoadError(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+  const name = 'name' in error ? String((error as { name?: string }).name) : '';
+  const message = 'message' in error ? String((error as { message?: string }).message) : '';
+  return name === 'ChunkLoadError' || /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module/i.test(message);
+}
+
+function lazyRetry<T extends React.ComponentType<any>>(factory: () => Promise<{ default: T }>) {
+  return lazy(() =>
+    factory().catch((error: unknown) => {
+      if (typeof window !== 'undefined' && isChunkLoadError(error) && !sessionStorage.getItem('chunk-reload')) {
+        sessionStorage.setItem('chunk-reload', '1');
+        window.location.reload();
+        return new Promise<{ default: T }>(() => {});
+      }
+      throw error;
+    }),
+  );
+}
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'System Administrator',
@@ -18,11 +40,11 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 // Lazy load heavy components to prevent chunk loading errors
-const FrontdeskDashboard = lazy(() => import('./FrontdeskDashboard'));
-const ExecutiveManagementDashboard = lazy(() => import('./ExecutiveManagementDashboard'));
-const ExecutiveApprovalsInbox = lazy(() => import('./ExecutiveApprovalsInbox'));
-const HousekeepingMainDashboard = lazy(() => import('./HousekeepingMainDashboard'));
-const FBPOS = lazy(() => import('./FBPOS').then(module => ({ default: module.default })));
+const FrontdeskDashboard = lazyRetry(() => import('./FrontdeskDashboard'));
+const ExecutiveManagementDashboard = lazyRetry(() => import('./ExecutiveManagementDashboard'));
+const ExecutiveApprovalsInbox = lazyRetry(() => import('./ExecutiveApprovalsInbox'));
+const HousekeepingMainDashboard = lazyRetry(() => import('./HousekeepingMainDashboard'));
+const FBPOS = lazyRetry(() => import('./FBPOS').then(module => ({ default: module.default })));
 // BarManagement was removed — restaurant and bar are one unified operation (same
 // staff, same POS), covered by FoodBeverageRestaurantBar.tsx with venue filtering
 // and FBPOS.tsx's venue toggle, which already auto-route revenue to the correct
@@ -30,21 +52,21 @@ const FBPOS = lazy(() => import('./FBPOS').then(module => ({ default: module.def
 // component) is no longer routed to now that 'restaurant' is the Food &
 // Beverage split's primary section key.
 // KitchenDisplay (old in-memory) removed — use /kitchen-display page instead
-const OfflineIndicator = lazy(() => import('./OfflineIndicator'));
-const OfflineManager = lazy(() => import('./OfflineManager'));
-const ActivityLog = lazy(() => import('./ActivityLog'));
-const SystemSettingsMainDashboard = lazy(() => import('./SystemSettingsMainDashboard'));
-const AutoComplianceMainDashboard = lazy(() => import('./AutoComplianceMainDashboard'));
-const AccountingMainDashboard = lazy(() => import('./AccountingMainDashboard'));
-const FrontofficeEventsConferences = lazy(() => import('./FrontofficeEventsConferences'));
-const EventsConferencesMainDashboard = lazy(() => import('./EventsConferencesMainDashboard'));
-const HRMainDashboard = lazy(() => import('./HRMainDashboard'));
-const SecurityMainDashboard = lazy(() => import('./SecurityMainDashboard'));
-const StoresMainDashboard = lazy(() => import('./StoresMainDashboard'));
-const FoodBeverageMainDashboard = lazy(() => import('./FoodBeverageMainDashboard'));
-const FoodBeverageKitchen = lazy(() => import('./FoodBeverageKitchen'));
-const DepartmentActivityLog = lazy(() => import('./DepartmentActivityLog').then(module => ({ default: module.default })));
-const FrontOfficeReportsAnalysis = lazy(() => import('./FrontOfficeReportsAnalysis'));
+const OfflineIndicator = lazyRetry(() => import('./OfflineIndicator'));
+const OfflineManager = lazyRetry(() => import('./OfflineManager'));
+const ActivityLog = lazyRetry(() => import('./ActivityLog'));
+const SystemSettingsMainDashboard = lazyRetry(() => import('./SystemSettingsMainDashboard'));
+const AutoComplianceMainDashboard = lazyRetry(() => import('./AutoComplianceMainDashboard'));
+const AccountingMainDashboard = lazyRetry(() => import('./AccountingMainDashboard'));
+const FrontofficeEventsConferences = lazyRetry(() => import('./FrontofficeEventsConferences'));
+const EventsConferencesMainDashboard = lazyRetry(() => import('./EventsConferencesMainDashboard'));
+const HRMainDashboard = lazyRetry(() => import('./HRMainDashboard'));
+const SecurityMainDashboard = lazyRetry(() => import('./SecurityMainDashboard'));
+const StoresMainDashboard = lazyRetry(() => import('./StoresMainDashboard'));
+const FoodBeverageMainDashboard = lazyRetry(() => import('./FoodBeverageMainDashboard'));
+const FoodBeverageKitchen = lazyRetry(() => import('./FoodBeverageKitchen'));
+const DepartmentActivityLog = lazyRetry(() => import('./DepartmentActivityLog').then(module => ({ default: module.default })));
+const FrontOfficeReportsAnalysis = lazyRetry(() => import('./FrontOfficeReportsAnalysis'));
 
 interface NavigationProps {
   onLogout: () => void;
@@ -119,7 +141,10 @@ export default function Navigation({ onLogout }: NavigationProps) {
   const [activeSection, setActiveSection] = React.useState<ActiveSection>('dashboard');
   // (narrow screens: choosing a section closes the open pane — see the effect after the sidebar state)
   const [hasMounted, setHasMounted] = React.useState(false);
-  React.useEffect(() => { setHasMounted(true); }, []);
+  React.useEffect(() => {
+    setHasMounted(true);
+    try { sessionStorage.removeItem('chunk-reload'); } catch { /* ignore */ }
+  }, []);
   // The side pane can be tucked away to give the work area the full width. The choice is a
   // per-device convenience, remembered between visits; Ctrl/Cmd+B toggles it from anywhere.
   // On phones and tablets the pane always starts tucked away and opens OVER the content (tap
@@ -162,6 +187,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
   useSettingsStore(s => s.sessionRoleId);
   useSettingsStore(s => s.roles);
   const moduleSettings = useSettingsStore(s => s.moduleSettings);
+  const settingsHydrated = useSettingsStore(s => s.hydrated);
   const hasModuleAccess = useSettingsStore.getState().hasModuleAccess;
   const hasPermission = useSettingsStore.getState().hasPermission;
   // The Approvals inbox (pending journal entries/payments/high-value
@@ -269,6 +295,11 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: `🏨 Front Office Operations${getUnreadCount('frontdesk') ? ` (${getUnreadCount('frontdesk')})` : ''}`,
       icon: '🏨',
       items: [
+        { title: '🛎️ Desk', href: '#' },
+        { title: '🛏️ Rooms', href: '#' },
+        { title: '💳 Billing', href: '#' },
+        { title: '👥 Clients', href: '#' },
+        { title: '🌙 Night', href: '#' },
         { title: '📈 Reports & Analysis', href: '#' },
       ]
     },
@@ -277,7 +308,11 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: '🎪 Events & Conferences',
       icon: '🎪',
       items: [
-        { title: '📈 Reports & Analysis', href: '/events/reports' },
+        { title: '📋 Events', href: '#' },
+        { title: '🏢 Venues', href: '#' },
+        { title: '💰 Rates', href: '#' },
+        { title: '👥 Staff', href: '#' },
+        { title: '📈 Reports & Analysis', href: '#' },
       ]
     },
     {
@@ -285,6 +320,11 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: '🍽️ Restaurant & Bar',
       icon: '🍽️',
       items: [
+        { title: '💳 POS Terminal', href: '#' },
+        { title: '🪑 Service', href: '#' },
+        { title: '🍽️ Menu', href: '#' },
+        { title: '💵 Cash', href: '#' },
+        { title: '📦 Supplies', href: '#' },
         { title: '📈 Reports & Analysis', href: '#' },
       ]
     },
@@ -294,6 +334,10 @@ export default function Navigation({ onLogout }: NavigationProps) {
       icon: '👨‍🍳',
       items: [
         { title: 'Kitchen Display', href: '#' },
+        { title: '🍳 Board', href: '#' },
+        { title: '📖 Recipes', href: '#' },
+        { title: '📦 Supplies', href: '#' },
+        { title: '👥 Staff', href: '#' },
         { title: '📈 Reports & Analysis', href: '#' },
       ]
     },
@@ -302,7 +346,10 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: `🛏️ Housekeeping & Maintenance${getUnreadCount('housekeeping') ? ` (${getUnreadCount('housekeeping')})` : ''}`,
       icon: '🛏️',
       items: [
-        { title: '🏠 Main Dashboard', href: '#' },
+        { title: '🏠 Floor', href: '#' },
+        { title: '🧹 Work', href: '#' },
+        { title: '📦 Supplies', href: '#' },
+        { title: '👥 Staff', href: '#' },
         { title: '📈 Reports & Analysis', href: '#' },
         { title: '👁️ View Activities', href: '#' },
       ]
@@ -312,7 +359,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: `📦 Inventory & Stores${getUnreadCount('inventory') ? ` (${getUnreadCount('inventory')})` : ''}`,
       icon: '📦',
       items: [
-        { title: '🏠 Main Dashboard', href: '#' },
+        { title: '📦 Stock', href: '#' },
+        { title: '👥 Staff', href: '#' },
         { title: '📈 Reports & Analysis', href: '/inventory/reports' },
       ]
     },
@@ -321,7 +369,10 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: `🚨 Security Operations${getUnreadCount('security') ? ` (${getUnreadCount('security')})` : ''}`,
       icon: '🚨',
       items: [
-        { title: '📊 Operations', href: '#' },
+        { title: '🚶 Watch', href: '#' },
+        { title: '🚨 Incidents', href: '#' },
+        { title: '🎟️ Visitors', href: '#' },
+        { title: '👥 Staff', href: '#' },
         { title: '📈 Reports & Analysis', href: '#' },
         { title: '👁️ View Activities', href: '#' },
       ]
@@ -331,7 +382,10 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: `👥 HR & Payroll${getUnreadCount('hr') ? ` (${getUnreadCount('hr')})` : ''}`,
       icon: '👥',
       items: [
-        { title: '🏠 Main Dashboard', href: '#' },
+        { title: '👥 People', href: '#' },
+        { title: '🌴 Leave', href: '#' },
+        { title: '⏰ Time', href: '#' },
+        { title: '💰 Payroll', href: '#' },
         { title: '📈 Reports & Analysis', href: '#' },
       ]
     },
@@ -340,8 +394,11 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: '🧾 Accounting & Finance',
       icon: '🧾',
       items: [
-        { title: 'Accounting Management', href: '#' },
-        { title: '📑 Financial Statements', href: '#' },
+        { title: '📝 Receivable', href: '#' },
+        { title: '🧾 Payable', href: '#' },
+        { title: '💰 Cash', href: '#' },
+        { title: '📒 Books', href: '#' },
+        { title: '📑 Statements', href: '#' },
         { title: '📈 Reports & Analysis', href: '#' },
       ]
     },
@@ -349,13 +406,24 @@ export default function Navigation({ onLogout }: NavigationProps) {
       key: 'compliance',
       title: '⚖️ Compliance & Reports',
       icon: '⚖️',
-      items: []
+      items: [
+        { title: '🧮 Tax', href: '#' },
+        { title: '💰 Payroll', href: '#' },
+        { title: '📈 Reports & Analysis', href: '#' },
+      ]
     },
     {
       key: 'settings',
       title: '⚙️ System Settings',
       icon: '⚙️',
-      items: []
+      items: [
+        { title: '👥 People', href: '#' },
+        { title: '🛏️ Rooms', href: '#' },
+        { title: '📄 Documents', href: '#' },
+        { title: '📦 Stock', href: '#' },
+        { title: '🔒 Security', href: '#' },
+        { title: '🏢 Setup', href: '#' },
+      ]
     }
   ];
 
@@ -369,13 +437,14 @@ export default function Navigation({ onLogout }: NavigationProps) {
   // stale deep link from a previous, more-privileged session), fall back to the dashboard
   // instead of silently continuing to render restricted content.
   React.useEffect(() => {
+    if (!settingsHydrated) return;
     const activeModuleKey = sectionToModuleKey(activeSection);
     const allowed = hasModuleAccess(activeModuleKey) && moduleEnabled(activeModuleKey, moduleSettings);
     if (activeModuleKey !== 'dashboard' && !allowed) {
       setActiveSection('dashboard');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSection, hasModuleAccess, moduleSettings]);
+  }, [activeSection, hasModuleAccess, moduleSettings, settingsHydrated]);
 
   const handleSelectionChange = (keys: any) => {
     // Handle both Set<string> and Selection types
@@ -405,6 +474,12 @@ export default function Navigation({ onLogout }: NavigationProps) {
     };
   }, []);
 
+  const openStoredTab = (section: ActiveSection, storageKey: string, tab: string, eventName: string) => {
+    try { localStorage.setItem(storageKey, tab); } catch {}
+    setActiveSection(section);
+    try { window.dispatchEvent(new Event(eventName)); } catch {}
+  };
+
   const handleSectionClick = (sectionKey: string, itemTitle?: string) => {
     // If no itemTitle is provided, it means the main section header was clicked
     // This should navigate to the dashboard for that section
@@ -422,37 +497,50 @@ export default function Navigation({ onLogout }: NavigationProps) {
       }
     // Handle Restaurant & Bar sub-items
     } else if (sectionKey === 'restaurant' && itemTitle) {
-      if (itemTitle === '📈 Reports & Analysis') {
-        try { localStorage.setItem('fb.tab', 'reports'); } catch {}
-        setActiveSection('restaurant');
-        try { window.dispatchEvent(new Event('fb-navigate')); } catch {}
+      const fbTab =
+        itemTitle === '🪑 Service' ? 'tables'
+        : itemTitle === '🍽️ Menu' ? 'menu'
+        : itemTitle === '💵 Cash' ? 'cashiering'
+        : itemTitle === '📦 Supplies' ? 'supplies'
+        : itemTitle === '📈 Reports & Analysis' ? 'reports'
+        : null;
+      if (itemTitle === '💳 POS Terminal') {
+        setActiveSection('fb-pos');
       } else if (itemTitle === '⚙️ User Preferences') {
         setActiveSection('fb-preferences');
+      } else if (fbTab) {
+        openStoredTab('restaurant', 'fb.tab', fbTab, 'fb-navigate');
       } else {
         setActiveSection('restaurant');
       }
     // Handle Kitchen sub-items
     } else if (sectionKey === 'kitchen' && itemTitle) {
+      const kitchenTab =
+        itemTitle === '🍳 Board' ? 'kds'
+        : itemTitle === '📖 Recipes' ? 'recipes'
+        : itemTitle === '📦 Supplies' ? 'supplies'
+        : itemTitle === '👥 Staff' ? 'staff'
+        : itemTitle === '📈 Reports & Analysis' ? 'reports'
+        : null;
       if (itemTitle === 'Kitchen Display') {
         window.location.assign('/kitchen-display');
         return;
-      } else if (itemTitle === '📈 Reports & Analysis') {
-        try { localStorage.setItem('kitchen.tab', 'reports'); } catch {}
-        setActiveSection('kitchen');
-        try { window.dispatchEvent(new Event('kitchen-navigate')); } catch {}
-        return;
+      } else if (kitchenTab) {
+        openStoredTab('kitchen', 'kitchen.tab', kitchenTab, 'kitchen-navigate');
       } else {
         setActiveSection('kitchen');
       }
     // Handle Housekeeping sub-items
     } else if (sectionKey === 'housekeeping' && itemTitle) {
-      if (itemTitle === '📊 Operations') {
-        setActiveSection('housekeeping');
-      } else if (itemTitle === '📈 Reports & Analysis') {
-        try { localStorage.setItem('hk.tab', 'reports'); } catch {}
-        setActiveSection('housekeeping');
-        try { window.dispatchEvent(new Event('hk-navigate')); } catch {}
-        return;
+      const hkTab =
+        itemTitle === '🏠 Floor' ? 'floor'
+        : itemTitle === '🧹 Work' ? 'work'
+        : itemTitle === '📦 Supplies' ? 'supplies'
+        : itemTitle === '👥 Staff' ? 'staff'
+        : itemTitle === '📈 Reports & Analysis' ? 'reports'
+        : null;
+      if (hkTab) {
+        openStoredTab('housekeeping', 'hk.tab', hkTab, 'hk-navigate');
       } else if (itemTitle === '👁️ View Activities') {
         setActiveSection('housekeeping-activities');
       } else if (itemTitle === '⚙️ User Preferences') {
@@ -462,13 +550,15 @@ export default function Navigation({ onLogout }: NavigationProps) {
       }
     // Handle Security sub-items
     } else if (sectionKey === 'security' && itemTitle) {
-      if (itemTitle === '📊 Operations') {
-        setActiveSection('security');
-      } else if (itemTitle === '📈 Reports & Analysis') {
-        try { localStorage.setItem('security.tab', 'reports'); } catch {}
-        setActiveSection('security');
-        try { window.dispatchEvent(new Event('security-navigate')); } catch {}
-        return;
+      const securityTab =
+        itemTitle === '🚶 Watch' ? 'patrols'
+        : itemTitle === '🚨 Incidents' ? 'incidents'
+        : itemTitle === '🎟️ Visitors' ? 'visitors'
+        : itemTitle === '👥 Staff' ? 'staff'
+        : itemTitle === '📈 Reports & Analysis' ? 'reports'
+        : null;
+      if (securityTab) {
+        openStoredTab('security', 'security.tab', securityTab, 'security-navigate');
       } else if (itemTitle === '👁️ View Activities') {
         setActiveSection('security-activities');
       } else if (itemTitle === '⚙️ User Preferences') {
@@ -478,11 +568,17 @@ export default function Navigation({ onLogout }: NavigationProps) {
       }
     // Handle Inventory sub-items
     } else if (sectionKey === 'inventory' && itemTitle) {
-      if (itemTitle === '📊 Operations' || itemTitle === '🏠 Main Dashboard') {
-        setActiveSection('inventory');
-      } else if (itemTitle === '📈 Reports & Analysis') {
+      const invTab =
+        itemTitle === '📦 Stock' ? 'items'
+        : itemTitle === '👥 Staff' ? 'staff'
+        : null;
+      if (itemTitle === '📈 Reports & Analysis') {
         window.location.assign('/inventory/reports');
         return;
+      } else if (invTab) {
+        try { localStorage.setItem('inventory.tab', invTab); } catch {}
+        setActiveSection('inventory');
+        try { window.dispatchEvent(new CustomEvent('inv-navigate', { detail: { tab: invTab } })); } catch {}
       } else if (itemTitle === '⚙️ User Preferences') {
         setActiveSection('inventory-preferences');
       } else {
@@ -490,38 +586,57 @@ export default function Navigation({ onLogout }: NavigationProps) {
       }
     // Handle HR sub-items
     } else if (sectionKey === 'hr' && itemTitle) {
-      if (itemTitle === '📊 Operations' || itemTitle === '🏠 Main Dashboard') {
-        setActiveSection('hr');
-      } else if (itemTitle === '📈 Reports & Analysis') {
-        try { localStorage.setItem('hr.tab', 'reports'); } catch {}
-        setActiveSection('hr');
-        try { window.dispatchEvent(new Event('hr-navigate')); } catch {}
-        return;
+      const hrTab =
+        itemTitle === '👥 People' ? 'employees'
+        : itemTitle === '🌴 Leave' ? 'leave'
+        : itemTitle === '⏰ Time' ? 'time'
+        : itemTitle === '💰 Payroll' ? 'payroll'
+        : itemTitle === '📈 Reports & Analysis' ? 'reports'
+        : null;
+      if (hrTab) {
+        openStoredTab('hr', 'hr.tab', hrTab, 'hr-navigate');
       } else if (itemTitle === '⚙️ User Preferences') {
         setActiveSection('hr-preferences');
       } else {
         setActiveSection('hr');
       }
     } else if (sectionKey === 'events-conferences' && itemTitle) {
-      if (itemTitle === '📈 Reports & Analysis') {
-        window.location.assign('/events/reports');
-        return;
+      const eventsTab =
+        itemTitle === '📋 Events' ? 'confirmed'
+        : itemTitle === '🏢 Venues' ? 'venues'
+        : itemTitle === '💰 Rates' ? 'quoting'
+        : itemTitle === '👥 Staff' ? 'staff'
+        : itemTitle === '📈 Reports & Analysis' ? 'reports'
+        : null;
+      if (eventsTab) {
+        openStoredTab('events-conferences', 'events.tab', eventsTab, 'events-navigate');
       } else {
         setActiveSection('events-conferences');
       }
     } else if (sectionKey === 'compliance') {
+      const complianceTab =
+        itemTitle === '🧮 Tax' ? 'tax'
+        : itemTitle === '💰 Payroll' ? 'payroll'
+        : itemTitle === '📈 Reports & Analysis' ? 'reports'
+        : null;
+      if (complianceTab) {
+        try { localStorage.setItem('compliance.tab', complianceTab); } catch {}
+        try { window.dispatchEvent(new CustomEvent('compliance.openTab', { detail: { tab: complianceTab } })); } catch {}
+      }
       setActiveSection('compliance');
     } else if (sectionKey === 'accounting' && itemTitle) {
+      const accountingTab =
+        itemTitle === '📝 Receivable' ? 'receivables'
+        : itemTitle === '🧾 Payable' ? 'payables'
+        : itemTitle === '💰 Cash' ? 'banking'
+        : itemTitle === '📒 Books' ? 'journal'
+        : itemTitle === '📑 Statements' || itemTitle === '📑 Financial Statements' ? 'statements'
+        : itemTitle === '📈 Reports & Analysis' ? 'reports'
+        : null;
       if (itemTitle === 'View Activities') {
         setActiveSection('accounting-activities');
-      } else if (itemTitle === '📑 Financial Statements') {
-        try { localStorage.setItem('accounting.tab', 'statements'); } catch {}
-        setActiveSection('accounting-management');
-        try { window.dispatchEvent(new Event('accounting-navigate')); } catch {}
-      } else if (itemTitle === '📈 Reports & Analysis') {
-        try { localStorage.setItem('accounting.tab', 'reports'); } catch {}
-        setActiveSection('accounting-management');
-        try { window.dispatchEvent(new Event('accounting-navigate')); } catch {}
+      } else if (accountingTab) {
+        openStoredTab('accounting-management', 'accounting.tab', accountingTab, 'accounting-navigate');
       } else {
         setActiveSection('accounting-management');
       }
@@ -546,18 +661,35 @@ export default function Navigation({ onLogout }: NavigationProps) {
         setActiveSection('inventory');
       }
     } else if (sectionKey === 'frontdesk' && itemTitle) {
-      if (itemTitle === '📈 Reports & Analysis') {
-        try { localStorage.setItem('fo.tab', 'reports'); } catch {}
+      const foTab =
+        itemTitle === '🛎️ Desk' ? 'desk'
+        : itemTitle === '🛏️ Rooms' ? 'rooms'
+        : itemTitle === '💳 Billing' ? 'billing'
+        : itemTitle === '👥 Clients' ? 'clients'
+        : itemTitle === '🌙 Night' ? 'night-audit'
+        : itemTitle === '📈 Reports & Analysis' ? 'reports'
+        : null;
+      if (foTab) {
+        try { localStorage.setItem('fo.tab', foTab); } catch {}
         setActiveSection('frontdesk');
         try { window.dispatchEvent(new Event('fo-navigate')); } catch {}
       } else {
         setActiveSection('frontdesk');
       }
     } else if (sectionKey === 'settings' && itemTitle) {
-      if (itemTitle === 'System Setup Wizard') {
+      const settingsTab =
+        itemTitle === '👥 People' ? 'users'
+        : itemTitle === '🛏️ Rooms' ? 'rooms'
+        : itemTitle === '📄 Documents' ? 'numbering'
+        : itemTitle === '📦 Stock' ? 'locations'
+        : itemTitle === '🔒 Security' ? 'security'
+        : null;
+      if (itemTitle === '🏢 Setup' || itemTitle === 'System Setup Wizard') {
         try { window.location.href = '/setup'; } catch {}
       } else if (itemTitle === 'Reports & Analytics') {
         setActiveSection('reports-analytics');
+      } else if (settingsTab) {
+        openStoredTab('settings', 'settings.tab', settingsTab, 'settings-navigate');
       } else {
         setActiveSection('settings');
       }
@@ -586,7 +718,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading Events & Conferences...</div>}><EventsConferencesMainDashboard /></Suspense>;
       case 'events-conferences-analytics':
         if (typeof window !== 'undefined') {
-          window.location.replace('/events/reports');
+          try { localStorage.setItem('events.tab', 'reports'); } catch {}
+          return <Suspense fallback={<div className="p-6 text-center">Loading Events & Conferences...</div>}><EventsConferencesMainDashboard /></Suspense>;
         }
         return <div className="p-6 text-center">Opening Reports & Analysis...</div>;
 
@@ -788,27 +921,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
             Help (F1 / F12)
           </Button>
 
-          {/* Workflow Integration Info */}
-          <div className="mt-8 p-4 bg-gradient-to-r from-blue-500/10 to-ghana-gold/10 rounded-xl border border-blue-500/20">
-            <h3 className="text-sm font-semibold text-ghana-black mb-2">🔄 Workflow Integration</h3>
-            <div className="text-xs text-gray-600 space-y-1">
-              <p>• Automated night audit</p>
-              <p>• Real-time room status sync</p>
-              <p>• Mobile money reconciliation</p>
-              <p>• Ghana compliance automation</p>
-            </div>
-          </div>
-
-          {/* Ghana-Specific Features */}
-          <div className="mt-6 p-4 bg-gradient-to-r from-ghana-red/10 to-ghana-gold/10 rounded-xl border border-ghana-red/20">
-            <h3 className="text-sm font-semibold text-ghana-black mb-2">🇬🇭 Ghana Features</h3>
-            <div className="text-xs text-gray-600 space-y-1">
-              <p>• Ghana Card verification</p>
-              <p>• VAT/NHIL calculation</p>
-              <p>• SSNIT compliance</p>
-              <p>• Tourism levy management</p>
-            </div>
-          </div>
+          <SidebarSticky />
 
           {/* User Profile & Logout */}
           <div className="mt-8 pt-6 border-t border-gray-200">

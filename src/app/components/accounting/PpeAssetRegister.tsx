@@ -70,7 +70,7 @@ import BankAccountOptionLabel from '@/app/components/shared/BankAccountOptionLab
 import { accountingAmountsLabel, formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { useDeskPagination } from '../dashboard/deskTableUi';
-import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName } from './DeskKpiStrip';
+import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName, useAccountingDeskPeriod } from './DeskKpiStrip';
 import HeadingInfo from '../HeadingInfo';
 
 function statusLabel(capExp: CapExpStatus): string {
@@ -1001,13 +1001,13 @@ export default function PpeAssetRegisterPage() {
       <p className="text-xs text-gray-500 -mt-2">{accountingAmountsLabel()}</p>
 
       <DeskKpiStrip
-        className="mb-1"
+        className="mb-2"
         items={[
-          { id: 'ppe.totalCost', label: 'Total cost', value: fmt(totals.cost), tone: 'text-slate-700' },
-          { id: 'ppe.accumDep', label: 'Depreciation so far', value: fmt(totals.dep), tone: 'text-slate-700' },
-          { id: 'ppe.nbv', label: 'Book value', value: fmt(totals.nbv), tone: 'text-slate-700' },
-          { id: 'ppe.graWdv', label: 'GRA written-down value', value: fmt(totals.graWdv), tone: 'text-slate-700' },
-          { id: 'ppe.graCa', label: 'GRA allowance this year', value: fmt(totals.graCa), tone: 'text-slate-700' },
+          { id: 'ppe.totalCost', label: 'Total cost', value: fmt(totals.cost), tone: 'text-blue-700' },
+          { id: 'ppe.accumDep', label: 'Depreciation so far', value: fmt(totals.dep), tone: 'text-orange-700' },
+          { id: 'ppe.nbv', label: 'Book value', value: fmt(totals.nbv), tone: 'text-green-700' },
+          { id: 'ppe.graWdv', label: 'GRA written-down value', value: fmt(totals.graWdv), tone: 'text-violet-700' },
+          { id: 'ppe.graCa', label: 'GRA allowance this year', value: fmt(totals.graCa), tone: 'text-amber-700' },
         ]}
       />
 
@@ -1465,12 +1465,12 @@ export default function PpeAssetRegisterPage() {
         </CardBody>
       </Card>
 
-      <Modal isOpen={isOpen} onClose={onClose} size="2xl">
+      <Modal isOpen={isOpen} onClose={onClose} size="2xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>{disposeMode ? 'Dispose asset' : editingId ? 'Edit asset' : 'Add asset'}</ModalHeader>
           <ModalBody>
             {formError && <Alert color="warning" className="mb-3">{formError}</Alert>}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <Input
                   label="Asset code"
@@ -1615,12 +1615,12 @@ export default function PpeAssetRegisterPage() {
         </ModalContent>
       </Modal>
 
-      <Modal isOpen={isCategoryOpen} onClose={onCategoryClose} size="2xl">
+      <Modal isOpen={isCategoryOpen} onClose={onCategoryClose} size="2xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>{editingCategoryId ? 'Edit category' : 'Add category'}</ModalHeader>
           <ModalBody>
             {categoryFormError && <Alert color="warning" className="mb-3">{categoryFormError}</Alert>}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="col-span-2">
                 <Input
                   label="Name"
@@ -1807,7 +1807,7 @@ export default function PpeAssetRegisterPage() {
                     </div>
                   </ModalHeader>
                   <ModalBody className="p-6 bg-white text-sm">
-                    <div className="grid grid-cols-2 gap-6">
+                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                       <div className="space-y-1">
                         <div><span className="text-gray-500">Category:</span> <span className="font-medium">{category?.name || '—'}</span></div>
                         <div><span className="text-gray-500">Purchase:</span> <span>{asset.purchaseDate?.slice(0, 10)}</span></div>
@@ -1857,7 +1857,7 @@ export default function PpeAssetRegisterPage() {
                   </div>
                 </ModalHeader>
                 <ModalBody className="p-6 bg-white text-sm">
-                  <div className="grid grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                     <div className="space-y-1">
                       <div><span className="text-gray-500">FS group:</span> <span className="font-medium">{c.presentationGroup}</span></div>
                       <div><span className="text-gray-500">GRA:</span> <span>{c.graClass} · {(c.graRate * 100).toFixed(0)}% {c.graMethod}</span></div>

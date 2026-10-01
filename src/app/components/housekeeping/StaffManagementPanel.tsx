@@ -42,7 +42,7 @@ import DepartmentOvertimePanel from '../hr/DepartmentOvertimePanel';
 const HOUSEKEEPING_STAFF_DEPT_HINTS = ['housekeeping', 'maintenance'];
 
 export default function StaffManagementPanel() {
-  const hrStaff = useDepartmentStaff(HOUSEKEEPING_STAFF_DEPT_HINTS);
+  const hrStaff = useDepartmentStaff(HOUSEKEEPING_STAFF_DEPT_HINTS).members;
   const [staff, setStaff] = useState<HousekeepingStaff[]>([]);
   const [tasks, setTasks] = useState<HousekeepingTask[]>([]);
   const [selectedStaff, setSelectedStaff] = useState<HousekeepingStaff | null>(null);

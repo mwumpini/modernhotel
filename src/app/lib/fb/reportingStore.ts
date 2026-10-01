@@ -38,6 +38,49 @@ function lineTotal(item: FBOrder['items'][number]): number {
   return item.price * item.qty;
 }
 
+type SoldItem = {
+  menuItemId?: string;
+  name: string;
+  category: string;
+  quantity: number;
+  revenue: number;
+};
+
+/** One row per menu dish sold in the period. Cancelled orders are not sales. */
+function soldItemsInRange(startDate: string, endDate: string): SoldItem[] {
+  const sold = new Map<string, SoldItem>();
+  ordersInRange(startDate, endDate)
+    .filter((order) => order.status !== 'cancelled')
+    .forEach((order) => {
+      order.items.forEach((item) => {
+        const name = item.name || 'Unnamed';
+        const category = item.category || 'Uncategorized';
+        const key = item.menuItemId || `${name}\0${category}`;
+        const row = sold.get(key) || { menuItemId: item.menuItemId, name, category, quantity: 0, revenue: 0 };
+        row.quantity += item.qty;
+        row.revenue += lineTotal(item);
+        sold.set(key, row);
+      });
+    });
+  return Array.from(sold.values());
+}
+
+export type MenuCostRef = {
+  id: string;
+  name: string;
+  category: string;
+  costPrice: number;
+  unit?: string;
+  inventoryItemId?: string;
+};
+
+export type RecipeUsageRef = {
+  name: string;
+  menuItemId?: string | null;
+  isActive?: boolean;
+  ingredients: Array<{ name?: string; quantity?: number; unit?: string }>;
+};
+
 function orderTotal(order: FBOrder): number {
   return order.items.reduce((sum, item) => sum + lineTotal(item), 0);
 }
@@ -63,6 +106,41 @@ export interface DailySalesFilters {
   staff?: string[];
   items?: string[];
   customerTypes?: string[];
+  /** Guest name, or the room / customer-type label when there is no guest name. */
+  customer?: string;
+  paymentMethod?: string;
+  venue?: string;
+  /** Table number, or room number when the order has no table. */
+  table?: string;
+}
+
+function customerLabel(order: FBOrder): string {
+  return order.guestName || (order.roomNumber ? `Room ${order.roomNumber}` : order.customerType);
+}
+
+/** Tender recorded on the receipt. Room charge has no receipt. Open means not billed yet. */
+function paymentMethodOf(order: FBOrder): string {
+  if (order.paymentMethod) return order.paymentMethod;
+  if (order.folioId && order.status === 'billed') return 'Room Charge';
+  return order.status === 'billed' ? 'Unrecorded' : 'Open';
+}
+
+function tableLabel(order: FBOrder): string {
+  return order.table || order.roomNumber || '—';
+}
+
+function matchesValue(value: string, selected?: string): boolean {
+  return !selected || selected === 'all' || value === selected;
+}
+
+/** Customer, staff, tender, venue, and table. Category and item stay on the lines. */
+function orderMatchesSalesSlice(order: FBOrder, filters: DailySalesFilters): boolean {
+  return matchesList(order.waiterId || '—', filters.staff)
+    && matchesValue(customerLabel(order), filters.customer)
+    && matchesList(order.customerType, filters.customerTypes)
+    && matchesValue(paymentMethodOf(order), filters.paymentMethod)
+    && matchesValue(order.venue, filters.venue)
+    && matchesValue(tableLabel(order), filters.table);
 }
 
 type TicketRow = {
@@ -128,6 +206,7 @@ class ReportingStore {
     customer: string;
     customerType: string;
     server: string;
+    paymentMethod: string;
     discount: number;
     price: number;
     tax: number;
@@ -136,8 +215,7 @@ class ReportingStore {
     const orders = ordersStore.all()
       .filter((order) => orderDate(order).toISOString().split('T')[0] === date)
       .filter((order) => order.status !== 'cancelled')
-      .filter((order) => matchesList(order.waiterId || '', filters.staff))
-      .filter((order) => matchesList(order.customerType, filters.customerTypes));
+      .filter((order) => orderMatchesSalesSlice(order, filters));
 
     const rows: ReturnType<typeof this.generateDailySalesReport> = [];
     orders.forEach((order) => {
@@ -171,6 +249,7 @@ class ReportingStore {
             // waiterId already holds the real server name for API-hydrated orders (see
             // ordersStore.hydrateFromApi's field-reconciliation notes), not a raw staff id.
             server: order.waiterId || '—',
+            paymentMethod: paymentMethodOf(order),
             price: netPrice,
             // Discount/Tax are captured per ORDER, not per item (see FBOrderItem —
             // taxAmount is always 0 there; "tax tracked at order level" per the order
@@ -185,6 +264,170 @@ class ReportingStore {
     });
 
     return rows.sort((a, b) => (a.time < b.time ? 1 : -1));
+  }
+
+  /** Same sold line items as Daily Sales, across a date range instead of one day. */
+  generateSalesReport(startDate: string, endDate: string, filters: DailySalesFilters = {}): Array<{
+    date: string;
+    orderNumber: string;
+    time: string;
+    room: string;
+    table: string;
+    venue: string;
+    category: string;
+    item: string;
+    quantity: number;
+    unitPrice: number;
+    amount: number;
+    customer: string;
+    customerType: string;
+    server: string;
+    paymentMethod: string;
+    discount: number;
+    price: number;
+    tax: number;
+    billedPaid: 'Yes' | 'No';
+  }> {
+    const orders = ordersInRange(startDate, endDate)
+      .filter((order) => order.status !== 'cancelled')
+      .filter((order) => orderMatchesSalesSlice(order, filters));
+
+    const rows: ReturnType<typeof this.generateSalesReport> = [];
+    orders.forEach((order) => {
+      const soldAt = orderDate(order);
+      const date = soldAt.toISOString().split('T')[0];
+      const time = soldAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      const customer = order.guestName || (order.roomNumber ? `Room ${order.roomNumber}` : order.customerType);
+
+      order.items
+        .filter((item) => matchesCategoryFilter(item, filters.categories || []))
+        .filter((item) => matchesList(item.name, filters.items))
+        .forEach((item) => {
+          const netPrice = item.price - (item.discountPerUnit || 0) + (item.serviceChargePerUnit || 0);
+          rows.push({
+            date,
+            orderNumber: order.orderNumber || order.id,
+            time,
+            room: order.roomNumber || '—',
+            table: order.table || '—',
+            venue: order.venue,
+            category: item.category || 'Uncategorized',
+            item: item.name,
+            quantity: item.qty,
+            unitPrice: item.price,
+            amount: lineTotal(item),
+            customer,
+            customerType: order.customerType,
+            server: order.waiterId || '—',
+            paymentMethod: paymentMethodOf(order),
+            price: netPrice,
+            discount: order.discountAmount || 0,
+            tax: order.taxAmount || 0,
+            billedPaid: order.status === 'billed' ? 'Yes' : 'No',
+          });
+        });
+    });
+
+    return rows.sort((a, b) => (a.date === b.date ? (a.time < b.time ? 1 : -1) : (a.date < b.date ? 1 : -1)));
+  }
+
+  /** One row per day: order counts and money totals, not each sold line. */
+  generateSalesSummaryReport(startDate: string, endDate: string, filters: DailySalesFilters = {}): Array<{
+    date: string;
+    orders: number;
+    covers: number;
+    grossSales: number;
+    discounts: number;
+    netSales: number;
+    serviceCharge: number;
+    tax: number;
+    grandTotal: number;
+    averageCheck: number;
+    voids: number;
+  }> {
+    const byDay: Record<string, {
+      orders: number;
+      covers: number;
+      grossSales: number;
+      discounts: number;
+      serviceCharge: number;
+      tax: number;
+      grandTotal: number;
+      voids: number;
+    }> = {};
+    const dayKey = (value: Date) => {
+      const month = String(value.getMonth() + 1).padStart(2, '0');
+      const day = String(value.getDate()).padStart(2, '0');
+      return `${value.getFullYear()}-${month}-${day}`;
+    };
+    const lineSlice = (filters.categories || []).length > 0 || (filters.items || []).length > 0;
+    ordersInRange(startDate, endDate)
+      .filter((order) => orderMatchesSalesSlice(order, filters))
+      .forEach((order) => {
+      const matchingItems = order.items.filter((item) =>
+        matchesCategoryFilter(item, filters.categories || []) && matchesList(item.name, filters.items)
+      );
+      if (lineSlice && matchingItems.length === 0) return;
+      const date = dayKey(orderDate(order));
+      if (!byDay[date]) {
+        byDay[date] = { orders: 0, covers: 0, grossSales: 0, discounts: 0, serviceCharge: 0, tax: 0, grandTotal: 0, voids: 0 };
+      }
+      const bucket = byDay[date];
+      if (order.status === 'cancelled') {
+        bucket.voids += 1;
+        return;
+      }
+      // Category and item belong to the line. Discount, tax, and service charge
+      // belong to the whole order, so a line slice totals only the matching lines.
+      if (lineSlice) {
+        const gross = matchingItems.reduce((sum, item) => sum + lineTotal(item), 0);
+        bucket.orders += 1;
+        bucket.covers += order.covers || 0;
+        bucket.grossSales += gross;
+        bucket.grandTotal += gross;
+        return;
+      }
+      const gross = order.subtotal ?? orderTotal(order);
+      bucket.orders += 1;
+      bucket.covers += order.covers || 0;
+      bucket.grossSales += gross;
+      bucket.discounts += order.discountAmount || 0;
+      bucket.serviceCharge += order.serviceCharge || 0;
+      bucket.tax += order.taxAmount || 0;
+      bucket.grandTotal += order.total ?? gross;
+    });
+    return Object.entries(byDay).map(([date, data]) => ({
+      date,
+      orders: data.orders,
+      covers: data.covers,
+      grossSales: data.grossSales,
+      discounts: data.discounts,
+      netSales: data.grossSales - data.discounts,
+      serviceCharge: data.serviceCharge,
+      tax: data.tax,
+      grandTotal: data.grandTotal,
+      averageCheck: data.orders > 0 ? data.grandTotal / data.orders : 0,
+      voids: data.voids,
+    })).sort((a, b) => (a.date < b.date ? 1 : -1));
+  }
+
+  /** Distinct customer, staff, tender, and the other sales dimensions in the period. */
+  salesFilterOptions(startDate: string, endDate: string, mode: 'day' | 'range' = 'range') {
+    const orders = mode === 'day'
+      ? ordersStore.all().filter((order) => orderDate(order).toISOString().split('T')[0] === startDate)
+      : ordersInRange(startDate, endDate);
+    const unique = (values: string[]) =>
+      Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    return {
+      customer: unique(orders.map(customerLabel)),
+      staff: unique(orders.map((order) => order.waiterId || '—')),
+      paymentMethod: unique(orders.map(paymentMethodOf)),
+      venue: unique(orders.map((order) => order.venue || '')),
+      customerType: unique(orders.map((order) => order.customerType || '')),
+      category: unique(orders.flatMap((order) => order.items.map((item) => item.category || 'Uncategorized'))),
+      item: unique(orders.flatMap((order) => order.items.map((item) => item.name))),
+      table: unique(orders.map(tableLabel)),
+    };
   }
 
   generateProductMixReport(startDate: string, endDate: string, categoryFilter: CategoryFilter = []): {
@@ -213,6 +456,7 @@ class ReportingStore {
 
     // Product performance
     const productSales: Record<string, {
+      itemId: string;
       name: string;
       category: string;
       quantity: number;
@@ -222,8 +466,10 @@ class ReportingStore {
 
     rows.forEach(items => {
       items.forEach(item => {
-        if (!productSales[item.id]) {
-          productSales[item.id] = {
+        const productKey = item.menuItemId || `${item.name}\0${item.category || 'Unknown'}`;
+        if (!productSales[productKey]) {
+          productSales[productKey] = {
+            itemId: item.menuItemId || item.id,
             name: item.name,
             category: item.category || 'Unknown',
             quantity: 0,
@@ -231,14 +477,14 @@ class ReportingStore {
             orderCount: 0
           };
         }
-        productSales[item.id].quantity += item.qty;
-        productSales[item.id].revenue += lineTotal(item);
-        productSales[item.id].orderCount += 1;
+        productSales[productKey].quantity += item.qty;
+        productSales[productKey].revenue += lineTotal(item);
+        productSales[productKey].orderCount += 1;
       });
     });
 
-    const productPerformance = Object.entries(productSales).map(([itemId, data]) => ({
-      itemId,
+    const productPerformance = Object.entries(productSales).map(([, data]) => ({
+      itemId: data.itemId,
       name: data.name,
       category: data.category,
       quantity: data.quantity,
@@ -271,6 +517,131 @@ class ReportingStore {
       productPerformance,
       categoryBreakdown
     };
+  }
+
+  /** One row per menu category: how the period's sales split across food, beverage, and the rest. */
+  generateCategorySalesReport(startDate: string, endDate: string): Array<{
+    category: string;
+    itemCount: number;
+    quantity: number;
+    revenue: number;
+    sharePercentage: number;
+  }> {
+    const sold = soldItemsInRange(startDate, endDate);
+    const totalRevenue = sold.reduce((sum, item) => sum + item.revenue, 0);
+    const byCategory = new Map<string, { itemCount: number; quantity: number; revenue: number }>();
+    sold.forEach((item) => {
+      const bucket = byCategory.get(item.category) || { itemCount: 0, quantity: 0, revenue: 0 };
+      bucket.itemCount += 1;
+      bucket.quantity += item.quantity;
+      bucket.revenue += item.revenue;
+      byCategory.set(item.category, bucket);
+    });
+    return Array.from(byCategory.entries()).map(([category, data]) => ({
+      category,
+      itemCount: data.itemCount,
+      quantity: data.quantity,
+      revenue: data.revenue,
+      sharePercentage: totalRevenue > 0 ? (data.revenue / totalRevenue) * 100 : 0,
+    })).sort((a, b) => b.revenue - a.revenue);
+  }
+
+  /**
+   * Cost comes from the menu item's stored cost price × quantity sold.
+   * A dish with no menu cost is left blank rather than treated as free.
+   */
+  generateItemProfitabilityReport(startDate: string, endDate: string, menu: MenuCostRef[] = []): Array<{
+    name: string;
+    category: string;
+    quantity: number;
+    revenue: number;
+    cost: number | null;
+    margin: number | null;
+    foodCostPercentage: number | null;
+  }> {
+    const byId = new Map(menu.map((item) => [item.id, item]));
+    const byName = new Map(menu.map((item) => [item.name.toLowerCase(), item]));
+    return soldItemsInRange(startDate, endDate).map((sold) => {
+      const menuItem = (sold.menuItemId && byId.get(sold.menuItemId)) || byName.get(sold.name.toLowerCase());
+      const cost = menuItem ? (Number(menuItem.costPrice) || 0) * sold.quantity : null;
+      return {
+        name: sold.name,
+        category: menuItem?.category || sold.category,
+        quantity: sold.quantity,
+        revenue: sold.revenue,
+        cost,
+        margin: cost === null ? null : sold.revenue - cost,
+        foodCostPercentage: cost === null || sold.revenue <= 0 ? null : (cost / sold.revenue) * 100,
+      };
+    }).sort((a, b) => b.revenue - a.revenue);
+  }
+
+  /**
+   * Ingredients a period's sales should have consumed.
+   * Recipe lines are quantity-per-portion × portions sold.
+   * A menu item linked straight to stock, with no recipe, counts one unit per portion.
+   */
+  generateTheoreticalUsageReport(
+    startDate: string,
+    endDate: string,
+    menu: MenuCostRef[] = [],
+    recipes: RecipeUsageRef[] = [],
+  ): Array<{
+    ingredient: string;
+    unit: string;
+    usedQuantity: number;
+    source: string;
+    dishes: string;
+  }> {
+    const byId = new Map(menu.map((item) => [item.id, item]));
+    const byName = new Map(menu.map((item) => [item.name.toLowerCase(), item]));
+    const recipesByMenu = new Map<string, RecipeUsageRef[]>();
+    recipes.filter((recipe) => recipe.isActive !== false && recipe.menuItemId).forEach((recipe) => {
+      const list = recipesByMenu.get(recipe.menuItemId as string) || [];
+      list.push(recipe);
+      recipesByMenu.set(recipe.menuItemId as string, list);
+    });
+
+    const usage = new Map<string, { ingredient: string; unit: string; quantity: number; source: string; dishes: Set<string> }>();
+    const add = (ingredient: string, unit: string, quantity: number, source: string, dish: string) => {
+      if (!ingredient || quantity <= 0) return;
+      const key = `${source}\0${ingredient}\0${unit}`;
+      const row = usage.get(key) || { ingredient, unit: unit || '—', quantity: 0, source, dishes: new Set<string>() };
+      row.quantity += quantity;
+      row.dishes.add(dish);
+      usage.set(key, row);
+    };
+
+    soldItemsInRange(startDate, endDate).forEach((sold) => {
+      const menuItem = (sold.menuItemId && byId.get(sold.menuItemId)) || byName.get(sold.name.toLowerCase());
+      const menuId = sold.menuItemId || menuItem?.id;
+      const linked = menuId ? recipesByMenu.get(menuId) || [] : [];
+      if (linked.length > 0) {
+        linked.forEach((recipe) => {
+          recipe.ingredients.forEach((ingredient) => {
+            add(
+              String(ingredient.name || '').trim(),
+              String(ingredient.unit || '—'),
+              (Number(ingredient.quantity) || 0) * sold.quantity,
+              'Recipe',
+              sold.name,
+            );
+          });
+        });
+        return;
+      }
+      if (menuItem?.inventoryItemId) {
+        add(menuItem.name, menuItem.unit || 'portion', sold.quantity, 'Menu link', sold.name);
+      }
+    });
+
+    return Array.from(usage.values()).map((row) => ({
+      ingredient: row.ingredient,
+      unit: row.unit,
+      usedQuantity: row.quantity,
+      source: row.source,
+      dishes: Array.from(row.dishes).sort((a, b) => a.localeCompare(b)).join(', '),
+    })).sort((a, b) => a.ingredient.localeCompare(b.ingredient));
   }
 
   // One row per staff member — Gross/Discount/Net/Tax/Grand Total/Average Check/Voids,

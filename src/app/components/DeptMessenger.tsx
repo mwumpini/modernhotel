@@ -2,10 +2,14 @@
 
 import React from 'react';
 import { Card, CardBody, CardHeader, Button, Chip, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/react";
+import { useRouter } from 'next/navigation';
 import { announcementStore, DepartmentKey } from '../lib/analytics/announcementStore';
 import { useEmployeeStore } from '../lib/hr/employeeStore';
 import { useSession } from 'next-auth/react';
 import { dmStore } from '../lib/communications/dmStore';
+import { buildDeskBrief } from '../lib/ai/deskBrief';
+import { localMamaniReply } from '../lib/ai/mamaniReply';
+import { findHelp, isHelpQuestion, type HelpMatch } from '../lib/ai/helpSearch';
 
 interface DeptMessengerProps {
   from: DepartmentKey;
@@ -13,6 +17,7 @@ interface DeptMessengerProps {
 }
 
 export default function DeptMessenger({ from, mode = 'inline' }: DeptMessengerProps) {
+  const router = useRouter();
   const [text, setText] = React.useState('');
   const [level, setLevel] = React.useState<'urgent'|'normal'|'info'>('info');
   const [targets, setTargets] = React.useState<DepartmentKey[]>([from]);
@@ -47,7 +52,7 @@ export default function DeptMessenger({ from, mode = 'inline' }: DeptMessengerPr
   const [endDate, setEndDate] = React.useState('');
 
   // Simple local AI chat state (no external API; rule-based helper)
-  type ChatMsg = { id: string; role: 'user'|'assistant'; content: string; at: string };
+  type ChatMsg = { id: string; role: 'user'|'assistant'; content: string; at: string; help?: HelpMatch };
   const [aiInput, setAiInput] = React.useState('');
   const [aiThread, setAiThread] = React.useState<ChatMsg[]>([]);
   const [aiLoading, setAiLoading] = React.useState(false);
@@ -58,12 +63,19 @@ export default function DeptMessenger({ from, mode = 'inline' }: DeptMessengerPr
     const rerender = () => setHistory(announcementStore.getForDepartment(from, 20));
     announcementStore.subscribe(rerender);
     const openHandler = () => setIsOpen(true);
+    const askHandler = (ev: Event) => {
+      ev.preventDefault();
+      setIsOpen(true);
+      setActiveMode('ai');
+    };
     if (typeof window !== 'undefined') {
       window.addEventListener('open-messenger', openHandler as any);
+      window.addEventListener('open-ask-mamani', askHandler);
     }
     return () => {
       if (typeof window !== 'undefined') {
         window.removeEventListener('open-messenger', openHandler as any);
+        window.removeEventListener('open-ask-mamani', askHandler);
       }
     };
   }, [from]);
@@ -91,71 +103,61 @@ export default function DeptMessenger({ from, mode = 'inline' }: DeptMessengerPr
     setText('');
   };
 
-  const generateAiResponse = (prompt: string): string => {
-    const p = prompt.toLowerCase();
-    if (p.includes('low stock') || p.includes('reorder')) {
-      return 'Consider notifying Inventory with an urgent alert and checking supplier lead times. I can draft a notice for you.';
-    }
-    if (p.includes('room') && p.includes('status')) {
-      return 'Rooms needing attention can be viewed in Housekeeping → Operations Overview. Do you want me to notify housekeeping?';
-    }
-    if (p.includes('invoice') || p.includes('payment')) {
-      return 'You can generate invoices in Accounting → Accounts Receivable. Would you like a checklist for end-of-day reconciliation?';
-    }
-    if (p.includes('events') || p.includes('conference')) {
-      return 'Check Events → Operations for setups and today’s pipeline. I can draft a setup reminder to the events team.';
-    }
-    return 'How can I help? I can draft department notices, summarize KPIs, or propose quick actions.';
-  };
-
-  const sendAi = () => {
-    if (!aiInput.trim()) return;
-    const userMsg: ChatMsg = { id: `u-${Date.now()}`, role: 'user', content: aiInput.trim(), at: new Date().toISOString() };
+  const ask = (raw?: string) => {
+    const content = (raw ?? aiInput).trim();
+    if (!content || aiLoading) return;
+    const matches = isHelpQuestion(content) ? findHelp(content, from) : [];
+    const helpLink = matches[0];
+    const brief = buildDeskBrief(from);
+    const replyBrief = { ...brief, help: matches.map((m) => m.text) };
+    const userMsg: ChatMsg = { id: `u-${Date.now()}`, role: 'user', content, at: new Date().toISOString() };
+    const pushAssistant = (reply: string) => {
+      setAiThread(prev => [...prev, { id: `a-${Date.now()}`, role: 'assistant', content: reply, at: new Date().toISOString(), help: helpLink }]);
+    };
     setAiThread(prev => [...prev, userMsg]);
     setAiInput('');
-    // Try server AI first; fallback to local
     (async () => {
       if (localOnly) {
-        const reply = generateAiResponse(userMsg.content);
-        setAiThread(prev => [...prev, { id: `a-${Date.now()}`, role: 'assistant', content: reply, at: new Date().toISOString() }]);
+        pushAssistant(localMamaniReply(content, replyBrief));
         return;
       }
       setAiError(null);
       setAiLoading(true);
       try {
-        const resp = await fetch('/api/ai/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: userMsg.content, context: aiThread.slice(-6) }) });
+        const resp = await fetch('/api/ai/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: content, context: aiThread.slice(-6), desk: brief.label, deskKey: from, snapshot: brief.snapshot, notices: brief.notices }) });
         if (resp.ok) {
           const ct = resp.headers.get('content-type') || '';
           if (ct.includes('text/event-stream') && (resp as any).body?.getReader) {
             const reader = (resp as any).body.getReader();
             const decoder = new TextDecoder();
             let acc = '';
+            let started = false;
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
               acc += decoder.decode(value, { stream: true });
-              setAiThread(prev => {
-                const last = prev[prev.length - 1];
-                if (last && last.role === 'assistant') {
+              if (!started) {
+                started = true;
+                pushAssistant(acc);
+              } else {
+                setAiThread(prev => {
                   const copy = [...prev];
-                  copy[copy.length - 1] = { ...last, content: acc };
+                  const last = copy[copy.length - 1];
+                  if (last && last.role === 'assistant') copy[copy.length - 1] = { ...last, content: acc };
                   return copy;
-                }
-                return [...prev, { id: `a-${Date.now()}`, role: 'assistant', content: acc, at: new Date().toISOString() }];
-              });
+                });
+              }
             }
             setAiLoading(false);
           } else {
-            const text = await resp.text();
-            setAiThread(prev => [...prev, { id: `a-${Date.now()}`, role: 'assistant', content: text, at: new Date().toISOString() }]);
+            pushAssistant(await resp.text());
             setAiLoading(false);
           }
           return;
         }
         throw new Error('bad status');
       } catch {
-        const reply = generateAiResponse(userMsg.content);
-        setAiThread(prev => [...prev, { id: `a-${Date.now()}`, role: 'assistant', content: reply, at: new Date().toISOString() }]);
+        pushAssistant(localMamaniReply(content, replyBrief));
         setAiError('Falling back to local assistant due to network/model issue.');
         setAiLoading(false);
       }
@@ -281,13 +283,58 @@ export default function DeptMessenger({ from, mode = 'inline' }: DeptMessengerPr
       </CardBody>
     </Card>
   );
+  const openHelpTarget = (hit: HelpMatch) => {
+    if (hit.href) {
+      router.push(hit.href);
+      setIsOpen(false);
+      return;
+    }
+    if (!hit.section) return;
+    try {
+      localStorage.setItem('nav.section', hit.section);
+      if (hit.settingsTab) localStorage.setItem('settings.tab', hit.settingsTab);
+      if (hit.complianceTab) localStorage.setItem('compliance.tab', hit.complianceTab);
+      window.dispatchEvent(new CustomEvent('app.navigate', { detail: { section: hit.section } }));
+    } catch {}
+    setIsOpen(false);
+  };
+
+  const deskBrief = buildDeskBrief(from);
   const contentAi = (
     <Card className="border-0 shadow-md">
-      <CardHeader className="pb-1"><h3 className="font-semibold text-ghana-black">Mamani AI</h3></CardHeader>
+      <CardHeader className="pb-1"><h3 className="font-semibold text-ghana-black">Ask Mamani</h3></CardHeader>
       <CardBody className="pt-2 space-y-3 text-sm">
         <div className="h-64 overflow-y-auto border border-gray-200 rounded p-2 bg-white">
           {aiThread.length === 0 && (
-            <div className="text-gray-500 text-sm">Ask me anything: draft notices, summarize KPIs, or suggest actions.</div>
+            <div className="text-gray-500 text-sm space-y-2">
+              <p>Ask about {deskBrief.label}, or how to use a screen. F12 opens this. I draft notices. You send them.</p>
+              <div className="flex flex-wrap gap-1.5">
+                {deskBrief.prompts.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    className="rounded border border-gray-300 bg-white px-2 py-1 text-xs text-ghana-black hover:bg-gray-50"
+                    onClick={() => ask(prompt)}
+                  >
+                    {prompt}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="rounded border border-gray-300 bg-white px-2 py-1 text-xs text-ghana-black hover:bg-gray-50"
+                  onClick={() => ask('How do I use this desk?')}
+                >
+                  How do I use this desk?
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-gray-300 bg-white px-2 py-1 text-xs text-ghana-black hover:bg-gray-50"
+                  onClick={() => { setIsOpen(false); router.push('/help'); }}
+                >
+                  Full Help
+                </button>
+              </div>
+            </div>
           )}
           <div className="space-y-2">
             {aiThread.map(msg => (
@@ -295,7 +342,10 @@ export default function DeptMessenger({ from, mode = 'inline' }: DeptMessengerPr
                 <div className={`max-w-[80%] p-2 rounded ${msg.role === 'user' ? 'bg-ghana-green text-white' : 'bg-gray-100 text-gray-800'}`}>
                   <div>{msg.content}</div>
                   {msg.role === 'assistant' && (
-                    <div className="mt-2 flex gap-2">
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {msg.help && (msg.help.section || msg.help.href) && (
+                        <Button size="sm" variant="flat" onPress={() => openHelpTarget(msg.help!)}>Open in app</Button>
+                      )}
                       <Button size="sm" variant="flat" onPress={() => setText((prev) => (prev ? prev + ' ' : '') + msg.content)}>Copy to Messenger</Button>
                       <Button size="sm" variant="flat" onPress={() => { setActiveMode('messenger'); setText(msg.content); }}>Use as Notice</Button>
                     </div>
@@ -314,8 +364,8 @@ export default function DeptMessenger({ from, mode = 'inline' }: DeptMessengerPr
           </div>
         </div>
         <div className="flex gap-2">
-          <input className="flex-1 border border-gray-300 rounded px-2 h-9" placeholder="Ask Mamani AI to help..." value={aiInput} onChange={(e) => setAiInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') sendAi(); }} />
-          <Button size="sm" onPress={sendAi}>Ask</Button>
+          <input className="flex-1 border border-gray-300 rounded px-2 h-9" placeholder="Ask Mamani to help..." value={aiInput} onChange={(e) => setAiInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') ask(); }} />
+          <Button size="sm" onPress={() => ask()}>Ask</Button>
         </div>
       </CardBody>
     </Card>
@@ -351,7 +401,7 @@ export default function DeptMessenger({ from, mode = 'inline' }: DeptMessengerPr
                 <h4 className="font-semibold text-ghana-black">{from.toUpperCase()}</h4>
                 <div className="border rounded overflow-hidden text-xs">
                   <button className={`px-2 py-1 ${activeMode === 'messenger' ? 'bg-ghana-green text-white' : 'bg-white'}`} onClick={() => setActiveMode('messenger')}>Messenger</button>
-                  <button className={`px-2 py-1 ${activeMode === 'ai' ? 'bg-ghana-green text-white' : 'bg-white'}`} onClick={() => setActiveMode('ai')}>Mamani AI</button>
+                  <button className={`px-2 py-1 ${activeMode === 'ai' ? 'bg-ghana-green text-white' : 'bg-white'}`} onClick={() => setActiveMode('ai')}>Ask Mamani</button>
                 </div>
               </div>
               <button onClick={closeDrawer} className="text-gray-500 hover:text-gray-800">✕</button>

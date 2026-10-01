@@ -17,12 +17,15 @@ import DepartmentInventoryPanel, {
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import ModuleExpandButton from './ModuleExpandButton';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import { useDashboardPeriod, isInPeriod } from '../lib/dashboard/useDashboardPeriod';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
 import { worksheetTableClassNames } from './frontoffice/StayWorksheetTable';
 import { sizedTableClassNames, useResizableColumns } from './frontoffice/columnResize';
 import { DateFilterPills, matchesDateFilter, useDateFilter } from './fb/DateFilterPills';
 import SubViewPills from './dashboard/SubViewPills';
 import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
+import { SummaryCollapsedProvider, useSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
+import { SummaryToggle } from './dashboard/SummaryToggle';
 import KitchenReportsAnalysis from './KitchenReportsAnalysis';
 
 type SuppliesView = 'inventory' | 'stock-count' | 'requisitions';
@@ -131,9 +134,11 @@ export default function FoodBeverageKitchen({
   initialTab?: string;
 } = {}) {
   const [selectedTab, setSelectedTab] = useState(initialTab || 'kds');
+  const { collapsed: summaryCollapsed, toggle: toggleSummary } = useSummaryCollapsed('kitchen.summaryCollapsed');
   const [suppliesView, setSuppliesView] = useState<SuppliesView>('inventory');
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.kitchen', KITCHEN_DASHBOARD_SECTIONS);
   const stockVisibility = useDashboardVisibility(deptInventoryVisibilityKey('kitchen'), STOCK_KPI_SECTIONS);
+  const deskPeriod = useDashboardPeriod('dashboard.period.kitchen', 'today');
   const onInventoryKpis = selectedTab === 'supplies' && suppliesView === 'inventory';
   const customizeSections = onInventoryKpis ? STOCK_KPI_SECTIONS : KITCHEN_DASHBOARD_SECTIONS;
   const customizeApi = onInventoryKpis ? stockVisibility : { isHidden, toggle: toggleSection, showAll, hiddenCount };
@@ -244,7 +249,12 @@ export default function FoodBeverageKitchen({
     }
   };
 
-  const stats = kitchenStats(liveOrders);
+  const servedInPeriod = liveOrders.filter(
+    (o) =>
+      (o.status === 'served' || o.status === 'billed') &&
+      isInPeriod(o.servedAt || o.createdAt, deskPeriod.period, deskPeriod.todayISO),
+  );
+  const stats = kitchenStats(liveOrders, servedInPeriod);
   const kitchenStations: LiveStationView[] = buildLiveStationBoard(liveOrders);
   const avgEfficiency =
     kitchenStations.length > 0
@@ -489,17 +499,22 @@ export default function FoodBeverageKitchen({
   };
 
   return (
+    <SummaryCollapsedProvider collapsed={!fullPage && summaryCollapsed}>
     <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
       {/* Header */}
       <div className={`flex items-center justify-between ${fullPage ? 'mb-2' : 'mb-6'}`}>
         <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>👨‍🍳 Kitchen</h2>
         <div className="flex items-center gap-2">
+          {!fullPage && <SummaryToggle collapsed={summaryCollapsed} onToggle={toggleSummary} />}
           <CustomizeViewControl
             sections={customizeSections}
             isHidden={customizeApi.isHidden}
             toggle={customizeApi.toggle}
             showAll={customizeApi.showAll}
             hiddenCount={customizeApi.hiddenCount}
+            period={deskPeriod.period}
+            onPeriodChange={deskPeriod.setPeriod}
+            defaultPeriod={deskPeriod.defaultPeriod}
           />
           {!fullPage && (
             <ModuleExpandButton
@@ -511,7 +526,7 @@ export default function FoodBeverageKitchen({
       </div>
 
       {/* Stats Overview */}
-      {!fullPage && (!isHidden('activeOrders') || !isHidden('avgPrepTime') || !isHidden('kitchenEfficiency') || !isHidden('recipesOnFile')) && (
+      {!fullPage && !summaryCollapsed && (!isHidden('activeOrders') || !isHidden('avgPrepTime') || !isHidden('kitchenEfficiency') || !isHidden('recipesOnFile')) && (
       <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
         {!isHidden('activeOrders') && (
         <Card className="relative border border-gray-200 shadow-none">
@@ -526,6 +541,7 @@ export default function FoodBeverageKitchen({
             >
               <div className="text-2xl font-semibold tabular-nums text-ghana-black">{stats.activeCount}</div>
               <div className="text-sm leading-tight text-gray-500">Active Orders</div>
+              <div className="text-xs leading-tight text-gray-400">Live queue</div>
               {stats.urgent > 0 && (
                 <div className="text-xs leading-tight text-blue-600">{stats.urgent} urgent</div>
               )}
@@ -547,7 +563,9 @@ export default function FoodBeverageKitchen({
             >
               <div className="text-2xl font-semibold tabular-nums text-ghana-black">{stats.avgPrep > 0 ? `${stats.avgPrep}min` : '—'}</div>
               <div className="text-sm leading-tight text-gray-500">Avg Prep Time</div>
-              <div className="text-xs leading-tight text-green-600">{stats.servedToday} served today</div>
+              <div className="text-xs leading-tight text-green-600">
+                {stats.servedToday} served · {deskPeriod.label}
+              </div>
             </button>
           </CardBody>
         </Card>
@@ -1089,6 +1107,7 @@ export default function FoodBeverageKitchen({
         </ModalContent>
       </Modal>
     </div>
+    </SummaryCollapsedProvider>
   );
 }
 

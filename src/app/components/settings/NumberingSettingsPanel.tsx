@@ -329,7 +329,7 @@ export default function NumberingSettingsPanel() {
       settings.reservationSettings.nextNumber,
       errors
     );
-    validateSeries('Guest Profile', core.clientFormat, Number(core.clientNext), settings.clientSettings.nextNumber, errors);
+    validateSeries('Corporation', core.clientFormat, Number(core.clientNext), settings.clientSettings.nextNumber, errors);
     const priorMod = (settings as any).moduleNumbering || DEFAULT_MODULE_NUMBERING;
     for (const category of Object.keys(moduleNumbering)) {
       for (const series of Object.keys(moduleNumbering[category])) {
@@ -425,7 +425,7 @@ export default function NumberingSettingsPanel() {
         <Tab key="fb" title="F&B" />
         <Tab key="inventory" title="Inventory" />
         <Tab key="events" title="Events" />
-        <Tab key="ops" title="Maint. / Security / HR" />
+        <Tab key="ops" title="HK/Security/HR" />
       </Tabs>
 
       <Card className="border border-gray-200 shadow-none">
@@ -485,21 +485,9 @@ export default function NumberingSettingsPanel() {
                 onNext={(v) => setCore((c) => ({ ...c, reservationNext: v }))}
               />
               {modRow('Folio', 'frontOffice', 'folio')}
-              {modRow('Housekeeping', 'frontOffice', 'housekeepingTicket')}
               {modRow('Service Charge', 'frontOffice', 'serviceCharge')}
               {modRow('Corporate Guest', 'frontOffice', 'corporateGuest')}
               {modRow('Personal Guest', 'frontOffice', 'personalGuest')}
-              <Trio
-                label="Guest Profile"
-                prefix={core.clientPrefix}
-                suffix={core.clientSuffix}
-                format={core.clientFormat}
-                next={core.clientNext}
-                onPrefix={(v) => setCore((c) => ({ ...c, clientPrefix: v }))}
-                onSuffix={(v) => setCore((c) => ({ ...c, clientSuffix: v }))}
-                onFormat={(v) => setCore((c) => ({ ...c, clientFormat: v }))}
-                onNext={(v) => setCore((c) => ({ ...c, clientNext: v }))}
-              />
             </SeriesGrid>
           )}
 
@@ -532,6 +520,7 @@ export default function NumberingSettingsPanel() {
 
           {activeTab === 'ops' && (
             <SeriesGrid>
+              {modRow('Housekeeping', 'frontOffice', 'housekeepingTicket')}
               {modRow('Work Order', 'maintenance', 'workOrder')}
               {modRow('Inspection', 'maintenance', 'inspection')}
               {modRow('Incident Report', 'security', 'incidentReport')}

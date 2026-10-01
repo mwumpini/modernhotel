@@ -5,8 +5,8 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import PageLayout from '../../../components/PageLayout';
 import HeadingInfo from '../../../components/HeadingInfo';
 import FrontOfficeBackButton from '../../../components/FrontOfficeBackButton';
-import { Card, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Avatar, Badge, Chip, Switch, Tooltip, Pagination } from '@heroui/react';
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Textarea, useDisclosure, Tabs, Tab } from '@heroui/react';
+import { Card, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Badge, Chip, Switch, Tooltip, Pagination } from '@heroui/react';
+import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Textarea, useDisclosure } from '@heroui/react';
 import { worksheetTableClassNames } from '../../../components/frontoffice/StayWorksheetTable';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
 import { useSettingsStore } from '../../../lib/settings/store';
@@ -117,7 +117,6 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
     const [duplicateList, setDuplicateList] = useState<Array<{primaryId:string;dupId:string;reason:string}>>([]);
     const { isOpen, onOpen, onClose } = useDisclosure();
     const { isOpen: isNewOpen, onOpen: onNewOpen, onClose: onNewClose } = useDisclosure();
-    const [activeTab, setActiveTab] = useState<'client-list'|'analytics'|'reservations'>('client-list');
     const [serviceName, setServiceName] = useState('');
     const [serviceType, setServiceType] = useState('');
     const [rate, setRate] = useState('');
@@ -145,7 +144,6 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage] = useState(20);
     const [sortState, setSortState] = useState<{ column: string; direction: 'asc'|'desc' }>({ column: 'name', direction: 'asc' });
-    const [showAllColumns, setShowAllColumns] = useState(false);
     const defaultColWidths: Record<string, number> = { 
         index: 40, id: 90, name: 200, email: 150, phone: 110, secondaryPhone: 110, 
         gender: 70, nationality: 90, dob: 90, company: 150, jobTitle: 120, 
@@ -153,19 +151,13 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
         type: 110, reservations: 90, services: 80, dateJoined: 100
     };
     const [colWidths, setColWidths] = useState<Record<string, number>>(defaultColWidths);
-    const columnsOrder: Array<keyof typeof colWidths> = [
-        'index','id','name','email','phone','secondaryPhone','gender','nationality','dob',
-        'company','jobTitle','industry','contactPerson','address','city',
-        'type','reservations','services','dateJoined'
-    ];
     
-    // Define which columns are visible by default
-    const defaultVisibleColumns: Array<keyof typeof colWidths> = [
-        'index', 'id', 'name', 'email', 'phone', 'type'
-    ];
-    
-    // Get visible columns based on showAllColumns state
-    const visibleColumns = showAllColumns ? columnsOrder : defaultVisibleColumns;
+    // People and companies do not share a column set. "All" keeps a Type column so both can sit in one list.
+    const visibleColumns: Array<keyof typeof colWidths> = typeFilter === 'corporate'
+        ? ['index', 'id', 'name', 'contactPerson', 'email', 'phone', 'reservations']
+        : typeFilter === 'individual'
+            ? ['index', 'id', 'name', 'email', 'phone', 'nationality', 'reservations']
+            : ['index', 'id', 'name', 'type', 'email', 'phone', 'reservations'];
     
     // Optimized form input handlers
     const handleInputChange = React.useCallback((field: string, value: any) => {
@@ -798,7 +790,6 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
         setDobTo('');
         setCompanyFilter('');
         setIdFilter('');
-        setActiveTab('client-list');
     };
 
 
@@ -1028,26 +1019,13 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 		<>
 			<div className={embedded ? '' : 'py-8 px-6'}>
 				<div className={embedded ? '' : 'max-w-[1800px] mx-auto'}>
-					<div className={`${embedded ? 'mb-4' : 'mb-8'} flex items-center justify-between`}>
-						{!embedded && (
-						<div>
-							<FrontOfficeBackButton />
-							<div className="flex items-center gap-1.5">
-								<h1 className="text-3xl font-bold text-gray-900">👥 Clients & Services</h1>
-								<HeadingInfo label="About clients">Manage clients, corporate accounts, and service offerings</HeadingInfo>
-							</div>
+					<div className="mb-[18px] flex flex-wrap items-center justify-between gap-2">
+						<div className="flex min-w-0 items-center gap-1.5">
+							{!embedded && <FrontOfficeBackButton />}
+							<h2 className="text-lg font-semibold text-ghana-black">Clients</h2>
+							<HeadingInfo label="About clients">People and companies who stay or bill with the hotel</HeadingInfo>
 						</div>
-						)}
-						<Button color="primary" variant="flat" className={embedded ? 'ml-auto' : ''} onClick={()=>{ setEditClientId(null); setNewClientStep('basic'); onNewOpen(); }}>➕ New Client</Button>
-					</div>
-
-					<div className="flex items-center justify-between mb-4 gap-3">
-                        <Tabs selectedKey={activeTab} onSelectionChange={(k)=>setActiveTab(k as 'client-list'|'analytics'|'reservations')}>
-                        <Tab key="client-list" title="📋 Client List"/>
-                        <Tab key="reservations" title="📅 Reservation History"/>
-                        <Tab key="analytics" title="📈 Analytics"/>
-                    </Tabs>
-                        <div className="flex items-center gap-2">
+						<div className="flex flex-wrap items-center justify-end gap-2">
                             <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={async e=>{
                                 try {
                                     const file = e.target.files?.[0];
@@ -1161,7 +1139,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                     e.currentTarget.value='';
                                 }
                             }} />
-                            <Button variant="flat" onPress={()=>{
+                            <Button size="sm" variant="flat" onPress={()=>{
                                 const headers = ['id','firstName','lastName','email','phone'];
                                 const lines = [headers.join(',')];
                                 filtered.forEach(r=>{
@@ -1182,8 +1160,8 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                 a.click();
                                 URL.revokeObjectURL(url);
                             }}>Export CSV</Button>
-                            <Button variant="flat" onPress={()=>fileRef.current?.click()}>Import CSV</Button>
-                            <Button variant="flat" color="warning" onPress={()=>{
+                            <Button size="sm" variant="flat" onPress={()=>fileRef.current?.click()}>Import CSV</Button>
+                            <Button size="sm" variant="flat" color="warning" onPress={()=>{
                                 const norm = (s?:string)=> (s||'').replace(/\D/g,'').trim();
                                 const dups: Array<{primaryId:string;dupId:string;reason:string}> = [];
                                 const seenEmail = new Map<string,string>();
@@ -1201,39 +1179,45 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                 setDuplicateList(dups);
                                 setShowDuplicates(true);
                             }}>Find Duplicates</Button>
+							<Button size="sm" color="primary" variant="flat" onPress={()=>{ setEditClientId(null); setNewClientStep('basic'); onNewOpen(); }}>New Client</Button>
                         </div>
                     </div>
 
-					<div className="flex flex-col gap-4 mb-6">
-					<div className="flex flex-col sm:flex-row gap-4">
-						<Input 
-							placeholder="🔍 Search clients..." 
-							value={searchTerm} 
-							onChange={(e)=>setSearchTerm(e.target.value)} 
-							className="flex-1"
-							startContent="🔍"
+					<div className="flex flex-col gap-2 mb-[18px]">
+					<div className="flex flex-wrap items-center gap-2">
+						<Input
+							size="sm"
+							placeholder="Name, company, phone or email…"
+							value={searchTerm}
+							onChange={(e)=>setSearchTerm(e.target.value)}
+							className="w-full max-w-full sm:w-64 sm:max-w-[16rem] shrink-0"
+							startContent={<span className="text-gray-400">🔍</span>}
 							aria-label="Search clients"
 						/>
-						<Select 
-							selectedKeys={[typeFilter]} 
-                             onSelectionChange={(keys)=>setTypeFilter((Array.from(keys as Set<string>)[0] as 'all'|'individual'|'corporate')||'all')} 
-							className="w-full sm:w-48"
-							aria-label="Filter by client type"
+						<Select
+							size="sm"
+							selectedKeys={[typeFilter]}
+							disallowEmptySelection
+							onChange={(e) => {
+								const value = e.target.value;
+								if (value === 'all' || value === 'individual' || value === 'corporate') setTypeFilter(value);
+							}}
+							className="w-full max-w-full sm:w-40 sm:max-w-[10rem] shrink-0"
+							aria-label="People or companies"
 						>
-							<SelectItem key="all">All Types</SelectItem>
-							<SelectItem key="individual">Individual</SelectItem>
-							<SelectItem key="corporate">Corporate</SelectItem>
+							<SelectItem key="all">All clients</SelectItem>
+							<SelectItem key="individual">People</SelectItem>
+							<SelectItem key="corporate">Companies</SelectItem>
 						</Select>
-                         <Autocomplete className="w-full sm:w-56" placeholder="Country" selectedKey={countryFilter} defaultSelectedKey="all" onSelectionChange={(k)=>{
+                         <Autocomplete size="sm" className="w-full max-w-full sm:w-48 sm:max-w-[12rem] shrink-0" placeholder="Country" selectedKey={countryFilter || 'all'} onSelectionChange={(k)=>{
                              const key = (k as string) || 'all';
                              setCountryFilter(key);
                          }} aria-label="Filter by country">
-                             {([{ code: 'all', name: 'All Countries' }, ...COUNTRIES] as {code:string;name:string}[]).map(item => <AutocompleteItem key={item.code}>{item.name}</AutocompleteItem>)}
+                             {([{ code: 'all', name: 'All countries' }, ...COUNTRIES] as {code:string;name:string}[]).map(item => <AutocompleteItem key={item.code}>{item.name}</AutocompleteItem>)}
                          </Autocomplete>
-                         <div className="flex gap-2">
-						<Button 
-							variant="flat" 
-							color="secondary"
+						<Button
+							size="sm"
+							variant="flat"
 							onPress={() => {
 								setSearchTerm('');
 								setTypeFilter('all');
@@ -1251,10 +1235,12 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                      setDateJoinedTo('');
 							}}
 						>
-							🔄 Clear Filters
+							Clear
 						</Button>
-                             <Button variant="flat" onPress={()=>setShowAdvancedFilters(v=>!v)}>{showAdvancedFilters ? 'Hide Filters' : 'More Filters'}</Button>
-                         </div>
+                             <Button size="sm" variant="flat" onPress={()=>setShowAdvancedFilters(v=>!v)}>{showAdvancedFilters ? 'Hide filters' : 'More filters'}</Button>
+						<span className="ml-auto text-sm text-gray-600 shrink-0">
+							{typeFilter === 'corporate' ? 'Companies' : typeFilter === 'individual' ? 'People' : 'Clients'}: {filtered.length}
+						</span>
                      </div>
                      {showAdvancedFilters && (
                      <div className="space-y-4">
@@ -1300,50 +1286,25 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                      )}
 					</div>
 
-					{activeTab === 'client-list' && (
-						<>
-							<div className="mb-2 flex items-center justify-between gap-2">
-								<div className="flex items-center gap-3">
-									<span className="inline-flex items-center gap-1.5 text-sm text-gray-600">
-										Total Clients
-										<span className="rounded-md bg-primary/15 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-primary-700">
-											{filtered.length}
-										</span>
-									</span>
-
-									{duplicateList.length > 0 && (
-										<span className="inline-flex items-center gap-1.5 text-sm text-gray-600">
-											Duplicates
-											<span className="rounded-md bg-warning/20 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-warning-700">
-												{duplicateList.length}
-											</span>
-										</span>
-									)}
-
-								</div>
-								<Button
-									size="sm"
-									variant="flat"
-									color={showAllColumns ? "default" : "primary"}
-									onPress={() => setShowAllColumns(!showAllColumns)}
-									startContent={showAllColumns ? "👁️" : "👁️‍🗨️"}
-								>
-									{showAllColumns ? "Show Less" : "Show More"}
-								</Button>
-							</div>
+					{duplicateList.length > 0 && (
+						<p className="mb-2 text-sm text-gray-600">Duplicates found: {duplicateList.length}</p>
+					)}
 							<Card className="border-0 shadow-lg">
 								<CardBody className="px-2 py-3">
 									<Table
 										aria-label="Clients and services table"
 										removeWrapper
-										classNames={worksheetTableClassNames}
+										classNames={{
+											...worksheetTableClassNames,
+											td: `${worksheetTableClassNames.td} overflow-hidden text-ellipsis`,
+										}}
 									>
 						<TableHeader>
 							{visibleColumns.map(columnKey => {
 								const columnTitles: Record<string, string> = {
 									index: "#",
 									id: "Client ID",
-									name: "Name",
+									name: typeFilter === 'corporate' ? 'Company' : 'Name',
 									email: "Email",
 									phone: "Phone",
 									secondaryPhone: "Phone 2",
@@ -1394,8 +1355,8 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 												<p className="font-semibold text-ghana-black">{row.name}</p>
 												{!row.isActive && <Chip size="sm" variant="flat">Inactive</Chip>}
 												</div>
-																{row.type==='corporate' && row.contactPerson && (
-																	<p className="text-xs text-gray-500">Contact: {row.contactPerson}</p>
+																{typeFilter !== 'corporate' && row.type==='corporate' && row.contactPerson && (
+																	<p className="text-xs text-gray-500">{row.contactPerson}</p>
 																)}
 										</div>
 									</TableCell>
@@ -1427,7 +1388,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 												case 'type':
 													return (
 														<TableCell style={{ width: colWidths.type }}>
-										<Chip size="sm" variant="flat" color={row.type==='corporate'?'primary':'default'}>{row.type === 'corporate' ? 'Corporate' : 'Individual'}</Chip>
+										<Chip size="sm" variant="flat" color={row.type==='corporate'?'primary':'default'}>{row.type === 'corporate' ? 'Company' : 'Person'}</Chip>
 									</TableCell>
 													);
 												case 'reservations':
@@ -1662,134 +1623,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 									<Pagination total={totalPages} page={currentPage} onChange={setCurrentPage} showControls size="sm" color="primary" />
 								</div>
 							)}
-						</>
-					)}
-					
 
-                    {activeTab==='reservations' && (
-                        <div className="space-y-4">
-                            <div className="flex justify-between items-center">
-                                <h3 className="text-lg font-semibold text-gray-800">📅 Client Reservation History</h3>
-                                <div className="flex gap-2">
-                                    <Input 
-                                        placeholder="Search by client name..." 
-                                        className="w-64"
-                                        startContent="🔍"
-                                        aria-label="Search reservations by client name"
-                                    />
-                                    <Select placeholder="Filter by status" className="w-40" aria-label="Filter reservations by status">
-                                        <SelectItem key="all">All Status</SelectItem>
-                                        <SelectItem key="confirmed">Confirmed</SelectItem>
-                                        <SelectItem key="checked-in">Checked In</SelectItem>
-                                        <SelectItem key="checked-out">Checked Out</SelectItem>
-                                        <SelectItem key="cancelled">Cancelled</SelectItem>
-                                    </Select>
-                                </div>
-                            </div>
-                            
-                            <Card className="border-0 shadow-lg">
-                                <CardBody className="px-2 py-3">
-                            <Table aria-label="Reservation history table" removeWrapper classNames={worksheetTableClassNames}>
-                                <TableHeader>
-                                    <TableColumn>Client</TableColumn>
-                                    <TableColumn>Room</TableColumn>
-                                    <TableColumn>Dates</TableColumn>
-                                    <TableColumn>Status</TableColumn>
-                                    <TableColumn>Amount</TableColumn>
-                                    <TableColumn>Services</TableColumn>
-                                </TableHeader>
-                                <TableBody>
-                                    {filtered.flatMap(client => {
-                                        // Mock reservation data for demonstration
-                                        const mockReservations = [
-                                            {
-                                                id: `res_${client.id}_1`,
-                                                roomNumber: '101',
-                                                roomType: 'Standard',
-                                                checkIn: '2024-01-15',
-                                                checkOut: '2024-01-18',
-                                                status: 'checked-out' as const,
-                                                totalAmount: 450,
-                                                rate: 150,
-                                                services: ['Room Service', 'Laundry'],
-                                                notes: 'Guest requested late checkout'
-                                            },
-                                            {
-                                                id: `res_${client.id}_2`,
-                                                roomNumber: '205',
-                                                roomType: 'Deluxe',
-                                                checkIn: '2024-02-20',
-                                                checkOut: '2024-02-22',
-                                                status: 'confirmed' as const,
-                                                totalAmount: 600,
-                                                rate: 300,
-                                                services: ['Airport Pickup'],
-                                                notes: 'Early check-in requested'
-                                            }
-                                        ];
-                                        
-                                        return mockReservations.map((res, index) => (
-                                            <TableRow key={res.id}>
-                                                <TableCell>
-                                                    <div className="flex items-center gap-3">
-                                                        <Avatar name={client.name} size="sm" className="bg-ghana-gold text-white" />
-                                                        <div>
-                                                            <p className="font-medium">{client.name}</p>
-                                                            <p className="text-xs text-gray-500">{client.type}</p>
-                                                        </div>
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell>
-                                                    <div>
-                                                        <p className="font-medium">{res.roomNumber}</p>
-                                                        <p className="text-xs text-gray-500">{res.roomType}</p>
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell>
-                                                    <div>
-                                                        <p className="text-sm">{new Date(res.checkIn).toLocaleDateString()}</p>
-                                                        <p className="text-xs text-gray-500">to {new Date(res.checkOut).toLocaleDateString()}</p>
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell>
-                                                    <Badge 
-                                                        variant="flat" 
-                                                        color={res.status === 'checked-out' ? 'success' : res.status === 'confirmed' ? 'warning' : 'primary'}
-                                                    >
-                                                        {res.status.replace('-', ' ')}
-                                                    </Badge>
-                                                </TableCell>
-                                                <TableCell>
-                                                    <div>
-                                                        <p className="font-medium">₵{res.totalAmount}</p>
-                                                        <p className="text-xs text-gray-500">₵{res.rate}/night</p>
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell>
-                                                    <div className="space-y-1">
-                                                        {res.services.map((service, idx) => (
-                                                            <Badge key={idx} size="sm" variant="flat" color="secondary">
-                                                                {service}
-                                                            </Badge>
-                                                        ))}
-                                                    </div>
-                                                </TableCell>
-                                            </TableRow>
-                                        ));
-                                    })}
-                                </TableBody>
-                            </Table>
-                                </CardBody>
-                            </Card>
-                        </div>
-                    )}
-
-                    {activeTab==='analytics' && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <Card><CardBody>Top Clients by Spend (coming soon)</CardBody></Card>
-                            <Card><CardBody>Services Usage Trends (coming soon)</CardBody></Card>
-                        </div>
-                    )}
 
 				</div>
 			</div>

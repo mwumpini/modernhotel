@@ -62,8 +62,29 @@ export async function GET(request: NextRequest) {
       menuItems.forEach(m => menuRouteById.set(m.id, m.route))
     }
 
+    const orderNumbers = orders.map((order) => order.orderNumber).filter(Boolean)
+    const paymentByOrder = new Map<string, string>()
+    if (orderNumbers.length > 0) {
+      const payments = await prisma.accountingPayment.findMany({
+        where: {
+          tenantId: ctx.tenantId,
+          type: 'Receipt',
+          status: { not: 'Void' },
+          reference: { in: orderNumbers },
+        },
+        select: { reference: true, paymentMethod: true },
+      })
+      payments.forEach((payment) => {
+        if (payment.reference && payment.paymentMethod) paymentByOrder.set(payment.reference, payment.paymentMethod)
+      })
+    }
+
     return NextResponse.json({
-      orders: orders.map(o => serializeFbOrder(o, menuRouteById)),
+      orders: orders.map((order) => ({
+        ...serializeFbOrder(order, menuRouteById),
+        paymentMethod: paymentByOrder.get(order.orderNumber)
+          || (order.folioId && order.status === 'billed' ? 'Room Charge' : null),
+      })),
     })
   } catch (error) {
     console.error('[fb/orders][GET] error', error)

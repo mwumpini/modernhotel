@@ -36,6 +36,7 @@ import { DateFilterPills, matchesDateFilter, useDateFilter } from '../fb/DateFil
 import { getClientTenantSubdomain } from '../../lib/api/clientTenant';
 import { HideCardButton } from '../dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../../lib/dashboard/useDashboardVisibility';
+import { useHostSummaryCollapsed } from '../../lib/dashboard/useSummaryCollapsed';
 
 function tenantHeaders() {
   return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
@@ -94,6 +95,7 @@ export default function DepartmentInventoryPanel({
   department: DepartmentInventoryKey;
 }) {
   const label = DEPT_LABEL[department];
+  const summaryCollapsed = useHostSummaryCollapsed();
   const { isHidden, hide, hiddenCount } = useDashboardVisibility(
     deptInventoryVisibilityKey(department),
     STOCK_KPI_SECTIONS,
@@ -293,7 +295,7 @@ export default function DepartmentInventoryPanel({
 
   return (
     <div className="space-y-3">
-      {hiddenCount < STOCK_KPI_SECTIONS.length && (
+      {!summaryCollapsed && hiddenCount < STOCK_KPI_SECTIONS.length && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
           {([
             { id: 'stock.total', label: 'Total', value: stockStats.total, tone: 'text-ghana-black' },

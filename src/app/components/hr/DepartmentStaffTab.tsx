@@ -58,9 +58,11 @@ export default function DepartmentStaffTab({
   /** Optional extra tabs (e.g. Housekeeping room responsibilities). Receives the same staff list. */
   extraTabs?: { key: string; title: string; render: (staff: DepartmentStaffMember[]) => React.ReactNode }[];
 }) {
-  const fetchedStaff = useDepartmentStaff(departmentNameHints, excludeNameHints, !preloadedStaff, alsoStaffNames);
-  const staff = preloadedStaff ?? fetchedStaff;
-  const listEmpty = emptyLabel || `No ${departmentLabel} department in HR.`;
+  const fetched = useDepartmentStaff(departmentNameHints, excludeNameHints, !preloadedStaff, alsoStaffNames);
+  const staff = preloadedStaff ?? fetched.members;
+  const listEmpty = (preloadedStaff || fetched.hasDepartment)
+    ? `No staff in ${departmentLabel} yet.`
+    : (emptyLabel || `No ${departmentLabel} department in HR.`);
 
   const [section, setSection] = useState('list');
   const [sort, setSort] = useState<ColumnSort>({ column: 'name', direction: 'asc' });

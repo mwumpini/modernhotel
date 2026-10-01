@@ -32,7 +32,9 @@ import {
 } from "@heroui/react";
 import { worksheetTableClassNames } from './frontoffice/StayWorksheetTable';
 import { HideCardButton } from './dashboard/CustomizeViewControl';
-import { FoDeskKpiCustomize, FO_ROOMS_KPI_SECTIONS, useFrontOfficeDeskVisibility } from './frontoffice/foDeskKpi';
+import { FoDeskKpiCustomize, FO_ROOMS_KPI_SECTIONS, useFrontOfficeDeskVisibility, useFrontOfficeDeskPeriod } from './frontoffice/foDeskKpi';
+import { useHostSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
+import { isInPeriod } from '../lib/dashboard/useDashboardPeriod';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { shortDay } from '../lib/frontoffice/stayWorksheet';
@@ -61,6 +63,8 @@ const ROOMS_STATUS_CARDS = FO_ROOMS_KPI_SECTIONS;
 export default function RoomAssignmentsManager({ onNewReservation }: { onNewReservation?: () => void }) {
   const { isHidden, hide, hiddenCount: hiddenStatsCount, isHosted } =
     useFrontOfficeDeskVisibility(FO_ROOMS_KPI_SECTIONS);
+  const summaryCollapsed = useHostSummaryCollapsed();
+  const { period: kpiPeriod, todayISO: kpiToday, label: kpiLabel } = useFrontOfficeDeskPeriod();
   const [assignments, setAssignments] = useState<RoomAssignment[]>([]);
   const [filteredAssignments, setFilteredAssignments] = useState<RoomAssignment[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -299,7 +303,12 @@ export default function RoomAssignmentsManager({ onNewReservation }: { onNewRese
     acc[assignment.status] = (acc[assignment.status] || 0) + 1;
     return acc;
   }, {} as Record<string, number>);
-  const reservedCount = assignments.filter((assignment) => assignment.reservedGuest).length;
+  // Reserved for arrival in Customize period; other statuses are live house snapshot.
+  const reservedCount = assignments.filter(
+    (assignment) =>
+      assignment.reservedGuest &&
+      isInPeriod(assignment.reservedArrival, kpiPeriod, kpiToday),
+  ).length;
 
   return (
     <div className="space-y-3">
@@ -332,11 +341,11 @@ export default function RoomAssignmentsManager({ onNewReservation }: { onNewRese
       </div>
 
       {/* Status Summary */}
-      {hiddenStatsCount < ROOMS_STATUS_CARDS.length && (
+      {!summaryCollapsed && hiddenStatsCount < ROOMS_STATUS_CARDS.length && (
         <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4 lg:grid-cols-8">
           {([
             ['rooms.occupied', statusCounts['occupied'] || 0, 'text-green-700', '🟢 Occupied'],
-            ['rooms.reserved', reservedCount, 'text-blue-700', '📌 Reserved'],
+            ['rooms.reserved', reservedCount, 'text-blue-700', `📌 Reserved (${kpiLabel})`],
             ['rooms.vacant', statusCounts['vacant'] || 0, 'text-gray-600', '⚪ Vacant'],
             ['rooms.dirty', statusCounts['dirty'] || 0, 'text-yellow-700', '🟡 Dirty'],
             ['rooms.clean', statusCounts['clean'] || 0, 'text-blue-700', '🔵 Clean'],

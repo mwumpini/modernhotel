@@ -132,7 +132,14 @@ export default function AuditLogPanel() {
       {error && <p className="text-sm text-danger">{error}</p>}
 
       <div className="overflow-x-auto">
-        <Table aria-label="Audit log" isStriped className="min-w-[1050px]">
+        <Table
+          aria-label="Audit log"
+          isStriped
+          classNames={{
+            base: 'overflow-x-auto',
+            table: '!min-w-[66rem] !w-max !table-auto',
+          }}
+        >
           <TableHeader>
             <TableColumn>Time</TableColumn>
             <TableColumn>Category</TableColumn>

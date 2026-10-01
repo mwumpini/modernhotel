@@ -6,7 +6,8 @@ import { useSettingsStore, type ModuleSettings } from '../../lib/settings/store'
 
 const MODULES: { key: keyof ModuleSettings; label: string; description: string }[] = [
   { key: 'frontOffice', label: 'Front Office', description: 'Reservations, check-in, and the front desk menu.' },
-  { key: 'foodBeverage', label: 'Restaurant, Bar, and Kitchen', description: 'Hides both the restaurant menu and the kitchen menu.' },
+  { key: 'foodBeverage', label: 'Restaurant & Bar', description: 'The restaurant menu, the POS, and the menu itself.' },
+  { key: 'kitchenTerminal', label: 'Kitchen terminal', description: 'The kitchen screen and Send to kitchen on the POS. Off: those stay hidden, and receipt, ticket, discount, and clear stay on the order.' },
   { key: 'housekeeping', label: 'Housekeeping', description: 'The housekeeping menu stays if Maintenance is still on.' },
   { key: 'maintenance', label: 'Maintenance', description: 'Shares the housekeeping menu. Both switches off hides that menu.' },
   { key: 'inventory', label: 'Inventory & Stores', description: 'Stock, purchasing, and stores.' },

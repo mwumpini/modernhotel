@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { HideCardButton } from '../dashboard/CustomizeViewControl';
+import { useHostSummaryCollapsed } from '../../lib/dashboard/useSummaryCollapsed';
 import { 
   Card, 
   CardBody, 
@@ -35,6 +36,7 @@ import {
 } from '../../lib/housekeeping/types';
 import { sizedTableClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { deskTableCardBodyClassName, deskTableCardClassName, deskTableClassNames, SortHeader, toggleColumnSort, DESK_PAGE_SIZE, type ColumnSort } from '../dashboard/deskTableUi';
+import { useDashboardPeriod, isInPeriod } from '../../lib/dashboard/useDashboardPeriod';
 
 export default function MaintenancePanel({
   hideStats = false,
@@ -43,6 +45,8 @@ export default function MaintenancePanel({
   hideStats?: boolean;
   onHideStats?: () => void;
 } = {}) {
+  const summaryCollapsed = useHostSummaryCollapsed();
+  const showStats = !hideStats && !summaryCollapsed;
   const [maintenanceRequests, setMaintenanceRequests] = useState<MaintenanceRequest[]>([]);
   const [staff, setStaff] = useState<HousekeepingStaff[]>([]);
   const [rooms, setRooms] = useState<any[]>([]);
@@ -65,6 +69,40 @@ export default function MaintenancePanel({
     assigned: 140,
     reported: 110,
   });
+
+  const { period: kpiPeriod, todayISO: kpiToday, label: kpiLabel } = useDashboardPeriod(
+    'dashboard.period.housekeeping',
+    'today',
+  );
+  // Activity: Total / Completed follow Customize period. Snapshot: Open / In progress / Urgent stay live.
+  const periodReported = useMemo(
+    () => maintenanceRequests.filter((r) => isInPeriod(r.reportedAt, kpiPeriod, kpiToday)),
+    [maintenanceRequests, kpiPeriod, kpiToday],
+  );
+  const periodCompleted = useMemo(
+    () =>
+      maintenanceRequests.filter(
+        (r) =>
+          (r.status === 'completed' || r.status === 'verified') &&
+          isInPeriod(r.completedAt || r.reportedAt, kpiPeriod, kpiToday),
+      ),
+    [maintenanceRequests, kpiPeriod, kpiToday],
+  );
+  const liveOpen = useMemo(
+    () => maintenanceRequests.filter((r) => r.status !== 'completed' && r.status !== 'verified').length,
+    [maintenanceRequests],
+  );
+  const liveInProgress = useMemo(
+    () => maintenanceRequests.filter((r) => r.status === 'in-progress').length,
+    [maintenanceRequests],
+  );
+  const liveUrgent = useMemo(
+    () =>
+      maintenanceRequests.filter(
+        (r) => r.priority === 'urgent' && r.status !== 'completed' && r.status !== 'verified',
+      ).length,
+    [maintenanceRequests],
+  );
 
   // Form state
   const [maintenanceForm, setMaintenanceForm] = useState({
@@ -274,32 +312,16 @@ export default function MaintenancePanel({
         </Button>
       </div>
 
-      {/* Maintenance Overview Cards — Desk-style compact */}
-      {!hideStats && (
+      {/* Maintenance Overview Cards — Desk-style compact; Total/Completed follow Customize period */}
+      {showStats && (
         <div className="flex items-start gap-1">
           <div className="grid min-w-0 flex-1 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
             {([
-              { label: 'Total', value: maintenanceRequests.length, tone: 'text-ghana-black' },
-              {
-                label: 'Open',
-                value: maintenanceRequests.filter((r) => r.status !== 'completed' && r.status !== 'verified').length,
-                tone: 'text-yellow-700',
-              },
-              {
-                label: 'In progress',
-                value: maintenanceRequests.filter((r) => r.status === 'in-progress').length,
-                tone: 'text-blue-700',
-              },
-              {
-                label: 'Completed',
-                value: maintenanceRequests.filter((r) => r.status === 'completed' || r.status === 'verified').length,
-                tone: 'text-green-700',
-              },
-              {
-                label: 'Urgent',
-                value: maintenanceRequests.filter((r) => r.priority === 'urgent').length,
-                tone: 'text-red-700',
-              },
+              { label: 'Total', value: periodReported.length, tone: 'text-ghana-black' },
+              { label: 'Open', value: liveOpen, tone: 'text-yellow-700' },
+              { label: 'In progress', value: liveInProgress, tone: 'text-blue-700' },
+              { label: 'Completed', value: periodCompleted.length, tone: 'text-green-700' },
+              { label: 'Urgent', value: liveUrgent, tone: 'text-red-700' },
             ] as const).map((stat) => (
               <Card key={stat.label} className="border border-gray-200 shadow-none">
                 <CardBody className="px-2 py-1.5 text-center">
@@ -311,6 +333,11 @@ export default function MaintenancePanel({
           </div>
           {onHideStats && <HideCardButton onHide={onHideStats} label="Maintenance summary" />}
         </div>
+      )}
+      {showStats && (
+        <p className="text-xs text-gray-500 -mt-1">
+          Total / Completed · {kpiLabel} · Open queue live
+        </p>
       )}
 
       {/* Filters — wrap on phone / zoomed screens */}

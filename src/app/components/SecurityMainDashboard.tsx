@@ -9,6 +9,9 @@ import SecurityComplianceDashboard, { SECURITY_DASHBOARD_SECTIONS } from './Secu
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import ModuleExpandButton from './ModuleExpandButton';
 import { useDashboardVisibility } from '../lib/dashboard/useDashboardVisibility';
+import { useDashboardPeriod } from '../lib/dashboard/useDashboardPeriod';
+import { useSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
+import { SummaryToggle } from './dashboard/SummaryToggle';
 
 export default function SecurityMainDashboard({
   fullPage = false,
@@ -21,19 +24,36 @@ export default function SecurityMainDashboard({
   // sections left in the Security module now that Overview (with its own
   // hideable stat/quick-action cards) has been removed.
   const { isHidden, hide, toggle, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.security', SECURITY_DASHBOARD_SECTIONS);
+  const deskPeriod = useDashboardPeriod('dashboard.period.security', 'today');
+  const { collapsed: summaryCollapsed, toggle: toggleSummary } = useSummaryCollapsed('security.summaryCollapsed');
   const [activeTab, setActiveTab] = React.useState(initialTab || 'patrols');
 
   return (
-    <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
-      <div className={`flex items-center justify-between ${fullPage ? 'mb-2' : 'mb-6'}`}>
-        <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>🚨 Security Operations</h2>
-        <div className="flex items-center gap-2">
+    <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-3 sm:p-4 md:p-6'}>
+      <div
+        className={`flex flex-wrap items-center justify-between gap-2 ${
+          fullPage ? 'mb-2' : 'mb-3 sm:mb-4 md:mb-6'
+        }`}
+      >
+        <h2
+          className={`min-w-0 flex-1 font-bold text-ghana-black ${
+            fullPage ? 'text-lg sm:text-xl' : 'text-lg sm:text-xl md:text-2xl'
+          }`}
+        >
+          <span className="sm:hidden">🚨 Security</span>
+          <span className="hidden sm:inline">🚨 Security Operations</span>
+        </h2>
+        <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
+          <SummaryToggle collapsed={summaryCollapsed} onToggle={toggleSummary} />
           <CustomizeViewControl
             sections={SECURITY_DASHBOARD_SECTIONS}
             isHidden={isHidden}
             toggle={toggle}
             showAll={showAll}
             hiddenCount={hiddenCount}
+            period={deskPeriod.period}
+            onPeriodChange={deskPeriod.setPeriod}
+            defaultPeriod={deskPeriod.defaultPeriod}
           />
           {!fullPage && (
             <ModuleExpandButton
@@ -49,18 +69,19 @@ export default function SecurityMainDashboard({
         fullPage={fullPage}
         initialTab={initialTab}
         onTabChange={setActiveTab}
+        summaryCollapsed={summaryCollapsed}
       />
 
       {!fullPage && (!isHidden('recentActivities') || !isHidden('notices')) && (
-      <div className="mt-8">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="mt-4 sm:mt-6 md:mt-8">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
           {!isHidden('recentActivities') && (
           <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3 flex items-center justify-between">
-              <h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3>
+            <CardHeader className="flex items-center justify-between gap-2 px-3 py-2 sm:pb-3">
+              <h3 className="min-w-0 text-base font-semibold text-ghana-black sm:text-xl">📋 Recent Activities</h3>
               <HideCardButton onHide={() => hide('recentActivities')} label="Recent Activities" />
             </CardHeader>
-            <CardBody>
+            <CardBody className="px-3 py-2 sm:p-3">
               <RecentActivities area="security" />
             </CardBody>
           </Card>
@@ -68,11 +89,11 @@ export default function SecurityMainDashboard({
 
           {!isHidden('notices') && (
           <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3 flex items-center justify-between">
-              <h3 className="text-xl font-semibold text-ghana-black">🔔 Security Notices</h3>
+            <CardHeader className="flex items-center justify-between gap-2 px-3 py-2 sm:pb-3">
+              <h3 className="min-w-0 text-base font-semibold text-ghana-black sm:text-xl">🔔 Security Notices</h3>
               <HideCardButton onHide={() => hide('notices')} label="Security Notices" />
             </CardHeader>
-            <CardBody>
+            <CardBody className="px-3 py-2 sm:p-3">
               <DeptNotices dept="security" title="" defaultTab="alerts" />
             </CardBody>
           </Card>

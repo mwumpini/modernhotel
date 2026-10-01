@@ -36,7 +36,7 @@ export function formatPercent(value: number): string {
 const COUNT_KEYS = new Set([
   'quantity', 'qty', 'hour', 'covers', 'orders', 'totalOrders', 'totalCustomers', 'activeCustomers',
   'totalVoids', 'pendingOrders', 'visitCount', 'loyaltyPoints', 'totalSuppliers', 'activeSuppliers',
-  'prepTimeMinutes', 'orderCount', 'transactions', 'voids',
+  'prepTimeMinutes', 'orderCount', 'transactions', 'voids', 'itemCount', 'onHand',
   // Front Office report fields — nights/stays/guests/rooms are counted, never money.
   'rank', 'adults', 'children', 'guests', 'guestCount', 'nights', 'nightsInPeriod', 'nightsOccupied',
   'roomNights', 'stays', 'daysInPeriod', 'leadTimeDays', 'availableRooms', 'totalRooms', 'totalNights',

@@ -17,6 +17,7 @@ import {
   TableRow,
 } from '@heroui/react';
 import { frontOfficeStore } from '../lib/frontoffice/store';
+import { useHostSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import { useNightAuditLog } from '../lib/frontoffice/useNightAuditLog';
 import { checkNightAuditDiscrepancies, computeDailyRevenue } from '../lib/frontoffice/nightAuditChecks';
@@ -48,6 +49,7 @@ function tonightPlan(stay: Reservation, businessDate: string): Tonight {
 }
 
 export default function FrontofficeNightAudit() {
+  const summaryCollapsed = useHostSummaryCollapsed();
   const [tick, setTick] = React.useState(0);
   const [lastRun, setLastRun] = React.useState<NightAuditRun | null>(null);
   const [running, setRunning] = React.useState(false);
@@ -174,6 +176,7 @@ export default function FrontofficeNightAudit() {
         </Button>
       </div>
 
+      {!summaryCollapsed && (
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         {([
           ['In house', String(inHouse.length), 'text-blue-700'],
@@ -189,6 +192,7 @@ export default function FrontofficeNightAudit() {
           </Card>
         ))}
       </div>
+      )}
 
       {discrepancies.length > 0 && (
         <Card className="border border-red-200 bg-red-50 shadow-none">

@@ -18,6 +18,9 @@ import RecentActivities from './RecentActivities';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import ModuleExpandButton from './ModuleExpandButton';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import { useDashboardPeriod, isInPeriod } from '../lib/dashboard/useDashboardPeriod';
+import { SummaryCollapsedProvider, useSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
+import { SummaryToggle } from './dashboard/SummaryToggle';
 
 // Hideable summary/widget cards on this dashboard — the "Operations Overview"
 // tabs are core navigation, not clutter, so they're deliberately not included.
@@ -137,6 +140,7 @@ export default function HousekeepingMainDashboard({
   const boot = resolveHkNav(initialTab);
   const [, setTick] = useState(0);
   const [selectedTab, setSelectedTab] = useState<HkPrimary>(boot.primary);
+  const { collapsed: summaryCollapsed, toggle: toggleSummary } = useSummaryCollapsed('housekeeping.summaryCollapsed');
   const [floorView, setFloorView] = useState<FloorView>(boot.floor || 'rooms');
   const [workView, setWorkView] = useState<WorkView>(boot.work || 'tasks');
   const [suppliesView, setSuppliesView] = useState<SuppliesView>(boot.supplies || 'inventory');
@@ -144,6 +148,7 @@ export default function HousekeepingMainDashboard({
 
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.housekeeping', HOUSEKEEPING_DASHBOARD_SECTIONS);
   const stockVisibility = useDashboardVisibility(deptInventoryVisibilityKey('housekeeping'), STOCK_KPI_SECTIONS);
+  const deskPeriod = useDashboardPeriod('dashboard.period.housekeeping', 'today');
   const onInventoryKpis = selectedTab === 'supplies' && suppliesView === 'inventory';
   const customizeSections = onInventoryKpis ? STOCK_KPI_SECTIONS : HOUSEKEEPING_DASHBOARD_SECTIONS;
   const customizeApi = onInventoryKpis ? stockVisibility : { isHidden, toggle: toggleSection, showAll, hiddenCount };
@@ -195,13 +200,20 @@ export default function HousekeepingMainDashboard({
   const maintenanceRooms = allRooms.filter(r => r.status === 'maintenance' || r.status === 'out-of-order').length;
   const totalRooms = allRooms.length;
 
-  // Today's operations
-  const todayIso = new Date().toISOString().slice(0,10);
-  const checkingOutToday = reservations.filter(r => r.status === 'checked-in' && r.departure.slice(0,10) === todayIso).length;
-  const todayCheckIns = reservations.filter(r => (r.status === 'confirmed' || r.status === 'pending') && r.arrival.slice(0,10) === todayIso).length;
+  // Period-scoped arrivals/departures (Customize → KPI period)
+  const checkingOutToday = reservations.filter(
+    (r) => r.status === 'checked-in' && isInPeriod(r.departure, deskPeriod.period, deskPeriod.todayISO),
+  ).length;
+  const todayCheckIns = reservations.filter(
+    (r) => (r.status === 'confirmed' || r.status === 'pending') && isInPeriod(r.arrival, deskPeriod.period, deskPeriod.todayISO),
+  ).length;
+  const extendedStays = reservations.filter(
+    (r) => r.status === 'checked-in' && (r.departure || '').slice(0, 10) < deskPeriod.todayISO,
+  ).length;
 
 
   return (
+    <SummaryCollapsedProvider collapsed={!fullPage && summaryCollapsed}>
     <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
       {!fullPage && <DeptMessenger from="housekeeping" mode="drawer" />}
       <div className={`flex flex-wrap items-center justify-between gap-2 ${fullPage ? 'mb-2' : 'mb-6'}`}>
@@ -209,12 +221,16 @@ export default function HousekeepingMainDashboard({
           {fullPage ? '🛏️ Housekeeping' : '🛏️ Housekeeping & Maintenance'}
         </h2>
         <div className="flex flex-wrap items-center justify-end gap-2">
+          {!fullPage && <SummaryToggle collapsed={summaryCollapsed} onToggle={toggleSummary} />}
           <CustomizeViewControl
             sections={customizeSections}
             isHidden={customizeApi.isHidden}
             toggle={customizeApi.toggle}
             showAll={customizeApi.showAll}
             hiddenCount={customizeApi.hiddenCount}
+            period={deskPeriod.period}
+            onPeriodChange={deskPeriod.setPeriod}
+            defaultPeriod={deskPeriod.defaultPeriod}
           />
           {!fullPage && (
             <ModuleExpandButton
@@ -227,17 +243,18 @@ export default function HousekeepingMainDashboard({
       </div>
 
       {/* Room Status Overview - Following Front Desk Pattern */}
-      {!fullPage && (
-      <div className="mb-8">
+      {!fullPage && !summaryCollapsed && (
+      <div className="mb-4">
         {(!isHidden('availableRooms') || !isHidden('occupiedRooms') || !isHidden('maintenance')) && (
         <>
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-3">
           <h3 className="text-xl font-semibold text-ghana-black flex items-center gap-2">
             🏠 Room Status Overview ({totalRooms} Rooms)
           </h3>
+          <span className="text-xs text-gray-500">Live house · activity {deskPeriod.label}</span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-3">
           {/* Available Rooms */}
           {!isHidden('availableRooms') && (
           <Card className="border-0 shadow-lg border-l-4 border-l-green-500">
@@ -273,7 +290,10 @@ export default function HousekeepingMainDashboard({
           <Card className="border-0 shadow-lg border-l-4 border-l-red-500">
             <CardBody className="p-4">
               <div className="flex items-center justify-between mb-3">
-                <h4 className="text-lg font-semibold text-ghana-black">Occupied Rooms</h4>
+                <div>
+                  <h4 className="text-lg font-semibold text-ghana-black">Occupied Rooms</h4>
+                  <span className="text-xs text-gray-500">House now · activity {deskPeriod.label}</span>
+                </div>
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 bg-red-500 rounded-full"></div>
                   <HideCardButton onHide={() => hide('occupiedRooms')} label="Occupied Rooms" />
@@ -282,16 +302,16 @@ export default function HousekeepingMainDashboard({
               <div className="text-3xl font-bold text-red-600 mb-3">{occupiedRooms}</div>
               <div className="space-y-1 text-sm text-gray-600">
                 <div className="flex justify-between">
-                  <span>Checking Out Today</span>
+                  <span>Checking out ({deskPeriod.label})</span>
                   <span className="font-medium">{checkingOutToday}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Extended Stays</span>
-                  <span className="font-medium">0</span>
+                  <span className="font-medium">{extendedStays}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>VIP Guests</span>
-                  <span className="font-medium">0</span>
+                  <span>Arrivals ({deskPeriod.label})</span>
+                  <span className="font-medium">{todayCheckIns}</span>
                 </div>
               </div>
             </CardBody>
@@ -331,26 +351,26 @@ export default function HousekeepingMainDashboard({
         </>
         )}
 
-        {/* Today's Operations - Matching Front Desk */}
+        {/* Period operations */}
         {!isHidden('todayOps') && (
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">📅</span>
-              <h4 className="text-lg font-semibold text-ghana-black">Today's Operations</h4>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 sm:gap-y-1">
+            <div className="flex items-center gap-1.5">
+              <span className="text-base">📅</span>
+              <h4 className="text-sm font-semibold text-ghana-black lg:text-base">Operations · {deskPeriod.label}</h4>
             </div>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-green-600 font-medium">{todayCheckIns} Check-ins</span>
-                <span className="text-gray-500">Starting 2:00 PM</span>
+                <span className="text-gray-500">Arrivals</span>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-blue-600 font-medium">{checkingOutToday} Check-outs</span>
-                <span className="text-gray-500">By 12:00 PM</span>
+                <span className="text-gray-500">Departures</span>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-orange-600 font-medium">{pendingTasks.length} Pending Tasks</span>
-                <span className="text-gray-500">To be assigned</span>
+                <span className="text-gray-500">Open</span>
               </div>
             </div>
           </div>
@@ -489,5 +509,6 @@ export default function HousekeepingMainDashboard({
       </div>
       )}
     </div>
+    </SummaryCollapsedProvider>
   );
 }

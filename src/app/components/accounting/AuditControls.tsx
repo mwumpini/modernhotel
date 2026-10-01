@@ -12,7 +12,8 @@ import { useAccountingStore } from '@/app/lib/accounting/store';
 import { downloadCSV } from '@/app/lib/accounting/helpers/exportHelpers';
 import { SortLabel, deskResizableTableClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { useDeskPagination } from '../dashboard/deskTableUi';
-import { DeskKpiStrip } from './DeskKpiStrip';
+import { DeskKpiStrip, useAccountingDeskPeriod } from './DeskKpiStrip';
+import { isInPeriod } from '@/app/lib/dashboard/useDashboardPeriod';
 
 type AuditSortKey = 'timestamp' | 'user' | 'action' | 'table' | 'recordId' | 'details';
 
@@ -138,8 +139,15 @@ export default function AuditControlsPage() {
     return tabs.sort((a, b) => plainArea(a).localeCompare(plainArea(b)));
   }, [auditTrail]);
 
-  const addedCount = auditTrail.filter((entry) => entry.action === 'Create').length;
-  const changedCount = auditTrail.filter((entry) => entry.action === 'Update').length;
+  const { period: kpiPeriod, todayISO: kpiToday } = useAccountingDeskPeriod();
+
+  const addedCount = auditTrail.filter(
+    (entry) => entry.action === 'Create' && isInPeriod(entry.timestamp, kpiPeriod, kpiToday),
+  ).length;
+  const changedCount = auditTrail.filter(
+    (entry) => entry.action === 'Update' && isInPeriod(entry.timestamp, kpiPeriod, kpiToday),
+  ).length;
+  const periodEntryCount = auditTrail.filter((entry) => isInPeriod(entry.timestamp, kpiPeriod, kpiToday)).length;
 
   if (isLoading) {
     return (
@@ -161,7 +169,7 @@ export default function AuditControlsPage() {
       <DeskKpiStrip
         className="mb-3"
         items={[
-          { id: 'audit.total', label: 'Entries', value: auditTrail.length, tone: 'text-blue-700' },
+          { id: 'audit.total', label: 'Entries', value: periodEntryCount, tone: 'text-blue-700' },
           { id: 'audit.create', label: 'Added', value: addedCount, tone: 'text-green-700' },
           { id: 'audit.update', label: 'Changed', value: changedCount, tone: 'text-orange-700' },
         ]}

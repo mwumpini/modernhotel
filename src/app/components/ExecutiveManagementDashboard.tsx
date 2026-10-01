@@ -819,7 +819,20 @@ export default function ExecutiveManagementDashboard() {
             <HideCardButton onHide={() => hide('liveOps')} label="Live Operations" />
           </div>
           <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
-            <OpsMetric label="In-house guests" value={`${guestsInHouse} · ${occupiedRooms} ${occupiedRooms === 1 ? 'room' : 'rooms'}`} icon={<Users className="h-4 w-4" />} iconClass="bg-blue-100 text-blue-600" onClick={() => go('/housekeeping')} />
+            <OpsMetric
+              label="In-house guests"
+              value={`${guestsInHouse} ${guestsInHouse === 1 ? 'guest' : 'guests'} in ${occupiedRooms} ${occupiedRooms === 1 ? 'room' : 'rooms'}`}
+              icon={<Users className="h-4 w-4" />}
+              iconClass="bg-blue-100 text-blue-600"
+              onClick={() => {
+                try {
+                  localStorage.setItem('fo.tab', 'desk');
+                  localStorage.setItem('fo.deskView', 'inhouse');
+                } catch {}
+                openModule('frontdesk');
+                window.dispatchEvent(new Event('fo-navigate'));
+              }}
+            />
             <OpsMetric label={isTodaySelected ? "Today's arrivals" : 'Arrivals'} value={String(arrivals)} icon={<LogIn className="h-4 w-4" />} iconClass="bg-green-100 text-green-600" onClick={() => go('/guest-services/check-ins?tab=checkins')} />
             <OpsMetric label={isTodaySelected ? "Today's departures" : 'Departures'} value={String(departures)} icon={<LogOut className="h-4 w-4" />} iconClass="bg-orange-100 text-orange-600" onClick={() => go('/guest-services/check-ins?tab=checkouts')} />
             <OpsMetric label="Expected occupancy" value={`${occupancyPct}%`} icon={<Gauge className="h-4 w-4" />} iconClass="bg-purple-100 text-purple-600" onClick={() => go('/reports')} />

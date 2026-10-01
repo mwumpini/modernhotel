@@ -6,6 +6,10 @@ import {
   useDashboardVisibility,
   type DashboardSectionDef,
 } from '../../lib/dashboard/useDashboardVisibility';
+import {
+  useDashboardPeriod,
+  type DashboardPeriod,
+} from '../../lib/dashboard/useDashboardPeriod';
 
 export const FO_OVERVIEW_SECTIONS: DashboardSectionDef[] = [
   { id: 'availableRooms', label: 'Available Rooms' },
@@ -86,7 +90,17 @@ export type FoDeskVisibilityApi = {
   isHosted: boolean;
 };
 
+export type FoDeskPeriodApi = {
+  period: DashboardPeriod;
+  setPeriod: (period: DashboardPeriod) => void;
+  defaultPeriod: DashboardPeriod;
+  todayISO: string;
+  label: string;
+  isDefault: boolean;
+};
+
 const FoDeskVisibilityContext = createContext<FoDeskVisibilityApi | null>(null);
+const FoDeskPeriodContext = createContext<FoDeskPeriodApi | null>(null);
 
 export function FrontOfficeDeskVisibilityProvider({
   value,
@@ -103,6 +117,20 @@ export function FrontOfficeDeskVisibilityProvider({
   );
 }
 
+export function FrontOfficeDeskPeriodProvider({
+  value,
+  children,
+}: {
+  value: FoDeskPeriodApi;
+  children: React.ReactNode;
+}) {
+  return (
+    <FoDeskPeriodContext.Provider value={value}>
+      {children}
+    </FoDeskPeriodContext.Provider>
+  );
+}
+
 /** Prefer FO shell visibility so ✕ and header Customize share state. */
 export function useFrontOfficeDeskVisibility(
   fallbackSections: DashboardSectionDef[] = ALL_FO_DESK_SECTIONS,
@@ -114,6 +142,24 @@ export function useFrontOfficeDeskVisibility(
   return { ...local, isHosted: false };
 }
 
+/** Prefer shell-provided period so Customize and desk KPI strips share one window. */
+export function useFrontOfficeDeskPeriod(
+  fallbackKey = 'dashboard.period.frontoffice',
+  fallbackDefault: DashboardPeriod = 'today',
+): FoDeskPeriodApi {
+  const ctx = useContext(FoDeskPeriodContext);
+  const local = useDashboardPeriod(fallbackKey, fallbackDefault);
+  if (ctx) return ctx;
+  return {
+    period: local.period,
+    setPeriod: local.setPeriod,
+    defaultPeriod: local.defaultPeriod,
+    todayISO: local.todayISO,
+    label: local.label,
+    isDefault: local.isDefault,
+  };
+}
+
 /** Tab-scoped Customize for the Front Office header (or a standalone page fallback). */
 export function FoDeskKpiCustomize({
   sections,
@@ -123,6 +169,7 @@ export function FoDeskKpiCustomize({
   className?: string;
 }) {
   const { isHidden, show, toggle, showAll } = useFrontOfficeDeskVisibility();
+  const { period, setPeriod, defaultPeriod } = useFrontOfficeDeskPeriod();
   const hiddenCount = useMemo(
     () => sections.filter((s) => isHidden(s.id)).length,
     [sections, isHidden],
@@ -148,6 +195,9 @@ export function FoDeskKpiCustomize({
       showAll={showAllInScope}
       hiddenCount={hiddenCount}
       className={className}
+      period={period}
+      onPeriodChange={setPeriod}
+      defaultPeriod={defaultPeriod}
     />
   );
 }

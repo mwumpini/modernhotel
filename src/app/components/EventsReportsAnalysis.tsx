@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Card, CardBody, CardHeader, Button, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
+  Card, CardBody, CardHeader, Button,
   Tabs, Tab, Select, SelectItem, Input, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
   useDisclosure, Textarea, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Chip
 } from '@heroui/react';
@@ -10,6 +10,8 @@ import {
   ArrowDownToLine, BarChart3, CalendarDays, FileSpreadsheet, FileText,
   Filter, Printer, RefreshCw, RotateCcw, Search, SlidersHorizontal, StickyNote, TrendingUp, X
 } from 'lucide-react';
+import ReportPageInfoTip from './dashboard/ReportPageInfoTip';
+import { SortableReportTable } from './reports/SortableReportTable';
 import { fetchCateringItems, fetchConferenceHalls, fetchEventBookings } from '../lib/frontoffice/eventsApi';
 import { useAccountingStore } from '../lib/accounting/store';
 import { conferenceDocBelongsToLiveEvent, retireOrphanConferenceInvoices } from '../lib/accounting/integration';
@@ -27,7 +29,14 @@ function formatReportValue(value: unknown): React.ReactNode {
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'number') return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  return String(value);
+  return shortDate(String(value));
+}
+
+/** Midnight timestamps are calendar dates. A real time keeps the clock and drops the seconds. */
+function shortDate(text: string) {
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?Z?$/.exec(text);
+  if (!match) return text;
+  return match[2] === '00:00' ? match[1] : `${match[1]} ${match[2]}`;
 }
 
 function money(value: number) {
@@ -255,8 +264,9 @@ const REPORT_DESCRIPTIONS: Record<string, string> = {
 type ReportColumnDefinition = { key: string; label: string; defaultVisible?: boolean };
 
 const EVENT_COLUMNS: ReportColumnDefinition[] = [
-  { key: 'title', label: 'Event' },
   { key: 'startDate', label: 'Start' },
+  { key: 'bookingNumber', label: 'Booking' },
+  { key: 'title', label: 'Event' },
   { key: 'endDate', label: 'End' },
   { key: 'startTime', label: 'From', defaultVisible: false },
   { key: 'endTime', label: 'To', defaultVisible: false },
@@ -286,6 +296,8 @@ const REPORT_COLUMNS: Record<string, ReportColumnDefinition[]> = {
   pending: EVENT_COLUMNS,
   cancelled: EVENT_COLUMNS,
   particulars: [
+    { key: 'startDate', label: 'Start' },
+    { key: 'bookingNumber', label: 'Booking' },
     { key: 'title', label: 'Event' },
     { key: 'organizer', label: 'Customer name' },
     { key: 'hallName', label: 'Hall' },
@@ -303,8 +315,9 @@ const REPORT_COLUMNS: Record<string, ReportColumnDefinition[]> = {
     { key: 'status', label: 'Hall status' },
   ],
   services: [
-    { key: 'title', label: 'Event' },
     { key: 'startDate', label: 'Start' },
+    { key: 'bookingNumber', label: 'Booking' },
+    { key: 'title', label: 'Event' },
     { key: 'hallName', label: 'Hall' },
     { key: 'attendees', label: 'Pax' },
     { key: 'catering', label: 'Catering' },
@@ -350,6 +363,7 @@ const REPORT_COLUMNS: Record<string, ReportColumnDefinition[]> = {
 
 type EventBookingRow = {
   id: string;
+  bookingNumber: string;
   title: string;
   organizer: string;
   hallId: string;
@@ -384,10 +398,11 @@ function explodeParticulars(row: EventBookingRow) {
   if (!budget) return [];
   const labels = row.particularLabels || {};
   const base = {
+    startDate: row.startDate,
+    bookingNumber: row.quoteNumber || row.id,
     title: row.title,
     organizer: row.organizer,
     hallName: row.hallName,
-    startDate: row.startDate,
     status: row.status,
   };
   if (row.combinedPackage) {
@@ -416,7 +431,7 @@ function explodeParticulars(row: EventBookingRow) {
     }));
 }
 
-export default function EventsReportsAnalysis() {
+export default function EventsReportsAnalysis({ embedded = false }: { embedded?: boolean }) {
   const [selectedTab, setSelectedTab] = useState<ReportGroupKey>('events');
   const [selectedReport, setSelectedReport] = useState('on-site');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
@@ -549,6 +564,7 @@ export default function EventsReportsAnalysis() {
         const details = row?.details && typeof row.details === 'object' ? row.details : {};
         return {
           id: row.id,
+          bookingNumber: details.quoteNumber || row.quoteNumber || row.id,
           title: row.title || row.eventName || 'Unnamed',
           organizer: row.organizer || row.organization || '—',
           hallId: row.hallId || '',
@@ -955,26 +971,18 @@ export default function EventsReportsAnalysis() {
       );
     }
     return (
-      <Table aria-label={`${selectedReport} report table`} classNames={{ base: 'overflow-x-auto', table: 'min-w-max' }}>
-        <TableHeader>
-          {visibleColumns.map((column) => <TableColumn key={column.key}>{column.label}</TableColumn>)}
-        </TableHeader>
-        <TableBody>
-          {rows.map((row: any, index: number) => (
-            <TableRow key={index}>
-              {visibleColumns.map((column) => (
-                <TableCell key={column.key}>
-                  {typeof row[column.key] === 'number' && moneyColumn.test(column.key)
-                    ? money(row[column.key])
-                    : typeof row[column.key] === 'boolean'
-                    ? (row[column.key] ? 'Yes' : 'No')
-                    : formatReportValue(row[column.key])}
-                </TableCell>
-              ))}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+      <SortableReportTable
+        ariaLabel={`${selectedReport} report table`}
+        columns={visibleColumns}
+        rows={rows}
+        renderCell={(row, column) => (
+          typeof row[column.key] === 'number' && moneyColumn.test(column.key)
+            ? money(row[column.key] as number)
+            : typeof row[column.key] === 'boolean'
+            ? (row[column.key] ? 'Yes' : 'No')
+            : formatReportValue(row[column.key])
+        )}
+      />
     );
   };
 
@@ -982,26 +990,26 @@ export default function EventsReportsAnalysis() {
   const rangeAllowed = RANGE_REPORT_KEYS.has(selectedReport);
 
   return (
-    <div className="min-h-screen bg-slate-50/70 p-4 md:p-6">
-      <div className="mx-auto max-w-[1600px] space-y-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-700">
-              <BarChart3 size={18} />
+    <div className={embedded ? 'px-2 py-1' : 'min-h-screen bg-slate-50/70 p-4 md:p-6'}>
+      <div className="mx-auto max-w-[1600px] space-y-2">
+        <div className="flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <div className="mb-0.5 flex items-center gap-2 text-sm font-semibold text-blue-700">
+              <BarChart3 size={16} />
               EVENTS INTELLIGENCE
             </div>
-            <h1 className="text-3xl font-bold tracking-tight text-slate-950">Reports & Analysis</h1>
-            <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              Arrivals, halls in use, and conference invoices on file. No occupancy or conversion score is invented here.
-            </p>
+            <div className="flex items-center gap-1.5">
+              <h1 className="text-2xl font-bold tracking-tight text-slate-950 md:text-3xl">Reports & Analysis</h1>
+              <ReportPageInfoTip text="Arrivals, halls in use, and conference invoices on file. No occupancy or conversion score is invented here." />
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="flat" startContent={<RefreshCw size={16} />} onPress={handleRefresh}>Refresh</Button>
-            <Button variant="bordered" startContent={<StickyNote size={16} />} onPress={onOpen}>Notes</Button>
-            <Button variant="bordered" startContent={<Printer size={16} />} onPress={() => window.print()}>Print</Button>
+          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto shrink-0">
+            <Button size="sm" variant="flat" className="shrink-0" startContent={<RefreshCw size={16} />} onPress={handleRefresh}>Refresh</Button>
+            <Button size="sm" variant="bordered" className="shrink-0" startContent={<StickyNote size={16} />} onPress={onOpen}>Notes</Button>
+            <Button size="sm" variant="bordered" className="shrink-0" startContent={<Printer size={16} />} onPress={() => window.print()}>Print</Button>
             <Dropdown>
               <DropdownTrigger>
-                <Button color="primary" startContent={<ArrowDownToLine size={16} />} isLoading={isGenerating}>Export</Button>
+                <Button size="sm" color="primary" className="shrink-0" startContent={<ArrowDownToLine size={16} />} isLoading={isGenerating}>Export</Button>
               </DropdownTrigger>
               <DropdownMenu aria-label="Export report">
                 <DropdownItem key="pdf" startContent={<FileText size={16} />} onPress={() => handleExportReport(exportableReportData, 'pdf')}>Download PDF</DropdownItem>
@@ -1013,24 +1021,35 @@ export default function EventsReportsAnalysis() {
         </div>
 
         <Card className="border border-slate-200 shadow-sm">
-          <CardBody className="gap-4 p-4">
-            <Tabs selectedKey={selectedTab} onSelectionChange={handleTabChange} aria-label="Report categories" color="primary" variant="underlined" classNames={{ tabList: 'gap-5', cursor: 'w-full', tab: 'px-0 h-10' }}>
+          <CardBody className="gap-2 px-3 py-2">
+            <Tabs selectedKey={selectedTab} onSelectionChange={handleTabChange} aria-label="Report categories" color="primary" variant="underlined" classNames={{ tabList: 'gap-3', cursor: 'w-full', tab: 'px-0 h-8' }}>
               {Object.entries(REPORT_GROUPS).map(([key, group]) => <Tab key={key} title={group.title} />)}
             </Tabs>
-            <div className="grid gap-4 lg:grid-cols-[minmax(260px,1fr)_2fr]">
-              <Select label="Report" selectedKeys={[selectedReport]} onSelectionChange={(keys) => {
-                const next = Array.from(keys)[0] as string;
-                const allowed: string[] = REPORT_GROUPS[selectedTab].reports.map(([key]) => key);
-                if (next && allowed.includes(next)) setSelectedReport(next);
-              }} startContent={<TrendingUp size={16} className="text-slate-400" />}>
+            <div className="flex flex-col gap-2 min-[900px]:flex-row min-[900px]:items-end min-[900px]:justify-between min-[900px]:gap-3">
+              <Select
+                label="Report"
+                className="w-full max-w-full min-[900px]:w-64 min-[900px]:max-w-[16rem] min-[900px]:shrink-0"
+                classNames={{
+                  trigger: 'min-h-[48px] h-[48px] py-1',
+                  label: 'text-xs',
+                  value: 'text-sm',
+                }}
+                selectedKeys={[selectedReport]}
+                onSelectionChange={(keys) => {
+                  const next = Array.from(keys)[0] as string;
+                  const allowed: string[] = REPORT_GROUPS[selectedTab].reports.map(([key]) => key);
+                  if (next && allowed.includes(next)) setSelectedReport(next);
+                }}
+                startContent={<TrendingUp size={15} className="text-slate-400" />}
+              >
                 {REPORT_GROUPS[selectedTab].reports.map(([key, label]) => <SelectItem key={key} textValue={label}>{label}</SelectItem>)}
               </Select>
               {showDateControls && (
-                <div>
-                  <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <div className="flex min-w-0 flex-col items-stretch min-[900px]:items-end">
+                  <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500 min-[900px]:justify-end">
                     <CalendarDays size={14} /> Reporting period
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5 min-[900px]:flex-nowrap min-[900px]:justify-end">
                     {(['today', 'specific', 'range'] as const).map((mode) => (
                       <button
                         key={mode}
@@ -1044,7 +1063,7 @@ export default function EventsReportsAnalysis() {
                           setReportDateMode(mode);
                         }}
                         disabled={mode === 'range' && !rangeAllowed}
-                        className={`rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+                        className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
                           reportDateMode === mode
                             ? 'border-blue-600 bg-blue-600 text-white'
                             : mode === 'range' && !rangeAllowed
@@ -1056,13 +1075,21 @@ export default function EventsReportsAnalysis() {
                       </button>
                     ))}
                     {reportDateMode === 'specific' && (
-                      <Input aria-label="Report date" type="date" value={startDate} onChange={(event) => { setStartDate(event.target.value); setEndDate(event.target.value); }} className="w-44" size="sm" />
+                      <Input
+                        aria-label="Report date"
+                        type="date"
+                        value={startDate}
+                        onChange={(event) => { setStartDate(event.target.value); setEndDate(event.target.value); }}
+                        className="w-[8.5rem] max-w-[8.5rem] shrink-0"
+                        classNames={{ inputWrapper: 'w-[8.5rem] max-w-[8.5rem]', input: 'text-xs' }}
+                        size="sm"
+                      />
                     )}
                     {reportDateMode === 'range' && rangeAllowed && (
                       <>
-                        <Input aria-label="Start date" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className="w-44" size="sm" />
-                        <span className="text-sm text-slate-400">to</span>
-                        <Input aria-label="End date" type="date" value={endDate} min={startDate} onChange={(event) => setEndDate(event.target.value)} className="w-44" size="sm" />
+                        <Input aria-label="Start date" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className="w-[8.5rem] max-w-[8.5rem] shrink-0" classNames={{ inputWrapper: 'w-[8.5rem] max-w-[8.5rem]', input: 'text-xs' }} size="sm" />
+                        <span className="shrink-0 text-sm text-slate-400">to</span>
+                        <Input aria-label="End date" type="date" value={endDate} min={startDate} onChange={(event) => setEndDate(event.target.value)} className="w-[8.5rem] max-w-[8.5rem] shrink-0" classNames={{ inputWrapper: 'w-[8.5rem] max-w-[8.5rem]', input: 'text-xs' }} size="sm" />
                       </>
                     )}
                   </div>
@@ -1115,34 +1142,35 @@ export default function EventsReportsAnalysis() {
         </Card>
 
         <Card className="border border-slate-200 shadow-sm">
-          <CardBody className="overflow-x-auto px-4 py-3">
-            <div className="flex min-w-max items-center gap-4">
+          <CardBody className="overflow-x-auto px-3 py-1.5">
+            <div className="flex min-w-max items-center gap-3">
               <div className="flex flex-1 items-center divide-x divide-slate-200">
                 {visibleReportKpis.length > 0 ? visibleReportKpis.map((kpi) => (
-                  <div key={kpi.label} className="flex items-baseline gap-2 px-4 first:pl-0 last:pr-0">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</span>
-                    <span className="text-base font-bold text-slate-950">{kpi.value}</span>
+                  <div key={kpi.label} className="flex items-baseline gap-1.5 px-3 first:pl-0 last:pr-0">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</span>
+                    <span className="text-sm font-bold text-slate-950">{kpi.value}</span>
                   </div>
-                )) : <p className="pr-4 text-sm text-slate-500">All summary metrics are hidden.</p>}
+                )) : <p className="pr-3 text-sm text-slate-500">All summary metrics are hidden.</p>}
               </div>
-              <div className="ml-auto flex shrink-0 items-center gap-2 border-l border-slate-200 pl-4">{summaryCustomizationControls}</div>
+              <div className="ml-auto flex shrink-0 items-center gap-1.5 border-l border-slate-200 pl-3">{summaryCustomizationControls}</div>
             </div>
           </CardBody>
         </Card>
 
         <Card id="report-print-area" className="border border-slate-200 shadow-sm">
-          <CardHeader className="flex flex-col items-start gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-xl font-bold text-slate-950">{reportLabel}</h2>
-                <Chip size="sm" color="primary" variant="flat">{REPORT_GROUPS[selectedTab].title}</Chip>
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-slate-100 px-4 py-1.5">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <h2 className="text-lg font-bold text-slate-950">{reportLabel}</h2>
+                <ReportPageInfoTip text={REPORT_DESCRIPTIONS[selectedReport]} label={`About ${reportLabel}`} />
               </div>
-              <p className="mt-1 text-sm text-slate-500">{REPORT_DESCRIPTIONS[selectedReport]}</p>
+              <p className="mt-1 hidden text-sm text-slate-500 print:block">{REPORT_DESCRIPTIONS[selectedReport]}</p>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="text-left text-xs text-slate-500 sm:text-right">
-                <div>{NO_DATE_REPORT_KEYS.has(selectedReport) ? 'Current file' : startDate === endDate ? startDate : `${startDate} – ${endDate}`}</div>
-                <div>Generated {generatedAt ?? '…'} by {currentUserLabel}</div>
+            <div className="flex shrink-0 items-center gap-2">
+              <div className="whitespace-nowrap text-[11px] text-slate-500">
+                {NO_DATE_REPORT_KEYS.has(selectedReport) ? 'Current file' : startDate === endDate ? startDate : `${startDate} – ${endDate}`}
+                <span className="mx-1.5 text-slate-300">·</span>
+                Generated {generatedAt ?? '…'} by {currentUserLabel}
               </div>
               {Array.isArray(reportData) && availableColumns.length > 0 && (
                 <Dropdown closeOnSelect={false}>
@@ -1159,7 +1187,7 @@ export default function EventsReportsAnalysis() {
               )}
             </div>
           </CardHeader>
-          <CardBody className="p-5">
+          <CardBody className="p-3 sm:p-5">
             {renderReportTable()}
             {reportNotes && (
               <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4">

@@ -13,7 +13,7 @@ export type IntelColumn = { key: string; label: string; align?: 'right' };
 
 export type IntelReport = {
   columns: IntelColumn[];
-  rows: Record<string, string>[];
+  rows: Record<string, string | number>[];
   kpis: { label: string; value: string }[];
   emptyHint: string;
 };
@@ -58,6 +58,11 @@ function periodDays(start: string, end: string) {
   return Math.max(1, Math.round(ms / 86_400_000) + 1);
 }
 
+function ageDays(due: string, asOf: string) {
+  const dueDay = day(due) || asOf;
+  return Math.floor((new Date(`${asOf}T00:00:00`).getTime() - new Date(`${dueDay}T00:00:00`).getTime()) / 86_400_000);
+}
+
 function ageBucket(due: string, asOf: string) {
   const days = Math.floor((new Date(asOf).getTime() - new Date(due || asOf).getTime()) / 86_400_000);
   if (days <= 0) return 'Current';
@@ -65,6 +70,28 @@ function ageBucket(due: string, asOf: string) {
   if (days <= 60) return '31–60 days';
   if (days <= 90) return '61–90 days';
   return 'Over 90 days';
+}
+
+/** Register balance from the last line before `asOf`, or on that day when `inclusive`. */
+function registerBalance(lines: BankTransaction[], asOf: string, opening: number, inclusive: boolean) {
+  const prior = lines.filter((line) => {
+    const posted = day(line.transactionDate);
+    return inclusive ? posted <= asOf : posted < asOf;
+  });
+  const last = prior[prior.length - 1];
+  if (last && Number.isFinite(last.balance)) return round2(last.balance);
+  return round2(opening);
+}
+
+function signedRegisterLine(line: BankTransaction, running: number) {
+  if (line.type === 'Transfer' && Number.isFinite(line.balance)) return round2(line.balance - running);
+  if (line.type === 'Withdrawal' || line.type === 'Charge') return -Math.abs(line.amount || 0);
+  if (line.type === 'Transfer') {
+    if (/transfer to/i.test(line.description || '')) return -Math.abs(line.amount || 0);
+    if (/transfer from/i.test(line.description || '')) return Math.abs(line.amount || 0);
+    return 0;
+  }
+  return Math.abs(line.amount || 0);
 }
 
 function openAmount(invoice: Invoice) {
@@ -459,67 +486,203 @@ export function buildAccountingIntelligenceReport(input: Input): IntelReport {
 
   if (reportKey === 'ar-aging' || reportKey === 'ap-aging' || reportKey === 'ar-customer' || reportKey === 'ap-forecast' || reportKey === 'dso' || reportKey === 'dpo') {
     const sales = reportKey.startsWith('ar') || reportKey === 'dso';
+    const partyLabel = sales ? 'Customer' : 'Vendor';
     const list = openInvoices(sales ? 'Sales' : 'Purchase');
     const totalOpen = round2(list.reduce((s, i) => s + openAmount(i), 0));
+    const invoiceLine = (inv: Invoice) => {
+      const overdue = ageDays(inv.dueDate, endDate);
+      return {
+        invoice: inv.invoiceNumber,
+        party: partnerName(inv.businessPartnerId),
+        date: day(inv.date),
+        due: day(inv.dueDate),
+        age: ageBucket(inv.dueDate, endDate),
+        days: Math.max(0, overdue),
+        dueIn: overdue > 0 ? 0 : -overdue,
+        total: round2(inv.total || 0),
+        paid: round2(inv.paidAmount || 0),
+        open: openAmount(inv),
+        status: inv.status,
+      };
+    };
     if (reportKey === 'ar-aging' || reportKey === 'ap-aging') {
-      const buckets = new Map<string, number>();
-      for (const inv of list) {
-        const bucket = ageBucket(inv.dueDate, endDate);
-        buckets.set(bucket, (buckets.get(bucket) || 0) + openAmount(inv));
-      }
-      const order = ['Current', '1–30 days', '31–60 days', '61–90 days', 'Over 90 days'];
+      const lines = list.map(invoiceLine).sort((a, b) => b.days - a.days || a.due.localeCompare(b.due));
+      const overdue = round2(lines.filter((line) => line.days > 0).reduce((sum, line) => sum + line.open, 0));
       return {
         columns: [
-          { key: 'bucket', label: 'Age' },
-          { key: 'amount', label: 'Open', align: 'right' },
+          { key: 'invoice', label: 'Invoice' },
+          { key: 'party', label: partyLabel },
+          { key: 'date', label: 'Date' },
+          { key: 'due', label: 'Due' },
+          { key: 'age', label: 'Age' },
+          { key: 'days', label: 'Days overdue', align: 'right' },
+          { key: 'total', label: 'Total', align: 'right' },
+          { key: 'paid', label: 'Paid', align: 'right' },
+          { key: 'open', label: 'Open', align: 'right' },
+          { key: 'status', label: 'Status' },
         ],
-        rows: order.filter((b) => buckets.has(b)).map((bucket) => ({ bucket, amount: money(buckets.get(bucket) || 0) })),
-        kpis: [{ label: sales ? 'Open AR' : 'Open AP', value: money(totalOpen) }],
+        rows: lines,
+        kpis: [
+          { label: sales ? 'Open AR' : 'Open AP', value: money(totalOpen) },
+          { label: 'Invoices', value: String(lines.length) },
+          { label: 'Overdue', value: money(overdue) },
+        ],
         emptyHint: sales ? 'No open sales invoices.' : 'No open purchase bills.',
       };
     }
-    if (reportKey === 'dso' || reportKey === 'dpo') {
-      const days = periodDays(startDate, endDate);
-      const base = sales ? revenueTotal : expenseTotal;
-      const ratio = base ? (totalOpen / base) * days : 0;
+    if (reportKey === 'ap-forecast') {
+      const lines = list.map(invoiceLine).sort((a, b) => a.due.localeCompare(b.due));
       return {
         columns: [
-          { key: 'metric', label: 'Metric' },
-          { key: 'value', label: 'Value', align: 'right' },
+          { key: 'party', label: 'Vendor' },
+          { key: 'invoice', label: 'Bill' },
+          { key: 'date', label: 'Date' },
+          { key: 'due', label: 'Due' },
+          { key: 'dueIn', label: 'Days to due', align: 'right' },
+          { key: 'total', label: 'Total', align: 'right' },
+          { key: 'paid', label: 'Paid', align: 'right' },
+          { key: 'open', label: 'Open', align: 'right' },
+          { key: 'status', label: 'Status' },
         ],
-        rows: [
-          { metric: sales ? 'Open receivables' : 'Open payables', value: money(totalOpen) },
-          { metric: sales ? 'Period revenue' : 'Period expenses', value: money(base) },
-          { metric: 'Days in period', value: String(days) },
-          { metric: sales ? 'Days sales outstanding' : 'Days payable outstanding', value: base ? ratio.toFixed(1) : '—' },
+        rows: lines,
+        kpis: [
+          { label: 'Open AP', value: money(totalOpen) },
+          { label: 'Bills', value: String(lines.length) },
         ],
-        kpis: [{ label: sales ? 'DSO' : 'DPO', value: base ? ratio.toFixed(1) : '—' }],
-        emptyHint: 'Need both an open balance and period activity.',
+        emptyHint: 'No open purchase bills.',
       };
     }
-    const byName = new Map<string, { amount: number; due: string }>();
+    const byName = new Map<string, { open: number; count: number; due: string }>();
     for (const inv of list) {
       const name = partnerName(inv.businessPartnerId);
-      const prev = byName.get(name) || { amount: 0, due: inv.dueDate };
-      prev.amount += openAmount(inv);
-      if (inv.dueDate < prev.due) prev.due = inv.dueDate;
+      const prev = byName.get(name) || { open: 0, count: 0, due: inv.dueDate || '9999-12-31' };
+      prev.open += openAmount(inv);
+      prev.count += 1;
+      if ((inv.dueDate || '') < prev.due) prev.due = inv.dueDate;
       byName.set(name, prev);
+    }
+    const days = periodDays(startDate, endDate);
+    const base = sales ? revenueTotal : expenseTotal;
+    const ratio = base ? (totalOpen / base) * days : 0;
+    const billedByName = new Map<string, number>();
+    for (const inv of invoices) {
+      if (inv.type !== (sales ? 'Sales' : 'Purchase')) continue;
+      if (inv.status === 'Void' || inv.status === 'Draft' || inv.isProforma) continue;
+      if (!inRange(inv.date, startDate, endDate)) continue;
+      const name = partnerName(inv.businessPartnerId);
+      billedByName.set(name, (billedByName.get(name) || 0) + (inv.total || 0));
+    }
+    const parties = [...byName.entries()]
+      .map(([name, value]) => {
+        return {
+          party: name,
+          invoices: value.count,
+          due: day(value.due),
+          days: Math.max(0, ageDays(value.due, endDate)),
+          open: round2(value.open),
+          billed: round2(billedByName.get(name) || 0),
+        };
+      })
+      .sort((a, b) => b.open - a.open);
+    if (reportKey === 'dso' || reportKey === 'dpo') {
+      return {
+        columns: [
+          { key: 'party', label: partyLabel },
+          { key: 'invoices', label: 'Invoices', align: 'right' },
+          { key: 'due', label: 'Oldest due' },
+          { key: 'days', label: 'Days overdue', align: 'right' },
+          { key: 'open', label: 'Open', align: 'right' },
+          { key: 'billed', label: 'Billed in period', align: 'right' },
+        ],
+        rows: parties,
+        kpis: [
+          { label: sales ? `DSO · ${days} days` : `DPO · ${days} days`, value: base ? ratio.toFixed(1) : '—' },
+          { label: sales ? 'Open AR' : 'Open AP', value: money(totalOpen) },
+          { label: sales ? 'Period revenue' : 'Period expenses', value: money(base) },
+        ],
+        emptyHint: sales ? 'No open sales invoices.' : 'No open purchase bills.',
+      };
     }
     return {
       columns: [
-        { key: 'name', label: sales ? 'Customer' : 'Vendor' },
-        { key: 'due', label: 'Earliest due' },
-        { key: 'amount', label: 'Open', align: 'right' },
+        { key: 'party', label: 'Customer' },
+        { key: 'invoices', label: 'Invoices', align: 'right' },
+        { key: 'due', label: 'Oldest due' },
+        { key: 'days', label: 'Days overdue', align: 'right' },
+        { key: 'open', label: 'Open', align: 'right' },
       ],
-      rows: [...byName.entries()]
-        .sort((a, b) => a[1].due.localeCompare(b[1].due))
-        .map(([name, v]) => ({ name, due: day(v.due), amount: money(v.amount) })),
-      kpis: [{ label: sales ? 'Open AR' : 'Open AP', value: money(totalOpen) }],
-      emptyHint: sales ? 'No open sales invoices.' : 'No open purchase bills.',
+      rows: parties,
+      kpis: [
+        { label: 'Open AR', value: money(totalOpen) },
+        { label: 'Customers', value: String(parties.length) },
+      ],
+      emptyHint: 'No open sales invoices.',
     };
   }
 
-  if (reportKey === 'cash-position' || reportKey === 'bank-balances' || reportKey === 'working-capital') {
+  if (reportKey === 'cash-position') {
+    const now = new Date();
+    const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const throughNow = endDate >= todayIso;
+    const accounts = bankAccounts.filter((b) => b.isActive || bankTransactions.some((t) => t.bankAccountId === b.id && inRange(t.transactionDate, startDate, endDate)));
+    const rows = accounts.map((account) => {
+      const lines = bankTransactions
+        .filter((t) => t.bankAccountId === account.id)
+        .sort((a, b) => day(a.transactionDate).localeCompare(day(b.transactionDate)) || (a.createdAt || '').localeCompare(b.createdAt || ''));
+      let moneyIn = 0;
+      let moneyOut = 0;
+      let running = round2(account.openingBalance || 0);
+      for (const line of lines) {
+        const signed = signedRegisterLine(line, running);
+        running = Number.isFinite(line.balance) ? round2(line.balance) : round2(running + signed);
+        if (!inRange(line.transactionDate, startDate, endDate)) continue;
+        if (signed >= 0) moneyIn += signed;
+        else moneyOut += -signed;
+      }
+      moneyIn = round2(moneyIn);
+      moneyOut = round2(moneyOut);
+      const closing = throughNow
+        ? round2(account.currentBalance || 0)
+        : registerBalance(lines, endDate, account.openingBalance || 0, true);
+      const opening = throughNow
+        ? round2(closing - moneyIn + moneyOut)
+        : registerBalance(lines, startDate, account.openingBalance || 0, false);
+      return {
+        account: account.accountName,
+        bank: account.bankName,
+        number: account.accountNumber,
+        gl: account.glAccountCode,
+        opening,
+        in: moneyIn,
+        out: moneyOut,
+        closing,
+      };
+    });
+    const closingTotal = round2(rows.reduce((sum, row) => sum + row.closing, 0));
+    const inTotal = round2(rows.reduce((sum, row) => sum + row.in, 0));
+    const outTotal = round2(rows.reduce((sum, row) => sum + row.out, 0));
+    return {
+      columns: [
+        { key: 'account', label: 'Account' },
+        { key: 'bank', label: 'Bank' },
+        { key: 'number', label: 'Number' },
+        { key: 'gl', label: 'GL' },
+        { key: 'opening', label: 'Opening', align: 'right' },
+        { key: 'in', label: 'In', align: 'right' },
+        { key: 'out', label: 'Out', align: 'right' },
+        { key: 'closing', label: 'Closing', align: 'right' },
+      ],
+      rows,
+      kpis: [
+        { label: 'Closing', value: money(closingTotal) },
+        { label: 'In', value: money(inTotal) },
+        { label: 'Out', value: money(outTotal) },
+      ],
+      emptyHint: 'No bank or cash accounts on the register.',
+    };
+  }
+
+  if (reportKey === 'bank-balances' || reportKey === 'working-capital') {
     const banks = bankAccounts.filter((b) => b.isActive);
     const bankTotal = round2(banks.reduce((s, b) => s + (b.currentBalance || 0), 0));
     const ar = round2(openInvoices('Sales').reduce((s, i) => s + openAmount(i), 0));
@@ -528,28 +691,46 @@ export function buildAccountingIntelligenceReport(input: Input): IntelReport {
       return {
         columns: [
           { key: 'item', label: 'Item' },
+          { key: 'detail', label: 'Detail' },
           { key: 'amount', label: 'Amount', align: 'right' },
         ],
         rows: [
-          { item: 'Bank & cash (register)', amount: money(bankTotal) },
-          { item: 'Open receivables', amount: money(ar) },
-          { item: 'Open payables', amount: money(ap) },
-          { item: 'Working capital (cash + AR − AP)', amount: money(bankTotal + ar - ap) },
+          ...banks.map((b) => ({
+            item: b.accountName,
+            detail: `${b.bankName} · ${b.glAccountCode}`,
+            amount: round2(b.currentBalance || 0),
+          })),
+          { item: 'Open receivables', detail: 'Sales invoices still open', amount: ar },
+          { item: 'Open payables', detail: 'Purchase bills still open', amount: ap },
+          { item: 'Working capital', detail: 'Cash + receivables − payables', amount: round2(bankTotal + ar - ap) },
         ],
-        kpis: [{ label: 'Working capital', value: money(bankTotal + ar - ap) }],
+        kpis: [
+          { label: 'Working capital', value: money(bankTotal + ar - ap) },
+          { label: 'Bank & cash', value: money(bankTotal) },
+          { label: 'Open AR', value: money(ar) },
+          { label: 'Open AP', value: money(ap) },
+        ],
         emptyHint: 'No bank, receivable, or payable balances.',
       };
     }
     return {
       columns: [
         { key: 'account', label: 'Account' },
+        { key: 'bank', label: 'Bank' },
+        { key: 'number', label: 'Number' },
         { key: 'gl', label: 'GL' },
-        { key: 'balance', label: 'Register balance', align: 'right' },
+        { key: 'currency', label: 'Currency' },
+        { key: 'opening', label: 'Opening', align: 'right' },
+        { key: 'balance', label: 'Balance', align: 'right' },
       ],
       rows: banks.map((b) => ({
-        account: `${b.accountName} · ${b.bankName}`,
+        account: b.accountName,
+        bank: b.bankName,
+        number: b.accountNumber,
         gl: b.glAccountCode,
-        balance: money(b.currentBalance || 0),
+        currency: b.currency,
+        opening: round2(b.openingBalance || 0),
+        balance: round2(b.currentBalance || 0),
       })),
       kpis: [{ label: 'Bank & cash', value: money(bankTotal) }],
       emptyHint: 'No active bank accounts.',
@@ -557,53 +738,93 @@ export function buildAccountingIntelligenceReport(input: Input): IntelReport {
   }
 
   if (reportKey === 'cash-movement' || reportKey === 'unreconciled' || reportKey === 'bank-recon-summary') {
-    const txns = bankTransactions.filter((t) => inRange(t.transactionDate, startDate, endDate));
     const accountName = (id: string) => bankAccounts.find((b) => b.id === id)?.accountName || id;
+    const openingByAccount = new Map(bankAccounts.map((account) => [account.id, round2(account.openingBalance || 0)]));
+    const signedById = new Map<string, number>();
+    const grouped = new Map<string, BankTransaction[]>();
+    for (const line of bankTransactions) {
+      const list = grouped.get(line.bankAccountId) || [];
+      list.push(line);
+      grouped.set(line.bankAccountId, list);
+    }
+    for (const [accountId, lines] of grouped) {
+      lines.sort((a, b) => day(a.transactionDate).localeCompare(day(b.transactionDate)) || (a.createdAt || '').localeCompare(b.createdAt || ''));
+      let running = openingByAccount.get(accountId) || 0;
+      for (const line of lines) {
+        const signed = signedRegisterLine(line, running);
+        signedById.set(line.id, signed);
+        running = Number.isFinite(line.balance) ? round2(line.balance) : round2(running + signed);
+      }
+    }
+    const txns = bankTransactions.filter((t) => inRange(t.transactionDate, startDate, endDate));
     if (reportKey === 'bank-recon-summary') {
-      const byAccount = new Map<string, { total: number; open: number }>();
+      const byAccount = new Map<string, { total: number; reconciled: number; open: number; openAmount: number }>();
       for (const t of bankTransactions.filter((t) => day(t.transactionDate) <= endDate)) {
-        const bucket = byAccount.get(t.bankAccountId) || { total: 0, open: 0 };
+        const bucket = byAccount.get(t.bankAccountId) || { total: 0, reconciled: 0, open: 0, openAmount: 0 };
         bucket.total += 1;
-        if (t.status !== 'Reconciled') bucket.open += 1;
+        if (t.status === 'Reconciled') bucket.reconciled += 1;
+        else {
+          bucket.open += 1;
+          bucket.openAmount += Math.abs(signedById.get(t.id) || 0);
+        }
         byAccount.set(t.bankAccountId, bucket);
       }
       return {
         columns: [
           { key: 'account', label: 'Account' },
           { key: 'lines', label: 'Lines', align: 'right' },
-          { key: 'open', label: 'Not reconciled', align: 'right' },
+          { key: 'reconciled', label: 'Reconciled', align: 'right' },
+          { key: 'openLines', label: 'Open lines', align: 'right' },
+          { key: 'openAmount', label: 'Open amount', align: 'right' },
         ],
-        rows: [...byAccount.entries()].map(([id, v]) => ({
+        rows: [...byAccount.entries()].map(([id, value]) => ({
           account: accountName(id),
-          lines: String(v.total),
-          open: String(v.open),
+          lines: value.total,
+          reconciled: value.reconciled,
+          openLines: value.open,
+          openAmount: round2(value.openAmount),
         })),
-        kpis: [{ label: 'Accounts', value: String(byAccount.size) }],
+        kpis: [
+          { label: 'Accounts', value: String(byAccount.size) },
+          { label: 'Open lines', value: String([...byAccount.values()].reduce((sum, value) => sum + value.open, 0)) },
+        ],
         emptyHint: 'No bank register lines through this date.',
       };
     }
-    const list = reportKey === 'unreconciled' ? txns.filter((t) => t.status !== 'Reconciled') : txns;
-    const net = round2(list.reduce((s, t) => s + (t.type === 'Withdrawal' || t.type === 'Charge' ? -t.amount : t.amount), 0));
+    const list = (reportKey === 'unreconciled' ? txns.filter((t) => t.status !== 'Reconciled') : txns)
+      .slice()
+      .sort((a, b) => day(a.transactionDate).localeCompare(day(b.transactionDate)));
+    const movementRows = list.map((t) => {
+      const signed = round2(signedById.get(t.id) || 0);
+      return {
+        date: day(t.transactionDate),
+        account: accountName(t.bankAccountId),
+        type: t.type,
+        description: t.description || '—',
+        reference: t.reference || '—',
+        status: t.status,
+        in: signed > 0 ? signed : 0,
+        out: signed < 0 ? round2(-signed) : 0,
+      };
+    });
+    const inTotal = round2(movementRows.reduce((sum, row) => sum + row.in, 0));
+    const outTotal = round2(movementRows.reduce((sum, row) => sum + row.out, 0));
     return {
       columns: [
         { key: 'date', label: 'Date' },
         { key: 'account', label: 'Account' },
         { key: 'type', label: 'Type' },
+        { key: 'description', label: 'Description' },
         { key: 'reference', label: 'Reference' },
         { key: 'status', label: 'Status' },
-        { key: 'amount', label: 'Amount', align: 'right' },
+        { key: 'in', label: 'In', align: 'right' },
+        { key: 'out', label: 'Out', align: 'right' },
       ],
-      rows: list.slice(0, 200).map((t) => ({
-        date: day(t.transactionDate),
-        account: accountName(t.bankAccountId),
-        type: t.type,
-        reference: t.reference || '—',
-        status: t.status,
-        amount: money(t.amount),
-      })),
+      rows: movementRows,
       kpis: [
         { label: 'Lines', value: String(list.length) },
-        { label: 'Net movement', value: money(net) },
+        { label: 'In', value: money(inTotal) },
+        { label: 'Out', value: money(outTotal) },
       ],
       emptyHint: reportKey === 'unreconciled' ? 'Nothing unreconciled in this period.' : 'No bank movements in this period.',
     };

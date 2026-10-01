@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, Suspense, lazy } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import {
   Card,
   CardBody,
@@ -18,6 +19,8 @@ import RecentActivities from './RecentActivities';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import ModuleExpandButton from './ModuleExpandButton';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import { useDashboardPeriod, isInPeriod } from '../lib/dashboard/useDashboardPeriod';
+import { useSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
 import InventoryReportsAnalysis from './InventoryReportsAnalysis';
 import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
@@ -54,10 +57,13 @@ function resolveInvTab(raw?: string | null): string {
 export default function StoresMainDashboard() {
   const [selectedTab, setSelectedTab] = useState('items');
 
+  const { collapsed: kpiCollapsed, toggle: toggleKpis } = useSummaryCollapsed('stores.kpiCollapsed');
+
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility(
     'dashboard.hidden.stores',
     STORES_DASHBOARD_SECTIONS
   );
+  const deskPeriod = useDashboardPeriod('dashboard.period.stores', 'today');
 
   const stockItems = useStockStore((s) => s.stockItems);
   const stockMovements = useStockStore((s) => s.stockMovements);
@@ -77,6 +83,15 @@ export default function StoresMainDashboard() {
   }, []);
 
   useEffect(() => {
+    try {
+      const stored = localStorage.getItem('inventory.tab');
+      if (stored) {
+        setSelectedTab(resolveInvTab(stored));
+        localStorage.removeItem('inventory.tab');
+      }
+    } catch {
+      /* ignore */
+    }
     const apply = (e: Event) => {
       const detail = (e as CustomEvent).detail || {};
       if (detail.tab) setSelectedTab(resolveInvTab(detail.tab));
@@ -84,9 +99,6 @@ export default function StoresMainDashboard() {
     window.addEventListener('inv-navigate', apply);
     return () => window.removeEventListener('inv-navigate', apply);
   }, []);
-
-  const today = new Date().toISOString().slice(0, 10);
-  const isToday = (d: Date) => new Date(d).toISOString().slice(0, 10) === today;
 
   const lowStockItemsList = getLowStockItems();
   const outOfStockItemsList = getOutOfStockItems();
@@ -104,9 +116,15 @@ export default function StoresMainDashboard() {
   const confirmedOrders = purchaseOrders.filter((p) => p.status === 'confirmed' || p.status === 'in-transit').length;
   const deliveredOrders = purchaseOrders.filter((p) => p.status === 'delivered' || p.status === 'closed').length;
 
-  const itemsReceivedToday = stockMovements.filter((m) => m.movementType === 'in' && isToday(m.createdAt)).length;
-  const itemsIssuedToday = stockMovements.filter((m) => m.movementType === 'out' && isToday(m.createdAt)).length;
-  const purchaseOrdersCreatedToday = purchaseOrders.filter((p) => isToday(p.createdAt)).length;
+  const itemsReceivedToday = stockMovements.filter(
+    (m) => m.movementType === 'in' && isInPeriod(m.createdAt, deskPeriod.period, deskPeriod.todayISO),
+  ).length;
+  const itemsIssuedToday = stockMovements.filter(
+    (m) => m.movementType === 'out' && isInPeriod(m.createdAt, deskPeriod.period, deskPeriod.todayISO),
+  ).length;
+  const purchaseOrdersCreatedToday = purchaseOrders.filter((p) =>
+    isInPeriod(p.createdAt, deskPeriod.period, deskPeriod.todayISO),
+  ).length;
 
   const goOps = (inner?: { tab?: string; stockOp?: string }) => {
     setSelectedTab('items');
@@ -153,12 +171,26 @@ export default function StoresMainDashboard() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-ghana-black">📦 Inventory & Stores</h2>
         <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="flat"
+            onPress={toggleKpis}
+            aria-expanded={!kpiCollapsed}
+            aria-label={kpiCollapsed ? 'Show summary' : 'Hide summary'}
+            className="h-10 md:h-8"
+            startContent={kpiCollapsed ? <ChevronDown className="h-3.5 w-3.5" aria-hidden /> : <ChevronUp className="h-3.5 w-3.5" aria-hidden />}
+          >
+            {kpiCollapsed ? 'Show' : 'Hide'}<span className="hidden sm:inline">&nbsp;summary</span>
+          </Button>
           <CustomizeViewControl
             sections={STORES_DASHBOARD_SECTIONS}
             isHidden={isHidden}
             toggle={toggleSection}
             showAll={showAll}
             hiddenCount={hiddenCount}
+            period={deskPeriod.period}
+            onPeriodChange={deskPeriod.setPeriod}
+            defaultPeriod={deskPeriod.defaultPeriod}
           />
           {(selectedTab === 'items' || selectedTab === 'reports') && (
             <ModuleExpandButton
@@ -169,8 +201,8 @@ export default function StoresMainDashboard() {
         </div>
       </div>
 
-      {(!isHidden('stockLevels') || !isHidden('inventoryValue') || !isHidden('purchaseOrders')) && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+      {!kpiCollapsed && (!isHidden('stockLevels') || !isHidden('inventoryValue') || !isHidden('purchaseOrders')) && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-3">
           {!isHidden('stockLevels') && (
             <Card className="border-0 shadow-lg border-l-4 border-l-green-500">
               <CardBody className="p-4">
@@ -255,11 +287,11 @@ export default function StoresMainDashboard() {
         </div>
       )}
 
-      {!isHidden('todayOps') && (
-        <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-          <div className="flex items-center gap-4 flex-wrap">
-            <h4 className="text-lg font-semibold text-ghana-black">Today&apos;s Operations</h4>
-            <div className="flex items-center gap-6 text-sm">
+      {!kpiCollapsed && !isHidden('todayOps') && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+            <h4 className="text-sm font-semibold text-ghana-black lg:text-base">Operations · {deskPeriod.label}</h4>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
               <span>
                 <span className="text-green-600 font-medium">{itemsReceivedToday}</span>
                 <span className="text-gray-500"> received</span>
@@ -274,8 +306,8 @@ export default function StoresMainDashboard() {
               </span>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button color="success" className="bg-green-600" onPress={() => goOps({ tab: 'inventory' })}>
+          <div className="flex items-center gap-1.5">
+            <Button size="sm" color="success" className="bg-green-600" onPress={() => goOps({ tab: 'inventory' })}>
               Open stock file
             </Button>
             <HideCardButton onHide={() => hide('todayOps')} label="Today's Operations" />
@@ -283,24 +315,24 @@ export default function StoresMainDashboard() {
         </div>
       )}
 
-      {!isHidden('quickActions') && (
-        <Card className="border-0 shadow-lg mb-6">
-          <CardHeader className="pb-3 flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-ghana-black">Quick Actions</h3>
+      {!kpiCollapsed && !isHidden('quickActions') && (
+        <Card className="border-0 shadow-lg mb-3">
+          <CardHeader className="flex items-center justify-between px-3 py-1.5">
+            <h3 className="text-sm font-semibold text-ghana-black lg:text-base">Quick Actions</h3>
             <HideCardButton onHide={() => hide('quickActions')} label="Quick Actions" />
           </CardHeader>
-          <CardBody>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <CardBody className="px-3 py-2">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-1.5 md:gap-2">
               {quickActions.map((action) => (
                 <Button
                   key={action.action}
                   color={action.color as any}
                   variant="flat"
-                  className="h-20 flex flex-col items-center justify-center gap-1"
+                  className="h-auto min-h-12 flex flex-col items-center justify-center gap-0.5 px-2 py-1.5"
                   onPress={() => handleQuickAction(action.action)}
                 >
-                  <span className="text-xl">{action.icon}</span>
-                  <span className="font-medium text-sm">{action.title}</span>
+                  <span className="text-base">{action.icon}</span>
+                  <span className="font-medium text-xs leading-tight">{action.title}</span>
                 </Button>
               ))}
             </div>

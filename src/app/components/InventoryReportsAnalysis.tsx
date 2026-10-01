@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Card, CardBody, CardHeader, Button, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
+  Card, CardBody, CardHeader, Button,
   Tabs, Tab, Select, SelectItem, Input, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
   useDisclosure, Textarea, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Chip
 } from '@heroui/react';
@@ -10,6 +10,8 @@ import {
   ArrowDownToLine, BarChart3, CalendarDays, FileSpreadsheet, FileText,
   Filter, Printer, RefreshCw, RotateCcw, Search, SlidersHorizontal, StickyNote, TrendingUp, X
 } from 'lucide-react';
+import ReportPageInfoTip from './dashboard/ReportPageInfoTip';
+import { SortableReportTable } from './reports/SortableReportTable';
 import { useStockStore } from '../lib/inventory/stockStore';
 import { useSupplierStore } from '../lib/inventory/supplierStore';
 import { useSettingsStore } from '../lib/settings/store';
@@ -28,7 +30,7 @@ function formatReportValue(value: unknown): React.ReactNode {
 }
 
 function money(value: number) {
-  return `₵${Number(value || 0).toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `GH₵ ${Number(value || 0).toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function dayOf(value?: Date | string | null) {
@@ -44,25 +46,30 @@ function inDateRange(day: string, startDate: string, endDate: string) {
   return Boolean(day) && day >= startDate && day <= endDate;
 }
 
-const RANGE_REPORT_KEYS = new Set(['movements', 'purchase-orders', 'requisitions']);
-const NO_DATE_REPORT_KEYS = new Set(['stock-items', 'low-stock', 'out-of-stock', 'overstock', 'suppliers']);
+const RANGE_REPORT_KEYS = new Set(['movements', 'purchase-orders', 'requisitions', 'transfers', 'issues', 'stock-counts']);
+const NO_DATE_REPORT_KEYS = new Set(['stock-items', 'low-stock', 'out-of-stock', 'overstock', 'stock-by-category', 'stock-by-location', 'suppliers']);
 
 const REPORT_GROUPS = {
   stock: {
-    title: 'Stock',
-    description: 'Current stock file — counts and values from stored qty × unit cost.',
+    title: 'Stock & Movements',
+    description: 'The stock file, reorder exceptions, and movements already posted.',
     reports: [
       ['stock-items', 'Stock Items'],
       ['low-stock', 'Low Stock'],
       ['out-of-stock', 'Out of Stock'],
       ['overstock', 'Overstock'],
+      ['stock-by-category', 'Stock by category'],
+      ['stock-by-location', 'Stock by location'],
+      ['movements', 'Stock Movements'],
     ],
   },
-  movements: {
-    title: 'Movements',
-    description: 'Goods in, issues, transfers and adjustments already posted.',
+  activity: {
+    title: 'Activity',
+    description: 'Transfers between locations, issues to departments, and stock counts.',
     reports: [
-      ['movements', 'Stock Movements'],
+      ['transfers', 'Transfers'],
+      ['issues', 'Issues'],
+      ['stock-counts', 'Stock counts'],
     ],
   },
   procurement: {
@@ -100,7 +107,12 @@ const REPORT_DESCRIPTIONS: Record<string, string> = {
   'low-stock': 'Active items still on hand that are at or below their reorder point.',
   'out-of-stock': 'Active items at zero or below their minimum stock.',
   overstock: 'Active items above 80% of their maximum stock.',
+  'stock-by-category': 'On-hand quantity and value rolled up by item category.',
+  'stock-by-location': 'On-hand quantity and value rolled up by store location.',
   movements: 'Stock movements posted in the selected period.',
+  transfers: 'Stock transfers between locations whose transfer date falls in the selected period.',
+  issues: 'Goods issued to departments whose issue date falls in the selected period.',
+  'stock-counts': 'Stock counts whose start date falls in the selected period, with variance.',
   'purchase-orders': 'Purchase orders whose order date falls in the selected period.',
   requisitions: 'Store requisitions whose request date falls in the selected period.',
   suppliers: 'Suppliers currently on file. Rating is the stored figure, not a computed score.',
@@ -148,6 +160,18 @@ const REPORT_COLUMNS: Record<string, ReportColumnDefinition[]> = {
     { key: 'maximumStock', label: 'Maximum' },
     { key: 'stockValue', label: 'Value' },
   ],
+  'stock-by-category': [
+    { key: 'category', label: 'Category' },
+    { key: 'items', label: 'Items' },
+    { key: 'quantity', label: 'Qty' },
+    { key: 'stockValue', label: 'Value' },
+  ],
+  'stock-by-location': [
+    { key: 'location', label: 'Location' },
+    { key: 'items', label: 'Items' },
+    { key: 'quantity', label: 'Qty' },
+    { key: 'stockValue', label: 'Value' },
+  ],
   movements: [
     { key: 'createdAt', label: 'Date' },
     { key: 'itemCode', label: 'Code' },
@@ -157,6 +181,39 @@ const REPORT_COLUMNS: Record<string, ReportColumnDefinition[]> = {
     { key: 'totalValue', label: 'Value' },
     { key: 'referenceNumber', label: 'Reference' },
     { key: 'performedBy', label: 'By', defaultVisible: false },
+  ],
+  transfers: [
+    { key: 'transferNumber', label: 'Transfer' },
+    { key: 'transferDate', label: 'Date' },
+    { key: 'fromLocation', label: 'From' },
+    { key: 'toLocation', label: 'To' },
+    { key: 'status', label: 'Status' },
+    { key: 'itemCount', label: 'Lines' },
+    { key: 'totalValue', label: 'Value' },
+    { key: 'createdBy', label: 'By' },
+    { key: 'items', label: 'Items' },
+  ],
+  issues: [
+    { key: 'issueNumber', label: 'Issue' },
+    { key: 'issueDate', label: 'Date' },
+    { key: 'department', label: 'Department' },
+    { key: 'issuedTo', label: 'Issued to' },
+    { key: 'status', label: 'Status' },
+    { key: 'itemCount', label: 'Lines' },
+    { key: 'totalValue', label: 'Value' },
+    { key: 'issuedBy', label: 'By' },
+    { key: 'items', label: 'Items' },
+  ],
+  'stock-counts': [
+    { key: 'countNumber', label: 'Count' },
+    { key: 'startDate', label: 'Started' },
+    { key: 'location', label: 'Location' },
+    { key: 'countType', label: 'Type' },
+    { key: 'status', label: 'Status' },
+    { key: 'countedItems', label: 'Counted' },
+    { key: 'varianceItems', label: 'Variances' },
+    { key: 'varianceValue', label: 'Variance value' },
+    { key: 'performedBy', label: 'By' },
   ],
   'purchase-orders': [
     { key: 'poNumber', label: 'PO' },
@@ -170,10 +227,12 @@ const REPORT_COLUMNS: Record<string, ReportColumnDefinition[]> = {
   requisitions: [
     { key: 'requisitionNumber', label: 'Requisition' },
     { key: 'requestedDate', label: 'Requested' },
-    { key: 'requestedBy', label: 'By' },
+    { key: 'requestedBy', label: 'Requested by' },
     { key: 'department', label: 'Department' },
     { key: 'status', label: 'Status' },
     { key: 'itemCount', label: 'Lines' },
+    { key: 'items', label: 'Items' },
+    { key: 'notes', label: 'Notes', defaultVisible: false },
   ],
   suppliers: [
     { key: 'code', label: 'Code' },
@@ -242,6 +301,9 @@ export default function InventoryReportsAnalysis({ embedded = false }: { embedde
 
   const stockItems = useStockStore((s) => s.stockItems);
   const stockMovements = useStockStore((s) => s.stockMovements);
+  const stockTransfers = useStockStore((s) => s.stockTransfers);
+  const stockCounts = useStockStore((s) => s.stockCounts);
+  const goodsIssues = useStockStore((s) => s.goodsIssues);
   const getLowStockItems = useStockStore((s) => s.getLowStockItems);
   const getOutOfStockItems = useStockStore((s) => s.getOutOfStockItems);
   const getOverstockItems = useStockStore((s) => s.getOverstockItems);
@@ -270,7 +332,7 @@ export default function InventoryReportsAnalysis({ embedded = false }: { embedde
   }, [hydrateStock, hydrateSuppliers, hydratePOs, hydrateRequisitions]);
   useEffect(() => {
     setGeneratedAt(new Date().toLocaleString('en-GH'));
-  }, [selectedReport, selectedTab, startDate, endDate, refreshVersion, stockItems, stockMovements, purchaseOrders, requisitions]);
+  }, [selectedReport, selectedTab, startDate, endDate, refreshVersion, stockItems, stockMovements, stockTransfers, stockCounts, goodsIssues, purchaseOrders, requisitions]);
   useEffect(() => {
     if (reportDateMode === 'range' && !RANGE_REPORT_KEYS.has(selectedReport)) {
       const today = new Date().toISOString().split('T')[0];
@@ -306,6 +368,30 @@ export default function InventoryReportsAnalysis({ embedded = false }: { embedde
         return getOutOfStockItems().map(stockRow);
       case 'overstock':
         return getOverstockItems().map(stockRow);
+      case 'stock-by-category': {
+        const byCategory = new Map<string, { items: number; quantity: number; stockValue: number }>();
+        stockItems.forEach((item) => {
+          const category = item.category || '—';
+          const current = byCategory.get(category) || { items: 0, quantity: 0, stockValue: 0 };
+          current.items += 1;
+          current.quantity += Number(item.currentStock || 0);
+          current.stockValue += Number(item.currentStock || 0) * Number(item.unitCost || 0);
+          byCategory.set(category, current);
+        });
+        return Array.from(byCategory.entries()).map(([category, row]) => ({ category, ...row }));
+      }
+      case 'stock-by-location': {
+        const byLocation = new Map<string, { items: number; quantity: number; stockValue: number }>();
+        stockItems.forEach((item) => {
+          const location = item.location || '—';
+          const current = byLocation.get(location) || { items: 0, quantity: 0, stockValue: 0 };
+          current.items += 1;
+          current.quantity += Number(item.currentStock || 0);
+          current.stockValue += Number(item.currentStock || 0) * Number(item.unitCost || 0);
+          byLocation.set(location, current);
+        });
+        return Array.from(byLocation.entries()).map(([location, row]) => ({ location, ...row }));
+      }
       case 'movements':
         return stockMovements
           .filter((row) => inDateRange(dayOf(row.createdAt), startDate, endDate))
@@ -318,6 +404,48 @@ export default function InventoryReportsAnalysis({ embedded = false }: { embedde
             totalValue: row.totalValue,
             referenceNumber: row.referenceNumber || '—',
             performedBy: row.performedBy || '—',
+          }));
+      case 'transfers':
+        return stockTransfers
+          .filter((row) => inDateRange(dayOf(row.transferDate), startDate, endDate))
+          .map((row) => ({
+            transferNumber: row.transferNumber,
+            transferDate: dayOf(row.transferDate),
+            fromLocation: row.fromLocation || '—',
+            toLocation: row.toLocation || '—',
+            status: row.status,
+            itemCount: row.items?.length || 0,
+            totalValue: row.totalValue,
+            createdBy: row.createdBy || '—',
+            items: (row.items || []).map((item) => `${item.quantity}× ${item.itemName}`).join(', ') || '—',
+          }));
+      case 'issues':
+        return goodsIssues
+          .filter((row) => inDateRange(dayOf(row.issueDate), startDate, endDate))
+          .map((row) => ({
+            issueNumber: row.issueNumber,
+            issueDate: dayOf(row.issueDate),
+            department: row.department || '—',
+            issuedTo: row.issuedTo || '—',
+            status: row.status,
+            itemCount: row.items?.length || 0,
+            totalValue: row.totalValue,
+            issuedBy: row.issuedBy || '—',
+            items: (row.items || []).map((item) => `${item.quantity}× ${item.itemName}`).join(', ') || '—',
+          }));
+      case 'stock-counts':
+        return stockCounts
+          .filter((row) => inDateRange(dayOf(row.startDate), startDate, endDate))
+          .map((row) => ({
+            countNumber: row.countNumber,
+            startDate: dayOf(row.startDate),
+            location: row.location || '—',
+            countType: row.countType,
+            status: row.status,
+            countedItems: row.countedItems,
+            varianceItems: row.varianceItems,
+            varianceValue: row.varianceValue,
+            performedBy: row.performedBy || row.createdBy || '—',
           }));
       case 'purchase-orders':
         return purchaseOrders
@@ -341,6 +469,8 @@ export default function InventoryReportsAnalysis({ embedded = false }: { embedde
             department: row.department || '—',
             status: row.status,
             itemCount: row.requestedItems?.length || 0,
+            items: (row.requestedItems || []).map((item) => `${item.quantity}× ${item.itemName}`).join(', ') || '—',
+            notes: row.notes || '—',
           }));
       case 'suppliers':
         return suppliers.map((row) => ({
@@ -367,9 +497,9 @@ export default function InventoryReportsAnalysis({ embedded = false }: { embedde
     Array.from(new Set(rawRows.map((row) => fieldValue(row, keys)).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   const filterOptions = {
     status: uniqueValues(['status', 'isActive']),
-    type: uniqueValues(['movementType', 'category']),
-    staff: uniqueValues(['supplierName', 'requestedBy', 'performedBy']),
-    category: uniqueValues(['category', 'location', 'department']),
+    type: uniqueValues(['movementType', 'category', 'countType']),
+    staff: uniqueValues(['supplierName', 'requestedBy', 'performedBy', 'createdBy', 'issuedBy', 'issuedTo']),
+    category: uniqueValues(['category', 'location', 'department', 'fromLocation', 'toLocation']),
     method: uniqueValues(['unit']),
   };
   const rows = rawRows.filter((row) => {
@@ -380,9 +510,9 @@ export default function InventoryReportsAnalysis({ embedded = false }: { embedde
     });
     return matchesQuery
       && (filters.status === 'all' || fieldValue(row, ['status', 'isActive']) === filters.status)
-      && (filters.type === 'all' || fieldValue(row, ['movementType', 'category']) === filters.type)
-      && (filters.staff === 'all' || fieldValue(row, ['supplierName', 'requestedBy', 'performedBy']) === filters.staff)
-      && (filters.category === 'all' || fieldValue(row, ['category', 'location', 'department']) === filters.category)
+      && (filters.type === 'all' || fieldValue(row, ['movementType', 'category', 'countType']) === filters.type)
+      && (filters.staff === 'all' || fieldValue(row, ['supplierName', 'requestedBy', 'performedBy', 'createdBy', 'issuedBy', 'issuedTo']) === filters.staff)
+      && (filters.category === 'all' || fieldValue(row, ['category', 'location', 'department', 'fromLocation', 'toLocation']) === filters.category)
       && (filters.method === 'all' || fieldValue(row, ['unit']) === filters.method);
   });
   const filteredReportData = Array.isArray(reportData) ? rows : reportData;
@@ -423,12 +553,44 @@ export default function InventoryReportsAnalysis({ embedded = false }: { embedde
         { label: 'Active', value: rows.filter((row) => row.isActive !== false).length.toLocaleString(), hint: 'Marked active' },
       ];
     }
+    if (selectedReport === 'stock-by-category' || selectedReport === 'stock-by-location') {
+      return [
+        { label: selectedReport === 'stock-by-category' ? 'Categories' : 'Locations', value: count.toLocaleString(), hint: 'With stock on file' },
+        { label: 'Items', value: rows.reduce((sum, row) => sum + Number(row.items || 0), 0).toLocaleString(), hint: 'Catalog lines' },
+        { label: 'Quantity', value: rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0).toLocaleString(), hint: 'On hand' },
+        { label: 'Stock value', value: money(rows.reduce((sum, row) => sum + Number(row.stockValue || 0), 0)), hint: 'Qty × unit cost' },
+      ];
+    }
     if (selectedReport === 'movements') {
       return [
         { label: 'Lines', value: count.toLocaleString(), hint: 'In period' },
         { label: 'In', value: rows.filter((row) => row.movementType === 'in').length.toLocaleString(), hint: 'Receipts' },
         { label: 'Out', value: rows.filter((row) => row.movementType === 'out').length.toLocaleString(), hint: 'Issues' },
         { label: 'Value', value: money(rows.reduce((sum, row) => sum + Number(row.totalValue || 0), 0)), hint: 'Posted value' },
+      ];
+    }
+    if (selectedReport === 'transfers') {
+      return [
+        { label: 'Transfers', value: count.toLocaleString(), hint: 'In period' },
+        { label: 'In transit', value: rows.filter((row) => row.status === 'pending' || row.status === 'in-transit').length.toLocaleString(), hint: 'Not delivered' },
+        { label: 'Delivered', value: rows.filter((row) => row.status === 'delivered').length.toLocaleString(), hint: 'Received' },
+        { label: 'Value', value: money(rows.reduce((sum, row) => sum + Number(row.totalValue || 0), 0)), hint: 'Transfer value' },
+      ];
+    }
+    if (selectedReport === 'issues') {
+      return [
+        { label: 'Issues', value: count.toLocaleString(), hint: 'In period' },
+        { label: 'Departments', value: new Set(rows.map((row) => row.department).filter((value) => value && value !== '—')).size.toLocaleString(), hint: 'Issued to' },
+        { label: 'Lines', value: rows.reduce((sum, row) => sum + Number(row.itemCount || 0), 0).toLocaleString(), hint: 'Item lines' },
+        { label: 'Value', value: money(rows.reduce((sum, row) => sum + Number(row.totalValue || 0), 0)), hint: 'Issued cost' },
+      ];
+    }
+    if (selectedReport === 'stock-counts') {
+      return [
+        { label: 'Counts', value: count.toLocaleString(), hint: 'In period' },
+        { label: 'Open', value: rows.filter((row) => row.status === 'planned' || row.status === 'in-progress').length.toLocaleString(), hint: 'Not completed' },
+        { label: 'With variance', value: rows.filter((row) => Number(row.varianceItems || 0) !== 0).length.toLocaleString(), hint: 'Counted ≠ expected' },
+        { label: 'Variance value', value: money(rows.reduce((sum, row) => sum + Number(row.varianceValue || 0), 0)), hint: 'Cost of differences' },
       ];
     }
     if (selectedReport === 'purchase-orders') {
@@ -462,7 +624,7 @@ export default function InventoryReportsAnalysis({ embedded = false }: { embedde
       { label: 'Status', value: 'Current', hint: generatedAt ? `Refreshed ${generatedAt}` : 'Preparing report' },
     ];
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedReport, startDate, endDate, reportDateMode, generatedAt, refreshVersion, mounted, filters, stockItems, stockMovements, purchaseOrders, requisitions, suppliers]);
+  }, [selectedReport, startDate, endDate, reportDateMode, generatedAt, refreshVersion, mounted, filters, stockItems, stockMovements, stockTransfers, stockCounts, goodsIssues, purchaseOrders, requisitions, suppliers]);
 
   const hiddenKpiLabels = hiddenKpisByReport[selectedReport] || [];
   const visibleReportKpis = reportKpis.filter((kpi) => !hiddenKpiLabels.includes(kpi.label));
@@ -525,26 +687,18 @@ export default function InventoryReportsAnalysis({ embedded = false }: { embedde
       );
     }
     return (
-      <Table aria-label={`${selectedReport} report table`} classNames={{ base: 'overflow-x-auto', table: 'min-w-max' }}>
-        <TableHeader>
-          {visibleColumns.map((column) => <TableColumn key={column.key}>{column.label}</TableColumn>)}
-        </TableHeader>
-        <TableBody>
-          {rows.map((row: any, index: number) => (
-            <TableRow key={index}>
-              {visibleColumns.map((column) => (
-                <TableCell key={column.key}>
-                  {typeof row[column.key] === 'number' && /(value|cost|amount|balance|price)/i.test(column.key)
-                    ? money(row[column.key])
-                    : typeof row[column.key] === 'boolean'
-                    ? (row[column.key] ? 'Yes' : 'No')
-                    : formatReportValue(row[column.key])}
-                </TableCell>
-              ))}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+      <SortableReportTable
+        ariaLabel={`${selectedReport} report table`}
+        columns={visibleColumns}
+        rows={rows}
+        renderCell={(row, column) => (
+          typeof row[column.key] === 'number' && /(value|cost|amount|balance|price)/i.test(column.key)
+            ? money(row[column.key] as number)
+            : typeof row[column.key] === 'boolean'
+            ? (row[column.key] ? 'Yes' : 'No')
+            : formatReportValue(row[column.key])
+        )}
+      />
     );
   };
 
@@ -552,30 +706,26 @@ export default function InventoryReportsAnalysis({ embedded = false }: { embedde
   const rangeAllowed = RANGE_REPORT_KEYS.has(selectedReport);
 
   return (
-    <div className={embedded ? 'bg-transparent p-0' : 'min-h-screen bg-slate-50/70 p-4 md:p-6'}>
-      <div className={embedded ? 'space-y-5' : 'mx-auto max-w-[1600px] space-y-5'}>
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            {!embedded && (
-              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-700">
-                <BarChart3 size={18} />
-                INVENTORY INTELLIGENCE
-              </div>
-            )}
-            <h1 className={`${embedded ? 'text-xl' : 'text-3xl'} font-bold tracking-tight text-slate-950`}>
-              Reports & Analysis
-            </h1>
-            <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              Stock, movements, procurement, and reconciliation on file. No invented KPIs.
-            </p>
+    <div className={embedded ? 'px-2 py-1' : 'min-h-screen bg-slate-50/70 p-4 md:p-6'}>
+      <div className="mx-auto max-w-[1600px] space-y-2">
+        <div className="flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <div className="mb-0.5 flex items-center gap-2 text-sm font-semibold text-blue-700">
+              <BarChart3 size={16} />
+              INVENTORY INTELLIGENCE
+            </div>
+            <div className="flex items-center gap-1.5">
+              <h1 className="text-2xl font-bold tracking-tight text-slate-950 md:text-3xl">Reports & Analysis</h1>
+              <ReportPageInfoTip text="Stock file, movements, transfers, issues, counts, purchase orders, requisitions and suppliers from one workspace." />
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="flat" startContent={<RefreshCw size={16} />} onPress={handleRefresh}>Refresh</Button>
-            <Button variant="bordered" startContent={<StickyNote size={16} />} onPress={onOpen}>Notes</Button>
-            <Button variant="bordered" startContent={<Printer size={16} />} onPress={() => window.print()}>Print</Button>
+          <div className="flex shrink-0 flex-nowrap items-center gap-1.5 overflow-x-auto">
+            <Button size="sm" variant="flat" className="shrink-0" startContent={<RefreshCw size={16} />} onPress={handleRefresh}>Refresh</Button>
+            <Button size="sm" variant="bordered" className="shrink-0" startContent={<StickyNote size={16} />} onPress={onOpen}>Notes</Button>
+            <Button size="sm" variant="bordered" className="shrink-0" startContent={<Printer size={16} />} onPress={() => window.print()}>Print</Button>
             <Dropdown>
               <DropdownTrigger>
-                <Button color="primary" startContent={<ArrowDownToLine size={16} />} isLoading={isGenerating}>Export</Button>
+                <Button size="sm" color="primary" className="shrink-0" startContent={<ArrowDownToLine size={16} />} isLoading={isGenerating}>Export</Button>
               </DropdownTrigger>
               <DropdownMenu aria-label="Export report">
                 <DropdownItem key="pdf" startContent={<FileText size={16} />} onPress={() => handleExportReport(exportableReportData, 'pdf')}>Download PDF</DropdownItem>
@@ -587,20 +737,27 @@ export default function InventoryReportsAnalysis({ embedded = false }: { embedde
         </div>
 
         <Card className="border border-slate-200 shadow-sm">
-          <CardBody className="gap-4 p-4">
-            <Tabs selectedKey={selectedTab} onSelectionChange={handleTabChange} aria-label="Report categories" color="primary" variant="underlined" classNames={{ tabList: 'gap-5', cursor: 'w-full', tab: 'px-0 h-10' }}>
+          <CardBody className="gap-2 px-3 py-2">
+            <Tabs selectedKey={selectedTab} onSelectionChange={handleTabChange} aria-label="Report categories" color="primary" variant="underlined" classNames={{ tabList: 'gap-3', cursor: 'w-full', tab: 'px-0 h-8' }}>
               {Object.entries(REPORT_GROUPS).map(([key, group]) => <Tab key={key} title={group.title} />)}
             </Tabs>
-            <div className="grid gap-4 lg:grid-cols-[minmax(260px,1fr)_2fr]">
-              <Select label="Report" selectedKeys={[selectedReport]} onSelectionChange={(keys) => { const next = Array.from(keys)[0] as string; if (next) setSelectedReport(next); }} startContent={<TrendingUp size={16} className="text-slate-400" />}>
+            <div className="flex flex-col gap-2 min-[900px]:flex-row min-[900px]:items-end min-[900px]:justify-between min-[900px]:gap-3">
+              <Select
+                label="Report"
+                className="w-full max-w-full min-[900px]:w-64 min-[900px]:max-w-[16rem] min-[900px]:shrink-0"
+                classNames={{ trigger: 'min-h-[48px] h-[48px] py-1', label: 'text-xs', value: 'text-sm' }}
+                selectedKeys={[selectedReport]}
+                onSelectionChange={(keys) => { const next = Array.from(keys)[0] as string; if (next) setSelectedReport(next); }}
+                startContent={<TrendingUp size={15} className="text-slate-400" />}
+              >
                 {REPORT_GROUPS[selectedTab].reports.map(([key, label]) => <SelectItem key={key}>{label}</SelectItem>)}
               </Select>
               {showDateControls && (
-                <div>
-                  <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <div className="flex min-w-0 flex-col items-stretch min-[900px]:items-end">
+                  <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500 min-[900px]:justify-end">
                     <CalendarDays size={14} /> Reporting period
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5 min-[900px]:flex-nowrap min-[900px]:justify-end">
                     {(['today', 'specific', 'range'] as const).map((mode) => (
                       <button
                         key={mode}
@@ -614,7 +771,7 @@ export default function InventoryReportsAnalysis({ embedded = false }: { embedde
                           setReportDateMode(mode);
                         }}
                         disabled={mode === 'range' && !rangeAllowed}
-                        className={`rounded-lg border px-3 py-2 text-xs font-semibold transition ${
+                        className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
                           reportDateMode === mode
                             ? 'border-blue-600 bg-blue-600 text-white'
                             : mode === 'range' && !rangeAllowed
@@ -626,20 +783,20 @@ export default function InventoryReportsAnalysis({ embedded = false }: { embedde
                       </button>
                     ))}
                     {reportDateMode === 'specific' && (
-                      <Input aria-label="Report date" type="date" value={startDate} onChange={(event) => { setStartDate(event.target.value); setEndDate(event.target.value); }} className="w-44" size="sm" />
+                      <Input aria-label="Report date" type="date" value={startDate} onChange={(event) => { setStartDate(event.target.value); setEndDate(event.target.value); }} className="w-[8.5rem] max-w-[8.5rem] shrink-0" classNames={{ inputWrapper: 'w-[8.5rem] max-w-[8.5rem]', input: 'text-xs' }} size="sm" />
                     )}
                     {reportDateMode === 'range' && rangeAllowed && (
                       <>
-                        <Input aria-label="Start date" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className="w-44" size="sm" />
-                        <span className="text-sm text-slate-400">to</span>
-                        <Input aria-label="End date" type="date" value={endDate} min={startDate} onChange={(event) => setEndDate(event.target.value)} className="w-44" size="sm" />
+                        <Input aria-label="Start date" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className="w-[8.5rem] max-w-[8.5rem] shrink-0" classNames={{ inputWrapper: 'w-[8.5rem] max-w-[8.5rem]', input: 'text-xs' }} size="sm" />
+                        <span className="shrink-0 text-sm text-slate-400">to</span>
+                        <Input aria-label="End date" type="date" value={endDate} min={startDate} onChange={(event) => setEndDate(event.target.value)} className="w-[8.5rem] max-w-[8.5rem] shrink-0" classNames={{ inputWrapper: 'w-[8.5rem] max-w-[8.5rem]', input: 'text-xs' }} size="sm" />
                       </>
                     )}
                   </div>
-                </div>
+              </div>
               )}
             </div>
-            {rawRows.length > 0 && (
+            {(rawRows.length > 0 || facetDefinitions.length > 0) && (
               <div className="border-t border-slate-100 pt-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <Input aria-label="Search report results" placeholder="Item, PO, supplier, location..." value={filters.query} onValueChange={(query) => setFilters((current) => ({ ...current, query }))} startContent={<Search size={16} className="text-slate-400" />} size="sm" className="w-full sm:w-64 lg:w-72" />
@@ -685,34 +842,42 @@ export default function InventoryReportsAnalysis({ embedded = false }: { embedde
         </Card>
 
         <Card className="border border-slate-200 shadow-sm">
-          <CardBody className="overflow-x-auto px-4 py-3">
-            <div className="flex min-w-max items-center gap-4">
+          <CardBody className="overflow-x-auto px-3 py-1.5">
+            <div className="flex min-w-max items-center gap-3">
               <div className="flex flex-1 items-center divide-x divide-slate-200">
                 {visibleReportKpis.length > 0 ? visibleReportKpis.map((kpi) => (
-                  <div key={kpi.label} className="flex items-baseline gap-2 px-4 first:pl-0 last:pr-0">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</span>
-                    <span className="text-base font-bold text-slate-950">{kpi.value}</span>
+                  <div key={kpi.label} className="flex items-baseline gap-1.5 px-3 first:pl-0 last:pr-0">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</span>
+                    <span className="text-sm font-bold text-slate-950">{kpi.value}</span>
                   </div>
-                )) : <p className="pr-4 text-sm text-slate-500">All summary metrics are hidden.</p>}
+                )) : <p className="pr-3 text-sm text-slate-500">All summary metrics are hidden.</p>}
               </div>
-              <div className="ml-auto flex shrink-0 items-center gap-2 border-l border-slate-200 pl-4">{summaryCustomizationControls}</div>
+              <div className="ml-auto flex shrink-0 items-center gap-1.5 border-l border-slate-200 pl-3">{summaryCustomizationControls}</div>
             </div>
           </CardBody>
         </Card>
 
         <Card id="report-print-area" className="border border-slate-200 shadow-sm">
-          <CardHeader className="flex flex-col items-start gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-xl font-bold text-slate-950">{reportLabel}</h2>
-                <Chip size="sm" color="primary" variant="flat">{REPORT_GROUPS[selectedTab].title}</Chip>
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-slate-100 px-4 py-1.5">
+            <div className="min-w-0">
+              <div className="hidden print:block">
+                <h2 className="text-xl font-bold">{orgProfile.name}</h2>
+                {(orgProfile.address || orgProfile.phone || orgProfile.email) && (
+                  <p className="text-xs text-slate-500">
+                    {[orgProfile.address, orgProfile.phone, orgProfile.email].filter(Boolean).join(' · ')}
+                  </p>
+                )}
               </div>
-              <p className="mt-1 text-sm text-slate-500">{REPORT_DESCRIPTIONS[selectedReport]}</p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <h2 className="text-lg font-bold text-slate-950">{reportLabel}</h2>
+                <ReportPageInfoTip text={REPORT_DESCRIPTIONS[selectedReport] || REPORT_GROUPS[selectedTab].description} label={`About ${reportLabel}`} />
+              </div>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="text-left text-xs text-slate-500 sm:text-right">
-                <div>{NO_DATE_REPORT_KEYS.has(selectedReport) ? 'Current file' : startDate === endDate ? startDate : `${startDate} – ${endDate}`}</div>
-                <div>Generated {generatedAt ?? '…'} by {currentUserLabel}</div>
+            <div className="flex shrink-0 items-center gap-2">
+              <div className="whitespace-nowrap text-[11px] text-slate-500">
+                {NO_DATE_REPORT_KEYS.has(selectedReport) ? 'Current snapshot' : startDate === endDate ? startDate : `${startDate} – ${endDate}`}
+                <span className="mx-1.5 text-slate-300">·</span>
+                Generated {generatedAt ?? '…'} by {currentUserLabel}
               </div>
               {Array.isArray(reportData) && availableColumns.length > 0 && (
                 <Dropdown closeOnSelect={false}>
@@ -729,11 +894,11 @@ export default function InventoryReportsAnalysis({ embedded = false }: { embedde
               )}
             </div>
           </CardHeader>
-          <CardBody className="p-5">
+          <CardBody className="p-3 sm:p-5">
             {renderReportTable()}
             {reportNotes && (
-              <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-amber-800">Report notes</div>
+              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">Notes</p>
                 <p className="mt-1 whitespace-pre-wrap text-sm text-amber-950">{reportNotes}</p>
               </div>
             )}

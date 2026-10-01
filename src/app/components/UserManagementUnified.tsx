@@ -615,7 +615,13 @@ export default function UserManagementUnified() {
       
       <Card className="border-0 shadow-lg">
         <CardBody className="p-0">
-          <Table aria-label="Users table">
+          <Table
+            aria-label="Users table"
+            classNames={{
+              base: 'overflow-x-auto',
+              table: '!min-w-[48rem] !w-max !table-auto',
+            }}
+          >
             <TableHeader>
               <TableColumn>USER</TableColumn>
               <TableColumn>ROLE</TableColumn>
@@ -794,7 +800,13 @@ export default function UserManagementUnified() {
       
       <Card className="border-0 shadow-lg">
         <CardBody className="p-0">
-          <Table aria-label="Roles table">
+          <Table
+            aria-label="Roles table"
+            classNames={{
+              base: 'overflow-x-auto',
+              table: '!min-w-[48rem] !w-max !table-auto',
+            }}
+          >
             <TableHeader>
               <TableColumn>ROLE NAME</TableColumn>
               <TableColumn>DESCRIPTION</TableColumn>

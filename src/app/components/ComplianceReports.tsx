@@ -178,7 +178,14 @@ export default function ComplianceReports() {
       ) : (
         <Card className="border-0 shadow-lg">
           <CardBody className="px-2 py-3">
-            <Table aria-label="Filing schedule" removeWrapper classNames={worksheetTableClassNames}>
+            <Table
+              aria-label="Filing schedule"
+              removeWrapper
+              classNames={{
+                ...worksheetTableClassNames,
+                table: '!min-w-[72rem] !w-max !table-auto',
+              }}
+            >
               <TableHeader>
                 <TableColumn>Report</TableColumn>
                 <TableColumn>Frequency</TableColumn>

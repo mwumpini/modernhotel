@@ -177,7 +177,7 @@ export default function DeptNotices({ dept, title = 'Notices & Alerts', defaultT
           {(['all', 'alerts', 'broadcasts', 'mentions'] as const).map(tabButton)}
           <select
             aria-label="Notice filter"
-            className="ml-auto h-7 rounded-md border border-gray-200 bg-transparent px-1.5 text-xs text-gray-600"
+            className="ml-auto h-7 max-md:h-10 rounded-md border border-gray-200 bg-transparent px-1.5 text-xs text-gray-600"
             value={filter}
             onChange={(e) => setFilter(e.target.value as 'all' | 'urgent' | 'unread')}
           >
@@ -187,11 +187,11 @@ export default function DeptNotices({ dept, title = 'Notices & Alerts', defaultT
           </select>
         </div>
         <div className="flex items-center gap-3 text-[11px] text-gray-500">
-          <label className="flex items-center gap-1">
+          <label className="flex min-h-8 cursor-pointer items-center gap-1 max-md:min-h-10">
             <input type="checkbox" checked={enableSound} onChange={(e) => { setEnableSound(e.target.checked); try { localStorage.setItem(`ann.pref.sound.${dept}`, String(e.target.checked)); } catch {} }} />
             Sound
           </label>
-          <label className="flex items-center gap-1">
+          <label className="flex min-h-8 cursor-pointer items-center gap-1 max-md:min-h-10">
             <input type="checkbox" checked={enableDesktop} onChange={(e) => { setEnableDesktop(e.target.checked); try { localStorage.setItem(`ann.pref.desktop.${dept}`, String(e.target.checked)); } catch {} }} />
             Desktop
           </label>

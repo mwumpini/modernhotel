@@ -22,7 +22,9 @@ import {
 } from '@heroui/react';
 import { useRouter } from 'next/navigation';
 import { HideCardButton } from './dashboard/CustomizeViewControl';
-import { FoDeskKpiCustomize, FO_DESK_KPI_SECTIONS, useFrontOfficeDeskVisibility } from './frontoffice/foDeskKpi';
+import { FoDeskKpiCustomize, FO_DESK_KPI_SECTIONS, useFrontOfficeDeskVisibility, useFrontOfficeDeskPeriod } from './frontoffice/foDeskKpi';
+import { useHostSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
+import { periodToDateFilter } from '../lib/dashboard/useDashboardPeriod';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { autoAssignRoomsEnabled, useSettingsStore } from '../lib/settings/store';
@@ -177,9 +179,19 @@ export default function FrontDeskCounter() {
   const router = useRouter();
   const { isHidden, hide, hiddenCount, isHosted } =
     useFrontOfficeDeskVisibility(FO_DESK_KPI_SECTIONS);
+  const summaryCollapsed = useHostSummaryCollapsed();
+  const { period: kpiPeriod, todayISO: kpiToday } = useFrontOfficeDeskPeriod();
   const [tick, setTick] = useState(0);
   const [query, setQuery] = useState('');
-  const [view, setView] = useState<'all' | 'arriving' | 'leaving' | 'inhouse'>('all');
+  const [view, setView] = useState<'all' | 'arriving' | 'leaving' | 'inhouse'>(() => {
+    if (typeof window === 'undefined') return 'all';
+    try {
+      const stored = localStorage.getItem('fo.deskView');
+      localStorage.removeItem('fo.deskView');
+      if (stored === 'arriving' || stored === 'leaving' || stored === 'inhouse') return stored;
+    } catch {}
+    return 'all';
+  });
   const [dateMode, setDateMode] = useState<'any' | 'today' | 'day' | 'range'>('any');
   const [specificDate, setSpecificDate] = useState('');
   const [rangeFrom, setRangeFrom] = useState('');
@@ -203,6 +215,29 @@ export default function FrontDeskCounter() {
   const canWaiveLateCheckout = useSettingsStore((s) => s.hasPermission('frontdesk.waive-late-checkout'));
 
   useEffect(() => frontOfficeStore.subscribe(() => setTick((n) => n + 1)), []);
+
+  // Keep desk date filter aligned with Customize → KPI period (drives KPI strip + list).
+  useEffect(() => {
+    const mapped = periodToDateFilter(kpiPeriod, kpiToday);
+    if (mapped.mode === 'all') {
+      setDateMode('any');
+      setSpecificDate('');
+      setRangeFrom('');
+      setRangeTo('');
+      return;
+    }
+    if (mapped.mode === 'today') {
+      setDateMode('today');
+      setSpecificDate('');
+      setRangeFrom('');
+      setRangeTo('');
+      return;
+    }
+    setDateMode('range');
+    setSpecificDate('');
+    setRangeFrom(mapped.from);
+    setRangeTo(mapped.to);
+  }, [kpiPeriod, kpiToday]);
 
   const today = todayKey();
   const stays = frontOfficeStore.reservations;
@@ -593,19 +628,20 @@ export default function FrontDeskCounter() {
   const quote = selected ? frontOfficeStore.getReservationQuote(selected) : null;
 
   return (
-    <div className="space-y-3">
-        <div className="flex items-start justify-between gap-3">
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
-          <h2 className="text-xl font-bold text-ghana-black">Front Desk</h2>
+          <h2 className="text-lg font-bold text-ghana-black">Front Desk</h2>
           <HeadingInfo label="About the desk">One list for the shift. Open a row to check a guest in, or to settle and check them out.</HeadingInfo>
         </div>
         {!isHosted && <FoDeskKpiCustomize sections={FO_DESK_KPI_SECTIONS} />}
       </div>
 
       <Card className="border-0 shadow-lg">
-        <CardBody className="space-y-3 p-4">
-          <div className="flex flex-wrap items-end gap-3">
+        <CardBody className="space-y-2 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Input
+              size="sm"
               placeholder="Search name, room, or reservation..."
               value={query}
               onValueChange={setQuery}
@@ -613,13 +649,13 @@ export default function FrontDeskCounter() {
               isClearable
               onClear={() => setQuery('')}
               aria-label="Search the desk"
-              className="min-w-[16rem] grow basis-[18rem]"
+              className="min-w-[14rem] grow basis-[16rem]"
             />
             <Select
-              label="Sort by"
-              labelPlacement="outside"
+              size="sm"
               aria-label="Sort by"
-              className="w-44"
+              placeholder="Sort by"
+              className="w-40"
               selectedKeys={[focus]}
               onSelectionChange={(keys) => chooseFocus(pick(keys, 'arrival') as DeskFocus)}
             >
@@ -629,10 +665,10 @@ export default function FrontDeskCounter() {
             </Select>
             {focus === 'purpose' && (
               <Select
-                label="Purpose"
-                labelPlacement="outside"
+                size="sm"
                 aria-label="Filter by purpose"
-                className="w-44"
+                placeholder="Purpose"
+                className="w-40"
                 selectedKeys={[narrow]}
                 onSelectionChange={(keys) => setNarrow(pick(keys))}
               >
@@ -644,10 +680,10 @@ export default function FrontDeskCounter() {
             )}
             {focus === 'billing' && (
               <Select
-                label="Billing"
-                labelPlacement="outside"
+                size="sm"
                 aria-label="Filter by billing"
-                className="w-44"
+                placeholder="Billing"
+                className="w-40"
                 selectedKeys={[narrow]}
                 onSelectionChange={(keys) => setNarrow(pick(keys))}
               >
@@ -658,10 +694,10 @@ export default function FrontDeskCounter() {
             )}
             {focus === 'centre' && (
               <Select
-                label="Centre"
-                labelPlacement="outside"
+                size="sm"
                 aria-label="Filter by centre"
-                className="w-52"
+                placeholder="Centre"
+                className="w-44"
                 selectedKeys={[narrow]}
                 onSelectionChange={(keys) => setNarrow(pick(keys))}
               >
@@ -673,10 +709,10 @@ export default function FrontDeskCounter() {
             )}
             {focus === 'staff' && (
               <Select
-                label="Staff"
-                labelPlacement="outside"
+                size="sm"
                 aria-label="Filter by staff"
-                className="w-52"
+                placeholder="Staff"
+                className="w-44"
                 selectedKeys={[narrow]}
                 onSelectionChange={(keys) => setNarrow(pick(keys))}
               >
@@ -690,11 +726,11 @@ export default function FrontDeskCounter() {
             {(focus === 'arrival' || focus === 'departure') && (
               <div className="contents lg:hidden">{dateFilter}</div>
             )}
-            <Button color="success" className="ml-auto shrink-0 bg-green-600 text-white" onPress={() => setWalkOpen(true)}>
+            <Button size="sm" color="success" className="ml-auto shrink-0 bg-green-600 text-white" onPress={() => setWalkOpen(true)}>
               Walk-in
             </Button>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             {([
               ['all', 'All'],
               ['arriving', 'Check-in'],
@@ -715,13 +751,13 @@ export default function FrontDeskCounter() {
             <Button size="sm" variant="flat" onPress={() => setSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'))}>
               {sortDir === 'asc' ? '↑ Ascending' : '↓ Descending'}
             </Button>
-            <span className="text-sm text-gray-500">{shown.length === 1 ? '1 stay' : `${shown.length} stays`}</span>
+            <span className="text-xs text-gray-500">{shown.length === 1 ? '1 stay' : `${shown.length} stays`}</span>
             <div className="hidden lg:contents">{dateFilter}</div>
           </div>
         </CardBody>
       </Card>
 
-      {hiddenCount < DESK_SUMMARY_CARDS.length && (
+      {!summaryCollapsed && hiddenCount < DESK_SUMMARY_CARDS.length && (
         <div className="mb-0 grid grid-cols-2 gap-2 lg:grid-cols-4">
           {([
             ['desk.totalCharges', money(summary.charges), 'text-blue-700'],

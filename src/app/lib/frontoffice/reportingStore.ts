@@ -667,6 +667,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         const nights = Math.max(1, Math.ceil((new Date(reservation.departure).getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24)));
         
         return {
+          arrivalDate: reservation.arrival,
           reservationNumber: reservation.resId || reservation.id,
           guestName: reservation.guestName,
           status: reservation.status,

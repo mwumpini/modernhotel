@@ -2322,7 +2322,13 @@ export default function RoomConfigurationDashboard() {
                </div>
              </CardHeader>
             <CardBody>
-                             <Table aria-label="Rooms table">
+                             <Table
+                               aria-label="Rooms table"
+                               classNames={{
+                                 base: 'overflow-x-auto',
+                                 table: '!min-w-[48rem] !w-max !table-auto',
+                               }}
+                             >
                  <TableHeader>
                    <TableColumn 
                      className="cursor-pointer hover:bg-gray-100 select-none transition-colors duration-200"
@@ -2636,7 +2642,13 @@ export default function RoomConfigurationDashboard() {
               <h3 className="text-xl font-semibold">All Rate Plans</h3>
             </CardHeader>
             <CardBody>
-                             <Table aria-label="Rate plans table">
+                             <Table
+                               aria-label="Rate plans table"
+                               classNames={{
+                                 base: 'overflow-x-auto',
+                                 table: '!min-w-[72rem] !w-max !table-auto',
+                               }}
+                             >
                  <TableHeader>
                    <TableColumn 
                      className="cursor-pointer hover:bg-gray-100 select-none transition-colors duration-200"

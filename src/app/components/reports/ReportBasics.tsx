@@ -7,7 +7,8 @@
  */
 
 import React, { useState } from 'react';
-import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Button, Popover, PopoverTrigger, PopoverContent } from '@heroui/react';
+import { Button, Popover, PopoverTrigger, PopoverContent } from '@heroui/react';
+import { SortableReportTable } from './SortableReportTable';
 import { formatPercent, isPercentKey, isCountKey } from '../../lib/frontoffice/reportExportFormat';
 
 export function labelize(key: string): string {
@@ -24,34 +25,44 @@ export function formatReportValue(value: unknown, key?: string): React.ReactNode
     // convention, instead of the count-friendly "whatever digits it happens to have".
     return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
-  return String(value);
+  return compactWhen(String(value));
 }
 
-/** Numbers read right-aligned (so digits/decimal points line up down the column, the
- * standard spreadsheet convention) — text stays left-aligned. Checked across every row,
- * not just the first, since a column can be numeric in one row and "—" (null) in another. */
-function isNumericColumn(rows: Record<string, unknown>[], column: string): boolean {
-  return rows.some((row) => typeof row[column] === 'number');
+/** Turn a stored timestamp into a short local date, keeping the clock when it is not midnight. */
+function compactWhen(text: string) {
+  if (/^\d{4}-\d{2}-\d{2}T/.test(text)) {
+    const parsed = new Date(text);
+    if (!Number.isNaN(parsed.getTime())) {
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const day = `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
+      const clock = `${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+      return clock === '00:00' ? day : `${day} ${clock}`;
+    }
+  }
+  const local = /^(\d{1,2})\/(\d{1,2})\/(\d{4}),\s+(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?/i.exec(text);
+  if (!local) return text;
+  let hour = Number(local[4]);
+  const mer = (local[6] || '').toLowerCase();
+  if (mer === 'pm' && hour < 12) hour += 12;
+  if (mer === 'am' && hour === 12) hour = 0;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const day = `${local[3]}-${pad(Number(local[2]))}-${pad(Number(local[1]))}`;
+  const clock = `${pad(hour)}:${local[5]}`;
+  return clock === '00:00' ? day : `${day} ${clock}`;
 }
 
 /** Renders an array of row objects as a small table — used for nested arrays inside a summary object
  * (e.g. a report's "topCustomers" or "byStatus" list). */
 export function ReportMiniTable({ rows }: { rows: Record<string, unknown>[] }) {
   if (rows.length === 0) return <p className="text-sm text-gray-500">None</p>;
-  const columns = Object.keys(rows[0]);
+  const columns = Object.keys(rows[0]).map((key) => ({ key, label: labelize(key) }));
   return (
-    <Table removeWrapper isCompact aria-label="Report detail">
-      <TableHeader>
-        {columns.map((c) => <TableColumn key={c} align={isNumericColumn(rows, c) ? 'end' : 'start'}>{labelize(c)}</TableColumn>) as any}
-      </TableHeader>
-      <TableBody>
-        {rows.map((row, i) => (
-          <TableRow key={i}>
-            {columns.map((c) => <TableCell key={c}>{formatReportValue(row[c], c)}</TableCell>) as any}
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <SortableReportTable
+      ariaLabel="Report detail"
+      columns={columns}
+      rows={rows}
+      renderCell={(row, column) => formatReportValue(row[column.key], column.key)}
+    />
   );
 }
 
@@ -68,20 +79,12 @@ export function ReportSummarySection({ data }: { data: Record<string, unknown> }
   return (
     <div className="space-y-6">
       {primitives.length > 0 && (
-        <Table removeWrapper isCompact aria-label="Report summary">
-          <TableHeader>
-            <TableColumn>Field</TableColumn>
-            <TableColumn>Value</TableColumn>
-          </TableHeader>
-          <TableBody>
-            {primitives.map(([key, value]) => (
-              <TableRow key={key}>
-                <TableCell className="font-medium text-gray-600">{labelize(key)}</TableCell>
-                <TableCell>{formatReportValue(value, key)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <SortableReportTable
+          ariaLabel="Report summary"
+          columns={[{ key: 'field', label: 'Field' }, { key: 'value', label: 'Value' }]}
+          rows={primitives.map(([key, value]) => ({ field: labelize(key), value }))}
+          renderCell={(row, column) => column.key === 'field' ? String(row.field) : formatReportValue(row.value)}
+        />
       )}
       {objects.map(([key, value]) => (
         <div key={key}>
@@ -108,24 +111,14 @@ export function ReportSummarySection({ data }: { data: Record<string, unknown> }
 /** The plain auto-column table used for any report that's just a row array — column headers come
  * straight from the first row's keys, so a new field on a report shows up with no UI change needed. */
 export function ReportTable({ data, ariaLabel }: { data: Record<string, unknown>[]; ariaLabel: string }) {
-  const columns = Object.keys(data[0] || {});
+  const columns = Object.keys(data[0] || {}).map((key) => ({ key, label: labelize(key) }));
   return (
-    <Table aria-label={ariaLabel}>
-      <TableHeader>
-        {columns.map((column) => (
-          <TableColumn key={column} align={isNumericColumn(data, column) ? 'end' : 'start'}>{labelize(column)}</TableColumn>
-        ))}
-      </TableHeader>
-      <TableBody>
-        {data.map((row, index) => (
-          <TableRow key={index}>
-            {columns.map((column) => (
-              <TableCell key={column}>{formatReportValue(row[column], column)}</TableCell>
-            ))}
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <SortableReportTable
+      ariaLabel={ariaLabel}
+      columns={columns}
+      rows={data}
+      renderCell={(row, column) => formatReportValue(row[column.key], column.key)}
+    />
   );
 }
 

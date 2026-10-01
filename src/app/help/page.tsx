@@ -14,7 +14,6 @@ import {
 import { openMessengerFromShell } from '../lib/openMessenger';
 import {
   helpTopics,
-  moduleQuickLinks,
   configurationGuide,
   helpMaintainerGuide,
   helpCategoryLabels,
@@ -23,14 +22,14 @@ import {
 } from './helpContent';
 
 const shortcuts = [
-  { keys: 'F1 / F12', action: 'Open this Help page (when not typing in a field)' },
+  { keys: 'F1 / F12', action: 'Open Ask Mamani on the current desk. Opens this Help page when that desk has no assistant.' },
   { keys: 'Esc', action: 'From this page: return to the main dashboard' },
   { keys: 'Ctrl + M', action: 'Open department messenger (when not typing in a field)' },
   { keys: 'Ctrl + Enter', action: 'F&B POS: send order' },
   { keys: 'Ctrl + P', action: 'F&B POS: open payment' },
 ];
 
-const CATEGORY_ORDER: HelpTopicCategory[] = ['configuration', 'operations', 'finance', 'general'];
+const CATEGORY_ORDER: HelpTopicCategory[] = ['start', 'operations', 'configuration', 'finance', 'general'];
 
 function goToAppSection(router: ReturnType<typeof useRouter>, topic: Pick<HelpTopic, 'section' | 'settingsTab' | 'complianceTab' | 'href'>) {
   if (topic.href) {
@@ -65,6 +64,14 @@ function TopicCard({
     <li className="rounded-lg border border-slate-200/80 bg-white p-4 shadow-sm">
       <p className="font-medium text-slate-900">{topic.title}</p>
       <p className="mt-1 text-sm text-slate-600">{topic.description}</p>
+
+      {topic.image && (
+        <img
+          src={topic.image}
+          alt={topic.imageAlt || topic.title}
+          className="mt-3 w-full rounded-md border border-slate-200 bg-slate-50"
+        />
+      )}
 
       {topic.steps && topic.steps.length > 0 && (
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
@@ -110,9 +117,10 @@ export default function HelpPage() {
   const normalized = query.trim().toLowerCase();
   const filteredTopics = React.useMemo(() => {
     if (!normalized) return helpTopics;
+    const terms = normalized.split(/\s+/).filter((term) => term.length > 1);
     return helpTopics.filter((t) => {
       const blob = `${t.title} ${t.description} ${t.keywords.join(' ')} ${t.notHere ?? ''} ${(t.steps ?? []).join(' ')}`.toLowerCase();
-      return blob.includes(normalized);
+      return terms.every((term) => blob.includes(term));
     });
   }, [normalized]);
 
@@ -148,16 +156,16 @@ export default function HelpPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 px-4 py-10">
-      <div className="mx-auto max-w-3xl space-y-6">
+      <div className="mx-auto max-w-4xl space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">Help</h1>
             <p className="mt-1 text-sm text-slate-600">
-              Search topics below or press{' '}
+              The Help button in the side menu opens this page. Press{' '}
               <kbd className="rounded border border-slate-300 bg-white px-1.5 py-0.5 font-mono text-xs shadow-sm">F1</kbd>{' '}
               /{' '}
               <kbd className="rounded border border-slate-300 bg-white px-1.5 py-0.5 font-mono text-xs shadow-sm">F12</kbd>{' '}
-              from the app.
+              from a desk to open Ask Mamani. This page opens when that desk has no assistant.
             </p>
           </div>
           <Button color="primary" variant="flat" onPress={() => router.push('/')}>
@@ -213,37 +221,6 @@ export default function HelpPage() {
             </CardBody>
           </Card>
         )}
-
-        <Card shadow="sm" className="border border-slate-200/80">
-          <CardHeader className="flex flex-col items-start gap-1 px-6 pt-6 pb-2">
-            <p className="text-lg font-medium text-slate-900">Jump to module</p>
-            <p className="text-sm text-slate-500">Opens the main app and selects that area in the sidebar.</p>
-          </CardHeader>
-          <CardBody className="flex flex-wrap gap-2 px-6 pb-6">
-            {moduleQuickLinks.map((m) => (
-              <Button
-                key={m.section}
-                size="sm"
-                variant="flat"
-                className="border border-slate-200 bg-white"
-                onPress={() => goToAppSection(router, { section: m.section })}
-              >
-                {m.label}
-              </Button>
-            ))}
-            <Button
-              size="sm"
-              variant="flat"
-              className="border border-dashed border-slate-300 bg-white"
-              onPress={() => openMessengerFromShell(router, pathname)}
-            >
-              Messenger
-            </Button>
-            <Button size="sm" variant="light" as={Link} href="/setup">
-              Setup wizard
-            </Button>
-          </CardBody>
-        </Card>
 
         {groupedTopics.map(({ category, topics }) => (
           <Card key={category} shadow="sm" className="border border-slate-200/80">
@@ -304,7 +281,7 @@ export default function HelpPage() {
           <CardBody className="px-6 py-5 text-sm text-amber-950">
             <p className="font-medium text-amber-900">Developers</p>
             <p className="mt-2 text-amber-900/90">
-              F1 and F12 open this Help page, so the browser may not use those keys for DevTools. Use{' '}
+              On a desk, F1 and F12 open Ask Mamani, so the browser may not use those keys for DevTools. Use{' '}
               <kbd className="rounded border border-amber-300 bg-white px-1.5 py-0.5 font-mono text-xs">Ctrl+Shift+I</kbd>{' '}
               or the browser menu instead.
             </p>

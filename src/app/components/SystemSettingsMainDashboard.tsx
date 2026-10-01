@@ -25,6 +25,8 @@ import StockLocationsPanel from './settings/StockLocationsPanel';
 import SampleDataPanel from './settings/SampleDataPanel';
 import PosWaiterSwitchSetting from './settings/PosWaiterSwitchSetting';
 import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
+import { useSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
+import { SummaryToggle } from './dashboard/SummaryToggle';
 
 const VALID_TABS = ['users', 'rooms', 'numbering', 'templates', 'locations', 'security', 'approvals', 'modules', 'sample-data', 'audit'] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
@@ -55,6 +57,7 @@ export default function SystemSettingsMainDashboard() {
   const initialSetupCompleted = useSettingsStore((s) => s.initialSetupCompleted);
   const canManage2fa = settings.hasPermission('settings.manage-2fa');
   const canManageSecurityPolicy = settings.hasPermission('settings.manage-security-policy');
+  const { collapsed: summaryCollapsed, toggle: toggleSummary } = useSummaryCollapsed('settings.summaryCollapsed');
 
   const userCount = settings.users.length;
   const roleCount = settings.roles.length;
@@ -66,7 +69,27 @@ export default function SystemSettingsMainDashboard() {
     setSelectedTab(tab);
   }, [searchParams]);
 
+  useEffect(() => {
+    const apply = () => {
+      try {
+        const stored = localStorage.getItem('settings.tab');
+        if (stored && VALID_TABS.includes(stored as SettingsTab)) {
+          localStorage.removeItem('settings.tab');
+          setSelectedTab(stored as SettingsTab);
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener('settings-navigate', apply);
+    return () => window.removeEventListener('settings-navigate', apply);
+  }, []);
+
   const handleTabChange = (key: string) => {
+    if (key === 'setup') {
+      openSystemSetup();
+      return;
+    }
     if (!VALID_TABS.includes(key as SettingsTab)) return;
     setSelectedTab(key as SettingsTab);
     const params = new URLSearchParams(searchParams);
@@ -102,34 +125,20 @@ export default function SystemSettingsMainDashboard() {
         </Card>
       )}
 
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-xl font-bold text-ghana-black">⚙️ System Settings</h2>
         <div className="flex flex-wrap gap-1.5 items-center">
-          <Badge variant="flat" color="primary" size="sm">{userCount} users</Badge>
-          <Badge variant="flat" color="secondary" size="sm">{roleCount} roles</Badge>
-          <Badge variant="flat" color="success" size="sm">{roomCount} rooms</Badge>
-          <Badge variant="flat" color="warning" size="sm">{ratePlanCount} rate plans</Badge>
+          <SummaryToggle collapsed={summaryCollapsed} onToggle={toggleSummary} />
+          {!summaryCollapsed && (
+            <>
+              <Badge variant="flat" color="primary" size="sm">{userCount} users</Badge>
+              <Badge variant="flat" color="secondary" size="sm">{roleCount} roles</Badge>
+              <Badge variant="flat" color="success" size="sm">{roomCount} rooms</Badge>
+              <Badge variant="flat" color="warning" size="sm">{ratePlanCount} rate plans</Badge>
+            </>
+          )}
         </div>
       </div>
-
-      <Card className="border-0 shadow-sm bg-slate-50">
-        <CardBody className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 py-2.5 px-3">
-          <div>
-            <p className="text-sm font-medium text-ghana-black">Related configuration (not in this screen)</p>
-            <p className="text-xs text-gray-600">
-              VAT, NHIL, GETFund, and Tourism Levy are managed under Compliance — they drive all invoice and room tax calculations.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="flat" color="primary" onPress={openSystemSetup}>
-              Company &amp; localization → Setup
-            </Button>
-            <Button size="sm" variant="flat" color="secondary" onPress={openComplianceTax}>
-              Tax rules → Compliance
-            </Button>
-          </div>
-        </CardBody>
-      </Card>
 
       <Card className="border-0 shadow-lg">
         <CardBody className="p-3 pt-2">
@@ -282,6 +291,8 @@ export default function SystemSettingsMainDashboard() {
             <Tab key="audit" title="Audit Log">
               <AuditLogPanel />
             </Tab>
+
+            <Tab key="setup" title="Company & localization → Setup" />
           </Tabs>
         </CardBody>
       </Card>

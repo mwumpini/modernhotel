@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { HideCardButton } from '../dashboard/CustomizeViewControl';
+import { useHostSummaryCollapsed } from '../../lib/dashboard/useSummaryCollapsed';
 import { 
   Card, 
   CardBody, 
@@ -35,6 +36,7 @@ import {
 } from '../../lib/housekeeping/types';
 import { sizedTableClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { deskTableCardBodyClassName, deskTableCardClassName, deskTableClassNames, SortHeader, toggleColumnSort, DESK_PAGE_SIZE, type ColumnSort } from '../dashboard/deskTableUi';
+import { useDashboardPeriod, isInPeriod } from '../../lib/dashboard/useDashboardPeriod';
 
 export default function RoomInspectionPanel({
   hideStats = false,
@@ -43,6 +45,8 @@ export default function RoomInspectionPanel({
   hideStats?: boolean;
   onHideStats?: () => void;
 } = {}) {
+  const summaryCollapsed = useHostSummaryCollapsed();
+  const showStats = !hideStats && !summaryCollapsed;
   const [inspections, setInspections] = useState<RoomInspection[]>([]);
   const [staff, setStaff] = useState<HousekeepingStaff[]>([]);
   const [rooms, setRooms] = useState<any[]>([]);
@@ -63,6 +67,15 @@ export default function RoomInspectionPanel({
     date: 110,
     followUp: 96,
   });
+
+  const { period: kpiPeriod, todayISO: kpiToday, label: kpiLabel } = useDashboardPeriod(
+    'dashboard.period.housekeeping',
+    'today',
+  );
+  const periodInspections = useMemo(
+    () => inspections.filter((i) => isInPeriod(i.inspectionDate, kpiPeriod, kpiToday)),
+    [inspections, kpiPeriod, kpiToday],
+  );
 
   // Form state
   const [inspectionForm, setInspectionForm] = useState({
@@ -266,32 +279,32 @@ export default function RoomInspectionPanel({
         </Button>
       </div>
 
-      {/* Inspection Overview Cards — Desk-style compact */}
-      {!hideStats && (
+      {/* Inspection Overview Cards — Desk-style compact; counts follow Customize KPI period */}
+      {showStats && (
         <div className="flex items-start gap-1">
           <div className="grid min-w-0 flex-1 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
             {([
-              { label: 'Total', value: String(inspections.length), tone: 'text-ghana-black' },
+              { label: 'Total', value: String(periodInspections.length), tone: 'text-ghana-black' },
               {
                 label: 'Passed',
-                value: String(inspections.filter((i) => i.status === 'passed').length),
+                value: String(periodInspections.filter((i) => i.status === 'passed').length),
                 tone: 'text-green-700',
               },
               {
                 label: 'Partial',
-                value: String(inspections.filter((i) => i.status === 'partial').length),
+                value: String(periodInspections.filter((i) => i.status === 'partial').length),
                 tone: 'text-yellow-700',
               },
               {
                 label: 'Failed',
-                value: String(inspections.filter((i) => i.status === 'failed').length),
+                value: String(periodInspections.filter((i) => i.status === 'failed').length),
                 tone: 'text-red-700',
               },
               {
                 label: 'Avg score',
                 value: `${
-                  inspections.length > 0
-                    ? Math.round(inspections.reduce((sum, i) => sum + i.score, 0) / inspections.length)
+                  periodInspections.length > 0
+                    ? Math.round(periodInspections.reduce((sum, i) => sum + i.score, 0) / periodInspections.length)
                     : 0
                 }%`,
                 tone: 'text-purple-700',
@@ -307,6 +320,9 @@ export default function RoomInspectionPanel({
           </div>
           {onHideStats && <HideCardButton onHide={onHideStats} label="Inspections summary" />}
         </div>
+      )}
+      {showStats && (
+        <p className="text-xs text-gray-500 -mt-1">Inspection KPIs · {kpiLabel}</p>
       )}
 
       {/* Filters — wrap on phone / zoomed screens */}

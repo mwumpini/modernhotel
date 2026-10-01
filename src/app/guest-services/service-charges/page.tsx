@@ -29,7 +29,9 @@ import {
 } from "@heroui/react";
 import { HideCardButton } from '../../components/dashboard/CustomizeViewControl';
 import { worksheetTableClassNames } from '../../components/frontoffice/StayWorksheetTable';
-import { FoDeskKpiCustomize, FO_SERVICE_CHARGES_KPI_SECTIONS, useFrontOfficeDeskVisibility } from '../../components/frontoffice/foDeskKpi';
+import { FoDeskKpiCustomize, FO_SERVICE_CHARGES_KPI_SECTIONS, useFrontOfficeDeskVisibility, useFrontOfficeDeskPeriod } from '../../components/frontoffice/foDeskKpi';
+import { useHostSummaryCollapsed } from '../../lib/dashboard/useSummaryCollapsed';
+import { periodToDateFilter } from '../../lib/dashboard/useDashboardPeriod';
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { useSettingsStore } from '../../lib/settings/store';
 import { useCurrentUserName } from '../../lib/auth/useCurrentUserName';
@@ -116,6 +118,8 @@ export default function ServiceChargesPage() {
   const currentUserName = useCurrentUserName();
   const { isHidden, hide, hiddenCount: hiddenStatsCount, isHosted } =
     useFrontOfficeDeskVisibility(FO_SERVICE_CHARGES_KPI_SECTIONS);
+  const summaryCollapsed = useHostSummaryCollapsed();
+  const { period: kpiPeriod, todayISO: kpiToday } = useFrontOfficeDeskPeriod();
   const { roomManagement } = useSettingsStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -124,6 +128,14 @@ export default function ServiceChargesPage() {
   const [dateFilterSingle, setDateFilterSingle] = useState('');
   const [dateFilterFrom, setDateFilterFrom] = useState('');
   const [dateFilterTo, setDateFilterTo] = useState('');
+
+  useEffect(() => {
+    const mapped = periodToDateFilter(kpiPeriod, kpiToday);
+    setDateFilterMode(mapped.mode);
+    setDateFilterSingle(mapped.single);
+    setDateFilterFrom(mapped.from);
+    setDateFilterTo(mapped.to);
+  }, [kpiPeriod, kpiToday]);
   const [selectedCharge, setSelectedCharge] = useState<ServiceCharge | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -661,7 +673,7 @@ export default function ServiceChargesPage() {
       </div>
 
       {/* Payment Summary — totals reflect the active filter so cards match table rows */}
-      {hiddenStatsCount < SERVICE_CHARGES_DASHBOARD_SECTIONS.length && (
+      {!summaryCollapsed && hiddenStatsCount < SERVICE_CHARGES_DASHBOARD_SECTIONS.length && (
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         {!isHidden('svc.totalCharges') && (
         <Card className="relative border border-gray-200 shadow-none">

@@ -891,7 +891,7 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
         </>
       )}
 
-      <Modal isOpen={isOpen} onClose={onClose}>
+      <Modal isOpen={isOpen} onClose={onClose} scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>
             {addSide === 'bank' ? 'Explain a bank timing difference' : 'Record something from the statement'}
@@ -1129,7 +1129,7 @@ function ItemsPanel({
         </div>
       </CardBody>
 
-      <Modal isOpen={!!viewItem} onOpenChange={(open) => { if (!open) setViewItem(null); }} size="lg">
+      <Modal isOpen={!!viewItem} onOpenChange={(open) => { if (!open) setViewItem(null); }} size="lg" scrollBehavior="inside">
         <ModalContent>
           {(onClose) => {
             if (!viewItem) return null;
@@ -1323,7 +1323,7 @@ function RegisterTransactionsPanel({
         </div>
       )}
 
-      <Modal isOpen={!!viewTxn} onOpenChange={(open) => { if (!open) setViewTxn(null); }} size="lg">
+      <Modal isOpen={!!viewTxn} onOpenChange={(open) => { if (!open) setViewTxn(null); }} size="lg" scrollBehavior="inside">
         <ModalContent>
           {(onClose) => {
             if (!viewTxn) return null;

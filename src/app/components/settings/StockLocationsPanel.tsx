@@ -207,7 +207,14 @@ export default function StockLocationsPanel() {
         </Button>
       </div>
 
-      <Table aria-label="Stock locations" removeWrapper>
+      <Table
+        aria-label="Stock locations"
+        removeWrapper
+        classNames={{
+          base: 'overflow-x-auto',
+          table: '!min-w-[48rem] !w-max !table-auto',
+        }}
+      >
         <TableHeader>
           <TableColumn>Code</TableColumn>
           <TableColumn>Name</TableColumn>

@@ -76,13 +76,17 @@ export function ColumnSizer({
   );
 }
 
-export function useResizableColumns<T extends string>(defaults: Record<T, number>) {
+export function useResizableColumns<T extends string>(defaults: Record<T, number>, options?: { flexKeys?: T[] }) {
   const [widths, setWidths] = useState(defaults);
   const widthsRef = useRef(widths);
   widthsRef.current = widths;
   const dragRef = useRef<{ key: T; startX: number; startWidth: number } | null>(null);
   const defaultsRef = useRef(defaults);
   defaultsRef.current = defaults;
+  const flexKeysRef = useRef(options?.flexKeys);
+  flexKeysRef.current = options?.flexKeys;
+  const userSized = useRef(false);
+  const defaultsKey = Object.entries(defaults).map(([key, width]) => `${key}:${width}`).join('|');
   // A plain useRef's assignment doesn't re-run effects, and these table
   // frames live inside conditionally-rendered tabs — the div this attaches
   // to may not exist yet when the component first mounts. A state-backed
@@ -115,6 +119,11 @@ export function useResizableColumns<T extends string>(defaults: Record<T, number
     };
   }, []);
 
+  useEffect(() => {
+    if (userSized.current) return;
+    setWidths(defaultsRef.current);
+  }, [defaultsKey]);
+
   // Column widths are fixed pixel values (required for drag-to-resize to mean
   // anything), which otherwise leaves every table sitting at whatever total
   // width its defaults were tuned for — cramped and swimming in empty space
@@ -130,17 +139,28 @@ export function useResizableColumns<T extends string>(defaults: Record<T, number
       if (!containerWidth) return;
       setWidths((current) => {
         const keys = Object.keys(defaultsRef.current) as T[];
-        const currentTotal = keys.reduce((sum, k) => sum + current[k], 0);
-        if (currentTotal <= 0 || containerWidth <= currentTotal + 1) return current;
-        const scale = containerWidth / currentTotal;
+        const currentTotal = keys.reduce((sum, k) => sum + (current[k] || 0), 0);
+        if (currentTotal <= 0 || containerWidth - 8 <= currentTotal + 1) return current;
+        const preferred = flexKeysRef.current;
+        const growKeys = (preferred === undefined ? keys : preferred.filter((key) => keys.includes(key)));
+        if (growKeys.length === 0) return current;
+        const extra = containerWidth - 8 - currentTotal;
+        const weight = growKeys.reduce((sum, key) => sum + Math.max(1, current[key] || 0), 0);
         const next = { ...current };
-        keys.forEach((k) => { next[k] = Math.round(current[k] * scale); });
+        let used = 0;
+        growKeys.forEach((key, index) => {
+          const add = index === growKeys.length - 1
+            ? extra - used
+            : Math.round(extra * (Math.max(1, current[key] || 0) / weight));
+          used += add;
+          next[key] = (current[key] || 0) + add;
+        });
         return next;
       });
     });
     observer.observe(frameEl);
     return () => observer.disconnect();
-  }, [frameEl]);
+  }, [frameEl, defaultsKey]);
 
   const tableWidth = (Object.keys(defaults) as T[]).reduce((sum, key) => sum + (widths[key] ?? defaults[key]), 0);
 
@@ -157,6 +177,7 @@ export function useResizableColumns<T extends string>(defaults: Record<T, number
       <ColumnSizer
         label={label}
         onResizeStart={(clientX) => {
+          userSized.current = true;
           dragRef.current = { key, startX: clientX, startWidth: widthsRef.current[key] };
           document.body.style.cursor = 'col-resize';
           document.body.style.userSelect = 'none';
