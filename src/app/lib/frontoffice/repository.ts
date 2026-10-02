@@ -179,6 +179,12 @@ export async function createReservationRow(
   return toStoreReservation(row)
 }
 
+export class GuestNotInHotelError extends Error {
+  constructor() {
+    super('That guest is not on this hotel\'s guest list')
+  }
+}
+
 export async function updateReservationRow(
   tenantId: string,
   id: string,
@@ -189,6 +195,12 @@ export async function updateReservationRow(
   const data = toDbReservationData(patch)
   if (data.details) {
     data.details = { ...((existing.details as any) || {}), ...data.details }
+  }
+  // Switching the booking to another guest: only a guest of the same hotel.
+  if (typeof patch.guestId === 'string' && patch.guestId && patch.guestId !== existing.guestId) {
+    const guest = await prisma.guest.findFirst({ where: { id: patch.guestId, tenantId }, select: { id: true } })
+    if (!guest) throw new GuestNotInHotelError()
+    data.guestId = patch.guestId
   }
   const row = await prisma.reservation.update({
     where: { id },

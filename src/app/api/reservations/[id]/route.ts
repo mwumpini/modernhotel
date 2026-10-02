@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
-import { updateReservationRow, deleteReservationRow, isRoomAvailable } from '@/app/lib/frontoffice/repository'
+import { updateReservationRow, deleteReservationRow, isRoomAvailable, GuestNotInHotelError } from '@/app/lib/frontoffice/repository'
 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -48,7 +48,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       }
     }
 
-    const reservation = await updateReservationRow(ctx.tenantId, id, body)
+    const reservation = await updateReservationRow(ctx.tenantId, id, body).catch((e) => {
+      if (e instanceof GuestNotInHotelError) return e
+      throw e
+    })
+    if (reservation instanceof GuestNotInHotelError) return NextResponse.json({ error: reservation.message }, { status: 400 })
     if (!reservation) return NextResponse.json({ error: 'Reservation not found' }, { status: 404 })
     const sessionUserId = (auth.session as any).user?.id
     await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'RESERVATION_UPDATED', 'Reservation', id, undefined, { status: reservation.status, roomId: reservation.roomId }, request)

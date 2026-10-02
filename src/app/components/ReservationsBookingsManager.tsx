@@ -210,6 +210,12 @@ const AuditLogSection = ({ reservationId }: { reservationId: string }) => {
 
 const RESERVATIONS_DASHBOARD_SECTIONS = FO_RESERVATIONS_KPI_SECTIONS;
 
+/** Guest profiles carry either `name` or first/last name. */
+function guestDisplayName(guest: GuestProfile): string {
+  const g = guest as any;
+  return String(g.name || `${g.firstName || ''} ${g.lastName || ''}`).trim();
+}
+
 const POSTED_STAY_VOID_MESSAGE =
   'This stay is already in the books (its bill went to Accounting at checkout). Void its receipts and invoice in Accounting → Accounts Receivable instead, so the reversal is posted there.';
 
@@ -1067,6 +1073,12 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     setTabKey('summary');
   };
 
+  /** A guest picked on the Reservation tab that differs from the booking's current guest. */
+  const switchedGuest =
+    selectedGuest && selectedReservation && selectedGuest.id !== selectedReservation.guestId ? selectedGuest : null;
+  // Changing the guest after check-out would leave the posted bill under the old name.
+  const canChangeGuest = !!selectedReservation && ['pending', 'confirmed', 'checked-in'].includes(selectedReservation.status);
+
   const handleGuestSelection = (guest: GuestProfile) => {
     setSelectedGuest(guest);
     setFormData(prev => ({
@@ -1288,7 +1300,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
 
       const updatedReservation = {
         ...selectedReservation,
-        guestName: formData.guestName,
+        // The guest is picked from the guest list (Reservation tab), never typed in.
+        guestId: switchedGuest ? switchedGuest.id : selectedReservation.guestId,
+        guestName: switchedGuest ? guestDisplayName(switchedGuest) : selectedReservation.guestName,
         roomTypeId: formData.roomTypeId,
         ratePlanId: (formData.ratePlanId === 'custom' ? undefined : (formData.ratePlanId || undefined)),
         arrival: formData.arrival,
@@ -1319,13 +1333,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         rateBreakdown
       };
 
-      if (selectedReservation.guestId) {
-        frontOfficeStore.updateGuest(selectedReservation.guestId, {
-          name: formData.guestName,
-          phone: formData.phone,
-          email: formData.email,
-        });
-      }
+      // Guest profiles are edited in Clients, not from a booking — typing here
+      // used to rename the guest's record for every stay.
       frontOfficeStore.updateReservation(updatedReservation);
       
       trackEvent('FO.Reservation.Updated', {
@@ -1767,13 +1776,77 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           {selectedReservation.roomId && selectedReservation.roomId !== 'TBD' ? `Room ${selectedReservation.roomId}` : 'Room not assigned'}
                         </span>
                       </div>
-                      <div className="bg-purple-50 p-3 rounded-lg border">
-                        <h4 className="mb-2 font-medium text-purple-900">👤 Guest</h4>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                          <Input label="Guest name" value={formData.guestName} onChange={(e) => setFormData({...formData, guestName: e.target.value})} />
-                          <Input label="Phone" value={formData.phone || ''} onChange={(e) => setFormData({...formData, phone: e.target.value})} />
-                          <Input label="Email" type="email" value={formData.email || ''} onChange={(e) => setFormData({...formData, email: e.target.value})} />
+                      {/* Raised so the guest search results sit above (and take clicks over) the sections below. */}
+                      <div className="relative z-20 bg-purple-50 p-3 rounded-lg border">
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                          <h4 className="font-medium text-purple-900">👤 Guest</h4>
+                          {switchedGuest && (
+                            <div className="flex items-center gap-2">
+                              <Chip size="sm" color="warning" variant="flat">Changes when you update</Chip>
+                              <Button size="sm" variant="light" onPress={() => { setSelectedGuest(null); setFormData((prev) => ({ ...prev, guestName: selectedReservation.guestName, phone: (selectedReservation as any).guestPhone || '', email: (selectedReservation as any).guestEmail || '' })); }}>
+                                Undo
+                              </Button>
+                            </div>
+                          )}
                         </div>
+                        <div className="bg-white px-3 py-2 rounded-lg border border-purple-200">
+                          <div className="truncate font-semibold text-ghana-black">{(switchedGuest ? guestDisplayName(switchedGuest) : selectedReservation.guestName) || 'No guest'}</div>
+                          <div className="text-sm text-gray-600">
+                            {[formData.phone && `📱 ${formData.phone}`, formData.email && `📧 ${formData.email}`].filter(Boolean).join('   ') || 'No phone or email on file'}
+                          </div>
+                        </div>
+                        {canChangeGuest ? (
+                          <div className="relative mt-2">
+                            <Input
+                              value={guestSearchTerm}
+                              onChange={(e) => { setGuestSearchTerm(e.target.value); setGuestSearchError(null); }}
+                              placeholder="Change guest: search by name, phone, email, or Ghana Card"
+                              aria-label="Change guest: search by name, phone, email, or Ghana Card"
+                              startContent={isGuestSearching
+                                ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600"></div>
+                                : <span className="text-gray-400">🔍</span>}
+                              isClearable
+                              onClear={() => { setGuestSearchTerm(''); setFilteredGuests([]); }}
+                            />
+                            {guestSearchTerm.trim() && (
+                              <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                                {isGuestSearching ? (
+                                  <div className="p-4 text-center text-sm text-gray-600">Searching guests...</div>
+                                ) : filteredGuests.length > 0 ? (
+                                  filteredGuests.map((guest) => (
+                                    <div
+                                      key={guest.id}
+                                      role="button"
+                                      tabIndex={0}
+                                      className="p-3 hover:bg-gray-100 cursor-pointer border-b border-gray-200 last:border-b-0"
+                                      onClick={() => handleGuestSelection(guest)}
+                                      onKeyDown={(e) => { if (e.key === 'Enter') handleGuestSelection(guest); }}
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <div className="min-w-0">
+                                          <div className="truncate font-medium text-gray-900">{guestDisplayName(guest) || 'Unknown guest'}</div>
+                                          <div className="text-sm text-gray-600">
+                                            {(guest as any).phone && `📱 ${(guest as any).phone}`}
+                                            {(guest as any).email && ` 📧 ${(guest as any).email}`}
+                                          </div>
+                                        </div>
+                                        <Button size="sm" color="primary" variant="flat" onClick={(e) => { e.stopPropagation(); handleGuestSelection(guest); }}>
+                                          Use
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  ))
+                                ) : guestSearchError === 'No guests found matching your search' ? (
+                                  <GuestSearchEmptyState searchTerm={guestSearchTerm} />
+                                ) : guestSearchError ? (
+                                  <div className="p-3 text-center text-sm text-red-600">⚠️ {guestSearchError}</div>
+                                ) : null}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-xs text-purple-800">The guest can't be changed once the stay is checked out. Edit guest details in Clients.</p>
+                        )}
                       </div>
                       <div className="bg-blue-50 p-3 rounded-lg border">
                         <h4 className="mb-2 font-medium text-blue-900">📅 Stay</h4>
@@ -1860,7 +1933,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                   )}
                   {/* Guest Management - Unified for Single and Multiple */}
                   {isCreatingNew && (
-                    <div className="bg-purple-50 p-3 rounded-lg border">
+                    <div className="relative z-20 bg-purple-50 p-3 rounded-lg border">
                       <div className="flex items-center justify-between mb-3">
                         <h4 className="font-medium text-purple-900">👥 Guest List ({bulkGuests.length} guest{bulkGuests.length !== 1 ? 's' : ''})</h4>
                         {bulkGuests.length > 1 ? (
