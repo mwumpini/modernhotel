@@ -8,15 +8,24 @@ export type DangerConfirmRequest = {
   message: string;
   confirmLabel: string;
   tone: 'delete' | 'void';
+  /** Optional third choice shown before the confirm button (e.g. "Assign room"). */
+  altLabel?: string;
 };
 
-type Pending = DangerConfirmRequest & { resolve: (ok: boolean) => void };
+export type DangerChoice = 'confirm' | 'alt' | 'cancel';
 
-let openRequest: ((req: DangerConfirmRequest) => Promise<boolean>) | null = null;
+type Pending = DangerConfirmRequest & { resolve: (choice: DangerChoice) => void };
+
+let openRequest: ((req: DangerConfirmRequest) => Promise<DangerChoice>) | null = null;
+
+/** Like confirmDanger, but tells which of the three buttons was pressed. */
+export function chooseDanger(req: DangerConfirmRequest): Promise<DangerChoice> {
+  if (!openRequest) return Promise.resolve('cancel');
+  return openRequest(req);
+}
 
 export function confirmDanger(req: DangerConfirmRequest): Promise<boolean> {
-  if (!openRequest) return Promise.resolve(false);
-  return openRequest(req);
+  return chooseDanger(req).then((choice) => choice === 'confirm');
 }
 
 export function confirmDelete(what: string, message?: string): Promise<boolean> {
@@ -49,13 +58,13 @@ export default function DangerConfirmHost() {
     };
   }, []);
 
-  const close = (ok: boolean) => {
-    pending?.resolve(ok);
+  const close = (choice: DangerChoice) => {
+    pending?.resolve(choice);
     setPending(null);
   };
 
   return (
-    <Modal isOpen={!!pending} onClose={() => close(false)} size="sm" hideCloseButton>
+    <Modal isOpen={!!pending} onClose={() => close('cancel')} size="sm" hideCloseButton>
       <ModalContent>
         <ModalHeader className="flex flex-col gap-1">
           <span data-danger-confirm="open">{pending?.title}</span>
@@ -64,11 +73,14 @@ export default function DangerConfirmHost() {
           <p className="text-sm text-slate-600">{pending?.message}</p>
         </ModalBody>
         <ModalFooter>
-          <Button size="sm" variant="flat" onPress={() => close(false)}>Keep as is</Button>
+          <Button size="sm" variant="flat" onPress={() => close('cancel')}>Keep as is</Button>
+          {pending?.altLabel && (
+            <Button size="sm" color="primary" onPress={() => close('alt')}>{pending.altLabel}</Button>
+          )}
           <Button
             size="sm"
             color={pending?.tone === 'delete' ? 'danger' : 'warning'}
-            onPress={() => close(true)}
+            onPress={() => close('confirm')}
           >
             {pending?.confirmLabel || 'Confirm'}
           </Button>

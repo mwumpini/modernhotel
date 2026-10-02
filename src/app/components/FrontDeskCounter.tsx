@@ -28,7 +28,7 @@ import { periodToDateFilter } from '../lib/dashboard/useDashboardPeriod';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { useSettingsStore } from '../lib/settings/store';
-import { confirmDanger } from './DangerConfirm';
+import { chooseDanger } from './DangerConfirm';
 import { findMainFolio, getFolioDisplayTotals } from '../lib/frontoffice/helpers/folio';
 import { isPostedRoomCharge, nextCalendarDate, previousCalendarDate } from '../lib/frontoffice/folioLedger';
 import { getRoomChargeDatesOnFolio, postRoomChargeForDate } from '../lib/frontoffice/roomCharges';
@@ -202,6 +202,9 @@ export default function FrontDeskCounter() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [chosenRoom, setChosenRoom] = useState('');
+  /** "Assign room" from the no-room check-in prompt: pick a room, then check in. */
+  const [assignThenCheckIn, setAssignThenCheckIn] = useState(false);
+  const [assignPickRoom, setAssignPickRoom] = useState('');
   const [method, setMethod] = useState<PayMethod>('Cash');
   const [payAmount, setPayAmount] = useState('');
   const [leaveOnAccount, setLeaveOnAccount] = useState(false);
@@ -427,21 +430,28 @@ export default function FrontDeskCounter() {
     </div>
   );
 
-  const checkIn = async () => {
+  const checkIn = async (roomOverride?: string) => {
     if (!selected || busy) return;
-    const leaveRoomOpen = !hasRoom && !chosenRoom;
+    const roomToAssign = roomOverride || chosenRoom;
+    const leaveRoomOpen = !hasRoom && !roomToAssign;
     if (leaveRoomOpen) {
-      const ok = await confirmDanger({
+      const choice = await chooseDanger({
         tone: 'void',
         title: `Check in ${selected.guestName} without a room?`,
-        message: 'No room is assigned. You can check this guest in anyway. The room stays open until you assign one.',
+        message: 'No room is assigned. Assign one now, or check this guest in anyway and assign the room later.',
         confirmLabel: 'Check in anyway',
+        altLabel: rooms.length > 0 ? 'Assign room' : undefined,
       });
-      if (!ok) return;
+      if (choice === 'cancel') return;
+      if (choice === 'alt') {
+        setAssignPickRoom('');
+        setAssignThenCheckIn(true);
+        return;
+      }
     }
     setBusy(true);
     try {
-      if (!hasRoom && chosenRoom) frontOfficeStore.assignRoom(selected.id, chosenRoom);
+      if (!hasRoom && roomToAssign) frontOfficeStore.assignRoom(selected.id, roomToAssign);
       frontOfficeStore.checkIn(selected.id, leaveRoomOpen ? { leaveRoomOpen: true } : undefined);
       const updated = frontOfficeStore.reservations.find((r) => r.id === selected.id);
       const room = updated?.roomId && updated.roomId !== 'TBD' ? `Room ${updated.roomId}` : 'room still to assign';
@@ -806,6 +816,44 @@ export default function FrontDeskCounter() {
         </CardBody>
       </Card>
 
+      {/* "Assign room" from the no-room check-in prompt. */}
+      <Modal isOpen={assignThenCheckIn && !!selected} onClose={() => setAssignThenCheckIn(false)} size="sm">
+        <ModalContent>
+          <ModalHeader>Assign room and check in</ModalHeader>
+          <ModalBody>
+            <p className="text-sm text-gray-600">{selected?.guestName} · rooms free for this stay</p>
+            <Select
+              label="Room"
+              selectedKeys={assignPickRoom ? [assignPickRoom] : []}
+              onSelectionChange={(keys) => {
+                const value = Array.from(keys)[0];
+                setAssignPickRoom(value ? String(value) : '');
+              }}
+            >
+              {rooms.map((number) => (
+                <SelectItem key={number}>{number}</SelectItem>
+              ))}
+            </Select>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="light" onPress={() => setAssignThenCheckIn(false)}>Cancel</Button>
+            <Button
+              color="success"
+              className="bg-green-600 font-semibold text-white"
+              isDisabled={!assignPickRoom}
+              onPress={() => {
+                const room = assignPickRoom;
+                setAssignThenCheckIn(false);
+                setChosenRoom(room);
+                void checkIn(room);
+              }}
+            >
+              Assign & check in
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
       <Modal
         isOpen={!!selected}
         onClose={() => setSelectedId(null)}
@@ -1071,7 +1119,7 @@ export default function FrontDeskCounter() {
                   </Button>
                 )}
                 {arriving && (
-                  <Button color="success" className="bg-green-600 font-semibold text-white" isLoading={busy} onPress={checkIn}>
+                  <Button color="success" className="bg-green-600 font-semibold text-white" isLoading={busy} onPress={() => checkIn()}>
                     Check in
                   </Button>
                 )}

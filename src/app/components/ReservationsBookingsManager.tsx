@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import HeadingInfo from './HeadingInfo';
-import { confirmDanger, confirmDelete, confirmVoid } from './DangerConfirm';
+import { chooseDanger, confirmDanger, confirmDelete, confirmVoid } from './DangerConfirm';
 import { 
   Card, 
   CardBody, 
@@ -253,6 +253,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   const [tabKey, setTabKey] = useState<string>('guest');
   // Assign room modal state
   const [isAssignOpen, setIsAssignOpen] = useState(false);
+  /** The assign pop-up was opened from "Check in" — check the guest in once a room is assigned. */
+  const [checkInAfterAssign, setCheckInAfterAssign] = useState(false);
   /** Which new-booking guest card has its small room pop-up open, and its choices. */
   const [roomPickerFor, setRoomPickerFor] = useState<string | null>(null);
   const [roomPickerChoice, setRoomPickerChoice] = useState('');
@@ -1178,6 +1180,31 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         return;
       }
 
+      // Walk-in with no room: ask before anything is saved, so "Assign room"
+      // can go back to the form and open that guest's room pop-up.
+      let walkInLeaveOpen = false;
+      if (mode === 'checkin') {
+        const roomless = bulkGuests.filter((g) => !g.roomId);
+        if (roomless.length > 0) {
+          const who = roomless.map((g) => guestDisplayName(g.guest)).filter(Boolean).join(', ') || 'This guest';
+          const choice = await chooseDanger({
+            tone: 'void',
+            title: roomless.length === 1 ? `Check in ${who} without a room?` : `Check in ${roomless.length} guests without a room?`,
+            message: 'No room is assigned. Assign one now, or check them in anyway and assign the room later.',
+            confirmLabel: 'Check in anyway',
+            altLabel: 'Assign room',
+          });
+          if (choice === 'alt') {
+            setTabKey('guest');
+            setRoomPickerChoice('');
+            setRoomPickerMatchType(true);
+            setRoomPickerFor(roomless[0].id);
+            return;
+          }
+          walkInLeaveOpen = choice === 'confirm';
+        }
+      }
+
         // Create reservations for each guest
         const createdReservations: any[] = [];
         for (const bulkGuest of bulkGuests) {
@@ -1260,17 +1287,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         // If in check-in mode, immediately check-in each created reservation.
         // A walk-in with no room asks before the stay is marked in house.
         if (mode === 'checkin') {
-          const unassigned = createdReservations.filter((r) => !r.roomId || r.roomId === 'TBD');
-          let leaveOpen = false;
-          if (unassigned.length > 0) {
-            const who = unassigned.map((r) => r.guestName).filter(Boolean).join(', ') || 'This guest';
-            leaveOpen = await confirmDanger({
-              tone: 'void',
-              title: unassigned.length === 1 ? `Check in ${who} without a room?` : `Check in ${unassigned.length} guests without a room?`,
-              message: 'No room is assigned. You can check them in anyway. The room stays open until you assign one.',
-              confirmLabel: 'Check in anyway',
-            });
-          }
+          // Asked before saving (see walkInLeaveOpen above).
+          const leaveOpen = walkInLeaveOpen;
           createdReservations.forEach((r) => {
             const open = !r.roomId || r.roomId === 'TBD';
             if (open && !leaveOpen) return;
@@ -1361,13 +1379,25 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           const hasRoom = !!reservation.roomId && reservation.roomId !== 'TBD';
           void (async () => {
             if (!hasRoom) {
-              const ok = await confirmDanger({
+              const readyRooms = getRoomsFreeForStay(null, reservation.arrival, reservation.departure, undefined, reservation.id, true);
+              const choice = await chooseDanger({
                 tone: 'void',
                 title: `Check in ${reservation.guestName} without a room?`,
-                message: 'No room is assigned. You can check this guest in anyway. The room stays open until you assign one.',
+                message: readyRooms.length > 0
+                  ? 'No room is assigned. Assign one now, or check this guest in anyway and assign the room later.'
+                  : 'No room is assigned, and no room is empty for this stay right now. You can check this guest in anyway and assign the room later.',
                 confirmLabel: 'Check in anyway',
+                altLabel: readyRooms.length > 0 ? 'Assign room' : undefined,
               });
-              if (!ok) return;
+              if (choice === 'cancel') return;
+              if (choice === 'alt') {
+                // Pick a room, then the same pop-up checks the guest in.
+                setCheckInAfterAssign(true);
+                setAssignReservation(reservation);
+                setAssignRoomId('');
+                setIsAssignOpen(true);
+                return;
+              }
             }
             frontOfficeStore.checkIn(reservation.id, hasRoom ? undefined : { leaveRoomOpen: true });
             const updated = frontOfficeStore.reservations.find(r => r.id === reservation.id);
@@ -1453,8 +1483,10 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     departure: string,
     exceptBulkGuestId?: string,
     excludeReservationId?: string, // the booking being assigned, so its own room still counts as free
+    readyNow = false, // checking in now: the room must also be empty today (same rule as the Desk)
   ) => {
     if (roomTypeId === '' || !arrival || !departure || departure <= arrival) return [] as string[];
+    const vacantNow = readyNow ? new Set(housekeepingStore.getRoomsByStatus('vacant').map((r) => r.roomNumber)) : null;
     const start = new Date(arrival).getTime();
     const end = new Date(departure).getTime();
     const takenHere = new Set(
@@ -1466,6 +1498,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     return housekeepingStore.getAllRooms()
       .filter((room) => (roomTypeId === null || room.roomTypeId === roomTypeId)
         && room.status !== 'out-of-order'
+        && (!vacantNow || vacantNow.has(room.roomNumber))
         && frontOfficeStore.isRoomBookable(room.roomNumber)
         && frontOfficeStore.isRoomFreeForRange(room.roomNumber, arrival, departure, excludeReservationId)
         && !takenHere.has(room.roomNumber))
@@ -2241,6 +2274,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                             bulkGuest.arrival,
                                             bulkGuest.departure,
                                             bulkGuest.id,
+                                            undefined,
+                                            mode === 'checkin', // walk-in checks in now: only rooms empty today
                                           );
                                           const typeName = (num: string) => {
                                             const typeId = housekeepingStore.getAllRooms().find((r) => r.roomNumber === num)?.roomTypeId;
@@ -3024,9 +3059,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       </Modal>
 
       {/* Assign Room Modal */}
-      <Modal isOpen={isAssignOpen} onClose={() => setIsAssignOpen(false)}>
+      <Modal isOpen={isAssignOpen} onClose={() => { setIsAssignOpen(false); setCheckInAfterAssign(false); }}>
         <ModalContent>
-          <ModalHeader>Assign Room</ModalHeader>
+          <ModalHeader>{checkInAfterAssign ? 'Assign room and check in' : 'Assign Room'}</ModalHeader>
           <ModalBody>
             {assignReservation ? (
               <div className="space-y-3">
@@ -3055,6 +3090,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                         assignReservation.departure,
                         undefined,
                         assignReservation.id,
+                        checkInAfterAssign, // checking in now: only rooms empty today
                       );
                       const filtered = assignRoomSearch
                         ? all.filter(n => n.toLowerCase().includes((assignRoomSearch || '').toLowerCase()))
@@ -3074,18 +3110,25 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
             )}
           </ModalBody>
           <ModalFooter>
-            <Button variant="light" onClick={() => setIsAssignOpen(false)}>Cancel</Button>
+            <Button variant="light" onClick={() => { setIsAssignOpen(false); setCheckInAfterAssign(false); }}>Cancel</Button>
             <Button
               color="primary"
               isDisabled={!assignReservation || !assignRoomId}
               onClick={() => {
                 if (!assignReservation || !assignRoomId) return;
                 frontOfficeStore.assignRoom(assignReservation.id, assignRoomId);
+                if (checkInAfterAssign) {
+                  frontOfficeStore.checkIn(assignReservation.id);
+                  notifySuccess(`${assignReservation.guestName} checked in — Room ${assignRoomId}`, 'Checked in');
+                  const updated = frontOfficeStore.reservations.find((r) => r.id === assignReservation.id);
+                  if (updated && selectedReservation?.id === updated.id) setSelectedReservation(updated);
+                }
+                setCheckInAfterAssign(false);
                 setIsAssignOpen(false);
                 loadReservations();
               }}
             >
-              Assign
+              {checkInAfterAssign ? 'Assign & check in' : 'Assign'}
             </Button>
             {assignReservation?.roomId && assignReservation?.status !== 'checked-in' && (
               <Button
