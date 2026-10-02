@@ -257,6 +257,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   const [roomPickerFor, setRoomPickerFor] = useState<string | null>(null);
   const [roomPickerChoice, setRoomPickerChoice] = useState('');
   const [roomPickerMatchType, setRoomPickerMatchType] = useState(true);
+  /** Assign room pop-up on an existing booking (Guest row of the Reservation tab). */
+  const [editRoomPickerOpen, setEditRoomPickerOpen] = useState(false);
   const [assignReservation, setAssignReservation] = useState<Reservation | null>(null);
   const [assignRoomId, setAssignRoomId] = useState<string>('');
   const [assignRoomSearch, setAssignRoomSearch] = useState<string>('');
@@ -1812,6 +1814,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       <div className="relative z-20 bg-purple-50 p-3 rounded-lg border">
                         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                           <h4 className="font-medium text-purple-900">👤 Guest</h4>
+                          <div className="flex flex-wrap items-center gap-2">
                           {switchedGuest && (
                             <div className="flex items-center gap-2">
                               <Chip size="sm" color="warning" variant="flat">Changes when you update</Chip>
@@ -1820,6 +1823,88 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                               </Button>
                             </div>
                           )}
+                          {['pending', 'confirmed'].includes(selectedReservation.status) && (() => {
+                            // Same pop-up as a new booking's guest card. Assigns straight away,
+                            // for this booking's saved dates (like the old Assign Room tab).
+                            const current = selectedReservation.roomId && selectedReservation.roomId !== 'TBD' ? selectedReservation.roomId : '';
+                            const bookedTypeId = formData.roomTypeId || selectedReservation.roomTypeId;
+                            const bookedTypeName = useSettingsStore.getState().roomManagement.roomTypes.find((rt) => rt.id === bookedTypeId)?.name || '';
+                            const free = getRoomsFreeForStay(
+                              assignMatchTypeOnly ? bookedTypeId : null,
+                              selectedReservation.arrival,
+                              selectedReservation.departure,
+                              undefined,
+                              selectedReservation.id,
+                            );
+                            const typeName = (num: string) => {
+                              const typeId = housekeepingStore.getAllRooms().find((r) => r.roomNumber === num)?.roomTypeId;
+                              return useSettingsStore.getState().roomManagement.roomTypes.find((rt) => rt.id === typeId)?.name || '';
+                            };
+                            const apply = (roomId: string) => {
+                              frontOfficeStore.assignRoom(selectedReservation.id, roomId);
+                              const updated = frontOfficeStore.reservations.find((r) => r.id === selectedReservation.id);
+                              if (updated) {
+                                setSelectedReservation(updated);
+                                setAssignReservation(updated);
+                              }
+                              setAssignRoomId(roomId);
+                              loadReservations();
+                              setEditRoomPickerOpen(false);
+                            };
+                            return (
+                              <Popover
+                                placement="bottom-end"
+                                isOpen={editRoomPickerOpen}
+                                onOpenChange={(open) => {
+                                  setEditRoomPickerOpen(open);
+                                  if (open) setAssignRoomId(current);
+                                }}
+                              >
+                                <PopoverTrigger>
+                                  <Button size="sm" variant="flat" color={current ? 'success' : 'primary'}>
+                                    🛏️ {current ? `Room ${current}` : 'Assign room'}
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent>
+                                  <div className="w-[22rem] max-w-[90vw] space-y-3 p-2">
+                                    <div className="text-sm text-gray-700">
+                                      {selectedReservation.guestName} · {selectedReservation.resId || selectedReservation.id}
+                                      <span className="text-gray-500">{current ? ` · Room ${current}` : ' · No room assigned'}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-3">
+                                      <div className="text-sm text-gray-600">
+                                        {assignMatchTypeOnly ? `Free ${bookedTypeName} rooms for these dates` : 'All free rooms for these dates'}
+                                      </div>
+                                      <Switch size="sm" classNames={{ label: 'whitespace-nowrap' }} isSelected={assignMatchTypeOnly} onValueChange={setAssignMatchTypeOnly}>Match type</Switch>
+                                    </div>
+                                    <Autocomplete<any>
+                                      label="Room"
+                                      placeholder="Search a free room"
+                                      selectedKey={assignRoomId || null}
+                                      onSelectionChange={(key) => setAssignRoomId(typeof key === 'string' ? key : '')}
+                                    >
+                                      {(() => {
+                                        const list = current && !free.includes(current) ? [current, ...free] : free;
+                                        return (list.length ? list : ['__none']).map((num) => (
+                                          <AutocompleteItem key={num} textValue={num === '__none' ? 'No free rooms' : num} isDisabled={num === '__none'}>
+                                            {num === '__none' ? 'No free rooms for these dates' : assignMatchTypeOnly ? num : `${num} · ${typeName(num)}`}
+                                          </AutocompleteItem>
+                                        ));
+                                      })()}
+                                    </Autocomplete>
+                                    <div className="flex justify-end gap-2">
+                                      {current && (
+                                        <Button size="sm" color="danger" variant="flat" onPress={() => apply('')}>Unassign</Button>
+                                      )}
+                                      <Button size="sm" variant="light" onPress={() => setEditRoomPickerOpen(false)}>Close</Button>
+                                      <Button size="sm" color="primary" isDisabled={!assignRoomId || assignRoomId === current} onPress={() => apply(assignRoomId)}>Assign</Button>
+                                    </div>
+                                  </div>
+                                </PopoverContent>
+                              </Popover>
+                            );
+                          })()}
+                          </div>
                         </div>
                         {/* Current guest and the search share one row (stacked on phones). */}
                         <div className="keep-cols grid grid-cols-1 gap-2 md:grid-cols-2 md:items-center">
@@ -2784,99 +2869,6 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
               </Tab>
               
               
-              {!isCreatingNew && selectedReservation && (
-                <Tab key="room" title="Assign Room">
-                  <div className="space-y-3 pt-2">
-                    <div className="text-sm text-gray-700">
-                      {selectedReservation.guestName} · {selectedReservation.resId || selectedReservation.id}
-                      <span className="text-gray-500">
-                        {selectedReservation.roomId && selectedReservation.roomId !== 'TBD'
-                          ? ` · Room ${selectedReservation.roomId}`
-                          : ' · No room assigned'}
-                      </span>
-                    </div>
-                    {selectedReservation.status === 'checked-in' ? (
-                      <p className="text-sm text-gray-600">This guest is in house. Change the room from Room Transfer.</p>
-                    ) : !['pending', 'confirmed'].includes(selectedReservation.status) ? (
-                      <p className="text-sm text-gray-600">This stay is closed. The room on file stays as it is.</p>
-                    ) : (
-                      <>
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="text-sm text-gray-600">
-                            {assignMatchTypeOnly ? 'Free rooms of this type for these dates' : 'All free rooms for these dates'}
-                          </div>
-                          <Switch isSelected={assignMatchTypeOnly} onValueChange={setAssignMatchTypeOnly}>Match type</Switch>
-                        </div>
-                        <Autocomplete<any>
-                          label="Room"
-                          placeholder="Search a free room"
-                          selectedKey={assignRoomId || undefined}
-                          onSelectionChange={(key) => setAssignRoomId(typeof key === 'string' ? key : (key as any) || '')}
-                          onInputChange={(value) => setAssignRoomSearch(value)}
-                        >
-                          {(() => {
-                            const current = selectedReservation.roomId && selectedReservation.roomId !== 'TBD' ? selectedReservation.roomId : '';
-                            // Free for this booking's dates — not just empty today.
-                            const all = getRoomsFreeForStay(
-                              assignMatchTypeOnly ? (formData.roomTypeId || selectedReservation.roomTypeId) : null,
-                              selectedReservation.arrival,
-                              selectedReservation.departure,
-                              undefined,
-                              selectedReservation.id,
-                            );
-                            const withCurrent = current && !all.includes(current) ? [current, ...all] : all;
-                            const filtered = assignRoomSearch
-                              ? withCurrent.filter(n => n.toLowerCase().includes((assignRoomSearch || '').toLowerCase()))
-                              : withCurrent;
-                            const list = filtered.length ? filtered : ['No vacant rooms'];
-                            return list.map((num) => (
-                              <AutocompleteItem key={num} textValue={num} isDisabled={num === 'No vacant rooms'}>
-                                {num}
-                              </AutocompleteItem>
-                            ));
-                          })()}
-                        </Autocomplete>
-                        <div className="flex justify-end gap-2">
-                          {selectedReservation.roomId && selectedReservation.roomId !== 'TBD' && (
-                            <Button
-                              color="danger"
-                              variant="flat"
-                              onPress={() => {
-                                frontOfficeStore.assignRoom(selectedReservation.id, '');
-                                const updated = frontOfficeStore.reservations.find(r => r.id === selectedReservation.id);
-                                if (updated) {
-                                  setSelectedReservation(updated);
-                                  setAssignReservation(updated);
-                                }
-                                setAssignRoomId('');
-                                loadReservations();
-                              }}
-                            >
-                              Unassign
-                            </Button>
-                          )}
-                          <Button
-                            color="primary"
-                            isDisabled={!assignRoomId || assignRoomId === 'No vacant rooms'}
-                            onPress={() => {
-                              if (!assignRoomId) return;
-                              frontOfficeStore.assignRoom(selectedReservation.id, assignRoomId);
-                              const updated = frontOfficeStore.reservations.find(r => r.id === selectedReservation.id);
-                              if (updated) {
-                                setSelectedReservation(updated);
-                                setAssignReservation(updated);
-                              }
-                              loadReservations();
-                            }}
-                          >
-                            Assign
-                          </Button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </Tab>
-              )}
 
               <Tab key="additional" title="Additional">
                 <div className="space-y-3 pt-1">
@@ -2951,7 +2943,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
               </Button>
             )}
             {!isCreatingNew && selectedReservation && ['pending', 'confirmed'].includes(selectedReservation.status) && (
-              <Button color="primary" variant="flat" className="w-full sm:w-auto" onPress={() => setTabKey('room')}>
+              <Button color="primary" variant="flat" className="w-full sm:w-auto" onPress={() => { setTabKey('guest'); setEditRoomPickerOpen(true); }}>
                 Assign Room
               </Button>
             )}
