@@ -7,6 +7,7 @@ import { housekeepingStore } from '../lib/housekeeping/store';
 import { useSettingsStore } from '../lib/settings/store';
 import { notifyError, notifySuccess } from '../lib/notifications/notify';
 import { formatMoney } from '../lib/format/currency';
+import { logAudit } from '../lib/analytics/auditLogStore';
 import type { Reservation } from '../lib/frontoffice/types';
 
 const REASONS = [
@@ -16,6 +17,7 @@ const REASONS = [
   { key: 'downgrade', label: 'Downgrade' },
   { key: 'noise', label: 'Noise' },
   { key: 'room-issue', label: 'Room issue' },
+  { key: 'wrong-room', label: 'Checked into wrong room (desk error)' },
 ];
 
 function localToday() {
@@ -75,6 +77,8 @@ export default function RoomTransferPanel() {
   const [roomNumber, setRoomNumber] = useState('');
   const [reason, setReason] = useState('');
   const [keepRate, setKeepRate] = useState(true);
+  /** For a desk error: did the guest actually go into the wrong room? Decides whether it needs cleaning. */
+  const [usedWrongRoom, setUsedWrongRoom] = useState<'' | 'yes' | 'no'>('');
   const [busy, setBusy] = useState(false);
   const canTransfer = useSettingsStore((s) => s.hasPermission('frontdesk.assign-room'));
 
@@ -93,21 +97,43 @@ export default function RoomTransferPanel() {
   const nextTypeId = chosen ? frontOfficeStore.rooms.find((room) => room.id === chosen.number)?.roomTypeId : undefined;
   const nextRate = stay && nextTypeId ? nightlyOn(stay, today, nextTypeId) : 0;
 
+  const deskError = reason === 'wrong-room';
+  const reasonLabel = REASONS.find((item) => item.key === reason)?.label || reason;
+
   const transfer = () => {
     if (!stay || !stay.roomId || !roomNumber || !reason) return;
+    if (deskError && !usedWrongRoom) return;
     if (!canTransfer) {
       notifyError('You cannot move a guest to another room.', 'Room transfer');
       return;
     }
     const from = stay.roomId;
+    // A wrong room the guest never entered goes straight back to available; otherwise it needs cleaning.
+    const fromStatus = deskError && usedWrongRoom === 'no' ? 'vacant' : 'dirty';
     setBusy(true);
     try {
       frontOfficeStore.assignRoom(stay.id, roomNumber, { keepRate });
-      try { housekeepingStore.updateRoomStatus(from, 'dirty', 'Front Office', `Transferred ${stay.guestName} to ${roomNumber}`); } catch {}
-      try { housekeepingStore.updateRoomStatus(roomNumber, 'occupied', 'Front Office', `Transferred ${stay.guestName} from ${from}`); } catch {}
-      notifySuccess(`${stay.guestName} is now in ${roomNumber}. Nights already stayed stay on ${from}.`, 'Room transfer');
+      try { housekeepingStore.updateRoomStatus(from, fromStatus, 'Front Office', `Transferred ${stay.guestName} to ${roomNumber} (${reasonLabel})`); } catch {}
+      try { housekeepingStore.updateRoomStatus(roomNumber, 'occupied', 'Front Office', `Transferred ${stay.guestName} from ${from} (${reasonLabel})`); } catch {}
+      try {
+        logAudit({
+          area: 'frontdesk',
+          action: 'update',
+          entity: 'Reservation',
+          entityId: stay.id,
+          details: `Room transfer ${from} → ${roomNumber}: ${reasonLabel}${deskError ? (usedWrongRoom === 'no' ? '; guest did not enter the old room, released as available' : '; guest used the old room, sent for cleaning') : ''}`,
+          severity: deskError ? 'medium' : 'low',
+        });
+      } catch {}
+      notifySuccess(
+        fromStatus === 'vacant'
+          ? `${stay.guestName} is now in ${roomNumber}. Room ${from} is available again.`
+          : `${stay.guestName} is now in ${roomNumber}. Room ${from} is sent for cleaning. Nights already stayed stay on ${from}.`,
+        'Room transfer',
+      );
       setRoomNumber('');
       setReason('');
+      setUsedWrongRoom('');
     } finally {
       setBusy(false);
     }
@@ -187,15 +213,39 @@ export default function RoomTransferPanel() {
               onSelectionChange={(keys) => {
                 const value = Array.from(keys)[0];
                 setReason(value ? String(value) : '');
+                setUsedWrongRoom('');
               }}
             >
               {REASONS.map((item) => (
                 <SelectItem key={item.key}>{item.label}</SelectItem>
               ))}
             </Select>
+            {deskError && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <div className="text-sm font-medium text-amber-900">Did the guest go into room {stay.roomId}?</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant={usedWrongRoom === 'no' ? 'solid' : 'flat'}
+                    color={usedWrongRoom === 'no' ? 'success' : 'default'}
+                    onPress={() => setUsedWrongRoom('no')}
+                  >
+                    No — release it as available
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={usedWrongRoom === 'yes' ? 'solid' : 'flat'}
+                    color={usedWrongRoom === 'yes' ? 'warning' : 'default'}
+                    onPress={() => setUsedWrongRoom('yes')}
+                  >
+                    Yes — send it for cleaning
+                  </Button>
+                </div>
+              </div>
+            )}
             {!canTransfer && <p className="text-sm text-gray-600">You cannot move a guest to another room.</p>}
             <div>
-              <Button color="primary" isDisabled={!roomNumber || !reason || !canTransfer} isLoading={busy} onPress={transfer}>
+              <Button color="primary" isDisabled={!roomNumber || !reason || (deskError && !usedWrongRoom) || !canTransfer} isLoading={busy} onPress={transfer}>
                 Transfer
               </Button>
             </div>
