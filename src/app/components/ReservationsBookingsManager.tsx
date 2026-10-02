@@ -27,6 +27,7 @@ import {
   Pagination as HeroPagination
 } from "@heroui/react";
 import { Autocomplete, AutocompleteItem } from "@heroui/react";
+import { Popover, PopoverTrigger, PopoverContent } from "@heroui/react";
 import GuestSearchEmptyState from './frontoffice/GuestSearchEmptyState';
 import AttachmentUpload from './shared/AttachmentUpload';
 import { HideCardButton } from './dashboard/CustomizeViewControl';
@@ -252,6 +253,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   const [tabKey, setTabKey] = useState<string>('guest');
   // Assign room modal state
   const [isAssignOpen, setIsAssignOpen] = useState(false);
+  /** Which new-booking guest card has its small room pop-up open. */
+  const [roomPickerFor, setRoomPickerFor] = useState<string | null>(null);
   const [assignReservation, setAssignReservation] = useState<Reservation | null>(null);
   const [assignRoomId, setAssignRoomId] = useState<string>('');
   const [assignRoomSearch, setAssignRoomSearch] = useState<string>('');
@@ -1440,6 +1443,39 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       .map(room => room.roomNumber);
   };
 
+  /**
+   * Rooms of a type that are free for the whole stay. Date-aware, unlike
+   * getAvailableRooms (vacant right now): a room occupied today can be free
+   * next month, and an empty one may already be booked for these dates.
+   * Rooms picked for other guests on this same new booking are left out too.
+   */
+  const getRoomsFreeForStay = (roomTypeId: string, arrival: string, departure: string, exceptBulkGuestId?: string) => {
+    if (!roomTypeId || !arrival || !departure || departure <= arrival) return [] as string[];
+    const start = new Date(arrival).getTime();
+    const end = new Date(departure).getTime();
+    const takenHere = new Set(
+      bulkGuests
+        .filter((g) => g.id !== exceptBulkGuestId && g.roomId && g.arrival && g.departure
+          && new Date(g.arrival).getTime() < end && new Date(g.departure).getTime() > start)
+        .map((g) => g.roomId as string),
+    );
+    return housekeepingStore.getAllRooms()
+      .filter((room) => room.roomTypeId === roomTypeId
+        && room.status !== 'out-of-order'
+        && frontOfficeStore.isRoomBookable(room.roomNumber)
+        && frontOfficeStore.isRoomFreeForRange(room.roomNumber, arrival, departure)
+        && !takenHere.has(room.roomNumber))
+      .map((room) => room.roomNumber)
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  };
+
+  /** Drop a guest's chosen room once new dates or a new type make it unavailable. */
+  const keepRoomIfStillFree = (bulkGuestId: string, roomId: string | undefined, roomTypeId: string, arrival: string, departure: string) => {
+    if (roomId && !getRoomsFreeForStay(roomTypeId, arrival, departure, bulkGuestId).includes(roomId)) {
+      updateBulkGuest(bulkGuestId, 'roomId', '');
+    }
+  };
+
   const getVacantRooms = () => {
     return housekeepingStore.getRoomsByStatus('vacant')
       .filter(room => frontOfficeStore.isRoomBookable(room.roomNumber))
@@ -2095,6 +2131,60 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                       </h5>
                       </div>
                       </div>
+                                  <div className="flex items-center gap-1">
+                                    {/* Optional room: most bookings get a room nearer arrival. The pop-up lists
+                                        only rooms of this type that are free for this guest's dates. */}
+                                    <Popover
+                                      placement="bottom-end"
+                                      isOpen={roomPickerFor === bulkGuest.id}
+                                      onOpenChange={(open) => setRoomPickerFor(open ? bulkGuest.id : null)}
+                                    >
+                                      <PopoverTrigger>
+                                        <Button size="sm" variant="flat" color={bulkGuest.roomId ? 'success' : 'primary'}>
+                                          🛏️ {bulkGuest.roomId ? `Room ${bulkGuest.roomId}` : 'Assign room'}
+                                        </Button>
+                                      </PopoverTrigger>
+                                      <PopoverContent>
+                                        {(() => {
+                                          const hasDates = !!bulkGuest.arrival && !!bulkGuest.departure && bulkGuest.departure > bulkGuest.arrival;
+                                          const free = getRoomsFreeForStay(bulkGuest.roomTypeId, bulkGuest.arrival, bulkGuest.departure, bulkGuest.id);
+                                          const pick = (roomId: string) => { updateBulkGuest(bulkGuest.id, 'roomId', roomId); setRoomPickerFor(null); };
+                                          return (
+                                            <div className="w-64 space-y-2 p-2">
+                                              <div>
+                                                <div className="text-sm font-semibold text-gray-900">Assign room</div>
+                                                <div className="text-xs text-gray-500">
+                                                  {roomType?.name || 'Room type'} · {hasDates ? `${bulkGuest.arrival} → ${bulkGuest.departure}` : 'no dates yet'}
+                                                </div>
+                                              </div>
+                                              {!hasDates ? (
+                                                <p className="text-xs text-gray-600">Set the arrival and departure dates first.</p>
+                                              ) : free.length === 0 ? (
+                                                <p className="text-xs text-gray-600">No free {roomType?.name || ''} rooms for these dates.</p>
+                                              ) : (
+                                                <div className="grid max-h-48 grid-cols-4 gap-1 overflow-y-auto">
+                                                  {free.map((num) => (
+                                                    <Button
+                                                      key={num}
+                                                      size="sm"
+                                                      className="min-w-0"
+                                                      variant={bulkGuest.roomId === num ? 'solid' : 'flat'}
+                                                      color={bulkGuest.roomId === num ? 'success' : 'default'}
+                                                      onPress={() => pick(num)}
+                                                    >
+                                                      {num}
+                                                    </Button>
+                                                  ))}
+                                                </div>
+                                              )}
+                                              <Button size="sm" variant="light" className="w-full" onPress={() => pick('')}>
+                                                Assign later
+                                              </Button>
+                                            </div>
+                                          );
+                                        })()}
+                                      </PopoverContent>
+                                    </Popover>
                                   <Button
                           size="sm"
                                     color="danger"
@@ -2103,6 +2193,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                   >
                                     🗑️ Remove
                                   </Button>
+                                  </div>
                       </div>
                                 
                                 {/* Personal Details */}
@@ -2129,14 +2220,20 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                     label="Arrival Date"
                                     type="date"
                                     value={bulkGuest.arrival}
-                                    onChange={(e) => updateBulkGuest(bulkGuest.id, 'arrival', e.target.value)}
+                                    onChange={(e) => {
+                                      updateBulkGuest(bulkGuest.id, 'arrival', e.target.value);
+                                      keepRoomIfStillFree(bulkGuest.id, bulkGuest.roomId, bulkGuest.roomTypeId, e.target.value, bulkGuest.departure);
+                                    }}
                           size="sm"
                                   />
                       <Input
                                     label="Departure Date"
                                     type="date"
                                     value={bulkGuest.departure}
-                                    onChange={(e) => updateBulkGuest(bulkGuest.id, 'departure', e.target.value)}
+                                    onChange={(e) => {
+                                      updateBulkGuest(bulkGuest.id, 'departure', e.target.value);
+                                      keepRoomIfStillFree(bulkGuest.id, bulkGuest.roomId, bulkGuest.roomTypeId, bulkGuest.arrival, e.target.value);
+                                    }}
                         size="sm"
                       />
                       <Input
@@ -2155,6 +2252,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                     onSelectionChange={(keys) => {
                                       const id = Array.from(keys as Set<string>)[0] || '';
                                       updateBulkGuest(bulkGuest.id, 'roomTypeId', id);
+                                      // A room belongs to one type — a new type means pick again (or assign later).
+                                      if (id !== bulkGuest.roomTypeId) updateBulkGuest(bulkGuest.id, 'roomId', '');
                                       const settings = useSettingsStore.getState();
                                       const plans = (settings.roomManagement.ratePlans || []).filter((rp: any) => rp.roomTypeId === id);
                           const defaultId = (settings.roomManagement.defaultRatePlanByRoomType || {})[id];
@@ -2174,6 +2273,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                         })}
                       </Select>
                       {/* Selected Room Type chip removed per request */}
+
                                   
                       {/* Rate selector: list rate plans for selected room type + Custom Rate */}
                       <Select<any>

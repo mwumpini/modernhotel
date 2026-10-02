@@ -1072,7 +1072,8 @@ class FrontOfficeStore {
     return !this.reservations.some(r =>
       r.id !== excludeId &&
       r.roomId === roomNumber &&
-      (r.status === 'confirmed' || r.status === 'checked-in') &&
+      // Same statuses the server treats as holding a room (isRoomAvailable).
+      (r.status === 'pending' || r.status === 'confirmed' || r.status === 'checked-in') &&
       new Date(r.arrival).getTime() < end &&
       new Date(r.departure).getTime() > start
     );
