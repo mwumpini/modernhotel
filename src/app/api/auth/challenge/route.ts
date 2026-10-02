@@ -5,6 +5,7 @@ import { generateTotpSecret, otpauthUri } from '@/app/lib/auth/totp';
 import { passwordExpired } from '@/app/lib/settings/passwordPolicy';
 import { readTenantSecurity } from '@/app/lib/settings/securityPolicyDb';
 import { normalizeTenantSubdomain } from '@/app/lib/api/tenantSubdomain';
+import { findUserForLogin } from '@/app/lib/auth/loginLookup';
 
 /**
  * Password check that runs before a session is created.
@@ -14,10 +15,11 @@ import { normalizeTenantSubdomain } from '@/app/lib/api/tenantSubdomain';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const email = String(body.email || '').trim().toLowerCase();
+    // Email or username.
+    const login = String(body.email || '').trim();
     const password = String(body.password || '');
     const subdomain = normalizeTenantSubdomain(String(body.tenantId || ''));
-    if (!email || !password || !subdomain) {
+    if (!login || !password || !subdomain) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
     }
 
@@ -25,9 +27,7 @@ export async function POST(request: NextRequest) {
     if (!tenant || tenant.status !== 'active') {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
     }
-    const user = await prisma.user.findUnique({
-      where: { tenantId_email: { tenantId: tenant.id, email } },
-    });
+    const user = await findUserForLogin(tenant.id, login);
     if (!user || !user.isActive || !user.password || !(await bcrypt.compare(password, user.password))) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
     }

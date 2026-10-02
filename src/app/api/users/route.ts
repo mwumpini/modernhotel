@@ -6,10 +6,12 @@ import { prisma } from '@/app/lib/database/client'
 import { passwordPolicyError } from '@/app/lib/settings/passwordPolicy'
 import { readTenantSecurity } from '@/app/lib/settings/securityPolicyDb'
 import { publicUser } from '@/app/lib/auth/posPin'
+import { normalizeUsername, usernameError, usernameTaken } from '@/app/lib/auth/loginLookup'
 
 const USER_SELECT = {
   id: true,
   email: true,
+  username: true,
   name: true,
   role: true,
   isActive: true,
@@ -63,6 +65,12 @@ export async function POST(request: NextRequest) {
     if (!email || !name || !password || !role) {
       return NextResponse.json({ error: 'email, name, password, and role are required' }, { status: 400 })
     }
+    const username = normalizeUsername(body.username)
+    const nameError = usernameError(username)
+    if (nameError) return NextResponse.json({ error: nameError }, { status: 400 })
+    if (await usernameTaken(ctx.tenantId, username)) {
+      return NextResponse.json({ error: 'That username is already taken in this hotel' }, { status: 409 })
+    }
     const { policy } = await readTenantSecurity(ctx.tenantId)
     const passwordError = passwordPolicyError(password, policy.passwordPolicy)
     if (passwordError) return NextResponse.json({ error: passwordError }, { status: 400 })
@@ -73,6 +81,7 @@ export async function POST(request: NextRequest) {
         data: {
           tenantId: ctx.tenantId,
           email,
+          username: username || null,
           name,
           password: hashed,
           role,

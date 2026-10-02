@@ -1,5 +1,6 @@
 import { NextAuthOptions } from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
+import { findUserForLogin } from '@/app/lib/auth/loginLookup'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/app/lib/database/client'
 import { createAuditLog } from '@/app/lib/api/tenant'
@@ -62,7 +63,8 @@ export const authOptions: NextAuthOptions = {
     CredentialsProvider({
       name: 'credentials',
       credentials: {
-        email: { label: 'Email', type: 'email' },
+        // Email or username — see findUserForLogin.
+        email: { label: 'Email or username', type: 'text' },
         password: { label: 'Password', type: 'password' },
         tenantId: { label: 'Tenant ID', type: 'text' },
         otp: { label: 'Authentication code', type: 'text' },
@@ -80,9 +82,7 @@ export const authOptions: NextAuthOptions = {
           })
           if (!tenant || tenant.status !== 'active') return null
 
-          const user = await prisma.user.findUnique({
-            where: { tenantId_email: { tenantId: tenant.id, email: credentials.email } },
-          })
+          const user = await findUserForLogin(tenant.id, credentials.email)
           if (!user || !user.isActive || !user.password) return null
 
           const passwordValid = await bcrypt.compare(credentials.password, user.password)

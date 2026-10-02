@@ -235,6 +235,9 @@ model User {
   id          String   @id @default(cuid())
   tenantId    String
   email       String
+  // Optional sign-in name, stored lowercase. One per hotel — enforced in /api/users,
+  // not by a unique index, so adding it never blocks a deploy.
+  username    String?
   name        String
   password    String?
   role        String   @default("user")
@@ -251,6 +254,7 @@ model User {
   tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, email])
+  @@index([tenantId, username])
   @@map("users")
 }
 

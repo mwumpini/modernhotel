@@ -102,9 +102,12 @@ export default function LoginForm() {
             />
 
             <Input
-              type="email"
-              label="Email Address"
-              placeholder="Enter your email"
+              type="text"
+              label="Email or username"
+              placeholder="Enter your email or username"
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck="false"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required

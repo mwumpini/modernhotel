@@ -6,10 +6,12 @@ import { prisma } from '@/app/lib/database/client'
 import { passwordPolicyError } from '@/app/lib/settings/passwordPolicy'
 import { readTenantSecurity } from '@/app/lib/settings/securityPolicyDb'
 import { publicUser, withoutPinKeys } from '@/app/lib/auth/posPin'
+import { normalizeUsername, usernameError, usernameTaken } from '@/app/lib/auth/loginLookup'
 
 const USER_SELECT = {
   id: true,
   email: true,
+  username: true,
   name: true,
   role: true,
   isActive: true,
@@ -42,7 +44,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     // (settings.toggle-user-status / settings.reset-password), separate from
     // general profile editing (settings.edit) — a role can have one without the
     // others.
-    const changingProfile = ['email', 'name', 'role'].some((k) => typeof body[k] === 'string' && body[k].trim())
+    // A username change counts even when it clears the username.
+    const changingUsername = typeof body.username === 'string' && normalizeUsername(body.username) !== (target.username || '')
+    const changingProfile = changingUsername || ['email', 'name', 'role'].some((k) => typeof body[k] === 'string' && body[k].trim())
     if (changingProfile) {
       const perm = await requirePermission(request, 'settings.edit')
       if (!perm.ok) return perm.response
@@ -82,6 +86,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const data: Record<string, unknown> = {}
     if (typeof body.email === 'string' && body.email.trim()) data.email = body.email.trim().toLowerCase()
     if (typeof body.name === 'string' && body.name.trim()) data.name = body.name.trim()
+    if (changingUsername) {
+      const username = normalizeUsername(body.username)
+      const nameError = usernameError(username)
+      if (nameError) return NextResponse.json({ error: nameError }, { status: 400 })
+      if (await usernameTaken(ctx.tenantId, username, id)) {
+        return NextResponse.json({ error: 'That username is already taken in this hotel' }, { status: 409 })
+      }
+      data.username = username || null
+    }
     if (typeof body.role === 'string' && body.role.trim()) data.role = body.role.trim()
     if (typeof body.isActive === 'boolean') data.isActive = body.isActive
     if (typeof body.password === 'string' && body.password) {

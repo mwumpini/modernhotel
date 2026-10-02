@@ -217,7 +217,7 @@ async function deleteUserFromApi(userId: string): Promise<string | null> {
  * the server-assigned id (a real Prisma cuid, not the client's placeholder) on
  * success, or an error message (e.g. duplicate email, weak password) on failure —
  * the caller must not add the row locally when this returns an error. */
-async function createUserViaApi(input: { email: string; name: string; password: string; role: string; isActive: boolean; profile?: Partial<User['profile']> }): Promise<{ id: string } | { error: string }> {
+async function createUserViaApi(input: { email: string; username?: string; name: string; password: string; role: string; isActive: boolean; profile?: Partial<User['profile']> }): Promise<{ id: string } | { error: string }> {
   const t = typeof window !== 'undefined' ? getClientTenantSubdomain() : '';
   if (!t) return { error: 'No tenant context — reload and try again' };
   try {
@@ -240,7 +240,7 @@ async function createUserViaApi(input: { email: string; name: string; password: 
  * as success since there's nothing server-side to reject). Returns an error
  * message on failure (duplicate email, or the last-administrator guard), null
  * on success/no-op. */
-async function updateUserViaApi(userId: string, patch: { email?: string; name?: string; role?: string; isActive?: boolean; password?: string; currentPassword?: string; profile?: Partial<User['profile']>; preferences?: { theme?: string; backgroundLight?: string; backgroundDark?: string; cardBackgroundLight?: string; cardBackgroundDark?: string; font?: string; fontSize?: string } }): Promise<string | null> {
+async function updateUserViaApi(userId: string, patch: { email?: string; username?: string; name?: string; role?: string; isActive?: boolean; password?: string; currentPassword?: string; profile?: Partial<User['profile']>; preferences?: { theme?: string; backgroundLight?: string; backgroundDark?: string; cardBackgroundLight?: string; cardBackgroundDark?: string; font?: string; fontSize?: string } }): Promise<string | null> {
   const t = typeof window !== 'undefined' ? getClientTenantSubdomain() : '';
   if (!t) return null;
   try {
@@ -2833,7 +2833,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
               const [firstName, ...rest] = String(u.name || u.email).split(' ');
               return {
                 id: u.id,
-                username: u.email,
+                username: u.username || '',
                 email: u.email,
                 firstName: firstName || u.email,
                 lastName: rest.join(' '),
@@ -3554,7 +3554,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   addUser: async (user, password) => {
     const result = await createUserViaApi({
       email: user.email,
-      name: `${user.firstName} ${user.lastName}`.trim() || user.username,
+      username: user.username,
+      name: `${user.firstName} ${user.lastName}`.trim() || user.username || user.email,
       password,
       role: user.roleId,
       isActive: user.isActive,
@@ -3678,8 +3679,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   updateUser: async (userId, updates, newPassword) => {
-    const patch: { email?: string; name?: string; role?: string; isActive?: boolean; password?: string; profile?: Partial<User['profile']> } = {};
+    const patch: { email?: string; username?: string; name?: string; role?: string; isActive?: boolean; password?: string; profile?: Partial<User['profile']> } = {};
     if (updates.email) patch.email = updates.email;
+    // Sent even when blank, so clearing the box removes the username.
+    if (typeof updates.username === 'string') patch.username = updates.username;
     if (updates.firstName || updates.lastName) {
       const state = get();
       const existing = state.users.find((u) => u.id === userId);

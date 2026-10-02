@@ -1125,8 +1125,11 @@ export default function UserManagementUnified() {
               <Input
                 label="Username"
                 value={userForm.username}
-                onChange={(e) => setUserForm({...userForm, username: e.target.value})}
-                placeholder="Enter username"
+                onChange={(e) => setUserForm({...userForm, username: e.target.value.replace(/\s+/g, '').toLowerCase()})}
+                placeholder="Optional, e.g. kofi.mensah"
+                description="Optional. Signs in with this or the email."
+                autoCapitalize="none"
+                spellCheck="false"
               />
               <Input
                 label="Email"
@@ -1141,7 +1144,7 @@ export default function UserManagementUnified() {
                 value={userForm.password}
                 onChange={(e) => setUserForm({...userForm, password: e.target.value})}
                 placeholder={isEditing ? 'Leave blank to keep unchanged' : `At least ${useSettingsStore.getState().security.passwordPolicy.minLength} characters`}
-                description={isEditing ? (!canResetPassword ? "You don't have permission to reset passwords" : undefined) : 'This user will sign in with this email and password.'}
+                description={isEditing ? (!canResetPassword ? "You don't have permission to reset passwords" : undefined) : 'This user signs in with this password and their email or username.'}
                 isDisabled={isEditing && !canResetPassword}
               />
               <Input
