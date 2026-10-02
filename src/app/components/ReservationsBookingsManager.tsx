@@ -253,8 +253,10 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   const [tabKey, setTabKey] = useState<string>('guest');
   // Assign room modal state
   const [isAssignOpen, setIsAssignOpen] = useState(false);
-  /** Which new-booking guest card has its small room pop-up open. */
+  /** Which new-booking guest card has its small room pop-up open, and its choices. */
   const [roomPickerFor, setRoomPickerFor] = useState<string | null>(null);
+  const [roomPickerChoice, setRoomPickerChoice] = useState('');
+  const [roomPickerMatchType, setRoomPickerMatchType] = useState(true);
   const [assignReservation, setAssignReservation] = useState<Reservation | null>(null);
   const [assignRoomId, setAssignRoomId] = useState<string>('');
   const [assignRoomSearch, setAssignRoomSearch] = useState<string>('');
@@ -1381,7 +1383,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       case 'assign':
         setAssignReservation(reservation);
         // Prefill first available room
-        const avail = getAvailableRooms(reservation.roomTypeId);
+        const avail = getRoomsFreeForStay(reservation.roomTypeId, reservation.arrival, reservation.departure, undefined, reservation.id);
         setAssignRoomId(avail[0] || '');
         setIsAssignOpen(true);
         break;
@@ -1437,20 +1439,20 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
 
   const calculateNights = (arrival: string, departure: string) => calculateStayNights(arrival, departure);
 
-  const getAvailableRooms = (roomTypeId: string) => {
-    return housekeepingStore.getRoomsByStatus('vacant')
-      .filter(room => room.roomTypeId === roomTypeId && frontOfficeStore.isRoomBookable(room.roomNumber))
-      .map(room => room.roomNumber);
-  };
-
   /**
-   * Rooms of a type that are free for the whole stay. Date-aware, unlike
-   * getAvailableRooms (vacant right now): a room occupied today can be free
-   * next month, and an empty one may already be booked for these dates.
+   * Rooms (of a type, or any) free for the whole stay. Date-aware, not
+   * "vacant right now": a room occupied today can be free next month, and an
+   * empty one may already be booked for these dates.
    * Rooms picked for other guests on this same new booking are left out too.
    */
-  const getRoomsFreeForStay = (roomTypeId: string, arrival: string, departure: string, exceptBulkGuestId?: string) => {
-    if (!roomTypeId || !arrival || !departure || departure <= arrival) return [] as string[];
+  const getRoomsFreeForStay = (
+    roomTypeId: string | null, // null = any room type (Match type off)
+    arrival: string,
+    departure: string,
+    exceptBulkGuestId?: string,
+    excludeReservationId?: string, // the booking being assigned, so its own room still counts as free
+  ) => {
+    if (roomTypeId === '' || !arrival || !departure || departure <= arrival) return [] as string[];
     const start = new Date(arrival).getTime();
     const end = new Date(departure).getTime();
     const takenHere = new Set(
@@ -1460,26 +1462,20 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         .map((g) => g.roomId as string),
     );
     return housekeepingStore.getAllRooms()
-      .filter((room) => room.roomTypeId === roomTypeId
+      .filter((room) => (roomTypeId === null || room.roomTypeId === roomTypeId)
         && room.status !== 'out-of-order'
         && frontOfficeStore.isRoomBookable(room.roomNumber)
-        && frontOfficeStore.isRoomFreeForRange(room.roomNumber, arrival, departure)
+        && frontOfficeStore.isRoomFreeForRange(room.roomNumber, arrival, departure, excludeReservationId)
         && !takenHere.has(room.roomNumber))
       .map((room) => room.roomNumber)
       .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   };
 
-  /** Drop a guest's chosen room once new dates or a new type make it unavailable. */
-  const keepRoomIfStillFree = (bulkGuestId: string, roomId: string | undefined, roomTypeId: string, arrival: string, departure: string) => {
-    if (roomId && !getRoomsFreeForStay(roomTypeId, arrival, departure, bulkGuestId).includes(roomId)) {
+  /** Drop a guest's chosen room once new dates make it unavailable (any type — it may be an upgrade). */
+  const keepRoomIfStillFree = (bulkGuestId: string, roomId: string | undefined, _roomTypeId: string, arrival: string, departure: string) => {
+    if (roomId && !getRoomsFreeForStay(null, arrival, departure, bulkGuestId).includes(roomId)) {
       updateBulkGuest(bulkGuestId, 'roomId', '');
     }
-  };
-
-  const getVacantRooms = () => {
-    return housekeepingStore.getRoomsByStatus('vacant')
-      .filter(room => frontOfficeStore.isRoomBookable(room.roomNumber))
-      .map(r => r.roomNumber);
   };
 
   const dismissForm = () => {
@@ -2137,7 +2133,10 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                     <Popover
                                       placement="bottom-end"
                                       isOpen={roomPickerFor === bulkGuest.id}
-                                      onOpenChange={(open) => setRoomPickerFor(open ? bulkGuest.id : null)}
+                                      onOpenChange={(open) => {
+                                        setRoomPickerFor(open ? bulkGuest.id : null);
+                                        if (open) { setRoomPickerChoice(bulkGuest.roomId || ''); setRoomPickerMatchType(true); }
+                                      }}
                                     >
                                       <PopoverTrigger>
                                         <Button size="sm" variant="flat" color={bulkGuest.roomId ? 'success' : 'primary'}>
@@ -2146,40 +2145,59 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                       </PopoverTrigger>
                                       <PopoverContent>
                                         {(() => {
+                                          // Same layout as the Assign Room tab: Match type switch, room search, Assign.
                                           const hasDates = !!bulkGuest.arrival && !!bulkGuest.departure && bulkGuest.departure > bulkGuest.arrival;
-                                          const free = getRoomsFreeForStay(bulkGuest.roomTypeId, bulkGuest.arrival, bulkGuest.departure, bulkGuest.id);
+                                          const free = getRoomsFreeForStay(
+                                            roomPickerMatchType ? bulkGuest.roomTypeId : null,
+                                            bulkGuest.arrival,
+                                            bulkGuest.departure,
+                                            bulkGuest.id,
+                                          );
+                                          const typeName = (num: string) => {
+                                            const typeId = housekeepingStore.getAllRooms().find((r) => r.roomNumber === num)?.roomTypeId;
+                                            return useSettingsStore.getState().roomManagement.roomTypes.find((rt) => rt.id === typeId)?.name || '';
+                                          };
                                           const pick = (roomId: string) => { updateBulkGuest(bulkGuest.id, 'roomId', roomId); setRoomPickerFor(null); };
                                           return (
-                                            <div className="w-64 space-y-2 p-2">
-                                              <div>
-                                                <div className="text-sm font-semibold text-gray-900">Assign room</div>
-                                                <div className="text-xs text-gray-500">
-                                                  {roomType?.name || 'Room type'} · {hasDates ? `${bulkGuest.arrival} → ${bulkGuest.departure}` : 'no dates yet'}
+                                            <div className="w-[22rem] max-w-[90vw] space-y-3 p-2">
+                                              <div className="text-sm text-gray-700">
+                                                {bulkGuest.guest.name || 'Guest'}
+                                                <span className="text-gray-500">
+                                                  {' · '}{hasDates ? `${bulkGuest.arrival} → ${bulkGuest.departure}` : 'no dates yet'}
+                                                  {bulkGuest.roomId ? ` · Room ${bulkGuest.roomId}` : ' · No room assigned'}
+                                                </span>
+                                              </div>
+                                              <div className="flex items-center justify-between gap-3">
+                                                <div className="text-sm text-gray-600">
+                                                  {roomPickerMatchType ? `Free ${roomType?.name || ''} rooms` : 'All free rooms'}
                                                 </div>
+                                                <Switch size="sm" classNames={{ label: 'whitespace-nowrap' }} isSelected={roomPickerMatchType} onValueChange={setRoomPickerMatchType}>Match type</Switch>
                                               </div>
                                               {!hasDates ? (
-                                                <p className="text-xs text-gray-600">Set the arrival and departure dates first.</p>
-                                              ) : free.length === 0 ? (
-                                                <p className="text-xs text-gray-600">No free {roomType?.name || ''} rooms for these dates.</p>
+                                                <p className="text-sm text-gray-600">Set the arrival and departure dates first.</p>
                                               ) : (
-                                                <div className="grid max-h-48 grid-cols-4 gap-1 overflow-y-auto">
-                                                  {free.map((num) => (
-                                                    <Button
-                                                      key={num}
-                                                      size="sm"
-                                                      className="min-w-0"
-                                                      variant={bulkGuest.roomId === num ? 'solid' : 'flat'}
-                                                      color={bulkGuest.roomId === num ? 'success' : 'default'}
-                                                      onPress={() => pick(num)}
-                                                    >
-                                                      {num}
-                                                    </Button>
+                                                <Autocomplete<any>
+                                                  label="Room"
+                                                  placeholder="Search a free room"
+                                                  selectedKey={roomPickerChoice || null}
+                                                  onSelectionChange={(key) => setRoomPickerChoice(typeof key === 'string' ? key : '')}
+                                                >
+                                                  {(free.length ? free : ['__none']).map((num) => (
+                                                    <AutocompleteItem key={num} textValue={num === '__none' ? 'No free rooms' : num} isDisabled={num === '__none'}>
+                                                      {num === '__none'
+                                                        ? 'No free rooms for these dates'
+                                                        : roomPickerMatchType ? num : `${num} · ${typeName(num)}`}
+                                                    </AutocompleteItem>
                                                   ))}
-                                                </div>
+                                                </Autocomplete>
                                               )}
-                                              <Button size="sm" variant="light" className="w-full" onPress={() => pick('')}>
-                                                Assign later
-                                              </Button>
+                                              <div className="flex justify-end gap-2">
+                                                {bulkGuest.roomId && (
+                                                  <Button size="sm" color="danger" variant="flat" onPress={() => pick('')}>Unassign</Button>
+                                                )}
+                                                <Button size="sm" variant="light" onPress={() => setRoomPickerFor(null)}>Assign later</Button>
+                                                <Button size="sm" color="primary" isDisabled={!roomPickerChoice} onPress={() => pick(roomPickerChoice)}>Assign</Button>
+                                              </div>
                                             </div>
                                           );
                                         })()}
@@ -2785,22 +2803,27 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       <>
                         <div className="flex items-center justify-between gap-3">
                           <div className="text-sm text-gray-600">
-                            {assignMatchTypeOnly ? 'Vacant rooms for this room type' : 'All vacant rooms'}
+                            {assignMatchTypeOnly ? 'Free rooms of this type for these dates' : 'All free rooms for these dates'}
                           </div>
                           <Switch isSelected={assignMatchTypeOnly} onValueChange={setAssignMatchTypeOnly}>Match type</Switch>
                         </div>
                         <Autocomplete<any>
                           label="Room"
-                          placeholder="Search a vacant room"
+                          placeholder="Search a free room"
                           selectedKey={assignRoomId || undefined}
                           onSelectionChange={(key) => setAssignRoomId(typeof key === 'string' ? key : (key as any) || '')}
                           onInputChange={(value) => setAssignRoomSearch(value)}
                         >
                           {(() => {
                             const current = selectedReservation.roomId && selectedReservation.roomId !== 'TBD' ? selectedReservation.roomId : '';
-                            const all = assignMatchTypeOnly
-                              ? getAvailableRooms(formData.roomTypeId || selectedReservation.roomTypeId)
-                              : getVacantRooms();
+                            // Free for this booking's dates — not just empty today.
+                            const all = getRoomsFreeForStay(
+                              assignMatchTypeOnly ? (formData.roomTypeId || selectedReservation.roomTypeId) : null,
+                              selectedReservation.arrival,
+                              selectedReservation.departure,
+                              undefined,
+                              selectedReservation.id,
+                            );
                             const withCurrent = current && !all.includes(current) ? [current, ...all] : all;
                             const filtered = assignRoomSearch
                               ? withCurrent.filter(n => n.toLowerCase().includes((assignRoomSearch || '').toLowerCase()))
@@ -3029,7 +3052,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                 <div className="space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-sm text-gray-600">
-                      {assignMatchTypeOnly ? 'Showing vacant rooms for selected room type' : 'Showing all vacant rooms'}
+                      {assignMatchTypeOnly ? 'Free rooms of this type for these dates' : 'All free rooms for these dates'}
                     </div>
                     <Switch isSelected={assignMatchTypeOnly} onValueChange={setAssignMatchTypeOnly}>
                       Match Type
@@ -3037,15 +3060,19 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                   </div>
                   <Autocomplete<any>
                     label="Assign to Room"
-                    placeholder="Search or select a vacant room"
+                    placeholder="Search or select a free room"
                     selectedKey={assignRoomId || undefined}
                     onSelectionChange={(key) => setAssignRoomId(typeof key === 'string' ? key : (key as any) || '')}
                     onInputChange={(value) => setAssignRoomSearch(value)}
                   >
                     {(() => {
-                      const all = assignMatchTypeOnly
-                        ? getAvailableRooms(assignReservation.roomTypeId)
-                        : getVacantRooms();
+                      const all = getRoomsFreeForStay(
+                        assignMatchTypeOnly ? assignReservation.roomTypeId : null,
+                        assignReservation.arrival,
+                        assignReservation.departure,
+                        undefined,
+                        assignReservation.id,
+                      );
                       const filtered = assignRoomSearch
                         ? all.filter(n => n.toLowerCase().includes((assignRoomSearch || '').toLowerCase()))
                         : all;
