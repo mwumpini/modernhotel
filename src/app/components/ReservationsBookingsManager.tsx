@@ -1762,7 +1762,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       </div>
                     )}
 
-                    {/* Print and Send to guest live in the window footer. */}
+                    {/* Print, PDF and Send to guest live here only (not in the footer). */}
                     <div className="flex flex-wrap gap-2 justify-end">
                       <Button size="sm" variant="flat" onClick={async () => {
                         let cleanup: (() => void) | undefined;
@@ -1785,6 +1785,10 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           window.print();
                         }
                       }}>Download PDF</Button>
+                      <Button size="sm" color="primary" variant="flat" onPress={() => printConfirmation(selectedReservation)}>Print</Button>
+                      {((formData.email || '').trim() || (frontOfficeStore.guests.find(g => g.id === selectedReservation.guestId)?.email || '').trim()) && (
+                        <Button size="sm" color="primary" onPress={() => sendConfirmation(selectedReservation)}>Send to guest</Button>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -2942,11 +2946,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                 Check in
               </Button>
             )}
-            {!isCreatingNew && selectedReservation && ['pending', 'confirmed'].includes(selectedReservation.status) && (
-              <Button color="primary" variant="flat" className="w-full sm:w-auto" onPress={() => { setTabKey('guest'); setEditRoomPickerOpen(true); }}>
-                Assign Room
-              </Button>
-            )}
+
             {!isCreatingNew && selectedReservation && canMarkNoShow(selectedReservation, businessDate ?? '') && (
               <Button color="danger" variant="bordered" className="w-full sm:w-auto" onClick={() => openNoShowConfirm(selectedReservation)}>
                 No-show
@@ -3015,16 +3015,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                 : '💾 Update Reservation'
               }
             </Button>
-            {!isCreatingNew && selectedReservation && (
-              <Button color="primary" variant="flat" className="w-full sm:w-auto" onPress={() => printConfirmation(selectedReservation)}>
-                Print
-              </Button>
-            )}
-            {!isCreatingNew && selectedReservation && ((formData.email || '').trim() || (frontOfficeStore.guests.find(g => g.id === selectedReservation.guestId)?.email || '').trim()) && (
-              <Button color="primary" className="w-full sm:w-auto" onPress={() => sendConfirmation(selectedReservation)}>
-                Send to guest
-              </Button>
-            )}
+
             <Button variant="light" onClick={dismissForm} className="w-full sm:w-auto">
               Cancel
             </Button>
