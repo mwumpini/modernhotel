@@ -389,6 +389,12 @@ class HousekeepingStore {
     return Array.from(this.rooms.values()).filter(room => room.status === status);
   }
 
+  /** Empty rooms a guest can move into now: vacant, clean, or inspected. */
+  getRoomsReadyToAssign(): RoomStatusData[] {
+    const ready = new Set<RoomStatus>(['vacant', 'clean', 'inspected']);
+    return Array.from(this.rooms.values()).filter(room => ready.has(room.status));
+  }
+
   // Mirror Settings rooms -> housekeeping room status map (non-destructive)
   private syncRoomsFromSettings() {
     try {

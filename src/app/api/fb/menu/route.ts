@@ -3,6 +3,7 @@ import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/li
 import { requireAuth } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
 import { incomingMenuImage, withoutImage } from '@/app/lib/fb/menuImage'
+import { todayServiceDate } from '@/app/lib/fb/readyBoard'
 
 // GET /api/fb/menu — list menu items, filterable by venue/category
 export async function GET(request: NextRequest) {
@@ -117,6 +118,13 @@ export async function PATCH(request: NextRequest) {
     if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
 
     const body = await request.json()
+    if (body.clearReadyBoard) {
+      const cleared = await prisma.fBMenuItem.updateMany({
+        where: { tenantId: ctx.tenantId, readyNow: true },
+        data: { readyNow: false, readyPortions: null, readyForDate: null },
+      })
+      return NextResponse.json({ cleared: cleared.count })
+    }
     if (!body.id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
 
     const existing = await prisma.fBMenuItem.findFirst({ where: { id: body.id, tenantId: ctx.tenantId } })
@@ -137,6 +145,15 @@ export async function PATCH(request: NextRequest) {
         costPrice: body.costPrice ?? existing.costPrice,
         glAccountCode: body.venue ? venueToGLCode(body.venue) : existing.glAccountCode,
         isAvailable: body.isAvailable ?? existing.isAvailable,
+        readyNow: typeof body.readyNow === 'boolean' ? body.readyNow : existing.readyNow,
+        readyForDate: body.readyForDate === undefined
+          ? (body.readyNow === true && !existing.readyForDate ? todayServiceDate() : existing.readyForDate)
+          : (body.readyForDate || null),
+        readyPortions: body.readyPortions === undefined
+          ? existing.readyPortions
+          : (body.readyPortions === null || body.readyPortions === ''
+            ? null
+            : Math.max(0, Math.floor(Number(body.readyPortions)) || 0)),
         allergens: body.allergens ?? existing.allergens,
         aliases: body.aliases ?? existing.aliases,
         isPinned: typeof body.isPinned === 'boolean' ? body.isPinned : existing.isPinned,

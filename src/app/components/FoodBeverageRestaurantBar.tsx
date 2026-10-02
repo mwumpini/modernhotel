@@ -11,6 +11,7 @@ import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import DepartmentActivityLog from './DepartmentActivityLog';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
 import { useDepartmentStaff } from '../lib/hr/useDepartmentStaff';
+import { ReadyNowNotice } from './fb/ReadyNowBoard';
 
 const RESTAURANT_STAFF_DEPT_HINTS = ['food', 'beverage', 'restaurant', 'bar'];
 const RESTAURANT_STAFF_EXCLUDE_HINTS = ['kitchen'];
@@ -489,6 +490,8 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
         </Card>
       </div>
       )}
+
+      {!embedded && <ReadyNowNotice />}
 
       {/* Main Content Tabs */}
       <Card className="border-0 shadow-lg">

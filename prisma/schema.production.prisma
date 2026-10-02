@@ -1197,6 +1197,11 @@ model FBMenuItem {
   costPrice     Decimal  @default(0) @db.Decimal(10, 2)
   glAccountCode String   @default("4200")
   isAvailable   Boolean  @default(true)
+  /// Ready board: kitchen can send this dish immediately on readyForDate (local YYYY-MM-DD).
+  readyNow      Boolean  @default(false)
+  /// Plates holding. Null means the kitchen can keep sending it. Zero means the batch is finished.
+  readyPortions Int?
+  readyForDate  String?
   allergens     String?
   aliases       String?
   isPinned      Boolean  @default(false)

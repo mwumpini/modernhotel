@@ -5,6 +5,7 @@ import { getClientTenantSubdomain } from '../api/clientTenant';
 import { pickOperationalPolicy } from '../frontoffice/operationalPolicies';
 import type { BlockTemplate } from '../print/blocks';
 import type { PrintType } from '../print/templates';
+import { grantCovers, permissionIdsFor } from './permissionCatalog';
 
 const ROOM_CONFIG_KEYS = ['roomTypes', 'rooms', 'ratePlans', 'roomStatuses'] as const;
 
@@ -1401,6 +1402,7 @@ interface SettingsStore extends SystemSettings {
     'accommodation-proforma': string; 'accommodation-invoice': string; 'accommodation-receipt': string;
     'event-proforma': string; 'event-invoice': string; 'event-receipt': string;
     'registration-card': string;
+    'fb-receipt': string;
     payslip: string;
   };
   // No-code document template builder — tenant-created templates, all document types.
@@ -1487,6 +1489,8 @@ interface SettingsStore extends SystemSettings {
    *  only ever live in this browser's localStorage, so a second browser/session/
    *  storage reset can otherwise hand out a number already used elsewhere. */
   reconcileNumberFloor: (series: 'reservation' | 'client' | 'invoice' | 'folio', existingIds: (string | undefined)[]) => void;
+  /** Move a module series' nextNumber to just past ids that already exist. Never lowers it. */
+  raiseModuleNumberFloor: (category: string, seriesName: string, existingIds: (string | undefined)[]) => void;
   /** Generic generator for any of the 16 moduleNumbering series (folio, KOT, requisition,
    *  work order, incident report, employee ID, etc.) — the single source every real call
    *  site should use instead of minting its own Date.now()/array-length-based id. */
@@ -2571,6 +2575,7 @@ const DEFAULT_PRINTING: SettingsStore['printing'] = {
   'event-invoice': 'builtin-event-invoice-standard',
   'event-receipt': 'builtin-event-receipt-standard',
   'registration-card': 'builtin-registration-card-standard',
+  'fb-receipt': 'builtin-fb-receipt-thermal',
   payslip: 'builtin-payslip-grid',
 };
 
@@ -3783,13 +3788,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const userRole = state.roles.find(role => role.id === roleId);
     if (!userRole || !userRole.isActive) return false;
 
-    return userRole.permissions.some(granted => {
-      if (granted === '*' || granted === permission) return true;
-      if (granted.endsWith('.*')) {
-        return permission.startsWith(granted.slice(0, -1));
-      }
-      return false;
-    });
+    const accepted = permissionIdsFor(permission);
+    return userRole.permissions.some((granted) => accepted.some((id) => grantCovers(granted, id)));
   },
 
   getUserPermissions: () => {
@@ -3809,7 +3809,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const userRole = state.roles.find(role => role.id === roleId);
     if (!userRole || !userRole.isActive) return false;
 
-    return userRole.permissions.some(p => p === '*' || p === `${modulePrefix}.*` || p.startsWith(`${modulePrefix}.`));
+    return userRole.permissions.some((p) => {
+      const normalized = p === 'reports.view' ? 'compliance.view' : p;
+      return normalized === '*' || normalized === `${modulePrefix}.*` || normalized.startsWith(`${modulePrefix}.`);
+    });
   },
   
   subscribe: (callback) => {
@@ -3990,24 +3993,28 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     get().saveSettings();
   },
 
+  raiseModuleNumberFloor: (category, seriesName, existingIds) => {
+    const current = get();
+    const pattern = (current.moduleNumbering as any)?.[category]?.[seriesName]
+      || (defaultSettings.moduleNumbering as any)?.[category]?.[seriesName];
+    if (!pattern) return;
+    const floor = highestSequence(existingIds, pattern) + 1;
+    if (floor <= (pattern.nextNumber || 1)) return;
+    set({
+      moduleNumbering: {
+        ...current.moduleNumbering,
+        [category]: {
+          ...(current.moduleNumbering as any)[category],
+          [seriesName]: { ...pattern, nextNumber: floor },
+        },
+      } as any,
+    });
+    get().saveSettings();
+  },
+
   reconcileNumberFloor: (series, existingIds) => {
     const raiseModule = (category: string, seriesName: string) => {
-      const current = get();
-      const pattern = (current.moduleNumbering as any)?.[category]?.[seriesName]
-        || (defaultSettings.moduleNumbering as any)?.[category]?.[seriesName];
-      if (!pattern) return;
-      const floor = highestSequence(existingIds, pattern) + 1;
-      if (floor <= (pattern.nextNumber || 1)) return;
-      set({
-        moduleNumbering: {
-          ...current.moduleNumbering,
-          [category]: {
-            ...(current.moduleNumbering as any)[category],
-            [seriesName]: { ...pattern, nextNumber: floor },
-          },
-        } as any,
-      });
-      get().saveSettings();
+      get().raiseModuleNumberFloor(category, seriesName, existingIds);
     };
     const state = get();
     if (series === 'reservation') {

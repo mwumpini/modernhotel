@@ -1,6 +1,7 @@
 'use client';
 
 import { getClientTenantSubdomain } from '../api/clientTenant';
+import { useSettingsStore } from '../settings/store';
 
 export type VenueMode = 'Restaurant' | 'Bar';
 export type CustomerType = 'In-house' | 'Walk-in' | 'Takeout' | 'Bar Tab';
@@ -220,6 +221,11 @@ class OrdersStore {
         };
       });
       this.listeners.forEach((l) => l());
+      const ticket = (notes: string | undefined, key: 'KOT' | 'BOT') => notes?.match(new RegExp(`${key}=([^;\\]]+)`))?.[1];
+      const settings = useSettingsStore.getState();
+      settings.raiseModuleNumberFloor('foodBeverage', 'order', this.orders.map((o) => o.orderNumber));
+      settings.raiseModuleNumberFloor('foodBeverage', 'kitchenOrderTicket', this.orders.map((o) => ticket(o.notes, 'KOT')));
+      settings.raiseModuleNumberFloor('foodBeverage', 'barOrderTicket', this.orders.map((o) => ticket(o.notes, 'BOT')));
     } catch (e) {
       console.warn('[FB] ordersStore hydrateFromApi failed:', e);
     }

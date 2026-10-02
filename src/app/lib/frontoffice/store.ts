@@ -1084,12 +1084,9 @@ class FrontOfficeStore {
   // preferences (floor, accessibility) and VIP status.
   pickOptimalRoomNumber(res: Reservation): string | undefined {
     try {
-      const matchingVacant = housekeepingStore
-        .getRoomsByStatus('vacant')
-        .filter(room => room.roomTypeId === res.roomTypeId);
-      const vacant = matchingVacant.length > 0
-        ? matchingVacant
-        : housekeepingStore.getRoomsByStatus('vacant');
+      const ready = housekeepingStore.getRoomsReadyToAssign();
+      const matchingReady = ready.filter(room => room.roomTypeId === res.roomTypeId);
+      const vacant = matchingReady.length > 0 ? matchingReady : ready;
       // Exclude rooms with a date-overlapping active reservation
       const candidates = vacant.filter(room =>
         this.isRoomBookable(room.roomNumber) &&

@@ -3,7 +3,7 @@
 // Restored Invoices & Payments component for embedding inside consolidated tab
 import React, { useState, useMemo, useEffect } from 'react';
 import HeadingInfo from '../../../components/HeadingInfo';
-import { confirmDanger, confirmDelete, confirmVoid } from '../../../components/DangerConfirm';
+import { confirmDelete, confirmVoid } from '../../../components/DangerConfirm';
 import { 
   Card,
   CardBody,
@@ -42,7 +42,7 @@ import { periodToDateFilter } from '../../../lib/dashboard/useDashboardPeriod';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
 import { useSettingsStore } from '../../../lib/settings/store';
 import { useCurrentUserName } from '../../../lib/auth/useCurrentUserName';
-import { listAllTemplates, openPrintPreview, openHtmlPrintWindow } from '../../../lib/print/engine';
+import { listAllTemplates, openPrintPreview } from '../../../lib/print/engine';
 import { buildOrgProfile } from '../../../lib/print/buildOrgProfile';
 import { trackEvent } from '../../../lib/analytics/trackEvent';
 import { logAudit } from '../../../lib/analytics/auditLogStore';
@@ -53,6 +53,7 @@ import StayWorksheetTable, { worksheetTableClassNames } from '../../../component
 import { DateFilterPills } from '../../../components/fb/DateFilterPills';
 import CompanyAccounts, { CompanyStatement } from '../../../components/frontoffice/CompanyAccounts';
 import { companyAccounts } from '../../../lib/frontoffice/companyAccount';
+import GuestFolioModal from '../../../components/frontoffice/GuestFolioModal';
 
 interface InvoiceItem {
   id: string;
@@ -146,6 +147,7 @@ export default function InvoicesPaymentsPage() {
   const [sortBy, setSortBy] = useState('createdAt');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const settings = useSettingsStore();
+  const canSeeCompanies = useSettingsStore((s) => s.hasPermission('frontdesk.view-company-ledger') || s.hasPermission('frontdesk.post-company-payment'));
   const invoicePrintTemplates = useMemo(
     () => listAllTemplates('invoice', settings.docBuilder?.templates),
     [settings.docBuilder?.templates],
@@ -179,9 +181,6 @@ export default function InvoicesPaymentsPage() {
   const [companySearch, setCompanySearch] = useState('');
   const [companyStatus, setCompanyStatus] = useState('all');
   const { isOpen: isFolioModalOpen, onOpen: onFolioModalOpen, onClose: onFolioModalClose } = useDisclosure();
-  const [adjustmentAmount, setAdjustmentAmount] = useState<number>(0);
-  const [adjustmentReason, setAdjustmentReason] = useState<string>('');
-  const [adjustmentType, setAdjustmentType] = useState<'charge' | 'credit' | 'discount' | 'complimentary'>('charge');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
   const [invoicePage, setInvoicePage] = useState(1);
@@ -195,14 +194,6 @@ export default function InvoicesPaymentsPage() {
   const { isOpen: isPaymentOpen, onOpen: onPaymentOpen, onClose: onPaymentClose } = useDisclosure();
   const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateClose } = useDisclosure();
   const { isOpen: isAddPaymentOpen, onOpen: onAddPaymentOpen, onClose: onAddPaymentClose } = useDisclosure();
-  const { isOpen: isSplitOpen, onOpen: onSplitOpen, onClose: onSplitClose } = useDisclosure();
-
-  const [splitChargeId, setSplitChargeId] = useState<string>('');
-  const [splitTargetReservationId, setSplitTargetReservationId] = useState<string>('');
-  const [splitAmount, setSplitAmount] = useState<number>(0);
-  const [splitNote, setSplitNote] = useState<string>('');
-  const [chargeEdit, setChargeEdit] = useState<{ id: string; description: string; amount: string; original: number } | null>(null);
-  const [paymentEdit, setPaymentEdit] = useState<{ id: string; amount: string; method: string; notes: string; original: number; status: string } | null>(null);
   const [inlineNotification, setInlineNotification] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
   // Increments whenever the store notifies — forces useMemos that read store directly to recompute
   const [storeVersion, setStoreVersion] = useState(0);
@@ -608,134 +599,6 @@ export default function InvoicesPaymentsPage() {
     try { logAudit({ area: 'accounting', action: 'print', entity: 'Payment', entityId: payment.id, details: `Printed receipt for ${payment.transactionId}`, severity: 'low' }); } catch {}
   };
 
-  // Folio Management modal's "Print Folio" — was a bare window.print() of the
-  // modal's own live Tailwind-styled DOM (broken: see html2pdf's oklch() error
-  // for the same pattern elsewhere). This is a fixed-layout internal report
-  // (Guest Information / Financial Summary / Charges & Services / Payments &
-  // Credits, mirroring the modal above) — NOT one of the Document Templates
-  // engine's customizable invoice/receipt/proforma documents, since a folio
-  // report isn't something a tenant reformats per guest-facing branding the
-  // way an invoice is; it always looks the same, just with the org's own
-  // header up top. Built and opened directly rather than via openPrintPreview.
-  const handlePrintFolio = (reservation: any) => {
-    if (!reservation) return;
-    const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
-    const org = buildOrgProfile(settings);
-    const currency = settings.countryCompliance[settings.defaultCountry]?.currencySymbol || '₵';
-    const fmt = (n?: number) => `${currency}${formatMoney(n || 0)}`;
-
-    const totalCharges = folio.totalCharges || 0;
-    const totalPayments = folio.totalPayments || 0;
-    const balance = folio.balance || 0;
-    const transactionCount = (folio.charges?.length || 0) + (folio.payments?.length || 0);
-    const nights = Math.ceil((new Date(reservation.departure).getTime() - new Date(reservation.arrival).getTime()) / 86400000);
-
-    const chargeRows = (folio.charges || []).length
-      ? (folio.charges || []).map((c: any) => `
-        <tr>
-          <td>${new Date(c.date).toLocaleDateString()}</td>
-          <td>${c.description || 'Charge'}</td>
-          <td class="right">${fmt(c.amount)}</td>
-          <td class="right">${fmt(c.tax)}</td>
-        </tr>`).join('')
-      : `<tr><td colspan="4" class="empty">No charges recorded</td></tr>`;
-
-    const paymentRows = (folio.payments || []).length
-      ? (folio.payments || []).map((p: any) => `
-        <tr>
-          <td>${new Date(p.date).toLocaleDateString()}</td>
-          <td>${p.method || ''}</td>
-          <td class="right">${fmt(p.amount)}</td>
-          <td>${p.status || ''}</td>
-          <td>${p.reference || '-'}</td>
-        </tr>`).join('')
-      : `<tr><td colspan="5" class="empty">No payments recorded</td></tr>`;
-
-    const html = `
-    <!doctype html><html><head><meta charset="utf-8" />
-    <title>Folio — ${reservation.guestName || ''}</title>
-    <style>
-      :root { --fg:#111; --muted:#555; --border:#ddd; }
-      * { box-sizing:border-box; }
-      body { font-family: Arial, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", sans-serif; color:var(--fg); margin:0; padding:24px; }
-      h1,h2,h3,h4 { margin:0; }
-      .header { text-align:center; border-bottom:2px solid var(--border); padding-bottom:16px; margin-bottom:16px; }
-      .logo { max-width:120px; max-height:80px; object-fit:contain; margin-bottom:8px; }
-      .org-name { font-size:1.4em; font-weight:700; }
-      .org-detail { font-size:12px; color:var(--muted); margin-top:2px; }
-      .doc-title { text-align:center; font-size:1.2em; font-weight:700; margin:4px 0 20px; text-decoration:underline; }
-      .section { margin-bottom:20px; }
-      .section-title { font-size:1.05em; font-weight:700; margin-bottom:10px; border-bottom:1px solid var(--border); padding-bottom:4px; }
-      .grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; }
-      .field-label { font-size:11px; color:var(--muted); }
-      .field-value { font-weight:600; margin-top:2px; }
-      .stats { display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; }
-      .stat-card { text-align:center; padding:12px; border-radius:8px; border:1px solid var(--border); }
-      .stat-value { font-size:1.4em; font-weight:700; }
-      .stat-label { font-size:11px; color:var(--muted); margin-top:2px; }
-      table { width:100%; border-collapse:collapse; margin-top:8px; font-size:12px; }
-      th, td { border:1px solid var(--border); padding:6px 8px; text-align:left; }
-      th { background:#f7f7f7; }
-      .right { text-align:right; }
-      .empty { text-align:center; color:var(--muted); padding:16px; }
-      .footer { margin-top:24px; font-size:11px; color:var(--muted); text-align:center; }
-      @media print { body { padding:0; } }
-    </style>
-    </head><body>
-      <div class="header">
-        ${org.logoUrl ? `<img class="logo" src="${org.logoUrl}" />` : ''}
-        <div class="org-name">${org.name || ''}</div>
-        <div class="org-detail">${[org.address, org.phone, org.email].filter(Boolean).join(' • ')}</div>
-      </div>
-
-      <div class="doc-title">Guest Folio Statement</div>
-
-      <div class="section">
-        <div class="section-title">Guest Information</div>
-        <div class="grid">
-          <div><div class="field-label">Guest Name</div><div class="field-value">${reservation.guestName || 'Unknown'}</div></div>
-          <div><div class="field-label">Room Number</div><div class="field-value">${reservation.roomId || 'TBD'}</div></div>
-          <div><div class="field-label">Status</div><div class="field-value">${reservation.status || ''}</div></div>
-          <div><div class="field-label">Arrival</div><div class="field-value">${new Date(reservation.arrival).toLocaleDateString()}</div></div>
-          <div><div class="field-label">Departure</div><div class="field-value">${new Date(reservation.departure).toLocaleDateString()}</div></div>
-          <div><div class="field-label">Nights</div><div class="field-value">${nights}</div></div>
-        </div>
-      </div>
-
-      <div class="section">
-        <div class="section-title">Financial Summary</div>
-        <div class="stats">
-          <div class="stat-card" style="background:#eff6ff;"><div class="stat-value" style="color:#2563eb;">${fmt(totalCharges)}</div><div class="stat-label">Total Charges</div></div>
-          <div class="stat-card" style="background:#f0fdf4;"><div class="stat-value" style="color:#16a34a;">${fmt(totalPayments)}</div><div class="stat-label">Total Payments</div></div>
-          <div class="stat-card" style="background:#fff7ed;"><div class="stat-value" style="color:#c2410c;">${fmt(balance)}</div><div class="stat-label">Outstanding Balance</div></div>
-          <div class="stat-card" style="background:#faf5ff;"><div class="stat-value" style="color:#7e22ce;">${transactionCount}</div><div class="stat-label">Transactions</div></div>
-        </div>
-      </div>
-
-      <div class="section">
-        <div class="section-title">Charges &amp; Services</div>
-        <table>
-          <thead><tr><th>Date</th><th>Description</th><th class="right">Amount</th><th class="right">Tax</th></tr></thead>
-          <tbody>${chargeRows}</tbody>
-        </table>
-      </div>
-
-      <div class="section">
-        <div class="section-title">Payments &amp; Credits</div>
-        <table>
-          <thead><tr><th>Date</th><th>Method</th><th class="right">Amount</th><th>Status</th><th>Reference</th></tr></thead>
-          <tbody>${paymentRows}</tbody>
-        </table>
-      </div>
-
-      <div class="footer">Generated ${new Date().toLocaleString()}</div>
-    </body></html>`;
-
-    openHtmlPrintWindow(html);
-    try { trackEvent('Print.Folio' as any, { reservationId: reservation.id, guestName: reservation.guestName }); } catch {}
-    try { logAudit({ area: 'frontdesk', action: 'print', entity: 'Folio', entityId: reservation.id, details: `Printed folio for ${reservation.guestName}`, severity: 'low' }); } catch {}
-  };
-
   const handleViewInvoice = (invoice: Invoice) => {
     setSelectedInvoice(invoice);
     onViewOpen();
@@ -837,145 +700,7 @@ export default function InvoicesPaymentsPage() {
   // Folio management functions
   const handleManageFolio = (reservation: any) => {
     setSelectedFolio(reservation);
-    setAdjustmentAmount(0);
-    setAdjustmentReason('');
-    setAdjustmentType('charge');
     onFolioModalOpen();
-  };
-
-  const handleProcessAdjustment = async () => {
-    if (!selectedFolio || adjustmentAmount <= 0 || !adjustmentReason.trim()) {
-      showNotification('warning', 'Please enter valid adjustment details');
-      return;
-    }
-
-    try {
-      if (adjustmentType === 'charge') {
-        frontOfficeStore.addCharge(selectedFolio.id, adjustmentReason, adjustmentAmount);
-      } else if (adjustmentType === 'credit') {
-        frontOfficeStore.addPayment(selectedFolio.id, 'Credit', adjustmentAmount, { notes: adjustmentReason, processedBy: currentUserName });
-      } else if (adjustmentType === 'discount') {
-        frontOfficeStore.addCharge(selectedFolio.id, `Discount: ${adjustmentReason}`, -adjustmentAmount);
-      } else if (adjustmentType === 'complimentary') {
-        frontOfficeStore.addCharge(selectedFolio.id, `Complimentary: ${adjustmentReason}`, -adjustmentAmount);
-      }
-
-      try { trackEvent('Folio.AdjustmentProcessed' as any, { reservationId: selectedFolio.id, type: adjustmentType, amount: adjustmentAmount }); } catch {}
-      try { logAudit({ area: 'frontdesk', action: 'update', entity: 'Folio', entityId: selectedFolio.id, details: `Adjustment (${adjustmentType}) ₵${adjustmentAmount} - ${adjustmentReason}`, severity: 'low' }); } catch {}
-
-      recomputeBillingFromStore();
-      showNotification('success', 'Adjustment processed successfully');
-      setAdjustmentAmount(0);
-      setAdjustmentReason('');
-    } catch (error) {
-      console.error('Adjustment processing error:', error);
-      showNotification('error', 'Adjustment failed. Please try again.');
-    }
-  };
-
-  const handleSplitCharge = () => {
-    if (!selectedFolio || !splitChargeId || !splitTargetReservationId || splitAmount <= 0) {
-      showNotification('warning', 'Select target folio and enter a valid split amount');
-      return;
-    }
-    const ok = frontOfficeStore.splitCharge(
-      selectedFolio.id,
-      splitChargeId,
-      splitTargetReservationId,
-      splitAmount,
-      splitNote.trim() || undefined,
-    );
-    if (ok) {
-      try { trackEvent('Folio.ChargeSplit' as any, { from: selectedFolio.id, to: splitTargetReservationId, amount: splitAmount }); } catch {}
-      try { logAudit({ area: 'frontdesk', action: 'update', entity: 'Folio', entityId: selectedFolio.id, details: `Split ₵${splitAmount} to ${splitTargetReservationId}`, severity: 'medium' }); } catch {}
-      recomputeBillingFromStore();
-      onSplitClose();
-      setSplitChargeId('');
-      setSplitTargetReservationId('');
-      setSplitAmount(0);
-      setSplitNote('');
-    } else {
-      showNotification('error', 'Split failed — check amount and charge');
-    }
-  };
-
-  const openSplitModal = (chargeId: string, maxAmount: number) => {
-    setSplitChargeId(chargeId);
-    setSplitAmount(maxAmount);
-    setSplitTargetReservationId('');
-    setSplitNote('');
-    onSplitOpen();
-  };
-
-  // Voiding a folio charge is irreversible (it posts an offsetting negative
-  // line rather than deleting anything) and directly changes what the guest
-  // owes, so it's gated behind its own permission rather than the general
-  // frontdesk.* module access — re-checked here (not just at the button)
-  // so a stale render or a direct call can't bypass it.
-  const handleVoidCharge = async (reservationId: string, chargeId: string) => {
-    if (!useSettingsStore.getState().hasPermission('frontdesk.void-charge')) {
-      showNotification('error', "You don't have permission to void charges.");
-      return;
-    }
-    const ok = await confirmVoid('this charge', 'This posts a reversing entry. The original charge stays on the folio as Void.');
-    if (!ok) return;
-    frontOfficeStore.voidCharge(reservationId, chargeId, 'User action');
-  };
-
-  const chargeAlreadyCounted = async (what: string) => {
-    await confirmDanger({
-      tone: 'delete',
-      title: `Delete ${what}?`,
-      message: 'This is already on the folio, so it cannot be deleted. Use Void. The original stays on file and the books stay even.',
-      confirmLabel: 'OK',
-    });
-  };
-
-  const saveChargeEdit = async () => {
-    if (!chargeEdit || !selectedFolio) return;
-    const description = chargeEdit.description.trim();
-    const amount = Number(chargeEdit.amount);
-    if (!description || !(amount >= 0)) return;
-    const open = selectedFolio.status === 'checked-in' || selectedFolio.status === 'pending';
-    const amountChanged = Math.abs(amount - chargeEdit.original) > 0.001;
-    if (!open && amountChanged) {
-      await confirmDanger({
-        tone: 'void',
-        title: 'This charge is already on the bill',
-        message: 'The amount has already counted. Void this charge, then add the correct one. The original stays on file and the books stay even.',
-        confirmLabel: 'OK',
-      });
-      return;
-    }
-    frontOfficeStore.updateFolioCharge(selectedFolio.id, chargeEdit.id, {
-      description,
-      ...(open ? { amount } : {}),
-    });
-    setChargeEdit(null);
-  };
-
-  const savePaymentEdit = async () => {
-    if (!paymentEdit || !selectedFolio) return;
-    const amount = Number(paymentEdit.amount);
-    if (!(amount > 0)) return;
-    const stayOpen = selectedFolio.status === 'checked-in' || selectedFolio.status === 'pending';
-    const posted = paymentEdit.status === 'completed';
-    const amountChanged = Math.abs(amount - paymentEdit.original) > 0.001;
-    if (posted && !stayOpen && amountChanged) {
-      await confirmDanger({
-        tone: 'void',
-        title: 'This payment is already on the bill',
-        message: 'The amount has already counted. Void this payment, then take the correct one. The original stays on file and the books stay even.',
-        confirmLabel: 'OK',
-      });
-      return;
-    }
-    frontOfficeStore.updateFolioPayment(selectedFolio.id, paymentEdit.id, {
-      amount,
-      method: paymentEdit.method as 'Cash' | 'Card' | 'Mobile Money' | 'Credit' | 'Corporate Account' | 'Bank Transfer' | 'Check',
-      notes: paymentEdit.notes,
-    });
-    setPaymentEdit(null);
   };
 
   const handleCreateInvoice = () => {
@@ -1129,7 +854,7 @@ export default function InvoicesPaymentsPage() {
               ['invoices', 'Invoices', invoices.length],
               ['payments', 'Payments', payments.length],
               ['companies', 'Companies', companyAccounts().length],
-            ] as const).map(([key, label, count]) => (
+            ] as const).filter(([key]) => key !== 'companies' || canSeeCompanies).map(([key, label, count]) => (
               <Button
                 key={key}
                 size="sm"
@@ -1332,7 +1057,7 @@ export default function InvoicesPaymentsPage() {
               />
             </div>
             </>
-          ) : activeTab === 'companies' ? (
+          ) : activeTab === 'companies' && canSeeCompanies ? (
             <>
             <div className="space-y-3 mb-3">
               <div className="flex items-center gap-1.5">
@@ -2032,384 +1757,13 @@ export default function InvoicesPaymentsPage() {
         </ModalContent>
       </Modal>
 
-      {/* Folio Management Modal */}
-        <Modal isOpen={isFolioModalOpen} onClose={onFolioModalClose} size="5xl" scrollBehavior="inside" classNames={{ closeButton: 'text-white hover:bg-white/20' }}>
-        <ModalContent>
-          <ModalHeader className="flex flex-row items-center justify-between gap-3 bg-gradient-to-r from-blue-600 to-purple-600 pr-12 text-white">
-            <div className="min-w-0">
-              <h2 className="truncate text-xl font-bold">{selectedFolio?.guestName || 'Folio'}</h2>
-              <p className="text-sm font-normal text-blue-100">
-                {selectedFolio?.resId || selectedFolio?.id || 'Folio'}
-                {selectedFolio?.roomId && selectedFolio.roomId !== 'TBD' ? ` • Room ${selectedFolio.roomId}` : ''}
-              </p>
-            </div>
-            {selectedFolio && (() => {
-              const inv = invoices.find((item) => item.id === selectedFolio.id);
-              const due = stayFigures(selectedFolio).balance;
-              return (
-                <div className="flex shrink-0 gap-1">
-                  {inv && (
-                    <Button size="sm" variant="flat" className="bg-white/20 text-white" onPress={() => handlePrintInvoice(inv)}>Print</Button>
-                  )}
-                  {inv && due > 0.005 && (
-                    <Button size="sm" variant="flat" className="bg-white/20 text-white" onPress={() => { setSelectedInvoice(inv); onAddPaymentOpen(); }}>Pay</Button>
-                  )}
-                </div>
-              );
-            })()}
-          </ModalHeader>
-          <ModalBody>
-            {selectedFolio && (
-              <div className="space-y-6">
-                {/* Guest Information */}
-                <Card>
-                  <CardHeader>
-                    <h4 className="text-lg font-semibold">Guest Information</h4>
-                  </CardHeader>
-                  <CardBody>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div>
-                        <div className="text-sm text-gray-600">Guest Name</div>
-                        <div className="font-medium">{selectedFolio.guestName || 'Unknown'}</div>
-                      </div>
-                      <div>
-                        <div className="text-sm text-gray-600">Room Number</div>
-                        <div className="font-medium">{selectedFolio.roomId || 'TBD'}</div>
-                      </div>
-                      <div>
-                        <div className="text-sm text-gray-600">Status</div>
-                        <Badge color={selectedFolio.status === 'checked-in' ? 'success' : 'warning'} variant="flat">
-                          {selectedFolio.status}
-                        </Badge>
-                      </div>
-                      {selectedFolio.taxExempt && (
-                        <div>
-                          <div className="text-sm text-gray-600">Tax</div>
-                          <Badge color="secondary" variant="flat">Tax Exempt</Badge>
-                        </div>
-                      )}
-                      <div>
-                        <div className="text-sm text-gray-600">Arrival</div>
-                        <div className="font-medium">{new Date(selectedFolio.arrival).toLocaleDateString()}</div>
-                      </div>
-                      <div>
-                        <div className="text-sm text-gray-600">Departure</div>
-                        <div className="font-medium">{new Date(selectedFolio.departure).toLocaleDateString()}</div>
-                      </div>
-                      <div>
-                        <div className="text-sm text-gray-600">Nights</div>
-                        <div className="font-medium">
-                          {Math.ceil((new Date(selectedFolio.departure).getTime() - new Date(selectedFolio.arrival).getTime()) / (1000 * 60 * 60 * 24))}
-                        </div>
-                      </div>
-                    </div>
-                  </CardBody>
-                </Card>
+      <GuestFolioModal
+        reservation={selectedFolio}
+        isOpen={isFolioModalOpen}
+        onClose={onFolioModalClose}
+        onChanged={recomputeBillingFromStore}
+      />
 
-                {/* Financial Summary */}
-                <Card>
-                  <CardHeader>
-                    <h4 className="text-lg font-semibold">Financial Summary</h4>
-                  </CardHeader>
-                  <CardBody>
-                    {(() => {
-                      const folio = frontOfficeStore.getOrCreateFolio(selectedFolio.id);
-                      return (
-                        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                          <div className="rounded-lg bg-blue-50 px-2 py-1.5 text-center">
-                            <div className="text-base font-semibold tabular-nums text-blue-700">₵{formatMoney((folio.totalCharges || 0))}</div>
-                            <div className="text-xs text-blue-600">Total Charges</div>
-                          </div>
-                          <div className="rounded-lg bg-green-50 px-2 py-1.5 text-center">
-                            <div className="text-base font-semibold tabular-nums text-green-700">₵{formatMoney((folio.totalPayments || 0))}</div>
-                            <div className="text-xs text-green-600">Total Payments</div>
-                          </div>
-                          <div className="rounded-lg bg-orange-50 px-2 py-1.5 text-center">
-                            <div className="text-base font-semibold tabular-nums text-orange-700">₵{formatMoney((folio.balance || 0))}</div>
-                            <div className="text-xs text-orange-600">Outstanding Balance</div>
-                          </div>
-                          <div className="rounded-lg bg-purple-50 px-2 py-1.5 text-center">
-                            <div className="text-base font-semibold tabular-nums text-purple-700">{folio.charges.length + folio.payments.length}</div>
-                            <div className="text-xs text-purple-600">Transactions</div>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </CardBody>
-                </Card>
-
-                {/* Detailed Folio */}
-                <Card>
-                  <CardHeader>
-                    <h4 className="text-lg font-semibold">Detailed Folio</h4>
-                  </CardHeader>
-                  <CardBody>
-                    <div className="space-y-4">
-                      {/* Charges */}
-                      <div>
-                        <h5 className="font-semibold mb-2 text-gray-700">Charges & Services</h5>
-                        <Table aria-label="Folio charges">
-                          <TableHeader>
-                            <TableColumn>Date</TableColumn>
-                            <TableColumn>Description</TableColumn>
-                            <TableColumn align="end">Amount</TableColumn>
-                            <TableColumn align="end">Tax</TableColumn>
-                            <TableColumn>Actions</TableColumn>
-                          </TableHeader>
-                          <TableBody>
-                            {(() => {
-                              const folio = frontOfficeStore.getOrCreateFolio(selectedFolio.id);
-                              const reservations = frontOfficeStore.reservations.filter(r => r.id !== selectedFolio.id);
-                              return folio.charges.map((charge) => {
-                                const reversal = (charge.description || '').startsWith('VOID') || (charge.amount || 0) < 0;
-                                return (
-                                <TableRow key={charge.id}>
-                                  <TableCell>{new Date(charge.date).toLocaleDateString()}</TableCell>
-                                  <TableCell>{charge.description}</TableCell>
-                                  <TableCell className="text-right">₵{formatMoney(charge.amount)}</TableCell>
-                                  <TableCell className="text-right">₵{formatMoney((charge.tax || 0))}</TableCell>
-                                  <TableCell>
-                                    <div className="flex gap-2">
-                                      {!reversal && (
-                                        <Button size="sm" variant="light" onPress={() => setChargeEdit({ id: charge.id, description: charge.description, amount: String(charge.amount), original: charge.amount })}>Edit</Button>
-                                      )}
-                                      {!reversal && (
-                                        <Button size="sm" variant="light" color="danger" onPress={() => chargeAlreadyCounted('this charge')}>Delete</Button>
-                                      )}
-                                      {!reversal && settings.hasPermission('frontdesk.void-charge') && (
-                                        <Button size="sm" variant="light" color="warning" onPress={() => handleVoidCharge(selectedFolio.id, charge.id)}>Void</Button>
-                                      )}
-                                      <Button size="sm" variant="light" color="secondary" onPress={() => openSplitModal(charge.id, charge.amount)}>Split</Button>
-                                      {reservations.length > 0 && (
-                                        <Button size="sm" variant="light" onPress={() => frontOfficeStore.transferCharge(selectedFolio.id, charge.id, reservations[0].id, 'User action')}>Transfer</Button>
-                                      )}
-                                    </div>
-                                  </TableCell>
-                                </TableRow>
-                                );
-                              });
-                            })()}
-                          </TableBody>
-                        </Table>
-                      </div>
-
-                      {/* Payments */}
-                      <div>
-                        <h5 className="font-semibold mb-2 text-gray-700">Payments & Credits</h5>
-                        <Table aria-label="Folio payments">
-                          <TableHeader>
-                            <TableColumn>Date</TableColumn>
-                            <TableColumn>Method</TableColumn>
-                            <TableColumn align="end">Amount</TableColumn>
-                            <TableColumn>Status</TableColumn>
-                            <TableColumn>Reference</TableColumn>
-                            <TableColumn>Actions</TableColumn>
-                          </TableHeader>
-                          <TableBody>
-                            {(() => {
-                              const folio = frontOfficeStore.getOrCreateFolio(selectedFolio.id);
-                              return folio.payments.map((payment) => (
-                                <TableRow key={payment.id}>
-                                  <TableCell>{new Date(payment.date).toLocaleDateString()}</TableCell>
-                                  <TableCell>{payment.method}</TableCell>
-                                  <TableCell className="text-right">₵{formatMoney(payment.amount)}</TableCell>
-                                  <TableCell>
-                                    <Badge color={payment.status === 'completed' ? 'success' : 'warning'} variant="flat">
-                                      {payment.status}
-                                    </Badge>
-                                  </TableCell>
-                                  <TableCell>{(payment as any).reference || '-'}</TableCell>
-                                  <TableCell>
-                                    {payment.status !== 'refunded' && (
-                                      <div className="flex gap-2">
-                                        <Button size="sm" variant="light" onPress={() => setPaymentEdit({ id: payment.id, amount: String(payment.amount), method: payment.method, notes: payment.notes || '', original: payment.amount, status: payment.status })}>Edit</Button>
-                                        <Button size="sm" variant="light" color="danger" onPress={async () => {
-                                          if (payment.status === 'pending') {
-                                            const ok = await confirmDelete('this payment', 'A payment that was never taken will be permanently removed.');
-                                            if (!ok) return;
-                                            frontOfficeStore.removeFolioPayment(selectedFolio.id, payment.id);
-                                            return;
-                                          }
-                                          await chargeAlreadyCounted('this payment');
-                                        }}>Delete</Button>
-                                        {payment.amount > 0 && (
-                                          <Button size="sm" variant="light" color="warning" onPress={async () => {
-                                            const ok = await confirmVoid('this payment', 'The payment stays on file as a refund so the guest owes it again and the books stay even.');
-                                            if (!ok) return;
-                                            frontOfficeStore.refundPayment(selectedFolio.id, payment.id, payment.amount, 'Void');
-                                          }}>Void</Button>
-                                        )}
-                                      </div>
-                                    )}
-                                  </TableCell>
-                                </TableRow>
-                              ));
-                            })()}
-                          </TableBody>
-                        </Table>
-                      </div>
-                    </div>
-                  </CardBody>
-                </Card>
-
-                {/* Folio Adjustments */}
-                <Card>
-                  <CardHeader>
-                    <h4 className="text-lg font-semibold">Folio Adjustments</h4>
-                  </CardHeader>
-                  <CardBody>
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <Input
-                          label="Adjustment Amount"
-                          type="number"
-                          value={adjustmentAmount.toString()}
-                          onChange={(e) => setAdjustmentAmount(Number(e.target.value))}
-                          placeholder="0"
-                          startContent={<span className="text-gray-400">₵</span>}
-                        />
-                        <Select
-                          label="Adjustment Type"
-                          selectedKeys={new Set([adjustmentType])}
-                          onSelectionChange={(keys) => setAdjustmentType(Array.from(keys as Set<string>)[0] as 'charge' | 'credit' | 'discount' | 'complimentary' || 'charge')}
-                        >
-                          <SelectItem key="charge">Add Charge</SelectItem>
-                          <SelectItem key="credit">Add Credit</SelectItem>
-                          <SelectItem key="discount">Apply Discount</SelectItem>
-                          <SelectItem key="complimentary">Complimentary (Comp)</SelectItem>
-                        </Select>
-                        <Input
-                          label="Reason/Description"
-                          value={adjustmentReason}
-                          onChange={(e) => setAdjustmentReason(e.target.value)}
-                          placeholder="Enter reason for adjustment"
-                        />
-                      </div>
-                      {adjustmentAmount > 0 && adjustmentReason.trim() && (
-                        <div className="p-3 bg-blue-50 rounded-lg">
-                          <div className="text-sm text-blue-600">
-                            {adjustmentType === 'charge' && `Will add ₵${formatMoney(adjustmentAmount)} charge: ${adjustmentReason}`}
-                            {adjustmentType === 'credit' && `Will add ₵${formatMoney(adjustmentAmount)} credit: ${adjustmentReason}`}
-                            {adjustmentType === 'discount' && `Will apply ₵${formatMoney(adjustmentAmount)} discount: ${adjustmentReason}`}
-                            {adjustmentType === 'complimentary' && `Will waive ₵${formatMoney(adjustmentAmount)} as complimentary: ${adjustmentReason}`}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </CardBody>
-                </Card>
-              </div>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onClick={onFolioModalClose}>
-              Close
-            </Button>
-            <Button
-              color="secondary"
-              onClick={() => handlePrintFolio(selectedFolio)}
-              startContent={<span>🖨️</span>}
-            >
-              Print Folio
-            </Button>
-            <Button 
-              color="primary" 
-              onClick={handleProcessAdjustment}
-              isDisabled={adjustmentAmount <= 0 || !adjustmentReason.trim()}
-              startContent={<span>⚡</span>}
-            >
-              Process Adjustment
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
-      <Modal isOpen={!!chargeEdit} onClose={() => setChargeEdit(null)} size="md">
-        <ModalContent>
-          <ModalHeader>Edit charge</ModalHeader>
-          <ModalBody className="space-y-3">
-            <Input label="Description" value={chargeEdit?.description || ''} onValueChange={(description) => setChargeEdit((row) => row ? { ...row, description } : row)} />
-            <Input label="Amount" type="number" value={chargeEdit?.amount || ''} onValueChange={(amount) => setChargeEdit((row) => row ? { ...row, amount } : row)} startContent={<span className="text-gray-400">₵</span>} />
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="light" onPress={() => setChargeEdit(null)}>Cancel</Button>
-            <Button color="primary" onPress={saveChargeEdit}>Save</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
-      <Modal isOpen={!!paymentEdit} onClose={() => setPaymentEdit(null)} size="md">
-        <ModalContent>
-          <ModalHeader>Edit payment</ModalHeader>
-          <ModalBody className="space-y-3">
-            <Select
-              label="Method"
-              selectedKeys={paymentEdit ? [paymentEdit.method] : []}
-              onSelectionChange={(keys) => {
-                const method = typeof keys === 'string' ? keys : String(Array.from(keys)[0] || '');
-                if (method) setPaymentEdit((row) => row ? { ...row, method } : row);
-              }}
-            >
-              {['Cash', 'Card', 'Mobile Money', 'Bank Transfer', 'Credit', 'Corporate Account', 'Check'].map((method) => (
-                <SelectItem key={method}>{method}</SelectItem>
-              ))}
-            </Select>
-            <Input label="Amount" type="number" value={paymentEdit?.amount || ''} onValueChange={(amount) => setPaymentEdit((row) => row ? { ...row, amount } : row)} startContent={<span className="text-gray-400">₵</span>} />
-            <Input label="Note" value={paymentEdit?.notes || ''} onValueChange={(notes) => setPaymentEdit((row) => row ? { ...row, notes } : row)} />
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="light" onPress={() => setPaymentEdit(null)}>Cancel</Button>
-            <Button color="primary" onPress={savePaymentEdit}>Save</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
-      <Modal isOpen={isSplitOpen} onClose={onSplitClose}>
-        <ModalContent>
-          <ModalHeader>Split charge</ModalHeader>
-          <ModalBody className="space-y-4">
-            <p className="text-sm text-gray-600">
-              Move part of this charge to another guest folio. Tax is allocated proportionally.
-            </p>
-            <Input
-              type="number"
-              label="Amount to move (₵)"
-              value={splitAmount > 0 ? String(splitAmount) : ''}
-              onValueChange={(v) => setSplitAmount(parseFloat(v) || 0)}
-              min={0}
-            />
-            <Select
-              label="Target reservation"
-              placeholder="Select guest folio"
-              selectedKeys={splitTargetReservationId ? [splitTargetReservationId] : []}
-              onSelectionChange={(keys) => {
-                const k = Array.from(keys)[0];
-                setSplitTargetReservationId(k ? String(k) : '');
-              }}
-            >
-              {frontOfficeStore.reservations
-                .filter((r) => selectedFolio && r.id !== selectedFolio.id && r.status === 'checked-in')
-                .map((r) => (
-                  <SelectItem key={r.id} textValue={`${r.guestName} (${r.id})`}>
-                    {r.guestName} — {r.id}
-                  </SelectItem>
-                ))}
-            </Select>
-            <Input
-              label="Note (optional)"
-              value={splitNote}
-              onValueChange={setSplitNote}
-              placeholder="e.g. Shared corporate billing"
-            />
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={onSplitClose}>Cancel</Button>
-            <Button color="primary" onPress={handleSplitCharge} isDisabled={!splitTargetReservationId || splitAmount <= 0}>
-              Split charge
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
     </div>
   );
 }

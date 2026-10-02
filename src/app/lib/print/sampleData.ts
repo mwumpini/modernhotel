@@ -205,6 +205,28 @@ export function getSampleData(docType: PrintType, org: PrintOrgInfo = placeholde
         totals: { subTotal: 4000, payments: 4000, balance: 0, grandTotal: 4000 },
         currency: '₵',
       };
+    case 'fb-receipt':
+      return {
+        org: sampleOrg,
+        guest: { name: 'Efua Mensah' },
+        docNumber: 'RCPT-100214',
+        docDate: new Date().toISOString(),
+        title: 'Receipt',
+        items: [
+          { description: 'Jollof Rice & Chicken', qty: 1, unit: 'plate', unitPrice: 85, amount: 85 },
+          { description: 'Star Beer (Bottle)', qty: 2, unit: 'bottle', unitPrice: 25, amount: 50 },
+        ],
+        totals: {
+          subTotal: 135,
+          taxes: { nhil: 3.38, gefl: 3.38, levy: 1.35, vat: 20.25 },
+          grandTotal: 163.36,
+          payments: 163.36,
+          balance: 0,
+        },
+        footerNotes: ['Table 4 · Server Abena', 'Thank you for dining with us.'],
+        currency: '₵',
+        attendantName: 'Abena Serwaa',
+      };
     case 'registration-card':
       return {
         org: sampleOrg,

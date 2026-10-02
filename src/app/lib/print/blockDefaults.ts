@@ -857,11 +857,118 @@ function thermalReceiptBlocks(recipientHeading: string): BlockConfig[] {
   ];
 }
 
+/** 80mm slip with the hotel name on a solid band. Reads from across the counter. */
+function thermalBannerBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'logo', type: 'logo', order: 0, align: 'center', spacing: 'small' }),
+    block({
+      id: 'company-name', type: 'company-name', order: 1, align: 'center', style: { fontSize: 'lg', bold: true },
+      background: '#006B3F', backgroundTextColor: '#ffffff',
+    }),
+    block({ id: 'company-address', type: 'company-address', order: 2, align: 'center', style: { fontSize: 'sm' } }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, align: 'center', underline: true, spacing: 'small' }),
+    block({ id: 'doc-number', type: 'doc-number', order: 4, align: 'center', docNumberLabel: 'Receipt' }),
+    block({ id: 'doc-date', type: 'doc-date', order: 5, align: 'center', dividerBelow: true }),
+    block({ id: 'guest-details', type: 'guest-details', order: 6, heading: 'Guest', border: 'none' }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 7, lineItemsDisplay: 'simple' }),
+    block({ id: 'totals-summary', type: 'totals-summary', order: 8, totalsDisplay: 'compact-taxes' }),
+    block({ id: 'thank-you', type: 'custom-text', order: 9, align: 'center', style: { bold: true }, text: 'Thank you for dining with us.' }),
+  ];
+}
+
+/** 80mm slip that leads with a large total. The items stay short above it. */
+function thermalBigTotalBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { bold: true } }),
+    block({ id: 'doc-title', type: 'doc-title', order: 1, align: 'center', spacing: 'small' }),
+    block({ id: 'doc-number', type: 'doc-number', order: 2, align: 'center', style: { fontSize: 'sm' } }),
+    block({ id: 'doc-date', type: 'doc-date', order: 3, align: 'center', style: { fontSize: 'sm' }, dividerBelow: true }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 4, lineItemsDisplay: 'simple' }),
+    block({ id: 'totals-grandtotal', type: 'totals-grandtotal', order: 5, align: 'center', underline: true, style: { fontSize: 'lg', bold: true }, spacing: 'small' }),
+    block({ id: 'totals-taxes', type: 'totals-taxes', order: 6, totalsDisplay: 'compact-taxes', style: { fontSize: 'sm' } }),
+    block({ id: 'thank-you', type: 'custom-text', order: 7, align: 'center', spacing: 'medium', text: 'Paid. Thank you.' }),
+  ];
+}
+
+/** 80mm slip with quantity and unit price, for a guest who wants the bill spelled out. */
+function thermalItemizedBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'left', style: { bold: true } }),
+    block({ id: 'company-contact', type: 'company-contact', order: 1, align: 'left', style: { fontSize: 'sm' }, dividerBelow: true }),
+    block({ id: 'doc-title', type: 'doc-title', order: 2, align: 'left', spacing: 'small' }),
+    block({ id: 'doc-number', type: 'doc-number', order: 3, align: 'left', docNumberLabel: 'Receipt No.' }),
+    block({ id: 'doc-date', type: 'doc-date', order: 4, align: 'left' }),
+    block({ id: 'guest-details', type: 'guest-details', order: 5, heading: 'Guest', border: 'none' }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 6, lineItemsDisplay: 'table', columns: ['qty', 'unitPrice'] }),
+    block({ id: 'totals-summary', type: 'totals-summary', order: 7, totalsDisplay: 'table' }),
+    block({ id: 'notes-text', type: 'notes-text', order: 8, align: 'left', style: { fontSize: 'sm' } }),
+  ];
+}
+
+/** 80mm slip with a dotted leader from each dish to its amount. */
+function thermalDottedBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center', style: { fontSize: 'sm' }, dividerBelow: true }),
+    block({ id: 'doc-title', type: 'doc-title', order: 2, align: 'center', spacing: 'small' }),
+    block({ id: 'meta', type: 'container', order: 3, direction: 'column', gap: 'none', align: 'center', dividerBelow: true, children: [
+      block({ id: 'doc-number', type: 'doc-number', order: 0, align: 'center', style: { fontSize: 'sm' } }),
+      block({ id: 'doc-date', type: 'doc-date', order: 1, align: 'center', style: { fontSize: 'sm' } }),
+    ] }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 4, lineItemsDisplay: 'list' }),
+    block({ id: 'totals-summary', type: 'totals-summary', order: 5, totalsDisplay: 'compact-taxes', showAmountInWords: true }),
+    block({ id: 'thank-you', type: 'custom-text', order: 6, align: 'center', style: { bold: true }, text: 'See you again.' }),
+  ];
+}
+
+/** 80mm slip with the red, gold, and green bands across the header. */
+function thermalGhanaBlocks(): BlockConfig[] {
+  return [
+    block({
+      id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { bold: true },
+      background: '#CE1126', backgroundTextColor: '#ffffff',
+    }),
+    block({
+      id: 'doc-title', type: 'doc-title', order: 1, align: 'center', style: { bold: true },
+      background: '#FCD116', backgroundTextColor: '#1c1917',
+    }),
+    block({
+      id: 'company-address', type: 'company-address', order: 2, align: 'center', style: { fontSize: 'sm' },
+      background: '#006B3F', backgroundTextColor: '#ffffff', dividerBelow: true,
+    }),
+    block({ id: 'doc-number', type: 'doc-number', order: 3, align: 'center', spacing: 'small' }),
+    block({ id: 'doc-date', type: 'doc-date', order: 4, align: 'center', dividerBelow: true }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 5, lineItemsDisplay: 'simple' }),
+    block({ id: 'totals-summary', type: 'totals-summary', order: 6, totalsDisplay: 'compact-taxes' }),
+    block({ id: 'thank-you', type: 'custom-text', order: 7, align: 'center', style: { bold: true }, text: 'Medaase. Thank you for dining with us.' }),
+  ];
+}
+
+/** Shortest 80mm slip: name, items, total. Uses the least paper. */
+function thermalCompactBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { bold: true } }),
+    block({ id: 'doc-number', type: 'doc-number', order: 1, align: 'center', style: { fontSize: 'sm' } }),
+    block({ id: 'doc-date', type: 'doc-date', order: 2, align: 'center', style: { fontSize: 'sm' }, dividerBelow: true }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 3, lineItemsDisplay: 'simple' }),
+    block({ id: 'totals-grandtotal', type: 'totals-grandtotal', order: 4, align: 'center', style: { bold: true }, dividerBelow: true }),
+    block({ id: 'thank-you', type: 'custom-text', order: 5, align: 'center', style: { fontSize: 'sm' }, text: 'Thank you.' }),
+  ];
+}
+
 /**
  * Warm sign-off receipt — green accent, a big faint "PAID" watermark instead
  * of the document-type text, and a personal thank-you line. For the guest's
  * last touchpoint at checkout rather than a plain accounting record.
  */
+function diningThankYouBlocks(): BlockConfig[] {
+  return thankYouReceiptBlocks('Guest').map((blockConfig) =>
+    blockConfig.id === 'thank-you-note'
+      ? { ...blockConfig, text: 'Thank you for dining with us.' }
+      : blockConfig,
+  );
+}
+
 function thankYouReceiptBlocks(recipientHeading: string): BlockConfig[] {
   return [
     block({ id: 'logo', type: 'logo', order: 0, align: 'center' }),
@@ -1124,6 +1231,17 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-registration-card-welcome', 'registration-card', 'Wumpini', welcomeCardBlocks()),
     template('builtin-registration-card-compact', 'registration-card', 'Compact (small front-desk printout)', compactRegistrationCardBlocks(), { pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm' }),
     template('builtin-registration-card-formal', 'registration-card', 'Formal (with policy terms)', formalRegistrationCardBlocks(), { fontFamily: 'serif', borderWidth: 'thick' }),
+  ],
+  'fb-receipt': [
+    template('builtin-fb-receipt-thermal', 'fb-receipt', 'Thermal / POS Slip (80mm)', thermalReceiptBlocks('Guest'), { fontFamily: 'mono', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm' }),
+    template('builtin-fb-receipt-thermal-banner', 'fb-receipt', 'Thermal · Banner', thermalBannerBlocks(), { fontFamily: 'sans', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm', primaryColor: '#006B3F', borderColor: '#006B3F' }),
+    template('builtin-fb-receipt-thermal-total', 'fb-receipt', 'Thermal · Big total', thermalBigTotalBlocks(), { fontFamily: 'sans', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'md', primaryColor: '#111111', borderColor: '#111111', corners: 'square' }),
+    template('builtin-fb-receipt-thermal-itemized', 'fb-receipt', 'Thermal · Itemized', thermalItemizedBlocks(), { fontFamily: 'sans', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm', corners: 'square', borderWidth: 'thin' }),
+    template('builtin-fb-receipt-thermal-dotted', 'fb-receipt', 'Thermal · Dotted', thermalDottedBlocks(), { fontFamily: 'serif', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm' }),
+    template('builtin-fb-receipt-thermal-compact', 'fb-receipt', 'Thermal · Compact', thermalCompactBlocks(), { fontFamily: 'mono', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm', corners: 'square' }),
+    template('builtin-fb-receipt-thermal-ghana', 'fb-receipt', 'Thermal · Ghana', thermalGhanaBlocks(), { fontFamily: 'sans', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm', primaryColor: '#006B3F', borderColor: '#CE1126' }),
+    template('builtin-fb-receipt-standard', 'fb-receipt', 'Standard', standardBlocks('Guest')),
+    template('builtin-fb-receipt-thank-you', 'fb-receipt', 'Thank You', diningThankYouBlocks(), { showWatermark: true, watermarkText: 'PAID', primaryColor: '#0A7D34' }),
   ],
   payslip: [
     template('builtin-payslip-grid', 'payslip', 'Grid (Earnings / Deductions side by side)', payslipGridBlocks()),

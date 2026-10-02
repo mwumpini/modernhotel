@@ -21,7 +21,7 @@ const MODULES: { key: keyof ModuleSettings; label: string; description: string }
 export default function ModulesPanel() {
   const modules = useSettingsStore((s) => s.moduleSettings);
   const updateModuleSettings = useSettingsStore((s) => s.updateModuleSettings);
-  const canManage = useSettingsStore((s) => s.hasPermission('settings.edit') || s.hasPermission('settings.manage-security-policy'));
+  const canManage = useSettingsStore((s) => s.hasPermission('settings.edit') || s.hasPermission('settings.manage-modules') || s.hasPermission('settings.manage-security-policy'));
 
   return (
     <div className="mt-2 max-w-3xl space-y-2">

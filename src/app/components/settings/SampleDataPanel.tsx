@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Button, Card, CardBody, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Spinner } from '@heroui/react';
+import { Button, Card, CardBody, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Spinner } from '@heroui/react';
 import { useSettingsStore } from '../../lib/settings/store';
 import { usePpeRegisterStore } from '../../lib/accounting/ppeStore';
 import { notifyError, notifySuccess } from '../../lib/notifications/notify';
@@ -26,11 +26,66 @@ const INCLUDED: Array<[string, string]> = [
   ['Security', '4 guards, checkpoints and patrol routes, who is on duty now, patrols (one interrupted), incidents from minor to a live fire alarm, visitors (one overdue) and compliance deadlines (one overdue).'],
 ];
 
+type TestDataCounts = { transactions: Record<string, number>; profiles: Record<string, number>; total: number };
+
+/** Plain names for the groups shown before clearing. */
+const COUNT_GROUPS: Array<[string, string[]]> = [
+  ['Stays, folios and payments', ['reservation', 'guestFolio', 'folio', 'folioLine', 'payment', 'cashierShift', 'cashTransfer', 'nightAuditLog', 'serviceRequest']],
+  ['Restaurant orders and table bookings', ['fBOrder', 'fBOrderItem', 'tableReservation']],
+  ['Accounting entries, invoices and bank lines', ['journalEntry', 'journalEntryLine', 'accountingInvoice', 'accountingInvoiceLine', 'accountingPayment', 'bankTransaction', 'bankReconciliation', 'reconcilingItem', 'expenseVoucher', 'expenseLine', 'pettyCashTxn', 'ppeAsset']],
+  ['Stock movements, orders and counts', ['inventoryTransaction', 'purchaseOrder', 'purchaseOrderItem', 'requisition', 'requisitionItem', 'goodsReceiptNote', 'gRNItem', 'stockTransfer', 'stockTransferItem', 'stockCount', 'stockCountItem', 'goodsIssue', 'goodsIssueItem', 'qualityCheck', 'qualityCheckItem', 'supplierInvoice', 'supplierInvoiceItem', 'inventoryAlertAcknowledgment']],
+  ['HR and payroll records', ['hrPayrollPeriod', 'hrPayrollRecord', 'hrLeaveRequest', 'hrTrainingRecord', 'hrAttendance', 'hrShift', 'hrEmployeeBenefits', 'hrPerformanceReview', 'hrPerformanceLog', 'hrEmployeeChange', 'hrOnboardingChecklist', 'hrStaffDebt', 'hrStaffDebtRepayment']],
+  ['Housekeeping, events, security and compliance reports', ['housekeepingTask', 'roomStatusLog', 'maintenanceRequest', 'eventBooking', 'securityIncident', 'securityVisitor', 'securityPatrolLog', 'securityShift', 'complianceReport']],
+];
+const PROFILE_LABELS: Record<string, string> = {
+  guest: 'guests', company: 'company clients', fBCustomer: 'restaurant customers',
+  businessPartner: 'business partners', supplier: 'suppliers', hrEmployee: 'employees',
+};
+
 export default function SampleDataPanel() {
   const canManage = useSettingsStore((s) => s.hasPermission('settings.manage-sample-data'));
+  const isAdmin = useSettingsStore((s) => (s.sessionRoleId ?? s.currentUser?.roleId) === 'admin');
   const [status, setStatus] = useState<Status | null>(null);
-  const [busy, setBusy] = useState<'load' | 'remove' | null>(null);
+  const [busy, setBusy] = useState<'load' | 'remove' | 'clear' | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [clearCounts, setClearCounts] = useState<TestDataCounts | null>(null);
+  const [clearTyped, setClearTyped] = useState('');
+
+  const openClear = async () => {
+    setClearTyped('');
+    try {
+      const res = await fetch('/api/settings/test-data', { cache: 'no-store' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) { notifyError(body?.error || 'Could not count the test data.', 'Clear test data'); return; }
+      setClearCounts(body);
+    } catch {
+      notifyError('Could not reach the server. Please try again.', 'Clear test data');
+    }
+  };
+
+  const runClear = async () => {
+    setBusy('clear');
+    try {
+      const res = await fetch('/api/settings/test-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: clearTyped.trim() }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) { notifyError(body?.error || 'Clearing failed. Nothing was removed.', 'Test data not cleared'); return; }
+      const extra = [
+        body.sampleReloaded ? 'Sample data was loaded again, dated around today.' : '',
+        ...(body.notes || []),
+      ].filter(Boolean).join(' ');
+      notifySuccess(`Test data cleared. ${extra} Reloading…`.trim(), 'Test data cleared');
+      setClearCounts(null);
+      reloadHere();
+    } catch {
+      notifyError('Could not reach the server. Please try again.', 'Clear test data');
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -141,6 +196,62 @@ export default function SampleDataPanel() {
           {busy && <div className="flex items-center gap-2 text-sm text-gray-600"><Spinner size="sm" /> Working — this can take a few seconds…</div>}
         </CardBody>
       </Card>
+
+      <Card className="border border-red-200 bg-red-50/40 shadow-none">
+        <CardBody className="space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="max-w-2xl">
+              <p className="text-sm font-semibold text-red-800">Clear test data</p>
+              <p className="mt-1 text-xs text-gray-700">
+                Removes everything testers entered — stays, folios, payments, invoices, ledger entries, restaurant orders, stock movements,
+                HR and security records — plus guests, clients, suppliers and employees that testers created. Settings, staff logins,
+                rooms and rates, menu, stock items, chart of accounts, taxes, compliance rules and document designs stay, and so does the
+                audit log. Stock on hand, cash and bank balances go back to their starting figures. If sample data was loaded, it is
+                loaded again fresh, dated around today.
+              </p>
+            </div>
+            <Button color="danger" variant="flat" isDisabled={!canManage || !isAdmin || busy !== null} onPress={openClear}>
+              Clear test data…
+            </Button>
+          </div>
+          {(!canManage || !isAdmin) && <p className="text-xs text-amber-700">Only an administrator can clear test data.</p>}
+        </CardBody>
+      </Card>
+
+      <Modal isOpen={!!clearCounts} onOpenChange={(open) => { if (!open) setClearCounts(null); }} size="lg" scrollBehavior="inside">
+        <ModalContent>
+          <ModalHeader>Clear all test data?</ModalHeader>
+          <ModalBody className="space-y-3 text-sm text-gray-700">
+            {clearCounts && (
+              <>
+                <p>This permanently deletes {clearCounts.total.toLocaleString()} records:</p>
+                <ul className="space-y-1">
+                  {COUNT_GROUPS.map(([label, keys]) => {
+                    const n = keys.reduce((s, k) => s + (clearCounts.transactions[k] || 0), 0);
+                    return n > 0 ? <li key={label}>• {label}: <strong>{n.toLocaleString()}</strong></li> : null;
+                  })}
+                  {Object.entries(clearCounts.profiles).filter(([, n]) => n > 0).map(([k, n]) => (
+                    <li key={k}>• Test {PROFILE_LABELS[k] || k}: <strong>{n.toLocaleString()}</strong></li>
+                  ))}
+                </ul>
+                <p className="font-medium text-red-700">This can’t be undone. Take a backup of the database first if you may need any of it.</p>
+                <Input
+                  label="Type CLEAR to confirm"
+                  value={clearTyped}
+                  onValueChange={setClearTyped}
+                  autoCapitalize="characters"
+                />
+              </>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={() => setClearCounts(null)}>Keep as is</Button>
+            <Button color="danger" isDisabled={clearTyped.trim() !== 'CLEAR'} isLoading={busy === 'clear'} onPress={runClear}>
+              Clear test data
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
 
       <Modal isOpen={confirmRemove} onOpenChange={setConfirmRemove} size="lg">
         <ModalContent>

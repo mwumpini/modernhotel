@@ -118,6 +118,8 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
     const [duplicateList, setDuplicateList] = useState<Array<{primaryId:string;dupId:string;reason:string}>>([]);
     const { isOpen, onOpen, onClose } = useDisclosure();
     const { isOpen: isNewOpen, onOpen: onNewOpen, onClose: onNewClose } = useDisclosure();
+    const canManageGuests = useSettingsStore((s) => s.hasPermission('frontdesk.manage-clients'));
+    const canManageCompanies = useSettingsStore((s) => s.hasPermission('frontdesk.manage-company-clients'));
     const [serviceName, setServiceName] = useState('');
     const [serviceType, setServiceType] = useState('');
     const [rate, setRate] = useState('');
@@ -422,7 +424,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 
             setNewClient(prev => {
                 const next = { ...prev };
-                if (t === 'corporate') {
+                if ((t === 'corporate' && canManageCompanies) || (!canManageGuests && canManageCompanies)) {
                     next.type = 'corporate';
                     next.isCorporate = true;
                     if (nameParam) next.companyName = nameParam;
@@ -600,6 +602,9 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 
     const handleCreateClient = () => {
         // Simple validation
+        if (newClient.type === 'corporate' ? !canManageCompanies : !canManageGuests) {
+            return;
+        }
         if (newClient.type === 'individual' && (!newClient.firstName || !newClient.lastName)) {
             return;
         }
@@ -1187,7 +1192,16 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                 setDuplicateList(dups);
                                 setShowDuplicates(true);
                             }}>Find Duplicates</Button>
-							<Button size="sm" color="primary" variant="flat" onPress={()=>{ setEditClientId(null); setNewClientStep('basic'); onNewOpen(); }}>New Client</Button>
+							{(canManageGuests || canManageCompanies) && (
+							<Button size="sm" color="primary" variant="flat" onPress={()=>{
+								setEditClientId(null);
+								setNewClientStep('basic');
+								if (canManageCompanies && !canManageGuests) {
+									setNewClient(prev => ({ ...prev, type: 'corporate', isCorporate: true }));
+								}
+								onNewOpen();
+							}}>{canManageCompanies && !canManageGuests ? 'New Company' : 'New Client'}</Button>
+							)}
                         </div>
                     </div>
 
@@ -1643,6 +1657,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                     <ModalBody className="max-h-[75vh] overflow-y-auto">
                         {newClientStep === 'basic' ? (
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                {canManageGuests && canManageCompanies && (
                                 <div className="md:col-span-3 flex justify-end">
                                     <Switch
                                         isSelected={newClient.type === 'corporate'}
@@ -1655,6 +1670,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                         Corporate Client
                                     </Switch>
                                 </div>
+                                )}
 
                                 {newClient.type === 'individual' && (
                                     <>

@@ -53,7 +53,8 @@ export default function SidebarSticky() {
 
   return (
     <div className="mt-6">
-      <p className="mb-2 text-xs font-semibold text-ghana-black">Notes</p>
+      {/* Hex text colors stay dark on cream even when dark theme remaps text-ghana-black / gray utilities. */}
+      <p className="mb-2 text-xs font-semibold text-[#1a1200]">Notes</p>
       <textarea
         value={draft}
         rows={2}
@@ -61,7 +62,7 @@ export default function SidebarSticky() {
         disabled={full}
         placeholder={full ? 'Clear a note to add another' : 'A reminder for yourself…'}
         aria-label="New note"
-        className="w-full resize-none rounded-md border border-amber-200 bg-[#fff8dc] px-2 py-1.5 text-xs text-ghana-black outline-none placeholder:text-amber-900/40 focus:border-amber-400 disabled:opacity-60"
+        className="w-full resize-none rounded-md border border-amber-300 bg-[#fff8dc] px-2 py-1.5 text-xs text-[#1a1200] outline-none placeholder:text-[#5c4a1a]/70 focus:border-amber-500 disabled:opacity-60"
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'Enter' && !event.shiftKey) {
@@ -71,12 +72,12 @@ export default function SidebarSticky() {
         }}
       />
       <div className="mt-1.5 flex items-center justify-between gap-2">
-        <span className="text-[10px] text-gray-400">{notes.length}/{MAX_NOTES}</span>
+        <span className="text-[10px] text-[#5c4a1a]/75">{notes.length}/{MAX_NOTES}</span>
         <button
           type="button"
           onClick={add}
           disabled={full || !draft.trim()}
-          className="rounded-md bg-amber-200 px-2 py-0.5 text-[11px] font-semibold text-ghana-black disabled:opacity-40"
+          className="rounded-md bg-amber-300 px-2 py-0.5 text-[11px] font-semibold text-[#1a1200] disabled:opacity-40"
         >
           Add
         </button>
@@ -84,13 +85,13 @@ export default function SidebarSticky() {
       {notes.length > 0 && (
         <ul className="mt-2 space-y-1.5">
           {notes.map((note) => (
-            <li key={note.id} className="flex items-start gap-1 rounded-md border border-amber-200 bg-[#fff4c2] px-2 py-1.5 shadow-sm">
-              <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-xs text-ghana-black">{note.text}</p>
+            <li key={note.id} className="flex items-start gap-1 rounded-md border border-amber-300 bg-[#fff4c2] px-2 py-1.5 shadow-sm">
+              <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-xs text-[#1a1200]">{note.text}</p>
               <button
                 type="button"
                 aria-label="Clear note"
                 onClick={() => setNotes((prev) => prev.filter((item) => item.id !== note.id))}
-                className="shrink-0 text-xs leading-none text-amber-900/50 hover:text-ghana-black"
+                className="shrink-0 text-xs leading-none text-[#5c4a1a]/70 hover:text-[#1a1200]"
               >
                 ✕
               </button>

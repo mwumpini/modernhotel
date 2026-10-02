@@ -27,6 +27,8 @@ import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/d
 import { SummaryCollapsedProvider, useSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
 import { SummaryToggle } from './dashboard/SummaryToggle';
 import KitchenReportsAnalysis from './KitchenReportsAnalysis';
+import ReadyNowBoard from './fb/ReadyNowBoard';
+import { useSettingsStore } from '../lib/settings/store';
 
 type SuppliesView = 'inventory' | 'stock-count' | 'requisitions';
 const SUPPLIES_VIEWS: { key: SuppliesView; label: string }[] = [
@@ -134,6 +136,10 @@ export default function FoodBeverageKitchen({
   initialTab?: string;
 } = {}) {
   const [selectedTab, setSelectedTab] = useState(initialTab || 'kds');
+  const canSeeReadyBoard = useSettingsStore((s) =>
+    s.hasPermission('kitchen.view-ready-board') || s.hasPermission('kitchen.manage-ready-board'),
+  );
+  const kitchenTab = selectedTab === 'ready' && !canSeeReadyBoard ? 'kds' : selectedTab;
   const { collapsed: summaryCollapsed, toggle: toggleSummary } = useSummaryCollapsed('kitchen.summaryCollapsed');
   const [suppliesView, setSuppliesView] = useState<SuppliesView>('inventory');
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.kitchen', KITCHEN_DASHBOARD_SECTIONS);
@@ -249,13 +255,14 @@ export default function FoodBeverageKitchen({
     }
   };
 
-  const servedInPeriod = liveOrders.filter(
+  const kitchenOrders = liveOrders.filter((order) => order.items.some((item) => item.route !== 'bar'));
+  const servedInPeriod = kitchenOrders.filter(
     (o) =>
       (o.status === 'served' || o.status === 'billed') &&
       isInPeriod(o.servedAt || o.createdAt, deskPeriod.period, deskPeriod.todayISO),
   );
-  const stats = kitchenStats(liveOrders, servedInPeriod);
-  const kitchenStations: LiveStationView[] = buildLiveStationBoard(liveOrders);
+  const stats = kitchenStats(kitchenOrders, servedInPeriod);
+  const kitchenStations: LiveStationView[] = buildLiveStationBoard(kitchenOrders);
   const avgEfficiency =
     kitchenStations.length > 0
       ? Math.round(kitchenStations.reduce((s, st) => s + st.efficiency, 0) / kitchenStations.length)
@@ -628,7 +635,7 @@ export default function FoodBeverageKitchen({
         )}
         <CardBody className="p-0">
           <Tabs
-            selectedKey={selectedTab}
+            selectedKey={kitchenTab}
             onSelectionChange={(key) => setSelectedTab(key as string)}
             className="w-full"
             size="sm"
@@ -637,6 +644,7 @@ export default function FoodBeverageKitchen({
             aria-label="Kitchen operations"
           >
             <Tab key="kds" title="🍳 Kitchen Display" />
+            {canSeeReadyBoard && <Tab key="ready" title="🍽️ Ready now" />}
             <Tab key="log" title="🧾 Kitchen Operations Log" />
             <Tab key="stations" title="🔥 Kitchen Stations" />
             <Tab key="supplies" title="📦 Supplies" />
@@ -646,11 +654,13 @@ export default function FoodBeverageKitchen({
           </Tabs>
 
           <div className={deskBookTabPanelClassName}>
-            {selectedTab === 'kds' && (
+            {kitchenTab === 'kds' && (
               <div className="space-y-4">
                 <KitchenDisplaySystem embedded />
               </div>
             )}
+
+            {kitchenTab === 'ready' && <ReadyNowBoard />}
 
             {selectedTab === 'log' && <KitchenOpsLog orders={liveOrders} />}
 

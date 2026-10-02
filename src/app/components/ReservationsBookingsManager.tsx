@@ -1486,7 +1486,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     readyNow = false, // checking in now: the room must also be empty today (same rule as the Desk)
   ) => {
     if (roomTypeId === '' || !arrival || !departure || departure <= arrival) return [] as string[];
-    const vacantNow = readyNow ? new Set(housekeepingStore.getRoomsByStatus('vacant').map((r) => r.roomNumber)) : null;
+    const vacantNow = readyNow ? new Set(housekeepingStore.getRoomsReadyToAssign().map((r) => r.roomNumber)) : null;
     const start = new Date(arrival).getTime();
     const end = new Date(departure).getTime();
     const takenHere = new Set(

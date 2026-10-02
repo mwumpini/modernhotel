@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { PpeAsset, PpeCategory } from './ppe/types';
-import { DEFAULT_PPE_CATEGORIES, SAMPLE_PPE_ASSETS } from './ppe/categories';
+import { DEFAULT_PPE_CATEGORIES } from './ppe/categories';
 import { defaultReportDateStr, assetTotalCost } from './ppe/calculations';
 import { validateAsset, validateCategory } from './ppe/validation';
 import { DEFAULT_ORG_ID } from './ppe/categories';
@@ -266,9 +266,11 @@ export const usePpeRegisterStore = create<PpeRegisterState>()(
 
       initializePpeRegister: () => {
         const state = get();
+        // Categories are set-up and ship with defaults. Assets are a hotel's own records: built-in demo
+        // assets must never be merged in (they were then uploaded to any hotel whose register was empty).
+        // Sample assets come from Settings → Sample Data instead.
         set({
           categories: mergeById(DEFAULT_PPE_CATEGORIES, state.categories),
-          assets: mergeById(SAMPLE_PPE_ASSETS as PpeAsset[], state.assets),
         });
       },
 
@@ -297,11 +299,8 @@ export const usePpeRegisterStore = create<PpeRegisterState>()(
           const res = await fetch('/api/accounting/ppe-assets', { headers, cache: 'no-store' });
           if (res.ok) {
             const data = await res.json();
-            if (Array.isArray(data.assets) && data.assets.length > 0) {
-              set({ assets: data.assets });
-            } else {
-              get().assets.forEach((a) => syncAssetToApi(a));
-            }
+            // The server is the register. Empty means empty — this browser's old copy is not uploaded.
+            if (Array.isArray(data.assets)) set({ assets: data.assets });
           }
         } catch (e) {
           console.warn('[PPE] Failed to hydrate assets from server:', e);

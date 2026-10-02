@@ -27,7 +27,8 @@ import {
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { logAudit } from '../lib/analytics/auditLogStore';
 import { ordersStore, FBOrder } from '../lib/fb/ordersStore';
-import { buildReceiptHtml, printReceipt, buildKOTHtml, printHtml, previewReceipt } from '../lib/print/print';
+import { openHtmlPrintWindow } from '../lib/print/engine';
+import { printReceipt, buildKOTHtml, printHtml, renderFbReceipt, previewReceipt } from '../lib/print/print';
 import { storesIssueBus } from '../lib/fb/stores';
 import { kitchenOpsStore } from '../lib/fb/kitchenOpsStore';
 import { storesStore } from '../lib/stores/store';
@@ -39,6 +40,7 @@ import { computeSalesTaxTotal } from '../lib/tax/engine';
 import { useSettingsStore } from '../lib/settings/store';
 import { managerPinMatches } from '../lib/settings/managerPin';
 import { notifyError } from '../lib/notifications/notify';
+import { isOnReadyBoard } from '../lib/fb/readyBoard';
 import { confirmDelete, confirmVoid } from './DangerConfirm';
 import { issueOrderIdentity, lineTicket, parseTicketTag } from '../lib/fb/ticketTag';
 import { useSession } from 'next-auth/react';
@@ -71,6 +73,9 @@ interface MenuItem {
   /** A photo was uploaded in Menu & Inventory (shown only when the hotel turns menu photos on). */
   hasImage?: boolean;
   imageVersion?: number;
+  readyNow?: boolean;
+  readyForDate?: string | null;
+  readyPortions?: number | null;
 }
 
 interface CartItem extends MenuItem {
@@ -148,7 +153,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
       setTillBusy(false);
     }
   };
-  const [waiterId, setWaiterId] = useState('W1');
+  const [waiterId, setWaiterId] = useState('');
   // Who is taking orders on this terminal right now. The signed-in account is trusted as it is;
   // anyone else switches in with their own PIN, and the terminal locks again after each order.
   const [verifiedWaiter, setVerifiedWaiter] = useState<{ id: string; name: string } | null>(null);
@@ -173,8 +178,6 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
       .catch(() => { /* keep it off */ });
     return () => { cancelled = true; };
   }, []);
-  const lockAfterOrder = () => { if (waiterSwitchOn) setVerifiedWaiter(null); };
-  const needsWaiter = waiterSwitchOn && !verifiedWaiter;
   const kitchenTerminalOn = useSettingsStore((s) => s.moduleSettings.kitchenTerminal !== false);
   const [search, setSearch] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -196,11 +199,10 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
   } | null>(null);
   // Tenant info loaded from API
   const [hotelName, setHotelName] = useState('Hotel');
-  const [waiters, setWaiters] = useState<Waiter[]>([
-    { id: 'W1', name: 'Ama' },
-    { id: 'W2', name: 'Kwame' },
-    { id: 'W3', name: 'Efua' },
-  ]);
+  const [waiters, setWaiters] = useState<Waiter[]>([]);
+  const [waitersReady, setWaitersReady] = useState(false);
+  const cashierIsServer = waiters.some((w) => w.id === cashierUserId);
+  const needsWaiter = waitersReady && !verifiedWaiter && (waiterSwitchOn || !cashierIsServer);
 
   const paymentModal = useDisclosure();
   const orderDetailModal = useDisclosure();
@@ -216,6 +218,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
   const [settleRoomSearch, setSettleRoomSearch] = useState<string>('');
   const [settleSelectedRoom, setSettleSelectedRoom] = useState<{ roomId: string; guestId: string; guestName: string } | null>(null);
   const [orderMode, setOrderMode] = useState<'Dine-in' | 'Takeaway'>('Dine-in');
+  const [quickService, setQuickService] = useState(false);
   const [packagingFee, setPackagingFee] = useState<number>(0);
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
   const cartRef = React.useRef<HTMLDivElement | null>(null);
@@ -412,6 +415,9 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
           hasImage: !!it.hasImage,
           imageVersion: Number(it.imageVersion || 0),
           route: (it.route || (it.category?.toLowerCase().includes('drink') || it.category?.toLowerCase().includes('bever') ? 'bar' : 'kitchen')) as 'kitchen' | 'bar',
+          readyNow: !!it.readyNow,
+          readyForDate: it.readyForDate || null,
+          readyPortions: it.readyPortions == null ? null : Number(it.readyPortions),
         }));
         if (mapped.length > 0) {
           setMenu(mapped);
@@ -426,7 +432,8 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
       }
     }
     fetchMenu();
-    return () => { cancelled = true; };
+    const timer = window.setInterval(fetchMenu, 20000);
+    return () => { cancelled = true; window.clearInterval(timer); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -435,28 +442,33 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     let cancelled = false;
     async function fetchTenantInfo() {
       try {
-        const res = await fetch('/api/tenant', { headers: fbTenantHeaders() });
-        if (!res.ok || cancelled) return;
+        const res = await fetch('/api/tenant?assigned=fb', { headers: fbTenantHeaders() });
+        if (cancelled) return;
+        if (!res.ok) {
+          setWaitersReady(true);
+          return;
+        }
         const data = await res.json();
         if (data.hotelName) setHotelName(data.hotelName);
-        if (Array.isArray(data.staff) && data.staff.length > 0) {
-          setWaiters(data.staff.map((s: any) => ({ id: s.id, name: s.name, hasPin: !!s.hasPin })));
-          // Start as whoever is signed in on this terminal; otherwise nobody until someone switches in.
-          const me = cashierUserId ? data.staff.find((s: any) => s.id === cashierUserId) : null;
-          if (me) {
-            setWaiterId(me.id);
-            setVerifiedWaiter({ id: me.id, name: me.name });
-          } else {
-            setWaiterId(data.staff[0].id);
-          }
+        const staff = Array.isArray(data.staff) ? data.staff : [];
+        setWaiters(staff.map((s: any) => ({ id: s.id, name: s.name, hasPin: !!s.hasPin })));
+        // A manager signed in on the terminal is not a waiter. Only someone assigned to the floor starts as the server.
+        const me = cashierUserId ? staff.find((s: any) => s.id === cashierUserId) : null;
+        if (me) {
+          setWaiterId(me.id);
+          setVerifiedWaiter({ id: me.id, name: me.name });
+        } else {
+          setWaiterId('');
+          setVerifiedWaiter(null);
         }
+        setWaitersReady(true);
       } catch {
-        // Keep default fallback values
+        setWaitersReady(true);
       }
     }
     fetchTenantInfo();
     return () => { cancelled = true; };
-  }, []);
+  }, [cashierUserId]);
 
   type AliasesMap = Record<string, string[]>; // menuId -> aliases
   const [aliases] = useState<AliasesMap>(() => {
@@ -485,9 +497,13 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     return aliasTokens(m).some((token) => token.toLowerCase().includes(qs));
   };
 
+  const saleMenu = useMemo(
+    () => (quickService ? menu.filter((m) => isOnReadyBoard(m)) : menu),
+    [menu, quickService],
+  );
   const visibleMenu = useMemo(
-    () => menu.filter((m) => aliasMatches(m, search)),
-    [menu, search, aliases],
+    () => saleMenu.filter((m) => aliasMatches(m, search)),
+    [saleMenu, search, aliases],
   );
 
 
@@ -667,6 +683,10 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
   };
 
   const addToCart = (item: MenuItem) => {
+    if (quickService && !isOnReadyBoard(item)) {
+      notifyError(`${item.name} is not on the kitchen ready board, so it cannot go on a quick order.`, 'Not ready now');
+      return;
+    }
     setCart(prev => {
       const existing = prev.find(ci => ci.id === item.id && ci.note === undefined);
       if (existing) {
@@ -752,7 +772,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     // ── POST to database API (source of truth for KDS) ─────────────────────
     let apiId: string | null = null;
     const stamped = issueOrderIdentity(itemsWithOrderDiscount, orderNotes);
-    const orderNumber = stamped.orderNumber;
+    let orderNumber = stamped.orderNumber;
     try {
       const data = await createFbOrder({
         orderNumber,
@@ -768,8 +788,10 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
         discountAmount: orderDiscountAmount,
         serviceCharge: serviceChargeAmount,
         priority,
+        quickService,
         items: itemsWithOrderDiscount.map(i => ({
           menuItemId: (i as any).code ? undefined : i.id,
+          catalogId: i.id,
           name: i.name,
           category: i.category,
           quantity: i.qty,
@@ -779,6 +801,10 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
         })),
       });
       apiId = data.order?.id ?? null;
+      if (data.order?.orderNumber) {
+        orderNumber = data.order.orderNumber;
+        useSettingsStore.getState().raiseModuleNumberFloor('foodBeverage', 'order', [orderNumber]);
+      }
       if (apiId && data.order) {
         setSentOrderData({
           id: apiId,
@@ -789,6 +815,11 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
       }
     } catch (err: any) {
       console.error('[FBPOS] sendOrder API error:', err);
+      if (quickService && /ready board/i.test(err?.message || '')) {
+        alert(err.message);
+        setIsSending(false);
+        return;
+      }
       alert(
         `Order could not reach the kitchen display (${err?.message || 'network error'}). ` +
         'It was saved locally in POS only — open Kitchen Display after fixing the connection.'
@@ -832,7 +863,6 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     setOrderNotes('');
     setPriority('high');
     setIsSending(false);
-    lockAfterOrder();
   };
 
   const openPayment = () => paymentModal.onOpen();
@@ -892,8 +922,10 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
             covers: 1,
             discountAmount: orderDiscountAmount,
             serviceCharge: serviceChargeAmount,
+            quickService,
             items: itemsWithOrderDiscount.map(i => ({
               menuItemId: i.id,
+              catalogId: i.id,
               name: i.name,
               category: i.category,
               quantity: i.qty,
@@ -903,11 +935,19 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
             })),
           });
           apiOrder = data.order;
+          if (apiOrder?.orderNumber) {
+            useSettingsStore.getState().raiseModuleNumberFloor('foodBeverage', 'order', [apiOrder.orderNumber]);
+          }
           finalSubtotal = Number(apiOrder.subtotal);
           totalTax = Number(apiOrder.taxAmount);
           total = Number(apiOrder.total);
         } catch (err) {
           console.warn('[FBPOS] handlePayment API error:', err);
+          if (quickService && /ready board/i.test((err as Error)?.message || '')) {
+            alert((err as Error).message);
+            setIsProcessingPayment(false);
+            return;
+          }
           // Order creation failed — fall back to the real configured stacked tax rate
           // (VAT/NHIL/GETFund/Tourism from Settings → Tax Rate Builder) instead of a
           // hardcoded 21%, which was both wrong (the real Ghana stack is 21.9%) and stale
@@ -982,7 +1022,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
         guestName: guestDisplayName,
         roomNumber: customerType === 'In-house' ? roomNumber : undefined,
         total,
-        orderNumber: expressStamp?.orderNumber,
+        orderNumber: apiOrder?.orderNumber || expressStamp?.orderNumber,
       } as any;
       const existingBilled = ordersStore.all().find(o => o.id === newId);
       if (existingBilled) {
@@ -1252,6 +1292,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
       if (e.ctrlKey && e.key.toLowerCase() === 'enter') {
         e.preventDefault();
         if (useSettingsStore.getState().moduleSettings.kitchenTerminal === false) return;
+        if (cart.length > 0 && !editingOrderId && cart.every((item) => item.route === 'bar')) return;
         sendOrder();
       }
       if (e.ctrlKey && e.key.toLowerCase() === 'p') {
@@ -1265,7 +1306,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [sendOrder, openPayment, onClose]);
+  }, [sendOrder, openPayment, onClose, cart, editingOrderId]);
 
   // Order panel: "Details" folds away once the order is set up; the second tab replaces the old
   // transactions table at the bottom of this screen (the full list is the dashboard's Transactions tab).
@@ -1333,8 +1374,8 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     waiterSwitchModal.onClose();
   };
   const chooseWaiter = (w: Waiter) => {
-    // The signed-in account already proved who it is.
-    if (w.id === cashierUserId) return becomeWaiter(w);
+    // Already on this terminal, the signed-in cashier, or a waiter with no login: no PIN again.
+    if (w.id === verifiedWaiter?.id || w.id === cashierUserId || !w.hasPin) return becomeWaiter(w);
     setSwitchTarget(w);
     setSwitchPin('');
     setSwitchError('');
@@ -1376,6 +1417,8 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : 'Walk-in');
   const taxAmount = computeSalesTaxTotal(total);
   const cartCount = cart.reduce((n, ci) => n + ci.qty, 0);
+  const drinksOnly = cart.length > 0 && !editingOrderId && cart.every((item) => item.route === 'bar');
+  const showStationSend = kitchenTerminalOn && !drinksOnly;
 
   const sendOrUpdate = () => {
     if (needsWaiter) {
@@ -1421,22 +1464,24 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
       setEditingOrderId(null);
       clearCart();
       setOrderNotes('');
-      lockAfterOrder();
       return;
     }
     sendOrder();
   };
 
   const previewCartReceipt = () => {
-    const html = buildReceiptHtml({
+    const html = renderFbReceipt({
       hotelName,
       contact: 'Accra, Ghana',
       code: `RCPT-${Date.now().toString().slice(-6)}`,
       datetime: new Date().toLocaleString(),
+      guestName: customerType === 'In-house'
+        ? guestName
+        : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : (walkInSearchTerm.trim() || 'Walk-in')),
       items: cart.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
       subtotal,
       discount: orderDiscountAmount,
-      total,
+      total: total + taxAmount,
       table: tableNumber,
       waiter: waiters.find(w => w.id === waiterId)?.name,
     });
@@ -1661,6 +1706,14 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
               classNames={{ inputWrapper: 'h-11 bg-slate-50 border-2 border-slate-300 shadow-none' }}
             />
             <div className="mb-3 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                aria-pressed={quickService}
+                onClick={() => setQuickService((on) => !on)}
+                className={`h-10 shrink-0 rounded-xl border px-3 text-sm font-medium ${quickService ? 'border-ghana-green bg-ghana-green text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
+              >
+                Quick order
+              </button>
               {searching ? (
                 <p className="text-sm text-slate-600">Results for “{search.trim()}”</p>
               ) : (
@@ -1681,12 +1734,15 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
               )}
               {menuLoading && <span className="shrink-0 text-xs text-slate-400 animate-pulse">Loading…</span>}
             </div>
+            {quickService && (
+              <p className="mb-3 text-xs text-slate-600">Only food the kitchen marked Ready now, plus drinks. A dish that still has to be cooked stays off this order.</p>
+            )}
             {!menuLoading && menu.length === 0 && (
               <p className="text-sm text-orange-600">No menu items yet. Add them under Menu &amp; Inventory.</p>
             )}
             <div className="min-h-0 flex-1 overflow-y-auto">
               {shownMenu.length === 0 ? (
-                <p className="py-10 text-center text-sm text-slate-500">{searching ? 'No items match your search.' : 'No items here yet.'}</p>
+                <p className="py-10 text-center text-sm text-slate-500">{searching ? 'No items match your search.' : quickService ? 'Nothing is ready for a quick order. Ask the kitchen to update Ready now. Drinks show here once they are on the menu.' : 'No items here yet.'}</p>
               ) : (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-2.5">
                   {shownMenu.map(mi => (
@@ -1704,6 +1760,9 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                         )}
                         <div className={`flex flex-1 flex-col gap-0.5 p-2.5 ${showMenuImages ? '' : 'pr-10'}`}>
                           <span className="line-clamp-2 text-sm font-semibold leading-snug text-ghana-black">{mi.name}</span>
+                          {mi.route !== 'bar' && isOnReadyBoard(mi) && (
+                            <span className="text-[11px] font-medium text-emerald-700">Ready{mi.readyPortions != null ? ` · ${mi.readyPortions} left` : ''}</span>
+                          )}
                           <span className="truncate text-xs text-slate-500">{mi.category}</span>
                           <span className="mt-auto whitespace-nowrap pt-2 text-sm font-bold text-ghana-black">GH₵ {mi.price.toFixed(2)}</span>
                         </div>
@@ -1856,7 +1915,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                 )}
 
                 <div className="mt-3 shrink-0 space-y-2">
-                  {kitchenTerminalOn ? (
+                  {showStationSend ? (
                   <div className="grid grid-cols-[1fr_auto] gap-2">
                     <Button
                       size="lg"
@@ -1929,7 +1988,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                   >
                     Process payment
                   </Button>
-                  <p className="hidden text-center text-[11px] text-slate-400 lg:block">{kitchenTerminalOn ? 'Ctrl+Enter send · Ctrl+P pay' : 'Ctrl+P pay'}</p>
+                  <p className="hidden text-center text-[11px] text-slate-400 lg:block">{showStationSend ? 'Ctrl+Enter send · Ctrl+P pay' : 'Ctrl+P pay'}</p>
                 </div>
               </div>
             ) : (
@@ -2052,7 +2111,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
         </ModalContent>
       </Modal>
 
-      {/* Shared terminal: tap your name, type your PIN. Locks again after each order is sent. */}
+      {/* Shared terminal: PIN once, then this waiter keeps taking orders until they switch or the terminal sits idle. */}
       <Modal isOpen={waiterSwitchModal.isOpen} onClose={waiterSwitchModal.onClose} size="md" placement="center">
         <ModalContent>
           <ModalHeader className="flex flex-col gap-0.5">
@@ -2063,13 +2122,16 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
           </ModalHeader>
           <ModalBody className="pb-6">
             {!switchTarget ? (
+              waiters.length === 0 ? (
+                <p className="text-sm text-slate-500">No waiters assigned yet. Add them under HR → Departments, in Food &amp; Beverage.</p>
+              ) : (
               <div className="grid max-h-[60vh] grid-cols-2 gap-2 overflow-y-auto">
                 {[...waiters]
                   // Signed-in person first, then everyone who can switch in, then those still without a PIN.
                   .sort((a, b) => Number(b.id === cashierUserId) - Number(a.id === cashierUserId) || Number(!!b.hasPin) - Number(!!a.hasPin))
                   .map(w => {
                   const isMe = w.id === cashierUserId;
-                  const usable = isMe || w.hasPin;
+                  const usable = true;
                   return (
                     <button
                       key={w.id}
@@ -2079,11 +2141,12 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                       className={`flex min-h-16 flex-col items-start justify-center rounded-xl border px-3 py-2 text-left ${verifiedWaiter?.id === w.id ? 'border-ghana-green bg-green-50' : 'border-slate-200 bg-white hover:border-ghana-green/50'} disabled:cursor-not-allowed disabled:opacity-50`}
                     >
                       <span className="w-full truncate font-semibold text-ghana-black">{w.name}</span>
-                      <span className="text-xs text-slate-500">{isMe ? 'Signed in · no PIN needed' : w.hasPin ? 'PIN' : 'No PIN yet — ask a manager'}</span>
+                      <span className="text-xs text-slate-500">{isMe ? 'Signed in · no PIN needed' : w.hasPin ? 'PIN' : 'Assigned'}</span>
                     </button>
                   );
                 })}
               </div>
+              )
             ) : (
               <div className="mx-auto w-full max-w-xs">
                 <div className="mb-3 flex justify-center gap-2" aria-live="polite" aria-label={`${switchPin.length} digits entered`}>
@@ -2302,8 +2365,10 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                     covers: 1,
                     discountAmount: orderDiscountAmount,
                     serviceCharge: serviceChargeAmount,
+                    quickService,
                     items: itemsWithOrderDiscount.map(i => ({
                       menuItemId: i.id,
+                      catalogId: i.id,
                       name: i.name,
                       category: i.category,
                       quantity: i.qty,
@@ -2318,7 +2383,13 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                     finalTax = Number(data.order.taxAmount);
                     finalTotal = Number(data.order.total);
                   }
-                } catch { /* fallback totals already set */ }
+                } catch (err) {
+                  if (quickService && /ready board/i.test((err as Error)?.message || '')) {
+                    alert((err as Error).message);
+                    return;
+                  }
+                  /* fallback totals already set */
+                }
               }
 
               // Advance order through state machine → billed (server posts GL + COGS)
@@ -2453,9 +2524,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
           <ModalHeader className="text-ghana-black">{printPreview?.title || 'Preview'}</ModalHeader>
           <ModalBody>
             {printPreview?.html ? (
-              <div className="max-h-[60vh] overflow-auto">
-                <div dangerouslySetInnerHTML={{ __html: printPreview.html }} />
-              </div>
+              <iframe title={printPreview.title || 'Preview'} srcDoc={printPreview.html} className="h-[60vh] w-full border-0 bg-white" />
             ) : (
               <div className="text-sm text-gray-500">Nothing to preview.</div>
             )}
@@ -2464,7 +2533,8 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
             <Button variant="flat" className="bg-gray-200" onClick={() => { setPrintPreview(null); printPreviewModal.onClose(); }}>Close</Button>
             <Button variant="flat" className="bg-ghana-green text-white" onClick={() => {
               if (printPreview?.html) {
-                printHtml(printPreview.title || 'Preview', printPreview.html);
+                if (/^\s*<!doctype/i.test(printPreview.html)) openHtmlPrintWindow(printPreview.html);
+                else printHtml(printPreview.title || 'Preview', printPreview.html);
               }
             }}>Print</Button>
           </ModalFooter>

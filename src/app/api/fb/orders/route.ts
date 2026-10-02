@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { ReadyBoardError } from '@/app/lib/fb/readyBoard'
+import { drawReadyBoard } from '@/app/lib/fb/readyBoardServer'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
@@ -9,6 +11,46 @@ import { venueGlAccount } from '@/app/lib/fb/venueGl'
 import { resolveCheckedInReservationId } from '@/app/lib/frontoffice/folioServer'
 
 function round2(n: number) { return Math.round((n + Number.EPSILON) * 100) / 100 }
+
+function isDuplicateOrderNumber(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: string }).code === 'P2002'
+}
+
+/** The till keeps its own counter. If that counter is behind orders already saved, use the next free number instead of failing the send. */
+async function nextFreeOrderNumber(tenantId: string, preferred?: string): Promise<string> {
+  const taken = async (value: string) => {
+    const hit = await prisma.fBOrder.findFirst({
+      where: { tenantId, orderNumber: value },
+      select: { id: true },
+    })
+    return !!hit
+  }
+
+  if (preferred && !(await taken(preferred))) return preferred
+
+  const year = new Date().getFullYear()
+  const seed = preferred && /\d+$/.test(preferred) ? preferred : `FB-${year}-0000`
+  const match = /^(.*?)(\d+)$/.exec(seed)
+  if (!match) {
+    let n = (await prisma.fBOrder.count({ where: { tenantId } })) + 1
+    for (let i = 0; i < 20; i++) {
+      const candidate = `FB-${year}-${String(n).padStart(4, '0')}`
+      if (!(await taken(candidate))) return candidate
+      n += 1
+    }
+    return `FB-${year}-${Date.now().toString().slice(-6)}`
+  }
+
+  const head = match[1]
+  const width = match[2].length
+  let n = Number.parseInt(match[2], 10)
+  for (let i = 0; i < 40; i++) {
+    n += 1
+    const candidate = `${head}${String(n).padStart(width, '0')}`
+    if (!(await taken(candidate))) return candidate
+  }
+  return `FB-${year}-${Date.now().toString().slice(-6)}`
+}
 
 // GET /api/fb/orders — list orders, optionally filter by status/venue
 export async function GET(request: NextRequest) {
@@ -122,13 +164,9 @@ export async function POST(request: NextRequest) {
 
     // ── Order numbering ───────────────────────────────────────────────────────
     // Prefer the client-generated number (drawn from Settings → Document Numbering,
-    // Food & Beverage → Order) so the series' prefix/format there is authoritative;
-    // fall back to a simple counter only if the client didn't supply one.
-    let orderNumber = body.orderNumber as string | undefined
-    if (!orderNumber) {
-      const orderCount = await prisma.fBOrder.count({ where: { tenantId: ctx.tenantId } })
-      orderNumber = `FB-${new Date().getFullYear()}-${String(orderCount + 1).padStart(4, '0')}`
-    }
+    // Food & Beverage → Order) so the series' prefix/format there is authoritative.
+    // A stale till counter must not reject the order: take the next free number.
+    let orderNumber = await nextFreeOrderNumber(ctx.tenantId, body.orderNumber as string | undefined)
 
     // ── Subtotal ──────────────────────────────────────────────────────────────
     const subtotal = round2(
@@ -170,10 +208,14 @@ export async function POST(request: NextRequest) {
       roomNumber: body.roomNumber,
     })
 
-    const order = await prisma.fBOrder.create({
+    const createOrder = (number: string) => prisma.$transaction(async (tx) => {
+      if (body.quickService) {
+        await drawReadyBoard(tx, ctx.tenantId, body.items)
+      }
+      return tx.fBOrder.create({
       data: {
         tenantId: ctx.tenantId,
-        orderNumber,
+        orderNumber: number,
         venue: body.venue,
         tableNumber: body.tableNumber,
         roomNumber: body.roomNumber,
@@ -209,6 +251,16 @@ export async function POST(request: NextRequest) {
       },
       include: { items: true },
     })
+    })
+
+    let order
+    try {
+      order = await createOrder(orderNumber)
+    } catch (error) {
+      if (!isDuplicateOrderNumber(error)) throw error
+      orderNumber = await nextFreeOrderNumber(ctx.tenantId, orderNumber)
+      order = await createOrder(orderNumber)
+    }
 
     await createAuditLog(
       ctx.tenantId, sessionUserId ?? null,
@@ -235,6 +287,9 @@ export async function POST(request: NextRequest) {
       taxBreakdown: taxLines,
     }, { status: 201 })
   } catch (error) {
+    if (error instanceof ReadyBoardError) {
+      return NextResponse.json({ error: error.message }, { status: 409 })
+    }
     console.error('[fb/orders][POST] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }

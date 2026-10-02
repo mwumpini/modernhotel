@@ -11,7 +11,7 @@
 import type { Reservation } from './types';
 import { roundMoney2 } from '../tax/engine';
 import { genId } from './helpers/ids';
-import { isPostedRoomCharge } from './folioLedger';
+import { isPostedRoomCharge, nextCalendarDate } from './folioLedger';
 
 export type StoreLike = {
   reservations: Reservation[];
@@ -52,7 +52,7 @@ function resolveDayPricing(store: StoreLike, reservation: Reservation, date: str
     reservation.rateBreakdown?.length
       ? reservation.rateBreakdown
       : store.calculateRateBreakdown(reservation.roomTypeId, reservation.arrival, reservation.departure);
-  const day = breakdown.find((n) => n.date === date);
+  const day = breakdown.find((n) => (n.date || '').slice(0, 10) === date.slice(0, 10));
   if (typeof day?.base === 'number') return { base: day.base, gross: day.total };
   const fallback = store.ratePlans.find((rp) => rp.roomTypeId === reservation.roomTypeId);
   return { base: fallback?.basePrice ?? fallback?.price ?? 0 };
@@ -92,6 +92,20 @@ export function postRoomChargeForDate(
   });
   store.updateFolioBalances(folio);
   return true;
+}
+
+/** Nights from arrival through the business date. Later nights stay for night audit. */
+export function postDueRoomCharges(store: StoreLike, reservationId: string, throughDate: string): number {
+  const reservation = store.reservations.find((r) => r.id === reservationId);
+  if (!reservation || reservation.status !== 'checked-in') return 0;
+  const arrival = reservation.arrival.slice(0, 10);
+  const departure = reservation.departure.slice(0, 10);
+  const through = throughDate.slice(0, 10);
+  let posted = 0;
+  for (let date = arrival; date < departure && date <= through && posted < 3660; date = nextCalendarDate(date)) {
+    if (postRoomChargeForDate(store, reservationId, date)) posted += 1;
+  }
+  return posted;
 }
 
 /** First night at check-in — only when no room lines exist yet. */

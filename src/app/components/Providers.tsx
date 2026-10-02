@@ -11,6 +11,7 @@ import SessionIdleGuard from './SessionIdleGuard';
 import NotificationToaster from './NotificationToaster';
 import DangerConfirmHost from './DangerConfirm';
 import ThemeProvider from './ThemeProvider';
+import DataResetWatcher from './DataResetWatcher';
 
 interface ProvidersProps {
   children: React.ReactNode;
@@ -27,6 +28,7 @@ export default function Providers({ children, session = null }: ProvidersProps) 
           <HelpF12Shortcut />
           <NightAuditScheduler />
           <SessionIdleGuard />
+          <DataResetWatcher />
           {children}
         </ThemeProvider>
       </HeroUIProvider>

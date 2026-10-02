@@ -40,6 +40,7 @@ const FB_TAB_OPTIONS = [
   { key: 'activity', label: '💳 Transactions' },
   { key: 'tables', label: '🪑 Tables' },
   { key: 'reservations', label: '📅 Reservations' },
+  { key: 'ready', label: '🍽️ Ready now' },
   { key: 'menu', label: '🍽️ Menu' },
   { key: 'cashiering', label: '💵 Cashiering' },
   { key: 'supplies', label: '📦 Supplies' },
@@ -84,6 +85,7 @@ function resolveSuppliesView(raw: string | null | undefined): SuppliesView {
 import ModuleExpandButton from './ModuleExpandButton';
 import SubViewPills from './dashboard/SubViewPills';
 import FBPOS from './FBPOS';
+import { ReadyNowPage } from './fb/ReadyNowBoard';
 import FoodBeveragePosActivity from './FoodBeveragePosActivity';
 import FoodBeverageRestaurantBar from './FoodBeverageRestaurantBar';
 import FoodBeverageMenuInventory from './FoodBeverageMenuInventory';
@@ -398,6 +400,7 @@ export default function FoodBeverageMainDashboard({
             )}
             {selectedTab === 'tables' && <FoodBeverageRestaurantBar panel="tables" />}
             {selectedTab === 'reservations' && <FoodBeverageRestaurantBar panel="reservations" />}
+            {selectedTab === 'ready' && <ReadyNowPage />}
             {selectedTab === 'menu' && <FoodBeverageMenuInventory panel="menu" />}
             {selectedTab === 'cashiering' && <CashierShiftPanel outlet="restaurant" />}
             {selectedTab === 'supplies' && (

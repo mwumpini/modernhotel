@@ -9,6 +9,8 @@ import {
   CardHeader,
   Button,
   Input,
+  Autocomplete,
+  AutocompleteItem,
   Select,
   SelectItem,
   Table,
@@ -924,19 +926,19 @@ export default function ServiceChargesPage() {
 
               {/* Guest Selection - In-House */}
               {formData.customerType === 'inhouse' && (
-                <Select
+                <Autocomplete
                   label="Guest & Room"
-                  placeholder="Select in-house guest"
-                  selectedKeys={formData.guestId ? [formData.guestId] : []}
-                  onSelectionChange={(keys) => handleGuestSelect(Array.from(keys)[0] as string || '')}
+                  placeholder="Search name or room"
+                  selectedKey={formData.guestId || null}
+                  onSelectionChange={(key) => handleGuestSelect(key ? String(key) : '')}
                   isRequired
                 >
                   {availableGuests.map(guest => (
-                    <SelectItem key={guest.guestId} textValue={`${guest.guestName} - Room ${guest.roomNumber}`}>
+                    <AutocompleteItem key={guest.guestId} textValue={`${guest.guestName} ${guest.roomNumber} ${guest.roomType}`}>
                       {guest.guestName} - Room {guest.roomNumber} ({guest.roomType})
-                    </SelectItem>
+                    </AutocompleteItem>
                   ))}
-                </Select>
+                </Autocomplete>
               )}
 
               {/* External Guest Form */}

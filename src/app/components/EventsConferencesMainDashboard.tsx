@@ -49,6 +49,8 @@ import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import { useRouter } from 'next/navigation';
 import { useFrontOfficeSelector } from '../lib/frontoffice/useFoStore';
 import { worksheetTableClassNames } from './frontoffice/StayWorksheetTable';
+import { deskResizableTableClassNames } from './frontoffice/columnResize';
+import { FOLIO_PAGE_SIZE, compareFolioValues, folioAccountColumnList, renderFolioAccountColumn, useFolioAccountColumns, type FolioAccountCol } from './frontoffice/folioAccountColumns';
 import { useComplianceStore } from '../lib/compliance/store';
 import { useCalculateTax } from '../hooks/useCalculateTax';
 import { enhancedFrontOfficeStore } from '../lib/frontoffice/enhancedStore';
@@ -1946,6 +1948,10 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
   });
   const [folioCreateError, setFolioCreateError] = useState<string>('');
   const [folioEntrySearch, setFolioEntrySearch] = useState('');
+  const [folioSortKey, setFolioSortKey] = useState<FolioAccountCol>('date');
+  const [folioSortDir, setFolioSortDir] = useState<'asc' | 'desc'>('asc');
+  const [folioPage, setFolioPage] = useState(1);
+  const folioAccountCols = useFolioAccountColumns();
   const [folioComposerOpen, setFolioComposerOpen] = useState(false);
   const invoiceStatusMeta: Record<EventInvoiceStatus, { color: 'default' | 'primary' | 'secondary' | 'success' | 'warning' | 'danger'; label: string }> = {
     Draft: { color: 'default', label: 'Draft' },
@@ -7717,6 +7723,38 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       entry.revenueCenter?.toLowerCase().includes(searchLower)
     );
   }, [activeFolio?.entries, folioEntrySearch]);
+  const sortedFolioEntries = useMemo(() => {
+    const lines = [...filteredFolioEntries];
+    if (activeFolio && activeFolio.openingBalance !== 0 && !folioEntrySearch.trim()) {
+      lines.unshift({
+        id: '__opening',
+        date: activeFolio.createdAt,
+        description: 'Opening balance',
+        debit: activeFolio.openingBalance > 0 ? activeFolio.openingBalance : 0,
+        credit: activeFolio.openingBalance < 0 ? Math.abs(activeFolio.openingBalance) : 0,
+        balance: activeFolio.openingBalance,
+        reference: '',
+      });
+    }
+    const value = (entry: EventFolioEntry, key: FolioAccountCol): string | number | null => {
+      if (key === 'date') return entry.date || '';
+      if (key === 'description') return entry.description || '';
+      if (key === 'reference') return entry.reference || '';
+      if (key === 'charge') return entry.debit > 0 ? entry.debit : null;
+      if (key === 'payment') return entry.credit > 0 ? entry.credit : null;
+      if (key === 'balance') return entry.balance;
+      return null;
+    };
+    return lines.sort((a, b) => compareFolioValues(value(a, folioSortKey), value(b, folioSortKey), folioSortDir));
+  }, [filteredFolioEntries, activeFolio, folioEntrySearch, folioSortKey, folioSortDir]);
+  const folioPageCount = Math.max(1, Math.ceil(sortedFolioEntries.length / FOLIO_PAGE_SIZE));
+  const folioSafePage = Math.min(folioPage, folioPageCount);
+  const folioPageRows = sortedFolioEntries.slice((folioSafePage - 1) * FOLIO_PAGE_SIZE, folioSafePage * FOLIO_PAGE_SIZE);
+  const sortFolioAccount = (key: FolioAccountCol) => {
+    setFolioPage(1);
+    setFolioSortDir((dir) => (folioSortKey === key ? (dir === 'asc' ? 'desc' : 'asc') : 'asc'));
+    setFolioSortKey(key);
+  };
 
   const handleAddFolioEntry = () => {
     if (!activeFolio) {
@@ -17199,13 +17237,13 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           <ModalHeader className="flex flex-col items-stretch gap-3">
             {activeFolio ? (
               <>
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start justify-between gap-4 rounded-lg border-l-4 border-ghana-green bg-green-50 px-3 py-2.5">
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Event Folio</p>
-                    <h3 className="text-xl font-semibold text-slate-900">{formatFolioNumber(activeFolio.id)}</h3>
-                    <p className="text-sm text-slate-600">
+                    <p className="text-xs font-medium uppercase tracking-wide text-green-800">Event Folio</p>
+                    <h3 className="text-xl font-semibold text-green-900">{formatFolioNumber(activeFolio.id)}</h3>
+                    <p className="text-sm font-normal text-slate-600">
                       {activeFolio.eventName}
-                      {activeFolio.clientName ? ` · ${activeFolio.clientName}` : ''}
+                      {activeFolio.clientName ? <> · <span className="font-bold text-slate-900">{activeFolio.clientName}</span></> : null}
                     </p>
                   </div>
                   <Badge
@@ -17358,12 +17396,12 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 <div>
                   <div className="mb-2 flex items-center justify-between gap-3">
                     <h4 className="text-sm font-semibold text-slate-800">Account</h4>
-                    {activeFolio.entries.length > 5 && (
+                    {(activeFolio.entries.length + (activeFolio.openingBalance !== 0 ? 1 : 0)) > FOLIO_PAGE_SIZE && (
                       <Input
                         size="sm"
                         placeholder="Search entries"
                         value={folioEntrySearch}
-                        onValueChange={setFolioEntrySearch}
+                        onValueChange={(value) => { setFolioEntrySearch(value); setFolioPage(1); }}
                         className="max-w-xs"
                         variant="bordered"
                       />
@@ -17383,45 +17421,32 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       </div>
                     </div>
                   ) : (
+                    <>
+                    <div ref={folioAccountCols.frameRef} style={folioAccountCols.frameStyle}>
                     <Table
                       aria-label="Folio account"
                       removeWrapper
-                      classNames={{
-                        ...worksheetTableClassNames,
-                        table: 'w-max min-w-full',
-                      }}
+                      classNames={deskResizableTableClassNames()}
                     >
-                      <TableHeader>
-                        <TableColumn>DATE</TableColumn>
-                        <TableColumn>DESCRIPTION</TableColumn>
-                        <TableColumn>REFERENCE</TableColumn>
-                        <TableColumn className="text-right">CHARGE</TableColumn>
-                        <TableColumn className="text-right">PAYMENT</TableColumn>
-                        <TableColumn className="text-right">BALANCE</TableColumn>
-                        <TableColumn className="text-right">ACTIONS</TableColumn>
+                      <TableHeader columns={folioAccountColumnList}>
+                        {(col) => renderFolioAccountColumn(col, folioSortKey, folioSortDir, sortFolioAccount, folioAccountCols)}
                       </TableHeader>
                       <TableBody>
                         <React.Fragment>
-                          {activeFolio.openingBalance !== 0 && (
-                            <TableRow>
-                              <TableCell>
-                                {new Date(activeFolio.createdAt).toLocaleDateString()}
-                              </TableCell>
-                              <TableCell className="font-medium">Opening balance</TableCell>
-                              <TableCell className="text-slate-400">—</TableCell>
-                              <TableCell className="text-right">
-                                {activeFolio.openingBalance > 0 ? formatCurrency(activeFolio.openingBalance) : '—'}
-                              </TableCell>
-                              <TableCell className="text-right">
-                                {activeFolio.openingBalance < 0 ? formatCurrency(Math.abs(activeFolio.openingBalance)) : '—'}
-                              </TableCell>
-                              <TableCell className="text-right font-semibold">
-                                {formatCurrency(activeFolio.openingBalance)}
-                              </TableCell>
-                              <TableCell>{null}</TableCell>
-                            </TableRow>
-                          )}
-                          {filteredFolioEntries.map((entry: EventFolioEntry) => {
+                          {folioPageRows.map((entry: EventFolioEntry) => {
+                            if (entry.id === '__opening') {
+                              return (
+                                <TableRow key="opening">
+                                  <TableCell>{entry.date ? new Date(entry.date).toLocaleDateString() : '—'}</TableCell>
+                                  <TableCell className="font-medium">Opening balance</TableCell>
+                                  <TableCell className="text-slate-400">—</TableCell>
+                                  <TableCell className="text-right">{entry.debit > 0 ? formatCurrency(entry.debit) : '—'}</TableCell>
+                                  <TableCell className="text-right">{entry.credit > 0 ? formatCurrency(entry.credit) : '—'}</TableCell>
+                                  <TableCell className="text-right font-semibold">{formatCurrency(entry.balance)}</TableCell>
+                                  <TableCell>—</TableCell>
+                                </TableRow>
+                              );
+                            }
                             const linkedInvoice = entry.reference
                               ? eventInvoices.find((inv) => inv.id === entry.reference)
                               : null;
@@ -17508,6 +17533,13 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                         </React.Fragment>
                       </TableBody>
                     </Table>
+                    </div>
+                    {sortedFolioEntries.length > FOLIO_PAGE_SIZE && (
+                      <div className="mt-3 flex justify-end">
+                        <Pagination page={folioSafePage} total={folioPageCount} onChange={setFolioPage} size="sm" showControls />
+                      </div>
+                    )}
+                    </>
                   )}
                 </div>
               </div>

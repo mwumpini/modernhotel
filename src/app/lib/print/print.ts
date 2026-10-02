@@ -1,5 +1,10 @@
 'use client';
 
+import { renderPrint, openHtmlPrintWindow } from './engine';
+import { buildOrgProfile } from './buildOrgProfile';
+import { useSettingsStore } from '../settings/store';
+import { salesTaxBreakdown } from '../tax/engine';
+
 export function printHtml(title: string, bodyHtml: string) {
   const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=480');
   if (!printWindow) return;
@@ -140,20 +145,55 @@ async function sendToBridge(kind: 'receipt' | 'kot', html: string, escpos: strin
 function escposHeader(text: string) { return `\x1B@\x1B!\x38${text}\n\x1B!\x00`; }
 function escposLine() { return `\n------------------------------------------\n`; }
 
-export function printReceipt(args: Parameters<typeof buildReceiptHtml>[0]) {
-  const html = buildReceiptHtml(args);
+/** POS receipt, using the Restaurant & Bar template set in Document Templates. */
+export function renderFbReceipt(args: Parameters<typeof buildReceiptHtml>[0] & { guestName?: string }): string {
+  const settings = useSettingsStore.getState();
+  const taxable = Math.max(0, args.subtotal - args.discount);
+  const tax = salesTaxBreakdown(taxable);
+  const where = [args.table ? `Table ${args.table}` : '', args.waiter ? `Server ${args.waiter}` : ''].filter(Boolean).join(' · ');
+  return renderPrint('fb-receipt', settings.printing['fb-receipt'], {
+    org: buildOrgProfile(settings),
+    guest: { name: args.guestName || 'Walk-in' },
+    docNumber: args.code,
+    docDate: new Date().toISOString(),
+    title: 'Receipt',
+    items: args.items.map((item) => ({
+      description: item.name,
+      qty: item.qty,
+      unitPrice: item.price,
+      amount: Math.round(item.price * item.qty * 100) / 100,
+    })),
+    totals: {
+      subTotal: args.subtotal,
+      discount: args.discount || undefined,
+      taxes: { nhil: tax.nhil, gefl: tax.getfund, levy: tax.tourism, vat: tax.vat },
+      grandTotal: args.total,
+      payments: args.total,
+      balance: 0,
+    },
+    footerNotes: [where, 'Thank you for dining with us.'].filter(Boolean),
+    currency: '₵',
+    attendantName: args.waiter,
+  });
+}
+
+export function printReceipt(args: Parameters<typeof buildReceiptHtml>[0] & { guestName?: string }) {
+  const html = renderFbReceipt(args);
   const { method, routeReceipt } = getPrintSettings();
   const effective = routeReceipt || method;
-  if (effective === 'browser') return printHtml('Receipt', html);
+  if (effective === 'browser') return openHtmlPrintWindow(html);
   // ESC/POS text (very simple)
   const items = args.items.map(i => `${i.qty} x ${i.name}`.slice(0,42)).join('\n');
   const esc = `${escposHeader('RECEIPT')}${args.hotelName}\n${args.datetime}\n${escposLine()}${items}${escposLine()}Subtotal: ${args.subtotal.toFixed(2)}\nDiscount: ${args.discount.toFixed(2)}\nTOTAL: ${args.total.toFixed(2)}\n\nThank you!\n\x1DVA\x00`;
   return sendToBridge('receipt', html, esc);
 }
 
-export function previewReceipt(args: Parameters<typeof buildReceiptHtml>[0]) {
-  const html = buildReceiptHtml(args);
-  return previewHtml('Receipt Preview', html);
+export function previewReceipt(args: Parameters<typeof renderFbReceipt>[0]) {
+  const html = renderFbReceipt(args);
+  const w = window.open('', '_blank', 'noopener,noreferrer,width=480');
+  if (!w) return;
+  w.document.write(html);
+  w.document.close();
 }
 
 export function printKOTDoc(args: { code: string; table: string; waiter: string; notes?: string; urgent?: boolean; title?: string; items: Array<{ name: string; qty: number }>; }) {

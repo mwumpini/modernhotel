@@ -20,6 +20,9 @@ export type PrintType =
   // so customizing one never silently changes the other (same reasoning as the
   // Events & Conferences split above).
   | 'registration-card'
+  // Restaurant & Bar till receipt. Its own type so a POS slip edit never
+  // changes the front-desk receipt.
+  | 'fb-receipt'
   // Employee payslip — its own family (employee info + earnings/deductions),
   // kept separate from every guest-billing document type above.
   | 'payslip';
@@ -411,6 +414,7 @@ export const printTemplates: Record<PrintType, Record<string, (p: PrintData) => 
   'event-invoice': {},
   'event-receipt': {},
   'registration-card': {},
+  'fb-receipt': {},
   // No legacy hand-written variants — payslip only ever existed in the block builder.
   payslip: {}
 };

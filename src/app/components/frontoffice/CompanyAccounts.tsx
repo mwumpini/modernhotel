@@ -15,6 +15,7 @@ import {
 import { money, shortDay } from '../../lib/frontoffice/stayWorksheet';
 import type { Reservation } from '../../lib/frontoffice/types';
 import { worksheetTableClassNames } from './StayWorksheetTable';
+import { useSettingsStore } from '../../lib/settings/store';
 
 const METHODS = ['Bank Transfer', 'Check', 'Cash', 'Mobile Money'] as const;
 type ReceiptMethod = (typeof METHODS)[number];
@@ -41,6 +42,7 @@ function guestSummary(names: string[]) {
 
 export function CompanyStatement({ companyKey, matches }: { companyKey: string; matches?: (reservation: Reservation) => boolean }) {
   const tick = useFrontOfficeTick();
+  const canPost = useSettingsStore((s) => s.hasPermission('frontdesk.post-company-payment'));
   const account = companyAccount(companyKey, matches);
   const ledger = companyLedger(companyKey, matches);
   const [amount, setAmount] = useState('');
@@ -172,7 +174,7 @@ export function CompanyStatement({ companyKey, matches }: { companyKey: string; 
           </div>
         )}
       </div>
-      {account.pending > 0.005 && (
+      {canPost && account.pending > 0.005 && (
         <div className="space-y-3 rounded-lg border border-gray-200 p-3">
           <h4 className="text-sm font-semibold text-ghana-black">Record a lump sum</h4>
           <div className="grid gap-2 sm:grid-cols-3">

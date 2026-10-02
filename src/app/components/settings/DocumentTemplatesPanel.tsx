@@ -15,7 +15,7 @@ import { DEFAULT_TEMPLATE_STYLE } from '../../lib/print/blocks';
 
 interface DocTypeOption { key: PrintType; label: string }
 interface LegOption { key: 'accommodation' | 'events'; label: string; icon: string; types: DocTypeOption[] }
-interface FamilyOption { key: 'general' | 'events' | 'payment-voucher' | 'payroll'; label: string; icon: string; types?: DocTypeOption[]; legs?: LegOption[] }
+interface FamilyOption { key: 'general' | 'restaurant' | 'events' | 'payment-voucher' | 'payroll'; label: string; icon: string; types?: DocTypeOption[]; legs?: LegOption[] }
 
 // Three real "families" of documents, matching how the business actually thinks
 // about them: guests staying/eating at the hotel, events & conferences (itself
@@ -30,6 +30,12 @@ const FAMILIES: FamilyOption[] = [
       { key: 'receipt', label: 'Receipt' },
       { key: 'proforma', label: 'Proforma / Quotation' },
       { key: 'registration-card', label: 'Registration Card' },
+    ],
+  },
+  {
+    key: 'restaurant', icon: '🍽️', label: 'Restaurant & Bar',
+    types: [
+      { key: 'fb-receipt', label: 'Receipt' },
     ],
   },
   {
@@ -212,9 +218,9 @@ export default function DocumentTemplatesPanel() {
       <div>
         <h3 className="text-lg font-semibold">Document Templates</h3>
         <p className="text-xs text-gray-600">
-          <strong>Accommodation &amp; Front Desk</strong> covers room, breakfast, restaurant, and other guest-facing
-          services. <strong>Events &amp; Conferences</strong> is kept fully separate, and split further into its own
-          Accommodation and Conference &amp; Events documents — edit each independently below.
+          <strong>Accommodation &amp; Front Desk</strong> covers room and front-desk documents.{' '}
+          <strong>Restaurant &amp; Bar</strong> has its own receipt, and that is the one the POS prints.{' '}
+          <strong>Events &amp; Conferences</strong> stays separate, split into Accommodation and Conference &amp; Events.
         </p>
       </div>
 

@@ -39,7 +39,7 @@ import { useSettingsStore } from '../lib/settings/store';
 import { passwordPolicyError } from '../lib/settings/passwordPolicy';
 import { applyDisplay, normalizeFontSize, normalizeTheme, type AppFont, type AppFontSize, type AppTheme } from '../lib/theme/applyTheme';
 import type { UserPreferences } from '../lib/settings/store';
-import { PERMISSION_MODULES, FULL_SYSTEM_ACCESS } from '../lib/settings/permissionCatalog';
+import { PERMISSION_MODULES, FULL_SYSTEM_ACCESS, permissionIdsFor } from '../lib/settings/permissionCatalog';
 import { useEmployeeStore } from '../lib/hr/employeeStore';
 import PosPinSection from './settings/PosPinSection';
 
@@ -201,6 +201,7 @@ function SwatchRow({
 
 export default function UserManagementUnified() {
   const { users, roles, addUser, updateUser, deleteUser, currentUser, updateUserProfile, updateUserPreferences, changePassword, addRole, updateRole, deleteRole, hasPermission } = useSettingsStore();
+  const signedInRoleId = useSettingsStore((s) => s.sessionRoleId) ?? currentUser?.roleId;
   // Department/Position options come from the same HR data source as the New
   // Staff form (HR → Employee Management → Departments & Positions) instead
   // of free text, so a user account's department can't drift into a typo'd
@@ -233,6 +234,7 @@ export default function UserManagementUnified() {
   }, []);
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
   const [isEditingRole, setIsEditingRole] = useState(false);
+  const [roleReadOnly, setRoleReadOnly] = useState(false);
   const [selectedRole, setSelectedRole] = useState<{ id: string; name: string; description: string; permissions: string[]; isActive: boolean } | null>(null);
   const [roleForm, setRoleForm] = useState({
     name: '',
@@ -688,17 +690,7 @@ export default function UserManagementUnified() {
     </div>
   );
 
-  const handleCreateRole = () => {
-    console.log('🔧 [UserManagementUnified] Creating new role - opening modal');
-    setIsEditingRole(false);
-    setSelectedRole(null);
-    resetRoleForm();
-    setIsRoleModalOpen(true);
-  };
-
-  const handleEditRole = (role: { id: string; name: string; description: string; permissions?: string[]; isActive: boolean }) => {
-    console.log('🔧 [UserManagementUnified] Editing role:', { roleId: role.id, name: role.name });
-    setIsEditingRole(true);
+  const fillRoleForm = (role: { id: string; name: string; description: string; permissions?: string[]; isActive: boolean }) => {
     setSelectedRole(role as any);
     setRoleForm({
       name: role.name,
@@ -706,7 +698,38 @@ export default function UserManagementUnified() {
       permissions: role.permissions || [],
       isActive: role.isActive,
     });
+  };
+
+  const handleCreateRole = () => {
+    setIsEditingRole(false);
+    setRoleReadOnly(false);
+    setSelectedRole(null);
+    resetRoleForm();
     setIsRoleModalOpen(true);
+  };
+
+  const handleOpenRole = (role: { id: string; name: string; description: string; permissions?: string[]; isActive: boolean }) => {
+    setIsEditingRole(true);
+    setRoleReadOnly(true);
+    fillRoleForm(role);
+    setIsRoleModalOpen(true);
+  };
+
+  const toggleRoleActive = (role: { id: string; name: string; isActive: boolean }) => {
+    if (!canManageRolePermissions) {
+      window.alert("You don't have permission to change roles.");
+      return;
+    }
+    if (role.isActive && role.id === signedInRoleId) {
+      window.alert('This is the role you are signed in with. Sign in with another role before turning it off.');
+      return;
+    }
+    const isActive = !role.isActive;
+    updateRole(role.id, { isActive });
+    if (selectedRole?.id === role.id) {
+      setSelectedRole({ ...selectedRole, isActive });
+      setRoleForm((prev) => ({ ...prev, isActive }));
+    }
   };
 
   const handleSaveRole = () => {
@@ -743,10 +766,12 @@ export default function UserManagementUnified() {
     setRoleForm({ ...roleForm, permissions: checked ? [FULL_SYSTEM_ACCESS] : [] });
   };
 
-  const moduleActionIds = (mod: typeof PERMISSION_MODULES[number]) =>
-    [mod.view, mod.create, mod.edit, mod.delete, mod.print, mod.void, ...mod.extra]
+  const moduleActionIds = (mod: typeof PERMISSION_MODULES[number]) => {
+    const lineActions = (mod.lines ?? []).flatMap((line) => [line.view, line.create, line.edit, line.delete, line.print, line.void]);
+    return [mod.view, mod.create, mod.edit, mod.delete, mod.print, mod.void, ...lineActions, ...mod.extra]
       .filter((a): a is { id: string; label: string } => !!a)
-      .map(a => a.id);
+      .flatMap(a => permissionIdsFor(a.id));
+  };
 
   const isModuleFullAccess = (fullAccessId: string) =>
     hasFullSystemAccess || roleForm.permissions.includes(fullAccessId);
@@ -762,15 +787,16 @@ export default function UserManagementUnified() {
   };
 
   const isActionChecked = (mod: typeof PERMISSION_MODULES[number], actionId: string) =>
-    isModuleFullAccess(mod.fullAccessId) || roleForm.permissions.includes(actionId);
+    isModuleFullAccess(mod.fullAccessId) || permissionIdsFor(actionId).some((id) => roleForm.permissions.includes(id));
 
   const toggleAction = (actionId: string, checked: boolean) => {
     if (hasFullSystemAccess) return;
+    const ids = permissionIdsFor(actionId);
     setRoleForm(prev => ({
       ...prev,
       permissions: checked
         ? [...prev.permissions, actionId]
-        : prev.permissions.filter(p => p !== actionId),
+        : prev.permissions.filter(p => !ids.includes(p)),
     }));
   };
 
@@ -787,6 +813,7 @@ export default function UserManagementUnified() {
     const ok = await confirmDelete('this role', 'Users assigned to it will remain with the role id. This cannot be undone.');
     if (!ok) return;
     deleteRole(roleId);
+    setIsRoleModalOpen(false);
   };
 
   const renderRoleManagement = () => (
@@ -811,22 +838,24 @@ export default function UserManagementUnified() {
               <TableColumn>ROLE NAME</TableColumn>
               <TableColumn>DESCRIPTION</TableColumn>
               <TableColumn>USERS</TableColumn>
-              <TableColumn>TYPE</TableColumn>
-              <TableColumn>ACTIONS</TableColumn>
+              <TableColumn>STATUS</TableColumn>
             </TableHeader>
             <TableBody>
               {roles.map((role) => {
                 const assignedUsers = users.filter(u => u.roleId === role.id).length;
-                const isSystem = (role.permissions || []).includes('*');
                 return (
-                  <TableRow key={role.id}>
+                  <TableRow
+                    key={role.id}
+                    className={`cursor-pointer ${role.isActive ? '' : 'opacity-60'}`}
+                    onClick={() => handleOpenRole(role)}
+                  >
                     <TableCell>
                       <div className="flex items-center space-x-3">
                         <div className="h-8 w-8 bg-gradient-to-br from-ghana-green to-ghana-gold rounded-lg flex items-center justify-center">
                           <span className="text-white text-sm">🔑</span>
                         </div>
                         <div>
-                          <p className="font-semibold">{role.name}</p>
+                          <p className="font-semibold text-ghana-black">{role.name}</p>
                           <p className="text-sm text-gray-500">{role.description}</p>
                         </div>
                       </div>
@@ -838,25 +867,13 @@ export default function UserManagementUnified() {
                       </Chip>
                     </TableCell>
                     <TableCell>
-                      <Chip 
-                        color={isSystem ? "warning" : (role.isActive ? "success" : "default")} 
-                        variant="flat" 
+                      <Chip
+                        color={role.isActive ? 'success' : 'default'}
+                        variant="flat"
                         size="sm"
                       >
-                        {isSystem ? 'System' : (role.isActive ? 'Active' : 'Inactive')}
+                        {role.isActive ? 'Active' : 'Inactive'}
                       </Chip>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex space-x-2">
-                        <Button size="sm" variant="flat" onPress={() => handleEditRole(role)} isDisabled={!canManageRolePermissions}>
-                          Edit
-                        </Button>
-                        {(canManageRolePermissions || hasPermission('settings.delete')) && (
-                          <Button size="sm" color="danger" variant="flat" onPress={() => handleDeleteRole(role.id)}>
-                            Delete
-                          </Button>
-                        )}
-                      </div>
                     </TableCell>
                   </TableRow>
                 );
@@ -1254,7 +1271,7 @@ export default function UserManagementUnified() {
       <Modal isOpen={isRoleModalOpen} onClose={() => setIsRoleModalOpen(false)} size="4xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>
-            {isEditingRole ? 'Edit Role' : 'Create New Role'}
+            {roleReadOnly ? roleForm.name || 'Role' : isEditingRole ? 'Edit Role' : 'Create New Role'}
           </ModalHeader>
           <ModalBody>
             <div className="space-y-4">
@@ -1263,18 +1280,21 @@ export default function UserManagementUnified() {
                 value={roleForm.name}
                 onChange={(e) => setRoleForm({ ...roleForm, name: e.target.value })}
                 placeholder="e.g., Front Desk Supervisor"
+                isReadOnly={roleReadOnly}
               />
               <Textarea
                 label="Description"
                 value={roleForm.description}
                 onChange={(e) => setRoleForm({ ...roleForm, description: e.target.value })}
                 placeholder="Describe the role"
+                isReadOnly={roleReadOnly}
               />
 
               <div className="border rounded-lg p-3 bg-default-50">
                 <Checkbox
                   isSelected={hasFullSystemAccess}
                   onValueChange={toggleFullSystemAccess}
+                  isDisabled={roleReadOnly}
                 >
                   <span className="font-semibold">Full System Access</span>
                   <span className="text-default-500 text-sm ml-1">— every module, current and future (System Administrator)</span>
@@ -1283,7 +1303,7 @@ export default function UserManagementUnified() {
 
               <div>
                 <div className="text-sm font-medium text-default-600 mb-2">Permissions by module</div>
-                <div className={`overflow-x-auto border rounded-lg ${hasFullSystemAccess ? 'opacity-50 pointer-events-none' : ''}`}>
+                <div className={`overflow-x-auto border rounded-lg ${hasFullSystemAccess || roleReadOnly ? 'opacity-50 pointer-events-none' : ''}`}>
                   <table className="w-full text-sm">
                     <thead className="bg-default-100">
                       <tr>
@@ -1300,27 +1320,36 @@ export default function UserManagementUnified() {
                     <tbody>
                       {PERMISSION_MODULES.map((mod) => {
                         const fullAccess = isModuleFullAccess(mod.fullAccessId);
-                        return (
-                          <tr key={mod.key} className="border-t border-default-200">
-                            <td className="px-3 py-2 whitespace-nowrap">
-                              <span className="mr-1">{mod.icon}</span>{mod.label}
+                        const rows = [
+                          { key: mod.key, label: mod.label, icon: mod.icon, indent: false, showFull: true, view: mod.view, create: mod.create, edit: mod.edit, delete: mod.delete, print: mod.print, void: mod.void },
+                          ...(mod.lines ?? []).map((line) => ({ ...line, indent: true, showFull: false })),
+                        ];
+                        return rows.map((row) => (
+                          <tr key={`${mod.key}-${row.key}`} className="border-t border-default-200">
+                            <td className={`px-3 py-2 whitespace-nowrap ${row.indent ? 'pl-8 text-default-600' : ''}`}>
+                              <span className="mr-1">{row.icon}</span>{row.label}
                             </td>
                             <td className="text-center px-2 py-2">
-                              <Checkbox
-                                aria-label={`${mod.label} — full access`}
-                                isSelected={fullAccess}
-                                onValueChange={(v) => toggleModuleFullAccess(mod, v)}
-                              />
+                              {row.showFull ? (
+                                <Checkbox
+                                  aria-label={`${mod.label} — full access`}
+                                  isSelected={fullAccess}
+                                  isDisabled={hasFullSystemAccess || roleReadOnly}
+                                  onValueChange={(v) => toggleModuleFullAccess(mod, v)}
+                                />
+                              ) : (
+                                <span className="text-default-300">—</span>
+                              )}
                             </td>
                             {(['view', 'create', 'edit', 'delete', 'print', 'void'] as const).map((col) => {
-                              const action = mod[col];
+                              const action = row[col];
                               return (
                                 <td key={col} className="text-center px-2 py-2">
                                   {action ? (
                                     <Checkbox
                                       aria-label={action.label}
                                       isSelected={isActionChecked(mod, action.id)}
-                                      isDisabled={fullAccess}
+                                      isDisabled={fullAccess || roleReadOnly}
                                       onValueChange={(v) => toggleAction(action.id, v)}
                                     />
                                   ) : (
@@ -1330,16 +1359,16 @@ export default function UserManagementUnified() {
                               );
                             })}
                           </tr>
-                        );
+                        ));
                       })}
                     </tbody>
                   </table>
                 </div>
 
                 {PERMISSION_MODULES.some((m) => m.extra.length > 0) && (
-                  <div className={`mt-3 ${hasFullSystemAccess ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <div className="mt-3">
                     <div className="text-sm font-medium text-default-600 mb-2">
-                      Specific actions <span className="text-default-400 font-normal">— granted on top of View/Create/Edit/Delete/Print/Void above</span>
+                      Screens and dialogs <span className="text-default-400 font-normal">— each module’s desks, tables, and dialogs, on top of the record permissions above</span>
                     </div>
                     <Accordion variant="bordered" itemClasses={{ title: 'text-sm' }}>
                       {PERMISSION_MODULES.filter((m) => m.extra.length > 0).map((mod) => {
@@ -1357,17 +1386,30 @@ export default function UserManagementUnified() {
                               </span>
                             }
                           >
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 pb-2">
-                              {mod.extra.map((action) => (
-                                <Checkbox
-                                  key={action.id}
-                                  size="sm"
-                                  isSelected={isActionChecked(mod, action.id)}
-                                  isDisabled={isModuleFullAccess(mod.fullAccessId)}
-                                  onValueChange={(v) => toggleAction(action.id, v)}
-                                >
-                                  {action.label}
-                                </Checkbox>
+                            <div className="space-y-3 pb-2">
+                              {mod.extra.reduce<{ name: string; actions: typeof mod.extra }[]>((groups, action) => {
+                                const name = action.group || 'Other';
+                                const found = groups.find((group) => group.name === name);
+                                if (found) found.actions.push(action);
+                                else groups.push({ name, actions: [action] });
+                                return groups;
+                              }, []).map((group) => (
+                                <div key={group.name}>
+                                  <p className="mb-1 text-xs font-semibold text-default-500">{group.name}</p>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
+                                    {group.actions.map((action) => (
+                                      <Checkbox
+                                        key={action.id}
+                                        size="sm"
+                                        isSelected={isActionChecked(mod, action.id)}
+                                        isDisabled={isModuleFullAccess(mod.fullAccessId)}
+                                        onValueChange={(v) => toggleAction(action.id, v)}
+                                      >
+                                        {action.label}
+                                      </Checkbox>
+                                    ))}
+                                  </div>
+                                </div>
                               ))}
                             </div>
                           </AccordionItem>
@@ -1381,16 +1423,46 @@ export default function UserManagementUnified() {
               <div>
                 <Switch
                   isSelected={roleForm.isActive}
-                  onValueChange={(v) => setRoleForm({ ...roleForm, isActive: v })}
+                  onValueChange={(v) => {
+                    if (roleReadOnly && selectedRole) {
+                      toggleRoleActive({ ...selectedRole, isActive: roleForm.isActive });
+                      return;
+                    }
+                    setRoleForm({ ...roleForm, isActive: v });
+                  }}
+                  isDisabled={roleReadOnly && selectedRole?.id === signedInRoleId && roleForm.isActive}
                 >
-                  Active Role
+                  Active role
                 </Switch>
+                {selectedRole?.id === signedInRoleId && (
+                  <p className="mt-1 text-xs text-gray-500">This is the role you are signed in with, so it stays on.</p>
+                )}
               </div>
             </div>
           </ModalBody>
           <ModalFooter>
-            <Button variant="flat" onPress={() => setIsRoleModalOpen(false)}>Cancel</Button>
-            <Button color="primary" onPress={handleSaveRole}>{isEditingRole ? 'Update' : 'Create'}</Button>
+            <Button variant="flat" onPress={() => setIsRoleModalOpen(false)}>{roleReadOnly ? 'Close' : 'Cancel'}</Button>
+            {selectedRole && (canManageRolePermissions || hasPermission('settings.delete')) && (
+              <Button color="danger" variant="flat" onPress={() => handleDeleteRole(selectedRole.id)}>
+                Delete
+              </Button>
+            )}
+            {selectedRole && canManageRolePermissions && (
+              <Button
+                color={roleForm.isActive ? 'warning' : 'success'}
+                variant="flat"
+                onPress={() => toggleRoleActive({ id: selectedRole.id, name: selectedRole.name, isActive: roleForm.isActive })}
+                isDisabled={roleForm.isActive && selectedRole.id === signedInRoleId}
+              >
+                {roleForm.isActive ? 'Deactivate' : 'Activate'}
+              </Button>
+            )}
+            {roleReadOnly && canManageRolePermissions && (
+              <Button color="primary" variant="flat" onPress={() => setRoleReadOnly(false)}>Edit</Button>
+            )}
+            {!roleReadOnly && (
+              <Button color="primary" onPress={handleSaveRole}>{isEditingRole ? 'Update' : 'Create'}</Button>
+            )}
           </ModalFooter>
         </ModalContent>
       </Modal>

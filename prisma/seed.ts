@@ -197,58 +197,8 @@ async function main() {
 
   console.log('✅ Created demo rooms')
 
-  // Create demo guests
-  const demoGuests = [
-    {
-      name: 'John Doe',
-      email: 'john.doe@email.com',
-      phone: '+233 24 123 4567',
-      nationality: 'Ghanaian',
-      source: 'walkin',
-      serialNumber: 'C001'
-    },
-    {
-      name: 'Jane Smith',
-      email: 'jane.smith@email.com',
-      phone: '+233 20 987 6543',
-      nationality: 'American',
-      source: 'online',
-      socialPlatform: 'facebook',
-      socialHandle: 'janesmith',
-      serialNumber: 'C002'
-    },
-    {
-      name: 'Kwame Asante',
-      email: 'kwame.asante@email.com',
-      phone: '+233 26 555 1234',
-      nationality: 'Ghanaian',
-      source: 'referral',
-      referralName: 'John Doe',
-      serialNumber: 'C003'
-    }
-  ]
-
-  for (const guestData of demoGuests) {
-    await prisma.guest.upsert({
-      where: { serialNumber: guestData.serialNumber },
-      update: {},
-      create: {
-        tenantId: demoTenant.id,
-        serialNumber: guestData.serialNumber,
-        name: guestData.name,
-        email: guestData.email,
-        phone: guestData.phone,
-        nationality: guestData.nationality,
-        source: guestData.source as any,
-        socialPlatform: guestData.socialPlatform as any,
-        socialHandle: guestData.socialHandle,
-        referralName: guestData.referralName,
-        isActive: true
-      }
-    })
-  }
-
-  console.log('✅ Created demo guests')
+  // No demo guests: deploys must not add test records. Guests for testing come from
+  // Settings → Sample Data, which can be removed again (and Clear test data resets them).
 
   // Create system settings
   await prisma.systemSettings.upsert({

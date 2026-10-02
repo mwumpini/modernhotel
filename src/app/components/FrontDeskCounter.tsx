@@ -20,7 +20,6 @@ import {
   Tab,
   Tabs,
 } from '@heroui/react';
-import { useRouter } from 'next/navigation';
 import { HideCardButton } from './dashboard/CustomizeViewControl';
 import { FoDeskKpiCustomize, FO_DESK_KPI_SECTIONS, useFrontOfficeDeskVisibility, useFrontOfficeDeskPeriod } from './frontoffice/foDeskKpi';
 import { useHostSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
@@ -31,7 +30,7 @@ import { useSettingsStore } from '../lib/settings/store';
 import { chooseDanger } from './DangerConfirm';
 import { findMainFolio, getFolioDisplayTotals } from '../lib/frontoffice/helpers/folio';
 import { isPostedRoomCharge, nextCalendarDate, previousCalendarDate } from '../lib/frontoffice/folioLedger';
-import { getRoomChargeDatesOnFolio, postRoomChargeForDate } from '../lib/frontoffice/roomCharges';
+import { getRoomChargeDatesOnFolio, postDueRoomCharges, postRoomChargeForDate } from '../lib/frontoffice/roomCharges';
 import { isLateCheckoutNow } from '../lib/frontoffice/lateCheckout';
 import { isCorporateGuest } from '../lib/frontoffice/helpers/guests';
 import { calculateStayNights } from '../lib/frontoffice/helpers/rates';
@@ -46,14 +45,8 @@ import {
   type StaySortKey,
 } from '../lib/frontoffice/stayWorksheet';
 import StayWorksheetTable from './frontoffice/StayWorksheetTable';
+import GuestFolioModal from './frontoffice/GuestFolioModal';
 import { DateFilterPills, type DateMode } from './fb/DateFilterPills';
-import { CompanyStatement } from './frontoffice/CompanyAccounts';
-import {
-  companyKeyOf,
-  guestEarlierStays,
-  lookupCompanyName,
-  standingLabel,
-} from '../lib/frontoffice/companyAccount';
 import { notifyError, notifySuccess } from '../lib/notifications/notify';
 import { openHtmlPrintWindow, renderPrint } from '../lib/print/engine';
 import { computeSalesTax } from '../lib/tax/engine';
@@ -163,7 +156,7 @@ function vacantRoomsFor(res: Reservation): string[] {
   const free = (roomNumber: string) =>
     frontOfficeStore.isRoomBookable(roomNumber) &&
     frontOfficeStore.isRoomFreeForRange(roomNumber, res.arrival, res.departure, res.id);
-  const vacant = housekeepingStore.getRoomsByStatus('vacant');
+  const vacant = housekeepingStore.getRoomsReadyToAssign();
   const typed = vacant.filter((room) => room.roomTypeId === res.roomTypeId && free(room.roomNumber));
   const list = typed.length > 0 ? typed : vacant.filter((room) => free(room.roomNumber));
   return list.map((room) => room.roomNumber);
@@ -177,7 +170,6 @@ function payLaterAllowed(res: Reservation) {
 }
 
 export default function FrontDeskCounter() {
-  const router = useRouter();
   const { isHidden, hide, hiddenCount, isHosted } =
     useFrontOfficeDeskVisibility(FO_DESK_KPI_SECTIONS);
   const summaryCollapsed = useHostSummaryCollapsed();
@@ -214,7 +206,8 @@ export default function FrontDeskCounter() {
   const [printKind, setPrintKind] = useState<PrintChoice>('invoice');
   const [nightCount, setNightCount] = useState('1');
   const [preview, setPreview] = useState<{ title: string; html: string } | null>(null);
-  const [companyFocus, setCompanyFocus] = useState<{ key: string; name: string } | null>(null);
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [folioOpen, setFolioOpen] = useState(false);
   const lateCheckoutPolicy = useSettingsStore((s) => s.roomManagement);
   const canWaiveLateCheckout = useSettingsStore((s) => s.hasPermission('frontdesk.waive-late-checkout'));
 
@@ -310,12 +303,17 @@ export default function FrontDeskCounter() {
     setNotes('');
     const stay = frontOfficeStore.reservations.find((r) => r.id === selectedId);
     setPreview(null);
-    setCompanyFocus(null);
+    setCheckoutOpen(false);
+    setFolioOpen(false);
     setNightCount('1');
     setPrintKind(stay?.status === 'checked-in' || stay?.status === 'checked-out' ? 'invoice' : 'registration-card');
-    if (!stay || stay.status !== 'checked-in') {
+    const canPay = stay && (stay.status === 'checked-in' || stay.status === 'confirmed' || stay.status === 'pending');
+    if (!canPay) {
       setPayAmount('');
       return;
+    }
+    if (stay.status === 'checked-in') {
+      postDueRoomCharges(frontOfficeStore as any, stay.id, frontOfficeStore.businessDate || today);
     }
     const folio = findMainFolio(frontOfficeStore.folios, stay.id);
     const due = folio ? getFolioDisplayTotals(folio).outstandingBalance : 0;
@@ -334,11 +332,6 @@ export default function FrontDeskCounter() {
   const rooms = selected && (selected.status === 'confirmed' || selected.status === 'pending') ? vacantRoomsFor(selected) : [];
   const hasRoom = !!(selected?.roomId && selected.roomId !== 'TBD');
   const canLeaveBalance = selected ? payLaterAllowed(selected) : false;
-  const guestRecord = selected ? frontOfficeStore.guests.find((item) => item.id === selected.guestId) : undefined;
-  const companyLookup = selected ? lookupCompanyName(selected, guestRecord) : null;
-  const earlierStays = selected ? guestEarlierStays(selected.guestId, selected.id) : [];
-  const earlierTotal = earlierStays.reduce((sum, row) => sum + row.balance, 0);
-
   const openStay = (id: string) => setSelectedId(id);
 
   const filtered = [...pool].filter((stay) => {
@@ -471,7 +464,10 @@ export default function FrontDeskCounter() {
     }
     setBusy(true);
     try {
-      frontOfficeStore.addPayment(selected.id, method, amount, { processedBy: 'Front Desk' });
+      frontOfficeStore.addPayment(selected.id, method, amount, {
+        processedBy: 'Front Desk',
+        notes: selected.status === 'checked-in' ? undefined : 'Advance payment',
+      });
       const folio = findMainFolio(frontOfficeStore.folios, selected.id);
       const due = folio ? getFolioDisplayTotals(folio).outstandingBalance : 0;
       setPayAmount(due > 0 ? due.toFixed(2) : '');
@@ -495,6 +491,7 @@ export default function FrontDeskCounter() {
         return;
       }
       notifySuccess(`${selected.guestName} has checked out`, 'Checked out');
+      setCheckoutOpen(false);
       setSelectedId(null);
       setView('leaving');
     } finally {
@@ -644,6 +641,9 @@ export default function FrontDeskCounter() {
   const departed = selected?.status === 'checked-out';
   const arriving = selected?.status === 'confirmed' || selected?.status === 'pending';
   const quote = selected ? frontOfficeStore.getReservationQuote(selected) : null;
+  const currentCharges = folioTotals?.totalCharges || 0;
+  const totalPayment = folioTotals?.totalPayments || 0;
+  const totalCharges = Math.max(currentCharges, (quote?.grandTotal || 0) + otherPosted);
 
   return (
     <div className="space-y-1.5">
@@ -990,70 +990,31 @@ export default function FrontDeskCounter() {
                   <p className="text-sm text-gray-600">No vacant room is free for these dates. Check in anyway leaves the room open.</p>
                 )}
 
-                {(earlierStays.length > 0 || companyLookup) && (
-                  <Card shadow="sm" className="shrink-0">
-                    <CardHeader className="flex items-center justify-between gap-2 pb-0">
-                      <h4 className="text-base font-semibold text-ghana-black">Earlier balances</h4>
-                      {companyLookup && (
-                        <Button
-                          size="sm"
-                          variant="flat"
-                          color="secondary"
-                          onPress={() => setCompanyFocus({ key: companyKeyOf(companyLookup), name: companyLookup })}
-                        >
-                          {companyLookup} record
-                        </Button>
-                      )}
-                    </CardHeader>
-                    <CardBody className="gap-2">
-                      {earlierStays.length === 0 ? (
-                        <p className="text-sm text-gray-600">This guest has no unpaid stay from before. This visit starts on its own bill.</p>
-                      ) : (
-                        <>
-                          <p className="text-sm text-gray-600">
-                            {selected.guestName} still owes {money(earlierTotal)} from earlier stays. That amount stays on those stays. It is not part of this visit&apos;s balance.
-                          </p>
-                          <div className="divide-y divide-gray-100">
-                            {earlierStays.map((row) => (
-                              <div key={row.reservation.id} className="flex items-center justify-between gap-2 py-1.5 text-sm">
-                                <div className="min-w-0">
-                                  <span className="font-medium">{row.reservation.resId || row.reservation.id}</span>
-                                  <span className="ml-2 text-gray-500">{shortDay(row.reservation.arrival)} – {shortDay(row.reservation.departure)}</span>
-                                </div>
-                                <div className="flex shrink-0 items-center gap-2">
-                                  <span className="text-xs text-gray-500">{standingLabel(row.standing)}</span>
-                                  <span className="font-semibold tabular-nums text-orange-700">{money(row.balance)}</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </>
-                      )}
-                    </CardBody>
-                  </Card>
-                )}
-
-                {(staying || departed) && (
+                {(arriving || staying || departed) && (
                   <Card shadow="sm" className="shrink-0">
                     <CardHeader className="pb-0">
                       <h4 className="text-base font-semibold text-ghana-black">Financial summary</h4>
                     </CardHeader>
                     <CardBody className="gap-3">
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-4 gap-2">
                       <div className="rounded-lg bg-blue-50 px-2 py-1.5 text-center">
-                        <div className="text-base font-semibold tabular-nums text-blue-700">{money(folioTotals?.totalCharges || 0)}</div>
+                        <div className="text-base font-semibold tabular-nums text-blue-700">{money(totalCharges)}</div>
                         <div className="text-xs text-blue-600">Total charges</div>
                       </div>
+                      <div className="rounded-lg bg-indigo-50 px-2 py-1.5 text-center">
+                        <div className="text-base font-semibold tabular-nums text-indigo-700">{money(currentCharges)}</div>
+                        <div className="text-xs text-indigo-600">Current charges</div>
+                      </div>
                       <div className="rounded-lg bg-green-50 px-2 py-1.5 text-center">
-                        <div className="text-base font-semibold tabular-nums text-green-700">{money(folioTotals?.totalPayments || 0)}</div>
-                        <div className="text-xs text-green-600">Total payments</div>
+                        <div className="text-base font-semibold tabular-nums text-green-700">{money(totalPayment)}</div>
+                        <div className="text-xs text-green-600">Total payment</div>
                       </div>
                       <div className={`rounded-lg px-2 py-1.5 text-center ${balance > 0 ? 'bg-orange-50' : 'bg-green-50'}`}>
                         <div className={`text-base font-semibold tabular-nums ${balance > 0 ? 'text-orange-700' : 'text-green-700'}`}>{money(balance)}</div>
-                        <div className={`text-xs ${balance > 0 ? 'text-orange-600' : 'text-green-600'}`}>Outstanding balance</div>
+                        <div className={`text-xs ${balance > 0 ? 'text-orange-600' : 'text-green-600'}`}>Outstanding</div>
                       </div>
                     </div>
-                    {staying && balance > 0 && (
+                    {(arriving || staying) && (
                       <>
                         <div className="flex items-end gap-2">
                           <Select
@@ -1084,7 +1045,7 @@ export default function FrontDeskCounter() {
                             Take payment
                           </Button>
                         </div>
-                        {canLeaveBalance && (
+                        {staying && balance > 0 && canLeaveBalance && (
                           <Switch isSelected={leaveOnAccount} onValueChange={setLeaveOnAccount} size="sm">
                             Leave the balance on account
                           </Switch>
@@ -1113,8 +1074,11 @@ export default function FrontDeskCounter() {
               </ModalBody>
               <ModalFooter>
                 <Button variant="light" onPress={() => setSelectedId(null)}>Close</Button>
-                {(staying || departed) && (
-                  <Button variant="flat" onPress={() => router.push('/guest-services/client-services/invoices-payments')}>
+                {(arriving || staying || departed) && (
+                  <Button variant="flat" onPress={() => {
+                    if (selected?.status === 'checked-in') postDueRoomCharges(frontOfficeStore as any, selected.id, businessDay);
+                    setFolioOpen(true);
+                  }}>
                     Open the folio
                   </Button>
                 )}
@@ -1124,7 +1088,10 @@ export default function FrontDeskCounter() {
                   </Button>
                 )}
                 {staying && (
-                  <Button color="warning" className="font-semibold" isLoading={busy} onPress={checkOut}>
+                  <Button color="warning" className="font-semibold" isLoading={busy} onPress={() => {
+                    if (selected) postDueRoomCharges(frontOfficeStore as any, selected.id, businessDay);
+                    setCheckoutOpen(true);
+                  }}>
                     Check out
                   </Button>
                 )}
@@ -1134,14 +1101,54 @@ export default function FrontDeskCounter() {
         </ModalContent>
       </Modal>
 
-      <Modal isOpen={!!companyFocus} onClose={() => setCompanyFocus(null)} size="3xl" scrollBehavior="inside" classNames={{ base: 'sm:!max-w-3xl' }}>
+      <GuestFolioModal reservation={selected} isOpen={folioOpen} onClose={() => setFolioOpen(false)} />
+
+      <Modal isOpen={checkoutOpen && !!selected} onClose={() => setCheckoutOpen(false)} size="lg">
         <ModalContent>
-          <ModalHeader className="text-ghana-black">{companyFocus?.name} ledger</ModalHeader>
-          <ModalBody>
-            {companyFocus && <CompanyStatement companyKey={companyFocus.key} />}
+          <ModalHeader className="text-ghana-black">Check out {selected?.guestName}?</ModalHeader>
+          <ModalBody className="gap-3">
+            <p className="text-sm text-gray-600">
+              {hasRoom ? `Room ${selected?.roomId}` : 'Room unassigned'}
+              {selected ? ` · ${shortDay(selected.arrival)} – ${shortDay(selected.departure)}` : ''}
+            </p>
+            <div className="grid grid-cols-4 gap-2">
+              <div className="rounded-lg bg-blue-50 px-2 py-1.5 text-center">
+                <div className="text-base font-semibold tabular-nums text-blue-700">{money(totalCharges)}</div>
+                <div className="text-xs text-blue-600">Total charges</div>
+              </div>
+              <div className="rounded-lg bg-indigo-50 px-2 py-1.5 text-center">
+                <div className="text-base font-semibold tabular-nums text-indigo-700">{money(currentCharges)}</div>
+                <div className="text-xs text-indigo-600">Current charges</div>
+              </div>
+              <div className="rounded-lg bg-green-50 px-2 py-1.5 text-center">
+                <div className="text-base font-semibold tabular-nums text-green-700">{money(totalPayment)}</div>
+                <div className="text-xs text-green-600">Total payment</div>
+              </div>
+              <div className={`rounded-lg px-2 py-1.5 text-center ${balance > 0 ? 'bg-orange-50' : 'bg-green-50'}`}>
+                <div className={`text-base font-semibold tabular-nums ${balance > 0 ? 'text-orange-700' : 'text-green-700'}`}>{money(balance)}</div>
+                <div className={`text-xs ${balance > 0 ? 'text-orange-600' : 'text-green-600'}`}>Outstanding</div>
+              </div>
+            </div>
+            {balance > 0 && canLeaveBalance && leaveOnAccount && (
+              <p className="text-sm text-gray-700">{money(balance)} stays on account. This visit can still check out.</p>
+            )}
+            {balance > 0 && !(canLeaveBalance && leaveOnAccount) && (
+              <p className="text-sm text-orange-700">Take {money(balance)} before this guest leaves.</p>
+            )}
+            {balance <= 0 && <p className="text-sm text-gray-700">This stay is settled.</p>}
+            {notes.trim() && <p className="text-sm text-gray-600">Note: {notes.trim()}</p>}
           </ModalBody>
           <ModalFooter>
-            <Button variant="light" onPress={() => setCompanyFocus(null)}>Close</Button>
+            <Button variant="light" onPress={() => setCheckoutOpen(false)}>Back</Button>
+            <Button
+              color="warning"
+              className="font-semibold"
+              isLoading={busy}
+              isDisabled={balance > 0 && !(canLeaveBalance && leaveOnAccount)}
+              onPress={checkOut}
+            >
+              Check out
+            </Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

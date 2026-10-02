@@ -208,17 +208,26 @@ function playBeep() {
 type KitchenDisplaySystemProps = {
   /** When true, fits inside the F&B dashboard tab instead of full-screen */
   embedded?: boolean
+  /** Kitchen pass never shows bar tickets. Bar is a separate station. */
+  lockStation?: 'kitchen' | 'bar'
 }
 
 // ── Main KDS ──────────────────────────────────────────────────────────────────
-export default function KitchenDisplaySystem({ embedded = false }: KitchenDisplaySystemProps) {
+function isBarLine(item: { route?: string | null; category?: string | null }): boolean {
+  if (item.route === 'bar') return true
+  if (item.route === 'kitchen') return false
+  const cat = (item.category || '').toLowerCase()
+  return cat.includes('drink') || cat.includes('bever') || cat.includes('bar')
+}
+
+export default function KitchenDisplaySystem({ embedded = false, lockStation = 'kitchen' }: KitchenDisplaySystemProps) {
   const [orders,         setOrders]         = useState<KDSOrder[]>([])
   const [loading,        setLoading]        = useState(true)
   const [error,          setError]          = useState<string | null>(null)
   const [lastRefresh,    setLastRefresh]    = useState<Date | null>(null)
   const [,               forceRender]       = useState(0)
   const [venueFilter,    setVenueFilter]    = useState('all')
-  const [stationFilter,  setStationFilter]  = useState<'all' | 'kitchen' | 'bar'>('all')
+  const [stationFilter,  setStationFilter]  = useState<'all' | 'kitchen' | 'bar'>(lockStation)
   const [statusFilter,   setStatusFilter]   = useState<'active' | 'all'>('active')
   const [updating,       setUpdating]       = useState<string | null>(null)
   const [soundEnabled,   setSoundEnabled]   = useState(true)
@@ -271,7 +280,7 @@ export default function KitchenDisplaySystem({ embedded = false }: KitchenDispla
       const relevantActive = all.filter(o => {
         if (!ACTIVE_STATUSES.includes(o.status)) return false
         if (station === 'all') return true
-        return o.items.some(it => (it.route ?? 'kitchen') === station)
+        return o.items.some(it => (isBarLine(it) ? 'bar' : 'kitchen') === station)
       })
       const incomingIds = new Set(relevantActive.map(o => o.id))
       if (lastOrderIdsRef.current.size > 0 && [...incomingIds].some(id => !lastOrderIdsRef.current.has(id))) {
@@ -286,7 +295,7 @@ export default function KitchenDisplaySystem({ embedded = false }: KitchenDispla
       const stationFiltered = stationFilter === 'all'
         ? all
         : all
-            .map(o => ({ ...o, items: o.items.filter(it => (it.route ?? 'kitchen') === stationFilter) }))
+            .map(o => ({ ...o, items: o.items.filter(it => (isBarLine(it) ? 'bar' : 'kitchen') === stationFilter) }))
             .filter(o => o.items.length > 0)
 
       // Status filter
@@ -327,8 +336,8 @@ export default function KitchenDisplaySystem({ embedded = false }: KitchenDispla
         ready:          all.filter(o => o.status === 'ready').length,
         completedToday: servedToday.length,
         avgMinToday:    avgMin,
-        kitchenActive:  activeAll.filter(o => o.items.some(it => (it.route ?? 'kitchen') === 'kitchen')).length,
-        barActive:      activeAll.filter(o => o.items.some(it => it.route === 'bar')).length,
+        kitchenActive:  activeAll.filter(o => o.items.some(it => !isBarLine(it))).length,
+        barActive:      activeAll.filter(o => o.items.some(it => isBarLine(it))).length,
         allActive:      activeAll.length,
       })
     } catch (err: any) {
@@ -551,16 +560,17 @@ export default function KitchenDisplaySystem({ embedded = false }: KitchenDispla
             activeClass="bg-blue-600 text-white"
           />
           {/* STATION — filters which items (and therefore orders) are shown */}
+          {embedded ? null : (
           <FilterPills
             label="STATION"
             options={[
-              { v: 'all',     label: '🏠 All',     count: stats.allActive },
               { v: 'kitchen', label: '🍳 Kitchen',  count: stats.kitchenActive },
               { v: 'bar',     label: '🍺 Bar',      count: stats.barActive },
             ]}
-            value={stationFilter} onChange={v => setStationFilter(v as any)}
+            value={stationFilter === 'all' ? 'kitchen' : stationFilter} onChange={v => setStationFilter(v as any)}
             activeClass="bg-orange-600 text-white"
           />
+          )}
           {/* VENUE — only shown when multiple venues exist (restaurant, bar, pool_bar, room_service…) */}
           {venues.length > 1 && (
             <FilterPills
@@ -951,9 +961,7 @@ function placeLabel(order: KDSOrder): string {
 }
 
 function ticketSummary(order: KDSOrder): string {
-  const kitchen = order.items.filter(i => (i.route ?? 'kitchen') === 'kitchen')
-  const shown = kitchen.length ? kitchen : order.items
-  return shown.map(i => `${i.quantity}× ${i.name}`).join(' · ')
+  return order.items.map(i => `${i.quantity}× ${i.name}`).join(' · ')
 }
 
 function OrderCard({ order, isUpdating, staff, blink, expanded, onToggle, onTransition, onAssignCook, onCancel, nextAction }: {
@@ -977,8 +985,8 @@ function OrderCard({ order, isUpdating, staff, blink, expanded, onToggle, onTran
   const place = placeLabel(order)
   const elapsed = formatElapsed(min)
 
-  const kitchenItems = order.items.filter(i => (i.route ?? 'kitchen') === 'kitchen')
-  const barItems     = order.items.filter(i => i.route === 'bar')
+  const kitchenItems = order.items.filter(i => !isBarLine(i))
+  const barItems     = order.items.filter(i => isBarLine(i))
   const tickets = parseTicketTag(order.notes)
   const ticketLabel = [
     kitchenItems.length ? tickets.kot : null,
