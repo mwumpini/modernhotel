@@ -1789,18 +1789,20 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                             </div>
                           )}
                         </div>
-                        <div className="bg-white px-3 py-2 rounded-lg border border-purple-200">
+                        {/* Current guest and the search share one row (stacked on phones). */}
+                        <div className="keep-cols grid grid-cols-1 gap-2 md:grid-cols-2 md:items-center">
+                        <div className="min-w-0 bg-white px-3 py-2 rounded-lg border border-purple-200">
                           <div className="truncate font-semibold text-ghana-black">{(switchedGuest ? guestDisplayName(switchedGuest) : selectedReservation.guestName) || 'No guest'}</div>
-                          <div className="text-sm text-gray-600">
+                          <div className="truncate text-sm text-gray-600">
                             {[formData.phone && `📱 ${formData.phone}`, formData.email && `📧 ${formData.email}`].filter(Boolean).join('   ') || 'No phone or email on file'}
                           </div>
                         </div>
                         {canChangeGuest ? (
-                          <div className="relative mt-2">
+                          <div className="relative min-w-0">
                             <Input
                               value={guestSearchTerm}
                               onChange={(e) => { setGuestSearchTerm(e.target.value); setGuestSearchError(null); }}
-                              placeholder="Change guest: search by name, phone, email, or Ghana Card"
+                              placeholder="Change guest: name, phone, email, Ghana Card"
                               aria-label="Change guest: search by name, phone, email, or Ghana Card"
                               startContent={isGuestSearching
                                 ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600"></div>
@@ -1845,8 +1847,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                             )}
                           </div>
                         ) : (
-                          <p className="mt-2 text-xs text-purple-800">The guest can't be changed once the stay is checked out. Edit guest details in Clients.</p>
+                          <p className="text-xs text-purple-800">The guest can't be changed once the stay is checked out. Edit guest details in Clients.</p>
                         )}
+                        </div>
                       </div>
                       <div className="bg-blue-50 p-3 rounded-lg border">
                         <h4 className="mb-2 font-medium text-blue-900">📅 Stay</h4>
