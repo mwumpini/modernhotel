@@ -9,11 +9,12 @@ function asLines(value: unknown, limit: number): string[] {
 }
 
 async function streamTextFromOpenAI(messages: Array<{ role: 'user'|'assistant'|'system'; content: string }>) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  // Any OpenAI-compatible provider (OpenAI, Google Gemini, Groq). A trailing slash is fine.
-  const baseUrl = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
-  const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
-  if (!apiKey) throw new Error('Missing OPENAI_API_KEY');
+  // Any provider that speaks the OpenAI chat format (Google Gemini, Groq, OpenAI).
+  // AI_* names first; the older OPENAI_* names still work. A trailing slash is fine.
+  const apiKey = process.env.AI_API_KEY || process.env.OPENAI_API_KEY;
+  const baseUrl = (process.env.AI_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  const model = process.env.AI_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  if (!apiKey) throw new Error('Missing AI_API_KEY');
 
   const resp = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
