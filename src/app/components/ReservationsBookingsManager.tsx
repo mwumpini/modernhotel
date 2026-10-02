@@ -954,6 +954,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       taxExemptionDocuments: [],
       taxExemptionNotes: ''
     });
+    // Start on the form, not the summary of whichever reservation was open last.
+    setTabKey('guest');
     onOpen();
     // Auto-select default rate plan when room type picked later
   };
@@ -1618,15 +1620,15 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           <ModalBody className="overflow-y-auto pt-1">
             <Tabs aria-label="Reservation details" classNames={{ panel: "py-1" }} selectedKey={tabKey} onSelectionChange={(key)=> setTabKey(key as string)}>
               <Tab key="summary" title="🧾 Summary / Print">
-                {selectedReservation ? (
-                  <div className="space-y-4 pt-2" id="reservation-summary">
+                {selectedReservation && !isCreatingNew ? (
+                  <div className="space-y-3 pt-1" id="reservation-summary">
                     {/* Same coloured sections as the Guest & stay tab. */}
                     <div className="bg-purple-50 p-3 rounded-lg border">
-                      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                         <h4 className="font-medium text-purple-900">📋 Reservation Details</h4>
                         <Chip size="sm" variant="flat" color={getStatusColor(selectedReservation.status) as any}>{selectedReservation.status}</Chip>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
                         {[
                           ['Reservation ID', selectedReservation.resId || selectedReservation.id],
                           ['Guest', selectedReservation.guestName],
@@ -1635,18 +1637,17 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           ['Check-out', new Date(selectedReservation.departure).toLocaleDateString()],
                           ['Nights', String(calculateNights(selectedReservation.arrival, selectedReservation.departure))],
                         ].map(([label, value]) => (
-                          <div key={label} className="bg-white p-3 rounded-lg border border-purple-200">
-                            <div className="text-sm text-gray-600">{label}</div>
-                            <div className="font-semibold text-ghana-black">{value}</div>
+                          <div key={label} className="bg-white px-3 py-2 rounded-lg border border-purple-200">
+                            <div className="text-xs text-gray-600">{label}</div>
+                            <div className="truncate font-semibold text-ghana-black" title={value}>{value}</div>
                           </div>
                         ))}
                       </div>
                     </div>
                     {(() => { const { nights, nightly, subtotal, taxRate, tax, grandTotal } = getComputedTotalsForReservation(selectedReservation); return (
-                      <div className="bg-blue-50 p-4 rounded-lg border">
-                        <h4 className="font-medium text-blue-900">💰 Rate Quote</h4>
-                        <p className="mb-3 text-xs text-blue-800">Contracted rate × nights, not the live folio</p>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                      <div className="bg-blue-50 p-3 rounded-lg border">
+                        <h4 className="mb-2 font-medium text-blue-900">💰 Rate Quote <span className="text-xs font-normal text-blue-800">· contracted rate × nights, not the live folio</span></h4>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
                           {[
                             ['Nightly', `₵${nightly.toFixed(2)}`],
                             ['Nights', String(nights)],
@@ -1654,9 +1655,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                             [`Taxes (${Math.round(taxRate * 100)}%)`, `₵${tax.toFixed(2)}`],
                             ['Quoted Total', `₵${grandTotal.toFixed(2)}`],
                           ].map(([label, value]) => (
-                            <div key={label} className="bg-white p-3 rounded-lg border border-blue-200">
+                            <div key={label} className="bg-white px-3 py-2 rounded-lg border border-blue-200">
                               <div className="text-xs text-gray-600">{label}</div>
-                              <div className="whitespace-nowrap text-lg font-semibold tabular-nums">{value}</div>
+                              <div className="whitespace-nowrap text-base font-semibold tabular-nums">{value}</div>
                             </div>
                           ))}
                         </div>
@@ -1668,12 +1669,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       if (!folio) return null;
                       const { totalCharges, totalPayments, outstandingBalance } = getFolioDisplayTotals(folio);
                       return (
-                        <div className="bg-green-50 p-4 rounded-lg border">
-                          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                            <div>
-                              <h4 className="font-medium text-green-900">🧾 Folio</h4>
-                              <p className="text-xs text-green-800">Actually posted to date</p>
-                            </div>
+                        <div className="bg-green-50 p-3 rounded-lg border">
+                          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                            <h4 className="font-medium text-green-900">🧾 Folio <span className="text-xs font-normal text-green-800">· actually posted to date</span></h4>
                             <Button
                               size="sm"
                               color="success"
@@ -1683,18 +1681,18 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                               View Folio →
                             </Button>
                           </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                            <div className="bg-white p-3 rounded-lg border border-green-200">
+                          <div className="grid grid-cols-3 gap-2">
+                            <div className="bg-white px-3 py-2 rounded-lg border border-green-200">
                               <div className="text-xs text-gray-600">Charged</div>
-                              <div className="whitespace-nowrap text-lg font-semibold tabular-nums">₵{totalCharges.toFixed(2)}</div>
+                              <div className="whitespace-nowrap text-base font-semibold tabular-nums">₵{totalCharges.toFixed(2)}</div>
                             </div>
-                            <div className="bg-white p-3 rounded-lg border border-green-200">
+                            <div className="bg-white px-3 py-2 rounded-lg border border-green-200">
                               <div className="text-xs text-gray-600">Paid</div>
-                              <div className="whitespace-nowrap text-lg font-semibold tabular-nums">₵{totalPayments.toFixed(2)}</div>
+                              <div className="whitespace-nowrap text-base font-semibold tabular-nums">₵{totalPayments.toFixed(2)}</div>
                             </div>
-                            <div className="bg-white p-3 rounded-lg border border-green-200">
+                            <div className="bg-white px-3 py-2 rounded-lg border border-green-200">
                               <div className="text-xs text-gray-600">Balance</div>
-                              <div className={`whitespace-nowrap text-lg font-semibold tabular-nums ${outstandingBalance > 0 ? 'text-orange-600' : 'text-green-600'}`}>₵{outstandingBalance.toFixed(2)}</div>
+                              <div className={`whitespace-nowrap text-base font-semibold tabular-nums ${outstandingBalance > 0 ? 'text-orange-600' : 'text-green-600'}`}>₵{outstandingBalance.toFixed(2)}</div>
                             </div>
                           </div>
                         </div>
@@ -1702,18 +1700,18 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                     })()}
 
                     {(selectedReservation.remarksToGuest || selectedReservation.internalNotes) && (
-                      <div className="bg-amber-50 p-4 rounded-lg border">
-                        <h4 className="mb-3 font-medium text-amber-900">📝 Notes</h4>
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                      <div className="bg-amber-50 p-3 rounded-lg border">
+                        <h4 className="mb-2 font-medium text-amber-900">📝 Notes</h4>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
                           {selectedReservation.remarksToGuest && (
-                            <div className="bg-white p-3 rounded-lg border border-amber-200">
-                              <div className="text-sm text-gray-600">Remarks to Guest</div>
+                            <div className="bg-white px-3 py-2 rounded-lg border border-amber-200">
+                              <div className="text-xs text-gray-600">Remarks to Guest</div>
                               <div className="text-ghana-black">{selectedReservation.remarksToGuest}</div>
                             </div>
                           )}
                           {selectedReservation.internalNotes && (
-                            <div className="bg-white p-3 rounded-lg border border-amber-200">
-                              <div className="text-sm text-gray-600">Internal Notes</div>
+                            <div className="bg-white px-3 py-2 rounded-lg border border-amber-200">
+                              <div className="text-xs text-gray-600">Internal Notes</div>
                               <div className="text-ghana-black">{selectedReservation.internalNotes}</div>
                             </div>
                           )}
@@ -1750,7 +1748,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                     </div>
                   </div>
                 ) : (
-                  <div className="py-8 text-center text-gray-500">Select a reservation to view</div>
+                  <div className="py-8 text-center text-gray-500">{isCreatingNew ? 'The summary appears here once the reservation is saved.' : 'Select a reservation to view'}</div>
                 )}
               </Tab>
               
@@ -1764,7 +1762,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
               <Tab key="guest" title={isCreatingNew ? 'Guest & stay' : 'Reservation'}>
                 <div className="space-y-4 pt-2">
                   {!isCreatingNew && selectedReservation && (
-                    <div className="space-y-4 rounded-lg border border-gray-200 p-4">
+                    <div className="space-y-3">
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                         <span className="font-semibold text-gray-900">{selectedReservation.resId || selectedReservation.id}</span>
                         <Chip size="sm" variant="flat" color={getStatusColor(selectedReservation.status) as any}>{selectedReservation.status}</Chip>
@@ -1772,17 +1770,17 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           {selectedReservation.roomId && selectedReservation.roomId !== 'TBD' ? `Room ${selectedReservation.roomId}` : 'Room not assigned'}
                         </span>
                       </div>
-                      <div>
-                        <div className="mb-2 text-sm font-medium text-gray-800">Guest</div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="bg-purple-50 p-3 rounded-lg border">
+                        <h4 className="mb-2 font-medium text-purple-900">👤 Guest</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                           <Input label="Guest name" value={formData.guestName} onChange={(e) => setFormData({...formData, guestName: e.target.value})} />
                           <Input label="Phone" value={formData.phone || ''} onChange={(e) => setFormData({...formData, phone: e.target.value})} />
                           <Input label="Email" type="email" value={formData.email || ''} onChange={(e) => setFormData({...formData, email: e.target.value})} />
                         </div>
                       </div>
-                      <div>
-                        <div className="mb-2 text-sm font-medium text-gray-800">Stay</div>
-                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                      <div className="bg-blue-50 p-3 rounded-lg border">
+                        <h4 className="mb-2 font-medium text-blue-900">📅 Stay</h4>
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                           <Input label="Arrival" type="date" value={formData.arrival} onChange={(e) => setFormData({...formData, arrival: e.target.value})} />
                           <Input label="Departure" type="date" value={formData.departure} onChange={(e) => setFormData({...formData, departure: e.target.value})} />
                           <Input label="Nights" value={String(calculateNights(formData.arrival, formData.departure))} isReadOnly />
@@ -1790,9 +1788,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           <Input label="Children" type="number" value={String(formData.children)} onChange={(e) => setFormData({...formData, children: parseInt(e.target.value) || 0})} />
                         </div>
                       </div>
-                      <div>
-                        <div className="mb-2 text-sm font-medium text-gray-800">Room and rate</div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="bg-green-50 p-3 rounded-lg border">
+                        <h4 className="mb-2 font-medium text-green-900">🛏️ Room and rate</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                           <Select
                             label="Room type"
                             selectedKeys={formData.roomTypeId ? new Set([formData.roomTypeId]) : new Set()}
@@ -1855,8 +1853,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                         {(() => {
                           const { nights, nightly, grandTotal } = getComputedTotals(formData.arrival, formData.departure, formData.roomTypeId || '', formData.ratePlanId, formData.customRate);
                           return (
-                            <div className="mt-2 text-sm text-gray-600">
-                              {nights} night{nights === 1 ? '' : 's'} · ₵{nightly.toFixed(2)} a night · Total ₵{grandTotal.toFixed(2)}
+                            <div className="mt-2 text-sm text-green-900">
+                              {nights} night{nights === 1 ? '' : 's'} · ₵{nightly.toFixed(2)} a night · Total <strong>₵{grandTotal.toFixed(2)}</strong>
                             </div>
                           );
                         })()}
@@ -2235,8 +2233,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
               
                   {/* Stay Purpose & Billing moved here from the separate tab */}
                   {/* Stay Purpose Section */}
-                  <div className="bg-blue-50 p-4 rounded-lg border">
-                    <h4 className="font-medium text-blue-900 mb-3">Purpose of Stay</h4>
+                  <div className="bg-blue-50 p-3 rounded-lg border">
+                    <h4 className="font-medium text-blue-900 mb-2">Purpose of Stay</h4>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Reason for Stay *</label>
@@ -2289,7 +2287,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
 
                   {/* Billing Person Section */}
                   {useBillingPerson && (
-                  <div className="bg-green-50 p-4 rounded-lg border">
+                  <div className="bg-green-50 p-3 rounded-lg border">
                     <div className="flex items-center justify-between mb-3">
                       <h4 className="font-medium text-green-900">Billing Information</h4>
                     </div>
@@ -2535,7 +2533,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                     </div>
                   </div>
                   {formData.taxExempt && (
-                    <div className="bg-amber-50 p-4 rounded-lg border mb-4">
+                    <div className="bg-amber-50 p-3 rounded-lg border mb-4">
                       <div className="space-y-3">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                           <div>
@@ -2685,8 +2683,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
               )}
 
               <Tab key="additional" title="Additional">
-                <div className="space-y-4 pt-2">
-                  <div className="bg-amber-50 p-4 rounded-lg border space-y-4">
+                <div className="space-y-3 pt-1">
+                  <div className="bg-amber-50 p-3 rounded-lg border space-y-3">
                   <h4 className="font-medium text-amber-900">📝 Notes</h4>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Remarks to Guest</label>
@@ -2694,7 +2692,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       value={formData.remarksToGuest}
                       onChange={(e) => setFormData({...formData, remarksToGuest: e.target.value})}
                       placeholder="Special requests, preferences, or notes for the guest"
-                      rows={3}
+                      rows={2}
                     />
                   </div>
                   
@@ -2704,12 +2702,12 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       value={formData.internalNotes}
                       onChange={(e) => setFormData({...formData, internalNotes: e.target.value})}
                       placeholder="Internal notes for staff (not visible to guest)"
-                      rows={3}
+                      rows={2}
                     />
                   </div>
                   </div>
 
-                  <div className="bg-blue-50 p-4 rounded-lg border space-y-4">
+                  <div className="bg-blue-50 p-3 rounded-lg border space-y-3">
                   <h4 className="font-medium text-blue-900">🏷️ Booking Details</h4>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Market Codes</label>
