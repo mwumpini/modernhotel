@@ -137,13 +137,15 @@ export default function CostRevenueCenters() {
     setShowAddModal(false);
   };
 
-  const handleDeleteCostCenter = (center: CostCenter) => {
-    if (!confirm(`Delete spending area "${center.name}" (${center.code})?`)) return;
+  const handleDeleteCostCenter = async (center: CostCenter) => {
+    const { confirmDelete } = await import('../DangerConfirm');
+    if (!(await confirmDelete(center.name, `Spending area ${center.code} will be permanently removed.`))) return;
     deleteCostCenter(center.id);
   };
 
-  const handleDeleteRevenueCenter = (center: RevenueCenter) => {
-    if (!confirm(`Delete income area "${center.name}" (${center.code})?`)) return;
+  const handleDeleteRevenueCenter = async (center: RevenueCenter) => {
+    const { confirmDelete } = await import('../DangerConfirm');
+    if (!(await confirmDelete(center.name, `Income area ${center.code} will be permanently removed.`))) return;
     deleteRevenueCenter(center.id);
   };
 

@@ -19,6 +19,20 @@ export function usernameError(username: string): string | null {
   return null
 }
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+export function normalizeEmail(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase()
+}
+
+/** Null when the email is acceptable (an empty one means "no email"). */
+export function emailError(email: string): string | null {
+  if (!email) return null
+  return EMAIL_PATTERN.test(email) ? null : 'That email address does not look right.'
+}
+
+export const NEEDS_SIGN_IN_NAME = 'Give the user an email or a username (or both) so they can sign in.'
+
 /** One username per hotel. The database has no unique index for it, so every write checks here. */
 export async function usernameTaken(tenantId: string, username: string, exceptUserId?: string): Promise<boolean> {
   if (!username) return false

@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import HeadingInfo from './HeadingInfo';
+import { confirmDanger, confirmDelete, confirmVoid } from './DangerConfirm';
 import { 
   Card, 
   CardBody, 
@@ -34,7 +35,7 @@ import { useHostSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
 import { stayOverlapsPeriod } from '../lib/dashboard/useDashboardPeriod';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { resolveGuestAddress } from '../lib/frontoffice/helpers/guests';
-import { autoAssignRoomsEnabled, useSettingsStore } from '../lib/settings/store';
+import { useSettingsStore } from '../lib/settings/store';
 import { useComplianceStore } from '../lib/compliance/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { trackEvent } from '../lib/analytics/trackEvent';
@@ -209,7 +210,12 @@ const AuditLogSection = ({ reservationId }: { reservationId: string }) => {
 
 const RESERVATIONS_DASHBOARD_SECTIONS = FO_RESERVATIONS_KPI_SECTIONS;
 
+const POSTED_STAY_VOID_MESSAGE =
+  'This stay is already in the books (its bill went to Accounting at checkout). Void its receipts and invoice in Accounting → Accounts Receivable instead, so the reversal is posted there.';
+
 export default function ReservationsBookingsManager({ mode = 'reservation', embed = false, autoOpenNew = false, onAutoOpenConsumed, defaultArrival = '', defaultDeparture = '', onFinished }: ReservationsManagerProps) {
+  // Hard delete of a pending reservation; the server checks frontdesk.delete too.
+  const canDeleteReservation = useSettingsStore((s) => s.hasPermission('frontdesk.delete'));
   const router = useRouter();
   const { isHidden, hide, hiddenCount: hiddenStatsCount, isHosted } =
     useFrontOfficeDeskVisibility(FO_RESERVATIONS_KPI_SECTIONS);
@@ -244,6 +250,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   const [assignRoomId, setAssignRoomId] = useState<string>('');
   const [assignRoomSearch, setAssignRoomSearch] = useState<string>('');
   const [assignMatchTypeOnly, setAssignMatchTypeOnly] = useState<boolean>(true);
+  const [editRateInput, setEditRateInput] = useState('');
   const [noShowTarget, setNoShowTarget] = useState<Reservation | null>(null);
   const { isOpen: isNoShowOpen, onOpen: onNoShowOpen, onClose: onNoShowClose } = useDisclosure();
   
@@ -412,6 +419,57 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       throw new Error('Failed to render PDF source');
     }
     return { el: body, cleanup: () => iframe.remove() };
+  };
+
+  const printConfirmation = (reservation: Reservation) => {
+    trackEvent('Proforma.Printed', { reservationId: reservation.id, guestName: reservation.guestName, via: 'template' }, { sourceModule: 'FrontOffice' });
+    const settingsState = useSettingsStore.getState();
+    openPrintPreview('accommodation-proforma' as any, settingsState.printing['accommodation-proforma'] || 'builtin-accommodation-proforma-standard', buildReservationConfirmationPrintData(reservation));
+  };
+
+  const sendConfirmation = async (reservation: Reservation) => {
+    const guestEmail = (formData.email || '').trim()
+      || (frontOfficeStore.guests.find(g => g.id === reservation.guestId)?.email || '').trim();
+    if (!guestEmail) return;
+    let cleanup: (() => void) | undefined;
+    try {
+      const { el, cleanup: c } = await renderReservationPdfSource(reservation);
+      cleanup = c;
+      // @ts-ignore
+      const ensure = async () => (window as any).html2pdf || await new Promise((res, rej) => { const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; s.onload=()=>res((window as any).html2pdf); s.onerror=()=>rej(); document.body.appendChild(s); });
+      // @ts-ignore
+      const h2p = await ensure();
+      const pdfBuffer = await h2p().set({ jsPDF: { unit: 'pt', format: 'a4', orientation: 'portrait' }, margin: 16 }).from(el).outputPdf('datauristring');
+      cleanup();
+      const response = await fetch('/api/email/send-proforma', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reservationId: reservation.resId || reservation.id,
+          guestEmail,
+          guestName: reservation.guestName || '',
+          pdfBuffer: pdfBuffer.split(',')[1],
+          hotelName: useSettingsStore.getState().saasSettings.customBranding.companyName || 'Ghana Hotel Management',
+          reservationDetails: {
+            checkIn: new Date(reservation.arrival).toLocaleDateString(),
+            checkOut: new Date(reservation.departure).toLocaleDateString(),
+            roomType: frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.name || 'Unknown',
+            totalAmount: getComputedTotalsForReservation(reservation).grandTotal,
+            currency: 'GHS'
+          }
+        })
+      });
+      if (response.ok) {
+        alert('Confirmation sent to the guest.');
+      } else {
+        const error = await response.json();
+        alert(`Failed to send: ${error.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      cleanup?.();
+      console.error('Error sending confirmation:', error);
+      alert('Failed to send. Please try again.');
+    }
   };
 
   // Display helper: nightly rate including taxes for reservation
@@ -950,11 +1008,12 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     setUseExistingGuest(false);
     setSelectedGuest(null);
     
+          const guestRecord = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
           // Convert reservation to form data
       setFormData({
         guestName: reservation.guestName,
-        phone: '',
-        email: '',
+        phone: guestRecord?.phone || '',
+        email: guestRecord?.email || '',
         nationality: 'ghanaian', // Default value since reservation doesn't store this
         idType: 'ghana_card', // Default value since reservation doesn't store this
         idNumber: '',
@@ -967,8 +1026,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         emergencyContactAddress: '',
         roomTypeId: reservation.roomTypeId,
         ratePlanId: reservation.ratePlanId || '',
-        arrival: reservation.arrival,
-        departure: reservation.departure,
+        arrival: (reservation.arrival || '').slice(0, 10),
+        departure: (reservation.departure || '').slice(0, 10),
         adults: reservation.adults || 1,
         children: reservation.children || 0,
         source: reservation.source || 'walkin',
@@ -991,6 +1050,11 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         taxExemptionNotes: reservation.taxExemptionNotes || ''
       });
     
+    setAssignReservation(reservation);
+    setEditRateInput(reservation.ratePlanId ? '' : frontOfficeStore.getReservationQuote(reservation).nightlyGross.toFixed(2));
+    setAssignRoomId(reservation.roomId && reservation.roomId !== 'TBD' ? reservation.roomId : '');
+    setAssignRoomSearch('');
+    setAssignMatchTypeOnly(true);
     setTabKey('guest');
     onOpen();
   };
@@ -1079,7 +1143,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     setShowNewBillingPersonModal(false);
   };
 
-  const handleSaveReservation = () => {
+  const handleSaveReservation = async () => {
     if (isCreatingNew) {
       // Handle reservation (single or multiple guests)
       if (bulkGuests.length === 0) {
@@ -1172,15 +1236,37 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           frontOfficeStore.linkReservationsAsGroup(createdReservations.map(r => r.id));
         }
 
-        // If in check-in mode, immediately check-in each created reservation
+        // If in check-in mode, immediately check-in each created reservation.
+        // A walk-in with no room asks before the stay is marked in house.
         if (mode === 'checkin') {
+          const unassigned = createdReservations.filter((r) => !r.roomId || r.roomId === 'TBD');
+          let leaveOpen = false;
+          if (unassigned.length > 0) {
+            const who = unassigned.map((r) => r.guestName).filter(Boolean).join(', ') || 'This guest';
+            leaveOpen = await confirmDanger({
+              tone: 'void',
+              title: unassigned.length === 1 ? `Check in ${who} without a room?` : `Check in ${unassigned.length} guests without a room?`,
+              message: 'No room is assigned. You can check them in anyway. The room stays open until you assign one.',
+              confirmLabel: 'Check in anyway',
+            });
+          }
           createdReservations.forEach((r) => {
-            try { frontOfficeStore.checkIn(r.id); } catch {}
+            const open = !r.roomId || r.roomId === 'TBD';
+            if (open && !leaveOpen) return;
+            try { frontOfficeStore.checkIn(r.id, open ? { leaveRoomOpen: true } : undefined); } catch {}
           });
           const updated = createdReservations.map((r) => frontOfficeStore.reservations.find((stay) => stay.id === r.id) || r);
-          const who = updated.map((r) => r.guestName).filter(Boolean).join(', ') || 'Guest';
-          const rooms = updated.map((r) => (r.roomId && r.roomId !== 'TBD' ? `Room ${r.roomId}` : 'room to assign')).join(', ');
-          notifySuccess(`${who} is in-house — ${rooms}`, 'Walk-in');
+          const housed = updated.filter((r) => r.status === 'checked-in');
+          const waiting = updated.filter((r) => r.status !== 'checked-in');
+          if (housed.length > 0) {
+            const who = housed.map((r) => r.guestName).filter(Boolean).join(', ') || 'Guest';
+            const rooms = housed.map((r) => (r.roomId && r.roomId !== 'TBD' ? `Room ${r.roomId}` : 'room still to assign')).join(', ');
+            notifySuccess(`${who} is in house — ${rooms}`, 'Walk-in');
+          }
+          if (waiting.length > 0) {
+            const who = waiting.map((r) => r.guestName).filter(Boolean).join(', ') || 'Guest';
+            notifySuccess(`${who} is still on Check-in. Assign a room, then check them in.`, 'Walk-in');
+          }
           onFinished?.(createdReservations.map((r) => r.id));
         } else {
         alert(`Successfully created ${createdReservations.length} reservation${createdReservations.length !== 1 ? 's' : ''}${formData.companyName ? ` for ${formData.companyName}` : ''}`);
@@ -1231,6 +1317,13 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         rateBreakdown
       };
 
+      if (selectedReservation.guestId) {
+        frontOfficeStore.updateGuest(selectedReservation.guestId, {
+          name: formData.guestName,
+          phone: formData.phone,
+          email: formData.email,
+        });
+      }
       frontOfficeStore.updateReservation(updatedReservation);
       
       trackEvent('FO.Reservation.Updated', {
@@ -1247,23 +1340,22 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     switch (action) {
       case 'checkin':
         {
-          const autoAssign = autoAssignRoomsEnabled();
           const hasRoom = !!reservation.roomId && reservation.roomId !== 'TBD';
-          if (!autoAssign && !hasRoom) {
-            // Prompt assign room modal instead of immediate check-in
-            setAssignReservation(reservation);
-            const avail = getAvailableRooms(reservation.roomTypeId);
-            setAssignRoomId(avail[0] || '');
-            setIsAssignOpen(true);
-          } else {
-            frontOfficeStore.checkIn(reservation.id);
-            // Confirm the check-in without navigating away — front desk
-            // processes arrivals back-to-back, and jumping to Check-Ins
-            // Management after every click would interrupt that.
+          void (async () => {
+            if (!hasRoom) {
+              const ok = await confirmDanger({
+                tone: 'void',
+                title: `Check in ${reservation.guestName} without a room?`,
+                message: 'No room is assigned. You can check this guest in anyway. The room stays open until you assign one.',
+                confirmLabel: 'Check in anyway',
+              });
+              if (!ok) return;
+            }
+            frontOfficeStore.checkIn(reservation.id, hasRoom ? undefined : { leaveRoomOpen: true });
             const updated = frontOfficeStore.reservations.find(r => r.id === reservation.id);
-            const roomLabel = updated?.roomId && updated.roomId !== 'TBD' ? `Room ${updated.roomId}` : 'room pending assignment';
+            const roomLabel = updated?.roomId && updated.roomId !== 'TBD' ? `Room ${updated.roomId}` : 'room still to assign';
             notifySuccess(`${reservation.guestName} checked in — ${roomLabel}`, 'Checked in');
-          }
+          })();
         }
         break;
       case 'checkout':
@@ -1310,6 +1402,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       case 'checked-in': return 'primary';
       case 'checked-out': return 'secondary';
       case 'cancelled': return 'danger';
+      case 'void': return 'danger';
       case 'no-show': return 'default';
       default: return 'default';
     }
@@ -1322,6 +1415,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       case 'checked-in': return '🔑';
       case 'checked-out': return '🚪';
       case 'cancelled': return '❌';
+      case 'void': return '🚫';
       case 'no-show': return '👻';
       default: return '❓';
     }
@@ -1518,14 +1612,14 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       {/* Reservation Form Modal */}
       <Modal isOpen={isOpen} onClose={dismissForm} size="4xl" className="mx-2 sm:mx-4">
         <ModalContent className="max-h-[90vh]">
-          <ModalHeader>
+          <ModalHeader className="pb-2">
             {isCreatingNew ? (mode === 'checkin' ? 'Walk-in' : 'Create New Reservation') : 'View / Edit Reservation'}
           </ModalHeader>
-          <ModalBody className="overflow-y-auto">
-            <Tabs aria-label="Reservation details" selectedKey={tabKey} onSelectionChange={(key)=> setTabKey(key as string)}>
+          <ModalBody className="overflow-y-auto pt-1">
+            <Tabs aria-label="Reservation details" classNames={{ panel: "py-1" }} selectedKey={tabKey} onSelectionChange={(key)=> setTabKey(key as string)}>
               <Tab key="summary" title="🧾 Summary / Print">
                 {selectedReservation ? (
-                  <div className="space-y-4 pt-4" id="reservation-summary">
+                  <div className="space-y-4 pt-2" id="reservation-summary">
                     {/* Reservation Details */}
                     <div className="mb-6">
                       <h2 className="text-lg font-semibold text-gray-900 mb-4">Reservation Details</h2>
@@ -1616,12 +1710,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       </div>
                     )}
 
-                    <div className="flex flex-wrap gap-2 justify-end pt-4">
-                      <Button color="primary" variant="flat" onClick={() => {
-                        trackEvent('Proforma.Printed', { reservationId: selectedReservation?.id, guestName: selectedReservation?.guestName, via: 'template' }, { sourceModule: 'FrontOffice' });
-                        const settingsState = useSettingsStore.getState();
-                        openPrintPreview('accommodation-proforma' as any, settingsState.printing['accommodation-proforma'] || 'builtin-accommodation-proforma-standard', buildReservationConfirmationPrintData(selectedReservation));
-                      }}>🧾 Print Confirmation</Button>
+                    <div className="flex flex-wrap gap-2 justify-end pt-2">
+                      <Button color="primary" variant="flat" onClick={() => printConfirmation(selectedReservation)}>Print</Button>
                       <Button variant="flat" onClick={async () => {
                         let cleanup: (() => void) | undefined;
                         try {
@@ -1642,56 +1732,10 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           trackEvent('Proforma.Printed', { reservationId: selectedReservation?.id, guestName: selectedReservation?.guestName, fallbackToPrint: true }, { sourceModule: 'FrontOffice' });
                           window.print();
                         }
-                      }}>⬇️ Download PDF</Button>
-                      <Button color="primary" onClick={async () => {
-                        let cleanup: (() => void) | undefined;
-                        try {
-                          const { el, cleanup: c } = await renderReservationPdfSource(selectedReservation!);
-                          cleanup = c;
-
-                          // Generate PDF
-                          // @ts-ignore
-                          const ensure = async () => (window as any).html2pdf || await new Promise((res, rej) => { const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; s.onload=()=>res((window as any).html2pdf); s.onerror=()=>rej(); document.body.appendChild(s); });
-                          // @ts-ignore
-                          const h2p = await ensure();
-                          const pdfBuffer = await h2p().set({ jsPDF: { unit: 'pt', format: 'a4', orientation: 'portrait' }, margin: 16 }).from(el).outputPdf('datauristring');
-                          cleanup();
-
-                          // Send via API
-                          const response = await fetch('/api/email/send-proforma', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              reservationId: selectedReservation?.resId || selectedReservation?.id,
-                              guestEmail: frontOfficeStore.guests.find(g => g.id === selectedReservation?.guestId)?.email || '',
-                              guestName: selectedReservation?.guestName || '',
-                              pdfBuffer: pdfBuffer.split(',')[1], // Remove data:application/pdf;base64, prefix
-                              hotelName: useSettingsStore.getState().saasSettings.customBranding.companyName || 'Ghana Hotel Management',
-                              reservationDetails: {
-                                checkIn: selectedReservation ? new Date(selectedReservation.arrival).toLocaleDateString() : '',
-                                checkOut: selectedReservation ? new Date(selectedReservation.departure).toLocaleDateString() : '',
-                                roomType: frontOfficeStore.roomTypes.find(rt => rt.id === selectedReservation?.roomTypeId)?.name || 'Unknown',
-                                totalAmount: (() => {
-                                  const { grandTotal } = getComputedTotalsForReservation(selectedReservation!);
-                                  return grandTotal;
-                                })(),
-                                currency: 'GHS'
-                              }
-                            })
-                          });
-                          
-                          if (response.ok) {
-                            alert('Proforma sent successfully to guest email!');
-                          } else {
-                            const error = await response.json();
-                            alert(`Failed to send proforma: ${error.error || 'Unknown error'}`);
-                          }
-                        } catch (error) {
-                          cleanup?.();
-                          console.error('Error sending proforma:', error);
-                          alert('Failed to send proforma. Please try again.');
-                        }
-                      }}>📧 Send to Client</Button>
+                      }}>Download PDF</Button>
+                      {((formData.email || '').trim() || (frontOfficeStore.guests.find(g => g.id === selectedReservation.guestId)?.email || '').trim()) && (
+                        <Button color="primary" onClick={() => sendConfirmation(selectedReservation)}>Send to guest</Button>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -1706,78 +1750,112 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                 </Tab>
               )}
               
-              <Tab key="guest" title={isCreatingNew ? '👤 Guest & Reservation Details' : '✏️'}>
-                <div className="space-y-4 pt-4">
+              <Tab key="guest" title={isCreatingNew ? 'Guest & stay' : 'Reservation'}>
+                <div className="space-y-4 pt-2">
                   {!isCreatingNew && selectedReservation && (
-                    <div className="bg-gray-50 p-4 rounded-lg border">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <Input
-                          label="Guest Name"
-                          value={formData.guestName}
-                          onChange={(e) => setFormData({...formData, guestName: e.target.value})}
-                        />
-                        <Input
-                          label="Phone"
-                          value={formData.phone}
-                          onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                        />
-                        <Input
-                          label="Email"
-                          type="email"
-                          value={formData.email}
-                          onChange={(e) => setFormData({...formData, email: e.target.value})}
-                        />
-                        {/* Single-guest form temporarily disabled by request */}
-                        <Input
-                          label="Arrival"
-                          type="date"
-                          value={formData.arrival}
-                          onChange={(e) => setFormData({...formData, arrival: e.target.value})}
-                        />
-                        <Input
-                          label="Departure"
-                          type="date"
-                          value={formData.departure}
-                          onChange={(e) => setFormData({...formData, departure: e.target.value})}
-                        />
-                        <Input
-                          label="Adults"
-                          type="number"
-                          value={String(formData.adults)}
-                          onChange={(e) => setFormData({...formData, adults: parseInt(e.target.value) || 1})}
-                        />
-                        <Input
-                          label="Children"
-                          type="number"
-                          value={String(formData.children)}
-                          onChange={(e) => setFormData({...formData, children: parseInt(e.target.value) || 0})}
-                        />
+                    <div className="space-y-4 rounded-lg border border-gray-200 p-4">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                        <span className="font-semibold text-gray-900">{selectedReservation.resId || selectedReservation.id}</span>
+                        <Chip size="sm" variant="flat" color={getStatusColor(selectedReservation.status) as any}>{selectedReservation.status}</Chip>
+                        <span className="text-gray-500">
+                          {selectedReservation.roomId && selectedReservation.roomId !== 'TBD' ? `Room ${selectedReservation.roomId}` : 'Room not assigned'}
+                        </span>
                       </div>
-                      {/* Pricing Summary */}
-                      <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-3">
-                        {(() => { const { nights, nightly, subtotal, taxRate, tax, grandTotal } = getComputedTotals(formData.arrival, formData.departure, formData.roomTypeId || '', formData.ratePlanId, formData.customRate); return (
-                          <>
-                            <Card><CardBody><div className="text-xs text-gray-600">Nightly</div><div className="text-lg font-semibold">₵{nightly.toFixed(2)}</div></CardBody></Card>
-                            <Card><CardBody><div className="text-xs text-gray-600">Nights</div><div className="text-lg font-semibold">{nights}</div></CardBody></Card>
-                            <Card><CardBody><div className="text-xs text-gray-600">Subtotal</div><div className="text-lg font-semibold">₵{subtotal.toFixed(2)}</div></CardBody></Card>
-                            <Card><CardBody><div className="text-xs text-gray-600">Taxes ({Math.round(taxRate*100)}%)</div><div className="text-lg font-semibold">₵{tax.toFixed(2)}</div></CardBody></Card>
-                            <Card><CardBody><div className="text-xs text-gray-600">Grand Total</div><div className="text-lg font-semibold">₵{grandTotal.toFixed(2)}</div></CardBody></Card>
-                          </>
-                        ); })()}
+                      <div>
+                        <div className="mb-2 text-sm font-medium text-gray-800">Guest</div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <Input label="Guest name" value={formData.guestName} onChange={(e) => setFormData({...formData, guestName: e.target.value})} />
+                          <Input label="Phone" value={formData.phone || ''} onChange={(e) => setFormData({...formData, phone: e.target.value})} />
+                          <Input label="Email" type="email" value={formData.email || ''} onChange={(e) => setFormData({...formData, email: e.target.value})} />
+                        </div>
+                      </div>
+                      <div>
+                        <div className="mb-2 text-sm font-medium text-gray-800">Stay</div>
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                          <Input label="Arrival" type="date" value={formData.arrival} onChange={(e) => setFormData({...formData, arrival: e.target.value})} />
+                          <Input label="Departure" type="date" value={formData.departure} onChange={(e) => setFormData({...formData, departure: e.target.value})} />
+                          <Input label="Nights" value={String(calculateNights(formData.arrival, formData.departure))} isReadOnly />
+                          <Input label="Adults" type="number" value={String(formData.adults)} onChange={(e) => setFormData({...formData, adults: parseInt(e.target.value) || 1})} />
+                          <Input label="Children" type="number" value={String(formData.children)} onChange={(e) => setFormData({...formData, children: parseInt(e.target.value) || 0})} />
+                        </div>
+                      </div>
+                      <div>
+                        <div className="mb-2 text-sm font-medium text-gray-800">Room and rate</div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <Select
+                            label="Room type"
+                            selectedKeys={formData.roomTypeId ? new Set([formData.roomTypeId]) : new Set()}
+                            onSelectionChange={(keys) => {
+                              const id = Array.from(keys as Set<string>)[0] || '';
+                              const settings = useSettingsStore.getState();
+                              const defaultId = (settings.roomManagement.defaultRatePlanByRoomType || {})[id] || '';
+                              setFormData({ ...formData, roomTypeId: id, ratePlanId: defaultId || 'custom', customRate: defaultId ? undefined : 0 });
+                              if (!defaultId) setEditRateInput('0.00');
+                            }}
+                          >
+                            {(useSettingsStore.getState().roomManagement.roomTypes || []).filter((rt: any) => rt.isActive !== false || rt.id === formData.roomTypeId).map((rt: any) => (
+                              <SelectItem key={rt.id} textValue={rt.name}>{rt.name}</SelectItem>
+                            ))}
+                          </Select>
+                          <Select<any>
+                            label="Rate"
+                            isDisabled={!formData.roomTypeId}
+                            selectedKeys={new Set([formData.ratePlanId || 'custom'])}
+                            onSelectionChange={(keys) => {
+                              const selected = Array.from(keys as Set<string>)[0] || 'custom';
+                              setFormData({ ...formData, ratePlanId: selected, customRate: selected === 'custom' ? (formData.customRate || 0) : undefined });
+                              if (selected === 'custom' && !editRateInput) setEditRateInput('0.00');
+                            }}
+                          >
+                            {(() => {
+                              const items = (useSettingsStore.getState().roomManagement.ratePlans || [])
+                                .filter((rp: any) => rp.roomTypeId === formData.roomTypeId)
+                                .map((rp: any) => (
+                                  <SelectItem key={rp.id} textValue={rp.name}>{`${rp.name} — ₵${getPlanGross(rp).toFixed(2)}`}</SelectItem>
+                                ));
+                              items.push(<SelectItem key="custom" textValue="Custom rate">Custom rate</SelectItem>);
+                              return items as unknown as any;
+                            })()}
+                          </Select>
+                          {formData.ratePlanId === 'custom' || !formData.ratePlanId ? (
+                            <Input
+                              label="Custom rate (₵ incl. taxes)"
+                              type="number"
+                              startContent="₵"
+                              value={editRateInput}
+                              onChange={(e) => {
+                                setEditRateInput(e.target.value);
+                                const gross = parseFloat(e.target.value);
+                                setFormData({ ...formData, ratePlanId: 'custom', customRate: !isNaN(gross) && gross > 0 ? Number(exclusiveFromGross(gross).toFixed(2)) : 0 });
+                              }}
+                            />
+                          ) : (
+                            <Input
+                              label="Rate"
+                              isReadOnly
+                              startContent="₵"
+                              value={(() => {
+                                const rp = useSettingsStore.getState().roomManagement.ratePlans.find(r => r.id === formData.ratePlanId);
+                                return rp ? getPlanGross(rp).toFixed(2) : '0.00';
+                              })()}
+                            />
+                          )}
+                        </div>
+                        {(() => {
+                          const { nights, nightly, grandTotal } = getComputedTotals(formData.arrival, formData.departure, formData.roomTypeId || '', formData.ratePlanId, formData.customRate);
+                          return (
+                            <div className="mt-2 text-sm text-gray-600">
+                              {nights} night{nights === 1 ? '' : 's'} · ₵{nightly.toFixed(2)} a night · Total ₵{grandTotal.toFixed(2)}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   )}
                   {/* Guest Management - Unified for Single and Multiple */}
                   {isCreatingNew && (
-                    <div className="bg-purple-50 p-4 rounded-lg border">
-                      {mode === 'checkin' && (
-                        <p className="mb-3 text-sm text-gray-600">
-                          {defaultDeparture
-                            ? `Check-in is today. Departure is ${defaultDeparture}. Change either date on the guest if the stay is different.`
-                            : 'Check-in is today. Change the dates on the guest if the stay is longer.'}
-                        </p>
-                      )}
-                      <div className="flex items-center justify-between mb-4">
+                    <div className="bg-purple-50 p-3 rounded-lg border">
+                      <div className="flex items-center justify-between mb-3">
                         <h4 className="font-medium text-purple-900">👥 Guest List ({bulkGuests.length} guest{bulkGuests.length !== 1 ? 's' : ''})</h4>
                         {bulkGuests.length > 1 ? (
                           <label className="flex items-center gap-2 text-sm text-purple-800 cursor-pointer">
@@ -2506,12 +2584,97 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
               </Tab>
               
               
-              {/* Removed separate Stay Purpose & Billing tab (merged into Guest Information) */}
-              
-              
-              
-              <Tab key="additional" title="📝 Additional Information">
-                <div className="space-y-4 pt-4">
+              {!isCreatingNew && selectedReservation && (
+                <Tab key="room" title="Assign Room">
+                  <div className="space-y-3 pt-2">
+                    <div className="text-sm text-gray-700">
+                      {selectedReservation.guestName} · {selectedReservation.resId || selectedReservation.id}
+                      <span className="text-gray-500">
+                        {selectedReservation.roomId && selectedReservation.roomId !== 'TBD'
+                          ? ` · Room ${selectedReservation.roomId}`
+                          : ' · No room assigned'}
+                      </span>
+                    </div>
+                    {selectedReservation.status === 'checked-in' ? (
+                      <p className="text-sm text-gray-600">This guest is in house. Change the room from Room Transfer.</p>
+                    ) : !['pending', 'confirmed'].includes(selectedReservation.status) ? (
+                      <p className="text-sm text-gray-600">This stay is closed. The room on file stays as it is.</p>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm text-gray-600">
+                            {assignMatchTypeOnly ? 'Vacant rooms for this room type' : 'All vacant rooms'}
+                          </div>
+                          <Switch isSelected={assignMatchTypeOnly} onValueChange={setAssignMatchTypeOnly}>Match type</Switch>
+                        </div>
+                        <Autocomplete<any>
+                          label="Room"
+                          placeholder="Search a vacant room"
+                          selectedKey={assignRoomId || undefined}
+                          onSelectionChange={(key) => setAssignRoomId(typeof key === 'string' ? key : (key as any) || '')}
+                          onInputChange={(value) => setAssignRoomSearch(value)}
+                        >
+                          {(() => {
+                            const current = selectedReservation.roomId && selectedReservation.roomId !== 'TBD' ? selectedReservation.roomId : '';
+                            const all = assignMatchTypeOnly
+                              ? getAvailableRooms(formData.roomTypeId || selectedReservation.roomTypeId)
+                              : getVacantRooms();
+                            const withCurrent = current && !all.includes(current) ? [current, ...all] : all;
+                            const filtered = assignRoomSearch
+                              ? withCurrent.filter(n => n.toLowerCase().includes((assignRoomSearch || '').toLowerCase()))
+                              : withCurrent;
+                            const list = filtered.length ? filtered : ['No vacant rooms'];
+                            return list.map((num) => (
+                              <AutocompleteItem key={num} textValue={num} isDisabled={num === 'No vacant rooms'}>
+                                {num}
+                              </AutocompleteItem>
+                            ));
+                          })()}
+                        </Autocomplete>
+                        <div className="flex justify-end gap-2">
+                          {selectedReservation.roomId && selectedReservation.roomId !== 'TBD' && (
+                            <Button
+                              color="danger"
+                              variant="flat"
+                              onPress={() => {
+                                frontOfficeStore.assignRoom(selectedReservation.id, '');
+                                const updated = frontOfficeStore.reservations.find(r => r.id === selectedReservation.id);
+                                if (updated) {
+                                  setSelectedReservation(updated);
+                                  setAssignReservation(updated);
+                                }
+                                setAssignRoomId('');
+                                loadReservations();
+                              }}
+                            >
+                              Unassign
+                            </Button>
+                          )}
+                          <Button
+                            color="primary"
+                            isDisabled={!assignRoomId || assignRoomId === 'No vacant rooms'}
+                            onPress={() => {
+                              if (!assignRoomId) return;
+                              frontOfficeStore.assignRoom(selectedReservation.id, assignRoomId);
+                              const updated = frontOfficeStore.reservations.find(r => r.id === selectedReservation.id);
+                              if (updated) {
+                                setSelectedReservation(updated);
+                                setAssignReservation(updated);
+                              }
+                              loadReservations();
+                            }}
+                          >
+                            Assign
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </Tab>
+              )}
+
+              <Tab key="additional" title="Additional">
+                <div className="space-y-4 pt-2">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Remarks to Guest</label>
                     <Textarea
@@ -2572,28 +2735,66 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           </ModalBody>
           <ModalFooter className="flex flex-col sm:flex-row gap-2 sm:gap-0 sm:justify-end">
             {!isCreatingNew && selectedReservation && (selectedReservation.status === 'confirmed' || selectedReservation.status === 'pending') && (
-              <Button size="sm" color="success" variant="flat" className="w-full sm:w-auto" onClick={() => handleQuickAction('checkin', selectedReservation)}>
+              <Button color="success" variant="flat" className="w-full sm:w-auto" onClick={() => handleQuickAction('checkin', selectedReservation)}>
                 Check in
               </Button>
             )}
-            {!isCreatingNew && selectedReservation && selectedReservation.status === 'confirmed' && !selectedReservation.roomId && (
-              <Button size="sm" color="primary" variant="flat" className="w-full sm:w-auto" onClick={() => handleQuickAction('assign', selectedReservation)}>
-                Assign
-              </Button>
-            )}
-            {!isCreatingNew && selectedReservation && !!selectedReservation.roomId && selectedReservation.roomId !== 'TBD' && selectedReservation.status !== 'checked-in' && (
-              <Button size="sm" color="danger" variant="flat" className="w-full sm:w-auto" onClick={() => { frontOfficeStore.assignRoom(selectedReservation.id, ''); loadReservations(); }}>
-                Unassign
+            {!isCreatingNew && selectedReservation && ['pending', 'confirmed'].includes(selectedReservation.status) && (
+              <Button color="primary" variant="flat" className="w-full sm:w-auto" onPress={() => setTabKey('room')}>
+                Assign Room
               </Button>
             )}
             {!isCreatingNew && selectedReservation && canMarkNoShow(selectedReservation, businessDate ?? '') && (
-              <Button size="sm" color="danger" variant="bordered" className="w-full sm:w-auto" onClick={() => openNoShowConfirm(selectedReservation)}>
+              <Button color="danger" variant="bordered" className="w-full sm:w-auto" onClick={() => openNoShowConfirm(selectedReservation)}>
                 No-show
               </Button>
             )}
             {!isCreatingNew && selectedReservation && ['pending', 'confirmed'].includes(selectedReservation.status) && (
-              <Button size="sm" color="danger" variant="flat" className="w-full sm:w-auto" onClick={() => handleQuickAction('cancel', selectedReservation)}>
+              <Button color="danger" variant="flat" className="w-full sm:w-auto" onClick={() => handleQuickAction('cancel', selectedReservation)}>
                 Cancel reservation
+              </Button>
+            )}
+            {!isCreatingNew && selectedReservation && canDeleteReservation && !['void', 'cancelled'].includes(selectedReservation.status) && (
+              <Button color="danger" variant="light" className="w-full sm:w-auto" onPress={async () => {
+                const posted = selectedReservation.status !== 'pending';
+                if (posted) {
+                  await confirmDanger({
+                    tone: 'delete',
+                    title: `Delete ${selectedReservation.resId || 'this stay'}?`,
+                    message: 'This stay already counted, so it cannot be deleted. Use Void. The original stays on file and the books stay even.',
+                    confirmLabel: 'OK',
+                  });
+                  return;
+                }
+                const ok = await confirmDelete(selectedReservation.resId || 'this reservation', 'A pending reservation that never became a stay will be permanently removed.');
+                if (!ok) return;
+                const removed = frontOfficeStore.deleteReservation(selectedReservation.id);
+                if (!removed) {
+                  alert('This reservation already has charges or payments. Void it instead.');
+                  return;
+                }
+                loadReservations();
+                dismissForm();
+              }}>
+                Delete
+              </Button>
+            )}
+            {!isCreatingNew && selectedReservation && ['checked-in', 'checked-out', 'no-show'].includes(selectedReservation.status) && (
+              <Button color="warning" variant="flat" className="w-full sm:w-auto" onPress={async () => {
+                if (frontOfficeStore.stayPostedToBooks(selectedReservation.id)) {
+                  alert(POSTED_STAY_VOID_MESSAGE);
+                  return;
+                }
+                const ok = await confirmVoid(selectedReservation.resId || 'this stay', 'The stay stays on file as Void. Charges are reversed and any payment is refunded so the books stay even.');
+                if (!ok) return;
+                if (!frontOfficeStore.voidReservation(selectedReservation.id, 'Void stay')) {
+                  alert(POSTED_STAY_VOID_MESSAGE);
+                  return;
+                }
+                loadReservations();
+                dismissForm();
+              }}>
+                Void
               </Button>
             )}
             <Button 
@@ -2611,14 +2812,16 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                 : '💾 Update Reservation'
               }
             </Button>
-            <Button 
-              color="secondary" 
-              variant="flat" 
-              onClick={() => setTabKey(prev => (prev === 'guest' ? 'additional' : 'guest'))}
-              className="w-full sm:w-auto"
-            >
-              {tabKey === 'guest' ? 'Next: Additional Info' : 'Previous: Guest Info'}
-            </Button>
+            {!isCreatingNew && selectedReservation && (
+              <Button color="primary" variant="flat" className="w-full sm:w-auto" onPress={() => printConfirmation(selectedReservation)}>
+                Print
+              </Button>
+            )}
+            {!isCreatingNew && selectedReservation && ((formData.email || '').trim() || (frontOfficeStore.guests.find(g => g.id === selectedReservation.guestId)?.email || '').trim()) && (
+              <Button color="primary" className="w-full sm:w-auto" onPress={() => sendConfirmation(selectedReservation)}>
+                Send to guest
+              </Button>
+            )}
             <Button variant="light" onClick={dismissForm} className="w-full sm:w-auto">
               Cancel
             </Button>

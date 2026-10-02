@@ -10,7 +10,7 @@ export type RoomStatus =
   | 'maintenance';
 
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
-export type TaskStatus = 'pending' | 'in-progress' | 'completed' | 'verified' | 'cancelled';
+export type TaskStatus = 'pending' | 'in-progress' | 'completed' | 'verified' | 'cancelled' | 'void';
 
 export interface HousekeepingTask {
   id: string;
@@ -45,7 +45,7 @@ export interface RoomInspection {
   inspectorId: string;
   inspectorName: string;
   inspectionDate: string;
-  status: 'passed' | 'failed' | 'partial';
+  status: 'passed' | 'failed' | 'partial' | 'void';
   score: number; // 0-100
   categories: {
     cleanliness: number;
@@ -66,7 +66,7 @@ export interface MaintenanceRequest {
   reportedAt: string;
   category: 'plumbing' | 'electrical' | 'hvac' | 'furniture' | 'appliances' | 'structural' | 'other';
   priority: TaskPriority;
-  status: 'reported' | 'assigned' | 'in-progress' | 'completed' | 'verified';
+  status: 'reported' | 'assigned' | 'in-progress' | 'completed' | 'verified' | 'void';
   description: string;
   assignedTo?: string;
   estimatedCost?: number;
@@ -96,7 +96,7 @@ export interface DailySchedule {
   startTime: string;
   endTime: string;
   breaks: Array<{ start: string; end: string }>;
-  status: 'scheduled' | 'in-progress' | 'completed';
+  status: 'scheduled' | 'in-progress' | 'completed' | 'void';
   notes?: string;
 }
 

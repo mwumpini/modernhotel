@@ -30,7 +30,8 @@ declare module 'next-auth' {
 
   interface User {
     id: string
-    email: string
+    // Null for staff who sign in with a username only.
+    email: string | null
     name: string
     role: string
     tenantId: string

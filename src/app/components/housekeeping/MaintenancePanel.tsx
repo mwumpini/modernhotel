@@ -610,6 +610,22 @@ export default function MaintenancePanel({
             </div>
           </ModalBody>
           <ModalFooter>
+            {!isCreatingRequest && selectedRequest?.status === 'reported' && (
+              <Button color="danger" variant="light" onPress={async () => {
+                const { confirmDelete } = await import('../DangerConfirm');
+                if (!(await confirmDelete('this maintenance request', 'A request that was never started will be permanently removed.'))) return;
+                housekeepingStore.removeMaintenanceRequest(selectedRequest.id);
+                setMaintenanceModalOpen(false);
+              }}>Delete</Button>
+            )}
+            {!isCreatingRequest && selectedRequest && selectedRequest.status !== 'reported' && selectedRequest.status !== 'void' && (
+              <Button color="warning" variant="flat" onPress={async () => {
+                const { confirmVoid } = await import('../DangerConfirm');
+                if (!(await confirmVoid('this maintenance request', 'The request stays on file as Void.'))) return;
+                housekeepingStore.updateMaintenanceRequest(selectedRequest.id, { status: 'void' });
+                setMaintenanceModalOpen(false);
+              }}>Void</Button>
+            )}
             <Button variant="light" onClick={() => setMaintenanceModalOpen(false)}>
               Cancel
             </Button>

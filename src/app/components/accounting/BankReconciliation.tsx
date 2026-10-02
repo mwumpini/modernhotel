@@ -1157,8 +1157,9 @@ function ItemsPanel({
                     <Button
                       color="danger"
                       variant="flat"
-                      onPress={() => {
-                        if (!window.confirm(`Delete reconciling item "${viewItem.description || viewItem.itemType}"? This cannot be undone.`)) return;
+                      onPress={async () => {
+                        const { confirmDelete } = await import('../DangerConfirm');
+                        if (!(await confirmDelete(viewItem.description || viewItem.itemType || 'this item', 'This reconciling item will be permanently removed. This cannot be undone.'))) return;
                         onDelete(viewItem.id);
                         setViewItem(null);
                       }}

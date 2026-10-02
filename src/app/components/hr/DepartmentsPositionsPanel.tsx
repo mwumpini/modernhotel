@@ -115,13 +115,14 @@ export default function DepartmentsPositionsPanel() {
     const nextActive = d.status === 'inactive';
     updateDepartment(d.id, { isActive: nextActive, status: nextActive ? 'active' : 'inactive' });
   };
-  const removeDepartment = (d: Department) => {
+  const removeDepartment = async (d: Department) => {
     const staffCount = getEmployeesByDepartment(d.id).length;
     const posCount = positions.filter((p) => p.departmentId === d.id).length;
     const warning = staffCount > 0 || posCount > 0
       ? ` It still has ${staffCount} staff and ${posCount} position(s) referencing it — deleting it won't remove those, but they'll point at a department that no longer exists.`
       : '';
-    if (!window.confirm(`Delete "${d.name}"?${warning}`)) return;
+    const { confirmDelete } = await import('../DangerConfirm');
+    if (!(await confirmDelete(d.name, `This department will be permanently removed.${warning}`))) return;
     deleteDepartment(d.id);
     if (viewDept?.id === d.id) setViewDept(null);
   };
@@ -164,12 +165,13 @@ export default function DepartmentsPositionsPanel() {
     const nextActive = p.status === 'inactive';
     updatePosition(p.id, { isActive: nextActive, status: nextActive ? 'active' : 'inactive' });
   };
-  const removePosition = (p: Position) => {
+  const removePosition = async (p: Position) => {
     const staffCount = getEmployeesByPosition(p.id).length;
     const warning = staffCount > 0
       ? ` ${staffCount} staff member(s) currently hold this position — deleting it won't remove them, but they'll point at a position that no longer exists.`
       : '';
-    if (!window.confirm(`Delete "${p.title}"?${warning}`)) return;
+    const { confirmDelete } = await import('../DangerConfirm');
+    if (!(await confirmDelete(p.title, `This position will be permanently removed.${warning}`))) return;
     deletePosition(p.id);
     if (viewPos?.id === p.id) setViewPos(null);
   };

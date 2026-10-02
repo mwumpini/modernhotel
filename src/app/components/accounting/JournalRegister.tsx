@@ -22,6 +22,7 @@ import {
   ModalFooter,
 } from '@heroui/react';
 import { useAccountingStore } from '../../lib/accounting/store';
+import { confirmDelete as askDelete, confirmVoid as askVoid } from '../DangerConfirm';
 import { accountingAmountsLabel } from '../../lib/accounting/tenantAccountingConfig';
 import { downloadCSV, generatePdfHtml, openPrintPreview } from '../../lib/accounting/helpers/exportHelpers';
 import type { ChartOfAccounts, JournalEntry, JournalEntryLine } from '../../lib/accounting/models';
@@ -514,7 +515,7 @@ export default function JournalRegister() {
     setNotice('Entry voided. An opposite entry was posted so the books stay even.');
   };
 
-  const requestVoid = (entry: JournalEntry) => {
+  const requestVoid = async (entry: JournalEntry) => {
     setActionError(null);
     setReversePrompt(false);
     if (!canManageHere(entry.sourceModule)) {
@@ -536,7 +537,9 @@ export default function JournalRegister() {
       setActionError('This entry is already reversed.');
       return;
     }
-    setVoidPrompt(true);
+    const ok = await askVoid(entry.entryNumber, 'Void posts the opposite amounts and marks this entry void. The books stay even.');
+    if (!ok) return;
+    await confirmVoid();
   };
 
   const requestEdit = (entry: JournalEntry) => {
@@ -546,7 +549,7 @@ export default function JournalRegister() {
     openEditEntry(entry);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!liveViewEntry) return;
     if (!canManageHere(liveViewEntry.sourceModule)) {
       setActionError(
@@ -560,7 +563,7 @@ export default function JournalRegister() {
       setActionError('Void a posted entry first. Deleting would leave the books wrong.');
       return;
     }
-    if (!confirm(`Delete ${liveViewEntry.entryNumber}?`)) return;
+    if (!(await askDelete(liveViewEntry.entryNumber, 'A draft entry will be permanently removed. Posted entries must be voided first.'))) return;
     deleteJournalEntry(liveViewEntry.id);
     setViewEntry(null);
     setNotice('Entry deleted.');

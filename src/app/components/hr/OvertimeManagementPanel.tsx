@@ -331,6 +331,22 @@ export default function OvertimeManagementPanel() {
                     >
                       Print
                     </Button>
+                    {!viewing.checkOutTime && viewing.status !== 'void' && (
+                      <Button color="danger" variant="light" onPress={async () => {
+                        const { confirmDelete } = await import('../DangerConfirm');
+                        if (!(await confirmDelete('this overtime record', 'An open record that never counted will be permanently removed.'))) return;
+                        useLeaveAttendanceStore.getState().deleteAttendance(viewing.id);
+                        setViewing(null);
+                      }}>Delete</Button>
+                    )}
+                    {!!viewing.checkOutTime && viewing.status !== 'void' && (
+                      <Button color="warning" variant="flat" onPress={async () => {
+                        const { confirmVoid } = await import('../DangerConfirm');
+                        if (!(await confirmVoid('this overtime record', 'The record stays on file as Void.'))) return;
+                        useLeaveAttendanceStore.getState().voidAttendance(viewing.id);
+                        setViewing(null);
+                      }}>Void</Button>
+                    )}
                     {!isApproved && !(escalated && !canApproveAsDirector) && (
                       <Button
                         color="primary"

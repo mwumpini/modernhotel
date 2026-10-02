@@ -6,7 +6,7 @@ import { prisma } from '@/app/lib/database/client'
 import { passwordPolicyError } from '@/app/lib/settings/passwordPolicy'
 import { readTenantSecurity } from '@/app/lib/settings/securityPolicyDb'
 import { publicUser } from '@/app/lib/auth/posPin'
-import { normalizeUsername, usernameError, usernameTaken } from '@/app/lib/auth/loginLookup'
+import { emailError, NEEDS_SIGN_IN_NAME, normalizeEmail, normalizeUsername, usernameError, usernameTaken } from '@/app/lib/auth/loginLookup'
 
 const USER_SELECT = {
   id: true,
@@ -58,14 +58,18 @@ export async function POST(request: NextRequest) {
     if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
 
     const body = await request.json()
-    const email = String(body.email || '').trim().toLowerCase()
+    // Email is optional: staff without one sign in with a username.
+    const email = normalizeEmail(body.email)
     const name = String(body.name || '').trim()
     const password = String(body.password || '')
     const role = String(body.role || '').trim()
-    if (!email || !name || !password || !role) {
-      return NextResponse.json({ error: 'email, name, password, and role are required' }, { status: 400 })
+    if (!name || !password || !role) {
+      return NextResponse.json({ error: 'name, password, and role are required' }, { status: 400 })
     }
     const username = normalizeUsername(body.username)
+    if (!email && !username) return NextResponse.json({ error: NEEDS_SIGN_IN_NAME }, { status: 400 })
+    const badEmail = emailError(email)
+    if (badEmail) return NextResponse.json({ error: badEmail }, { status: 400 })
     const nameError = usernameError(username)
     if (nameError) return NextResponse.json({ error: nameError }, { status: 400 })
     if (await usernameTaken(ctx.tenantId, username)) {
@@ -80,7 +84,7 @@ export async function POST(request: NextRequest) {
       .create({
         data: {
           tenantId: ctx.tenantId,
-          email,
+          email: email || null,
           username: username || null,
           name,
           password: hashed,

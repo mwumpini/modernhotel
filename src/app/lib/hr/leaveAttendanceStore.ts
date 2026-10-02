@@ -78,6 +78,10 @@ interface LeaveAttendanceState {
   requestLeave: (req: Omit<LeaveRequest, 'id' | 'createdAt' | 'updatedAt' | 'status' | 'requestedAt'> & { status?: LeaveRequest['status'] }) => LeaveRequest;
   approveLeave: (id: string, approver: string) => { success: boolean; error?: string };
   rejectLeave: (id: string, approver: string, reason?: string) => void;
+  deleteLeave: (id: string) => void;
+  voidLeave: (id: string) => void;
+  deleteAttendance: (id: string) => void;
+  voidAttendance: (id: string) => void;
   getLeaveBalance: (employeeId: string, leaveType: LeaveRequest['leaveType'], year: number) => LeaveBalance;
   hydrateFromApi: () => Promise<void>;
 
@@ -182,6 +186,43 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
       })
     }));
     if (updated) syncLeaveRequestToApi(updated);
+  },
+
+  deleteLeave: (id) => {
+    const current = get().leaveRequests.find((r) => r.id === id);
+    if (!current || current.status !== 'pending') return;
+    set((state) => ({ leaveRequests: state.leaveRequests.filter((r) => r.id !== id) }));
+    fetch(`/api/hr/leave-requests?id=${encodeURIComponent(id)}`, { method: 'DELETE', headers: hrTenantHeaders() }).catch(() => {});
+  },
+
+  voidLeave: (id) => {
+    let updated: LeaveRequest | undefined;
+    set((state) => ({
+      leaveRequests: state.leaveRequests.map((r) => {
+        if (r.id !== id || r.status === 'pending' || r.status === 'void') return r;
+        updated = { ...r, status: 'void', updatedAt: new Date() };
+        return updated;
+      }),
+    }));
+    if (updated) syncLeaveRequestToApi(updated);
+  },
+
+  deleteAttendance: (id) => {
+    const current = get().attendances.find((r) => r.id === id);
+    if (!current || current.checkOutTime) return;
+    set((state) => ({ attendances: state.attendances.filter((r) => r.id !== id) }));
+  },
+
+  voidAttendance: (id) => {
+    let updated: Attendance | undefined;
+    set((state) => ({
+      attendances: state.attendances.map((r) => {
+        if (r.id !== id || r.status === 'void') return r;
+        updated = { ...r, status: 'void', updatedAt: new Date() };
+        return updated;
+      }),
+    }));
+    if (updated) syncAttendanceToApi(updated);
   },
 
   clockIn: (employeeId, date = new Date(), when = new Date(), notes) => {

@@ -425,6 +425,22 @@ export default function TimeTrackingPanel() {
               </ModalBody>
               <ModalFooter className="flex flex-wrap justify-between gap-2">
                 <Button variant="flat" onPress={() => setViewLog(null)}>Close</Button>
+                {inProgress && viewLog.status !== 'void' && (
+                  <Button color="danger" variant="light" onPress={async () => {
+                    const { confirmDelete } = await import('../DangerConfirm');
+                    if (!(await confirmDelete('this clock record', 'An open punch that never counted will be permanently removed.'))) return;
+                    useLeaveAttendanceStore.getState().deleteAttendance(viewLog.id);
+                    setViewLog(null);
+                  }}>Delete</Button>
+                )}
+                {!inProgress && viewLog.status !== 'void' && (
+                  <Button color="warning" variant="flat" onPress={async () => {
+                    const { confirmVoid } = await import('../DangerConfirm');
+                    if (!(await confirmVoid('this clock record', 'The completed timesheet stays on file as Void.'))) return;
+                    useLeaveAttendanceStore.getState().voidAttendance(viewLog.id);
+                    setViewLog(null);
+                  }}>Void</Button>
+                )}
                 <Button
                   variant="bordered"
                   onPress={() => printDetailSheet('Clock record', [

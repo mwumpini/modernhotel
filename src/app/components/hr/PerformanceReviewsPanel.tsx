@@ -10,6 +10,7 @@ import { dayKey } from '@/app/lib/hr/leaveDates';
 import { useCurrentUserName } from '@/app/lib/auth/useCurrentUserName';
 import type { PerformanceReview } from '@/app/lib/hr/models';
 import { printDetailSheet } from '@/app/lib/print/simpleReport';
+import { confirmDelete } from '@/app/components/DangerConfirm';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { DetailGrid, DetailField } from '../frontoffice/detailView';
 import { useDeskPagination } from '../dashboard/deskTableUi';
@@ -383,7 +384,12 @@ export default function PerformanceReviewsPanel() {
                   </Button>
                   <Button variant="flat" onPress={() => updateReview(viewed.id, { status: 'submitted' })}>Submit</Button>
                   <Button variant="flat" onPress={() => updateReview(viewed.id, { status: 'completed' })}>Complete</Button>
-                  <Button variant="flat" color="danger" onPress={() => { deleteReview(viewed.id); setViewing(null); }}>Delete</Button>
+                  <Button variant="flat" color="danger" onPress={async () => {
+                    const ok = await confirmDelete('this performance review', 'A review that was never submitted will be permanently removed.');
+                    if (!ok) return;
+                    deleteReview(viewed.id);
+                    setViewing(null);
+                  }}>Delete</Button>
                 </div>
               </ModalFooter>
             </>

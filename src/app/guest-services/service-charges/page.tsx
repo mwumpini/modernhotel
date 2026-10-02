@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import HeadingInfo from '../../components/HeadingInfo';
+import { confirmDelete, confirmVoid } from '../../components/DangerConfirm';
 import {
   Card,
   CardBody,
@@ -103,7 +104,7 @@ interface ServiceCharge {
   amount: number;
   quantity: number;
   date: string;
-  status: 'pending' | 'approved' | 'billed' | 'paid';
+  status: 'pending' | 'approved' | 'billed' | 'paid' | 'void';
   notes?: string;
   createdBy: string;
   // Per-charge exemption override set from the Add Service Charge modal's Tax Exempt
@@ -412,6 +413,7 @@ export default function ServiceChargesPage() {
       case 'approved': return 'primary';
       case 'billed': return 'secondary';
       case 'paid': return 'success';
+      case 'void': return 'danger';
       default: return 'default';
     }
   };
@@ -1191,6 +1193,28 @@ export default function ServiceChargesPage() {
             <Button variant="light" onPress={() => setIsViewModalOpen(false)}>
               Close
             </Button>
+            {selectedCharge && selectedCharge.status === 'pending' && selectedCharge.roomNumber === 'External' && (
+              <Button color="danger" variant="light" onPress={async () => {
+                const ok = await confirmDelete('this service charge', 'It was never posted to a folio and will be permanently removed.');
+                if (!ok) return;
+                setServiceCharges(prev => prev.filter(c => c.id !== selectedCharge.id));
+                setIsViewModalOpen(false);
+              }}>Delete</Button>
+            )}
+            {selectedCharge && selectedCharge.status !== 'void' && !(selectedCharge.status === 'pending' && selectedCharge.roomNumber === 'External') && (
+              <Button color="warning" variant="flat" onPress={async () => {
+                const ok = await confirmVoid('this service charge', 'The charge stays on file as Void. A reversing folio line keeps the guest bill even.');
+                if (!ok) return;
+                const stay = frontOfficeStore.reservations.find(r => r.guestId === selectedCharge.guestId && (r.status === 'checked-in' || r.status === 'checked-out'));
+                if (stay) {
+                  const folio = frontOfficeStore.getOrCreateFolio(stay.id);
+                  const match = folio.charges.find(c => String(c.description || '').startsWith(selectedCharge.description) && !String(c.description || '').startsWith('VOID '));
+                  if (match) frontOfficeStore.voidCharge(stay.id, match.id, 'Void service charge');
+                }
+                setServiceCharges(prev => prev.map(c => c.id === selectedCharge.id ? { ...c, status: 'void' } : c));
+                setIsViewModalOpen(false);
+              }}>Void</Button>
+            )}
             <Button
               variant="flat"
               className="bg-ghana-green text-white"

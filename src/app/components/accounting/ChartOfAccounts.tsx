@@ -464,8 +464,9 @@ export default function ChartOfAccountsPage() {
   );
 
   const handleDelete = useCallback(
-    (id: string, name: string) => {
-      if (!confirm(`Delete "${name}" and everything under it?`)) return;
+    async (id: string, name: string) => {
+      const { confirmDelete } = await import('../DangerConfirm');
+      if (!(await confirmDelete(name, 'This account and everything under it will be permanently removed.'))) return;
       deleteChartOfAccount(id);
     },
     [deleteChartOfAccount]

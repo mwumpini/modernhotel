@@ -182,7 +182,7 @@ export default function SecurityComplianceDashboard({
     return sort.dir === 'asc' ? sorted : sorted.reverse();
   }
 
-  const { incidents, hydrateFromApi: hydrateIncidents, addIncident, updateIncident, assignIncident, resolveIncident } = useIncidentStore();
+  const { incidents, hydrateFromApi: hydrateIncidents, addIncident, updateIncident, assignIncident, resolveIncident, updateIncidentStatus, deleteIncident } = useIncidentStore();
   const { visitors, hydrateFromApi: hydrateVisitors, addVisitor, updateVisitor, checkOutVisitor } = useVisitorStore();
   const { patrols, hydrateFromApi: hydratePatrols, startPatrol, updatePatrol, endPatrol, completeCheckpoint, missCheckpoint } = usePatrolStore();
   const { personnel, hydrateFromApi: hydratePersonnel, addPersonnel, updatePersonnel, setPersonnelActive } = usePersonnelStore();
@@ -1428,6 +1428,22 @@ export default function SecurityComplianceDashboard({
               <Button color="success" variant="flat" onPress={() => resolveIncident(openIncident.id, 'Resolved')}>
                 Resolve
               </Button>
+            )}
+            {!isEditingIncident && openIncident?.status === 'reported' && (
+              <Button color="danger" variant="light" onPress={async () => {
+                const { confirmDelete } = await import('./DangerConfirm');
+                if (!(await confirmDelete('this incident', 'A report that was never acted on will be permanently removed.'))) return;
+                deleteIncident(openIncident.id);
+                closeIncidentView();
+              }}>Delete</Button>
+            )}
+            {!isEditingIncident && openIncident && openIncident.status !== 'reported' && openIncident.status !== 'void' && (
+              <Button color="warning" variant="flat" onPress={async () => {
+                const { confirmVoid } = await import('./DangerConfirm');
+                if (!(await confirmVoid('this incident', 'The incident stays on file as Void.'))) return;
+                updateIncidentStatus(openIncident.id, 'void');
+                closeIncidentView();
+              }}>Void</Button>
             )}
             {!isEditingIncident && openIncident && (
               <Button color="primary" variant="flat" onPress={startEditIncident}>Edit</Button>

@@ -1161,7 +1161,7 @@ export default function BankCashManagementPage() {
                     <Button
                       color="danger"
                       variant="flat"
-                      onPress={() => {
+                      onPress={async () => {
                         const txnCount = bankTransactions.filter((t) => t.bankAccountId === viewItem.id).length;
                         const payCount = payments.filter((p) => p.bankAccountId === viewItem.id && p.status !== 'Void').length;
                         const hasBalance = Math.abs(Number(viewItem.currentBalance || 0)) > 0.009;
@@ -1171,7 +1171,8 @@ export default function BankCashManagementPage() {
                           );
                           return;
                         }
-                        if (!window.confirm(`Permanently delete bank account "${viewItem.accountName}"? This cannot be undone.`)) return;
+                        const { confirmDelete } = await import('../DangerConfirm');
+                        if (!(await confirmDelete(viewItem.accountName, 'This bank account will be permanently removed. This cannot be undone.'))) return;
                         const result = deleteBankAccount(viewItem.id);
                         if (!result.ok) {
                           window.alert(result.reason);
@@ -1237,8 +1238,9 @@ export default function BankCashManagementPage() {
                       <Button
                         color="danger"
                         variant="flat"
-                        onPress={() => {
-                          if (!window.confirm(`Delete bank transaction ${viewItem.reference || viewItem.id}? This cannot be undone.`)) return;
+                        onPress={async () => {
+                          const { confirmDelete } = await import('../DangerConfirm');
+                          if (!(await confirmDelete(viewItem.reference || 'this transaction', 'This bank transaction will be permanently removed. This cannot be undone.'))) return;
                           deleteManualBankTransaction(viewItem.id);
                           closeView();
                         }}

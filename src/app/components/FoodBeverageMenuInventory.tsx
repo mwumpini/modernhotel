@@ -277,13 +277,14 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
         alert(`${item.name} has ${item.usedCount} order line${item.usedCount === 1 ? '' : 's'} and cannot be deleted. It is already unavailable.`);
         return;
       }
-      if (
-        !confirm(
-          `${item.name} has ${item.usedCount} order line${item.usedCount === 1 ? '' : 's'} and cannot be deleted. Mark it Unavailable so it stays off new orders but history is kept?`
-        )
-      ) {
-        return;
-      }
+      const { confirmDanger } = await import('./DangerConfirm');
+      const retire = await confirmDanger({
+        tone: 'delete',
+        title: `Deactivate ${item.name}?`,
+        message: `${item.name} has ${item.usedCount} order line${item.usedCount === 1 ? '' : 's'} and cannot be deleted. It will be marked Unavailable so it stays off new orders. History is kept.`,
+        confirmLabel: 'Deactivate',
+      });
+      if (!retire) return;
       await fetch('/api/fb/menu', {
         method: 'PATCH',
         headers: fbHeaders(),
@@ -292,7 +293,8 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
       reloadMenu();
       return;
     }
-    if (!confirm(`Delete ${item.name}? This action cannot be undone.`)) return;
+    const { confirmDelete } = await import('./DangerConfirm');
+    if (!(await confirmDelete(item.name, 'This item was never used and will be permanently removed.'))) return;
     await fetch(`/api/fb/menu?id=${encodeURIComponent(item.id)}`, { method: 'DELETE', headers: fbHeaders() });
     reloadMenu();
   };

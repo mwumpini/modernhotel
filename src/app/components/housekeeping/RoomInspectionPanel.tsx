@@ -573,6 +573,14 @@ export default function RoomInspectionPanel({
             </div>
           </ModalBody>
           <ModalFooter>
+            {!isCreatingInspection && selectedInspection && selectedInspection.status !== 'void' && (
+              <Button color="warning" variant="flat" onPress={async () => {
+                const { confirmVoid } = await import('../DangerConfirm');
+                if (!(await confirmVoid('this inspection', 'The inspection stays on file as Void.'))) return;
+                housekeepingStore.voidInspection(selectedInspection.id);
+                setInspectionModalOpen(false);
+              }}>Void</Button>
+            )}
             <Button variant="light" onClick={() => setInspectionModalOpen(false)}>
               Cancel
             </Button>

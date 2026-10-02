@@ -10,6 +10,7 @@ import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import type { StaffDebt, StaffDebtStatus, StaffDebtType } from '@/app/lib/hr/models';
 import { formatGhs, formatMoney } from '@/app/lib/format/currency';
 import { printDetailSheet } from '@/app/lib/print/simpleReport';
+import { confirmDelete } from '@/app/components/DangerConfirm';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { DetailField, DetailGrid } from '../frontoffice/detailView';
 import { useDeskPagination } from '../dashboard/deskTableUi';
@@ -406,7 +407,12 @@ export default function StaffDebtsPanel() {
                       <Button color="warning" variant="flat" onPress={() => { writeOffDebt(live.id); setViewing(null); }}>Write off</Button>
                     </>
                   )}
-                  <Button color="danger" variant="flat" onPress={() => { deleteDebt(live.id); setViewing(null); }}>Delete</Button>
+                  <Button color="danger" variant="flat" onPress={async () => {
+                    const ok = await confirmDelete('this staff debt', 'Only a debt that never counted can be removed. This cannot be undone.');
+                    if (!ok) return;
+                    deleteDebt(live.id);
+                    setViewing(null);
+                  }}>Delete</Button>
                 </div>
               </ModalFooter>
             </>

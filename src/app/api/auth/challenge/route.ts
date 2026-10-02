@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
         required: true,
         enroll: true,
         secret,
-        otpauth: otpauthUri(secret, user.email),
+        otpauth: otpauthUri(secret, user.email || user.username || user.name),
       });
     }
     return NextResponse.json({ required: true, enroll: false });

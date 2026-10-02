@@ -73,7 +73,7 @@ function stayLine(): string | null {
     if (!stays.length) return null;
     const today = todayIso();
     const inHouse = stays.filter((r) => r.status === 'checked-in').length;
-    const arriving = stays.filter((r) => r.arrival?.slice(0, 10) === today && r.status !== 'cancelled' && r.status !== 'no-show' && r.status !== 'checked-out').length;
+    const arriving = stays.filter((r) => r.arrival?.slice(0, 10) === today && r.status !== 'cancelled' && r.status !== 'no-show' && r.status !== 'void' && r.status !== 'checked-out').length;
     return `${inHouse} checked in, ${arriving} arriving today.`;
   } catch {
     return null;

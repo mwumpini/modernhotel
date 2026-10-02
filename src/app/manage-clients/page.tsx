@@ -14,4 +14,4 @@ export default function ManageClientsRedirect() {
     window.location.replace('/');
   }, []);
   return <div className="p-6 text-center">Opening Front Office...</div>;
-}
+ }

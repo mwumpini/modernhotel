@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState, useCallback, useEffect, Suspense, lazy } from 'react';
 import HeadingInfo from '../HeadingInfo';
+import { confirmDelete, confirmVoid } from '../DangerConfirm';
 import {
 	Card, CardBody, Button,
 	Tabs, Tab,
@@ -2060,7 +2061,7 @@ export default function AccountsReceivable() {
 			setFormError('Void all receipts and WHT payments on this invoice first');
 			return;
 		}
-		if (!window.confirm(`Void invoice ${inv.invoiceNumber}? A reversing GL entry will be posted.`)) return;
+		if (!(await confirmVoid(inv.invoiceNumber || 'this invoice', 'A reversing GL entry will be posted. The invoice stays on file as Void.'))) return;
 		await voidInvoice(inv.id);
 		const err = useAccountingStore.getState().error;
 		if (err) {
@@ -2092,11 +2093,10 @@ export default function AccountsReceivable() {
 			return;
 		}
 		const label = inv.invoiceNumber || inv.id;
-		if (!window.confirm(
-			isDraft
-				? `Permanently delete ${label}? This cannot be undone.`
-				: `Permanently delete ${label}? The invoice will be voided (GL reversed) then removed.`,
-		)) return;
+		if (!(await confirmDelete(label, isDraft
+			? 'This draft will be permanently removed. This cannot be undone.'
+			: 'The invoice will be voided (GL reversed) then removed.',
+		))) return;
 
 		// Posted invoices must reverse GL before removal so the ledger stays balanced.
 		if (!isDraft && inv.status === 'Posted') {
@@ -2126,7 +2126,7 @@ export default function AccountsReceivable() {
 		const msg = isFolio
 			? `Void receipt ${receipt.paymentNumber || receipt.id}? This removes the payment from the guest folio.`
 			: `Void receipt ${receipt.paymentNumber || receipt.id}? This reverses GL and reopens invoice balance.`;
-		if (!window.confirm(msg)) return;
+		if (!(await confirmVoid(receipt.paymentNumber || 'this receipt', msg))) return;
 
 		if (isFolio && receipt.reservationId && receipt.folioPaymentId) {
 			frontOfficeStore.removeFolioPayment(receipt.reservationId, receipt.folioPaymentId);

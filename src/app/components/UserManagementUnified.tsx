@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import HeadingInfo from './HeadingInfo';
+import { confirmDelete } from './DangerConfirm';
 import { 
   Card, 
   CardBody, 
@@ -458,13 +459,10 @@ export default function UserManagementUnified() {
       return;
     }
     console.log('🔧 [UserManagementUnified] Attempting to delete user:', { userId });
-    if (window.confirm('Are you sure you want to delete this user?')) {
-      console.log('🔧 [UserManagementUnified] User deletion confirmed, proceeding with delete');
-      const error = await deleteUser(userId);
-      if (error) window.alert(error);
-    } else {
-      console.log('🔧 [UserManagementUnified] User deletion cancelled by user');
-    }
+    const ok = await confirmDelete('this user', 'The user account will be permanently removed and they will lose access.');
+    if (!ok) return;
+    const error = await deleteUser(userId);
+    if (error) window.alert(error);
   };
 
   const handleSaveProfile = async () => {
@@ -640,7 +638,10 @@ export default function UserManagementUnified() {
                       />
                       <div>
                         <p className="font-semibold">{user.firstName} {user.lastName}</p>
-                        <p className="text-sm text-gray-500">{user.email}</p>
+                        <p className="text-sm text-gray-500">
+                          {user.email || (user.username ? `@${user.username}` : '')}
+                          {user.email && user.username ? <span className="text-gray-400"> · @{user.username}</span> : null}
+                        </p>
                       </div>
                     </div>
                   </TableCell>
@@ -778,15 +779,14 @@ export default function UserManagementUnified() {
       ? mod.extra.length
       : mod.extra.filter(a => isActionChecked(mod, a.id)).length;
 
-  const handleDeleteRole = (roleId: string) => {
+  const handleDeleteRole = async (roleId: string) => {
     if (!canManageRolePermissions && !hasPermission('settings.delete')) {
       window.alert("You don't have permission to delete roles.");
       return;
     }
-    if (window.confirm('Delete this role? Users assigned to it will remain with the role id.')) {
-      console.log('🔧 [UserManagementUnified] Deleting role:', { roleId });
-      deleteRole(roleId);
-    }
+    const ok = await confirmDelete('this role', 'Users assigned to it will remain with the role id. This cannot be undone.');
+    if (!ok) return;
+    deleteRole(roleId);
   };
 
   const renderRoleManagement = () => (
@@ -1136,7 +1136,8 @@ export default function UserManagementUnified() {
                 type="email"
                 value={userForm.email}
                 onChange={(e) => setUserForm({...userForm, email: e.target.value})}
-                placeholder="Enter email"
+                placeholder="Optional if a username is set"
+                autoCapitalize="none"
               />
               <Input
                 label={isEditing ? 'New Password' : 'Password'}

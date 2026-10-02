@@ -158,7 +158,9 @@ export default function OfflineManager() {
     updateCacheInfo();
   };
 
-  const clearOfflineData = () => {
+  const clearOfflineData = async () => {
+    const { confirmDelete } = await import('./DangerConfirm');
+    if (!(await confirmDelete('offline data', 'Queued offline changes on this device will be permanently removed.'))) return;
     setOfflineData([]);
     localStorage.removeItem('ghanaHotel_offlineData');
     setOfflineStatus(prev => ({ ...prev, pendingItems: 0 }));

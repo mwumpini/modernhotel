@@ -27,7 +27,8 @@ import { useHostSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
 import { periodToDateFilter } from '../lib/dashboard/useDashboardPeriod';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
-import { autoAssignRoomsEnabled, useSettingsStore } from '../lib/settings/store';
+import { useSettingsStore } from '../lib/settings/store';
+import { confirmDanger } from './DangerConfirm';
 import { findMainFolio, getFolioDisplayTotals } from '../lib/frontoffice/helpers/folio';
 import { isPostedRoomCharge, nextCalendarDate, previousCalendarDate } from '../lib/frontoffice/folioLedger';
 import { getRoomChargeDatesOnFolio, postRoomChargeForDate } from '../lib/frontoffice/roomCharges';
@@ -244,7 +245,7 @@ export default function FrontDeskCounter() {
 
   const arrivals = useMemo(() => {
     return stays
-      .filter((r) => (r.status === 'confirmed' || r.status === 'pending') && dayOf(r.arrival) <= today && dayOf(r.departure) > today)
+      .filter((r) => (r.status === 'confirmed' || r.status === 'pending') && dayOf(r.arrival) <= today)
       .sort((a, b) => dayOf(a.arrival).localeCompare(dayOf(b.arrival)) || a.guestName.localeCompare(b.guestName));
   }, [stays, today, tick]);
 
@@ -256,7 +257,7 @@ export default function FrontDeskCounter() {
 
   const inHouse = useMemo(() => {
     return stays
-      .filter((r) => r.status === 'checked-in' && dayOf(r.departure) > today)
+      .filter((r) => r.status === 'checked-in')
       .sort((a, b) => dayOf(a.departure).localeCompare(dayOf(b.departure)) || a.guestName.localeCompare(b.guestName));
   }, [stays, today, tick]);
 
@@ -281,7 +282,7 @@ export default function FrontDeskCounter() {
       : view === 'arriving'
         ? arrivals
         : view === 'leaving'
-          ? departures
+          ? checkedOut
           : inHouse;
     const q = query.trim().toLowerCase();
     if (!q) return base;
@@ -289,7 +290,7 @@ export default function FrontDeskCounter() {
       const blob = [stay.guestName, stay.resId, stay.roomId, stay.guestPhone, centreOf(stay), stay.stayReason].join(' ').toLowerCase();
       return blob.includes(q);
     });
-  }, [query, view, everyone, arrivals, departures, inHouse]);
+  }, [query, view, everyone, arrivals, checkedOut, inHouse]);
 
   const centres = useMemo(() => {
     return Array.from(new Set(pool.map(centreOf).filter(Boolean))).sort((a, b) => a.localeCompare(b));
@@ -426,20 +427,26 @@ export default function FrontDeskCounter() {
     </div>
   );
 
-  const checkIn = () => {
+  const checkIn = async () => {
     if (!selected || busy) return;
-    const autoAssign = autoAssignRoomsEnabled();
-    if (!hasRoom && !chosenRoom && !autoAssign) {
-      notifyError('Pick a vacant room before this guest checks in.', 'Room required');
-      return;
+    const leaveRoomOpen = !hasRoom && !chosenRoom;
+    if (leaveRoomOpen) {
+      const ok = await confirmDanger({
+        tone: 'void',
+        title: `Check in ${selected.guestName} without a room?`,
+        message: 'No room is assigned. You can check this guest in anyway. The room stays open until you assign one.',
+        confirmLabel: 'Check in anyway',
+      });
+      if (!ok) return;
     }
     setBusy(true);
     try {
       if (!hasRoom && chosenRoom) frontOfficeStore.assignRoom(selected.id, chosenRoom);
-      frontOfficeStore.checkIn(selected.id);
+      frontOfficeStore.checkIn(selected.id, leaveRoomOpen ? { leaveRoomOpen: true } : undefined);
       const updated = frontOfficeStore.reservations.find((r) => r.id === selected.id);
       const room = updated?.roomId && updated.roomId !== 'TBD' ? `Room ${updated.roomId}` : 'room still to assign';
       notifySuccess(`${selected.guestName} is in house — ${room}`, 'Checked in');
+      setView('inhouse');
     } finally {
       setBusy(false);
     }
@@ -479,6 +486,7 @@ export default function FrontDeskCounter() {
       }
       notifySuccess(`${selected.guestName} has checked out`, 'Checked out');
       setSelectedId(null);
+      setView('leaving');
     } finally {
       setBusy(false);
     }
@@ -931,7 +939,7 @@ export default function FrontDeskCounter() {
                   </Select>
                 )}
                 {arriving && !hasRoom && rooms.length === 0 && (
-                  <p className="text-sm text-gray-600">No vacant room is free for these dates. Check-in can still post the night with the room left open.</p>
+                  <p className="text-sm text-gray-600">No vacant room is free for these dates. Check in anyway leaves the room open.</p>
                 )}
 
                 {(earlierStays.length > 0 || companyLookup) && (
@@ -1122,8 +1130,9 @@ export default function FrontDeskCounter() {
           onFinished={(ids) => {
             setWalkOpen(false);
             if (ids[0]) {
+              const stay = frontOfficeStore.reservations.find((r) => r.id === ids[0]);
               setSelectedId(ids[0]);
-              setView('inhouse');
+              setView(stay?.status === 'checked-in' ? 'inhouse' : 'arriving');
             }
           }}
         />

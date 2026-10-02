@@ -43,6 +43,8 @@ export default function LeaveManagementPanel() {
   const requestLeave = useLeaveAttendanceStore((s) => s.requestLeave);
   const approveLeave = useLeaveAttendanceStore((s) => s.approveLeave);
   const rejectLeave = useLeaveAttendanceStore((s) => s.rejectLeave);
+  const deleteLeave = useLeaveAttendanceStore((s) => s.deleteLeave);
+  const voidLeave = useLeaveAttendanceStore((s) => s.voidLeave);
   const getLeaveBalance = useLeaveAttendanceStore((s) => s.getLeaveBalance);
   const employees = useEmployeeStore((s) => s.employees);
   const departments = useEmployeeStore((s) => s.departments);
@@ -371,7 +373,21 @@ export default function LeaveManagementPanel() {
                       <Button color="danger" variant="flat" onPress={() => rejectLeave(liveView.id, 'HR Manager')}>
                         Reject
                       </Button>
+                      <Button color="danger" variant="light" onPress={async () => {
+                        const { confirmDelete } = await import('../DangerConfirm');
+                        if (!(await confirmDelete('this leave request', 'A pending request will be permanently removed.'))) return;
+                        deleteLeave(liveView.id);
+                        setViewing(null);
+                      }}>Delete</Button>
                     </>
+                  )}
+                  {liveView.status === 'approved' && (
+                    <Button color="warning" variant="flat" onPress={async () => {
+                      const { confirmVoid } = await import('../DangerConfirm');
+                      if (!(await confirmVoid('this leave request', 'Approved leave stays on file as Void.'))) return;
+                      voidLeave(liveView.id);
+                      setViewing(null);
+                    }}>Void</Button>
                   )}
                 </div>
               </ModalFooter>

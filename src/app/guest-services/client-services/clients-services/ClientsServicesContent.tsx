@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import PageLayout from '../../../components/PageLayout';
 import HeadingInfo from '../../../components/HeadingInfo';
+import { confirmDanger, confirmDelete } from '../../../components/DangerConfirm';
 import FrontOfficeBackButton from '../../../components/FrontOfficeBackButton';
 import { Card, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Badge, Chip, Switch, Tooltip, Pagination } from '@heroui/react';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Textarea, useDisclosure } from '@heroui/react';
@@ -909,25 +910,32 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
     const clientHasHistory = (row: ClientRow) =>
         row.reservationCount > 0 || row.services > 0 || frontOfficeStore.guestHasHistory(row.id);
 
-    const handleDelete = (row: ClientRow) => {
+    const handleDelete = async (row: ClientRow) => {
         const used = clientHasHistory(row);
         if (used) {
             if (!row.isActive) {
-                if (!confirm(`Reactivate ${row.name} for new bookings? Stay history stays in place.`)) return;
+                const ok = await confirmDanger({
+                    tone: 'delete',
+                    title: `Reactivate ${row.name}?`,
+                    message: 'Stay history stays in place. They can be used on new bookings again.',
+                    confirmLabel: 'Reactivate',
+                });
+                if (!ok) return;
                 frontOfficeStore.updateGuest(row.id, { isActive: true } as any);
                 return;
             }
-            if (
-                !confirm(
-                    `${row.name} has stay or folio history and cannot be deleted. Mark the profile Inactive so it stays off new bookings but history is kept?`
-                )
-            ) {
-                return;
-            }
+            const ok = await confirmDanger({
+                tone: 'delete',
+                title: `Deactivate ${row.name}?`,
+                message: 'This profile has stay or folio history and cannot be deleted. It will be marked Inactive so it stays off new bookings. History is kept.',
+                confirmLabel: 'Deactivate',
+            });
+            if (!ok) return;
             frontOfficeStore.retireGuest(row.id);
             return;
         }
-        if (!confirm(`Delete ${row.name}? This cannot be undone.`)) return;
+        const ok = await confirmDelete(row.name, 'This client has no stay history and will be permanently removed.');
+        if (!ok) return;
         frontOfficeStore.deleteGuest(row.id);
         frontOfficeStore.deleteClientServicesForClient(row.id);
     };
@@ -2529,7 +2537,9 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                 }
                                 setDuplicateList(prev => prev.filter((_,i)=>i!==idx));
                               }}>Merge</Button>
-                              <Button size="sm" color="danger" variant="light" onPress={()=>{
+                              <Button size="sm" color="danger" variant="light" onPress={async () => {
+                                const ok = await confirmDelete('this duplicate', 'The duplicate profile will be removed. A profile with history is deactivated instead.');
+                                if (!ok) return;
                                 if (frontOfficeStore.guestHasHistory(d.dupId)) frontOfficeStore.retireGuest(d.dupId);
                                 else frontOfficeStore.deleteGuest(d.dupId);
                                 setDuplicateList(prev => prev.filter((_,i)=>i!==idx));

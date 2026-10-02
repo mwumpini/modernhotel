@@ -3,6 +3,7 @@
 // Restored Invoices & Payments component for embedding inside consolidated tab
 import React, { useState, useMemo, useEffect } from 'react';
 import HeadingInfo from '../../../components/HeadingInfo';
+import { confirmDanger, confirmDelete, confirmVoid } from '../../../components/DangerConfirm';
 import { 
   Card,
   CardBody,
@@ -200,6 +201,8 @@ export default function InvoicesPaymentsPage() {
   const [splitTargetReservationId, setSplitTargetReservationId] = useState<string>('');
   const [splitAmount, setSplitAmount] = useState<number>(0);
   const [splitNote, setSplitNote] = useState<string>('');
+  const [chargeEdit, setChargeEdit] = useState<{ id: string; description: string; amount: string; original: number } | null>(null);
+  const [paymentEdit, setPaymentEdit] = useState<{ id: string; amount: string; method: string; notes: string; original: number; status: string } | null>(null);
   const [inlineNotification, setInlineNotification] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
   // Increments whenever the store notifies — forces useMemos that read store directly to recompute
   const [storeVersion, setStoreVersion] = useState(0);
@@ -909,13 +912,70 @@ export default function InvoicesPaymentsPage() {
   // owes, so it's gated behind its own permission rather than the general
   // frontdesk.* module access — re-checked here (not just at the button)
   // so a stale render or a direct call can't bypass it.
-  const handleVoidCharge = (reservationId: string, chargeId: string) => {
+  const handleVoidCharge = async (reservationId: string, chargeId: string) => {
     if (!useSettingsStore.getState().hasPermission('frontdesk.void-charge')) {
       showNotification('error', "You don't have permission to void charges.");
       return;
     }
-    if (!window.confirm('Void this charge? This posts a reversing entry and cannot be undone.')) return;
+    const ok = await confirmVoid('this charge', 'This posts a reversing entry. The original charge stays on the folio as Void.');
+    if (!ok) return;
     frontOfficeStore.voidCharge(reservationId, chargeId, 'User action');
+  };
+
+  const chargeAlreadyCounted = async (what: string) => {
+    await confirmDanger({
+      tone: 'delete',
+      title: `Delete ${what}?`,
+      message: 'This is already on the folio, so it cannot be deleted. Use Void. The original stays on file and the books stay even.',
+      confirmLabel: 'OK',
+    });
+  };
+
+  const saveChargeEdit = async () => {
+    if (!chargeEdit || !selectedFolio) return;
+    const description = chargeEdit.description.trim();
+    const amount = Number(chargeEdit.amount);
+    if (!description || !(amount >= 0)) return;
+    const open = selectedFolio.status === 'checked-in' || selectedFolio.status === 'pending';
+    const amountChanged = Math.abs(amount - chargeEdit.original) > 0.001;
+    if (!open && amountChanged) {
+      await confirmDanger({
+        tone: 'void',
+        title: 'This charge is already on the bill',
+        message: 'The amount has already counted. Void this charge, then add the correct one. The original stays on file and the books stay even.',
+        confirmLabel: 'OK',
+      });
+      return;
+    }
+    frontOfficeStore.updateFolioCharge(selectedFolio.id, chargeEdit.id, {
+      description,
+      ...(open ? { amount } : {}),
+    });
+    setChargeEdit(null);
+  };
+
+  const savePaymentEdit = async () => {
+    if (!paymentEdit || !selectedFolio) return;
+    const amount = Number(paymentEdit.amount);
+    if (!(amount > 0)) return;
+    const stayOpen = selectedFolio.status === 'checked-in' || selectedFolio.status === 'pending';
+    const posted = paymentEdit.status === 'completed';
+    const amountChanged = Math.abs(amount - paymentEdit.original) > 0.001;
+    if (posted && !stayOpen && amountChanged) {
+      await confirmDanger({
+        tone: 'void',
+        title: 'This payment is already on the bill',
+        message: 'The amount has already counted. Void this payment, then take the correct one. The original stays on file and the books stay even.',
+        confirmLabel: 'OK',
+      });
+      return;
+    }
+    frontOfficeStore.updateFolioPayment(selectedFolio.id, paymentEdit.id, {
+      amount,
+      method: paymentEdit.method as 'Cash' | 'Card' | 'Mobile Money' | 'Credit' | 'Corporate Account' | 'Bank Transfer' | 'Check',
+      notes: paymentEdit.notes,
+    });
+    setPaymentEdit(null);
   };
 
   const handleCreateInvoice = () => {
@@ -1641,6 +1701,35 @@ export default function InvoicesPaymentsPage() {
           </ModalBody>
           <ModalFooter>
             <Button variant="light" onPress={onViewClose}>Close</Button>
+            {selectedInvoice && frontOfficeStore.reservations.find(r => r.id === selectedInvoice.id)?.status === 'pending' && (
+              <Button color="danger" variant="light" onPress={async () => {
+                const stay = frontOfficeStore.reservations.find(r => r.id === selectedInvoice.id);
+                const ok = await confirmDelete(stay?.resId || 'this invoice', 'A pending stay that was never posted will be permanently removed.');
+                if (!ok || !stay) return;
+                if (!frontOfficeStore.deleteReservation(stay.id)) {
+                  alert('This invoice already has charges or payments. Void it instead.');
+                  return;
+                }
+                onViewClose();
+              }}>Delete</Button>
+            )}
+            {selectedInvoice && ['checked-in', 'checked-out', 'no-show'].includes(frontOfficeStore.reservations.find(r => r.id === selectedInvoice.id)?.status || '') && (
+              <Button color="warning" variant="flat" onPress={async () => {
+                const stay = frontOfficeStore.reservations.find(r => r.id === selectedInvoice.id);
+                const postedMessage = 'This bill is already in the books (it went to Accounting at checkout). Void its receipts and invoice in Accounting → Accounts Receivable instead, so the reversal is posted there.';
+                if (stay && frontOfficeStore.stayPostedToBooks(stay.id)) {
+                  alert(postedMessage);
+                  return;
+                }
+                const ok = await confirmVoid(stay?.resId || 'this invoice', 'The invoice stays on file as Void. Charges are reversed and payments are refunded.');
+                if (!ok || !stay) return;
+                if (!frontOfficeStore.voidReservation(stay.id, 'Void invoice')) {
+                  alert(postedMessage);
+                  return;
+                }
+                onViewClose();
+              }}>Void</Button>
+            )}
             {selectedInvoice && selectedInvoice.balance > 0.005 && (
               <Button color="success" className="bg-green-600 font-semibold text-white" onPress={() => onAddPaymentOpen()}>
                 Pay
@@ -1722,6 +1811,14 @@ export default function InvoicesPaymentsPage() {
           </ModalBody>
           <ModalFooter>
             <Button variant="light" onPress={onPaymentClose}>Close</Button>
+            {selectedPayment && selectedPayment.status === 'completed' && (
+              <Button color="warning" variant="flat" onPress={async () => {
+                const ok = await confirmVoid('this payment', 'The payment stays on file as a refund so the guest owes it again and the books stay even.');
+                if (!ok) return;
+                frontOfficeStore.refundPayment(selectedPayment.invoiceId, selectedPayment.id, selectedPayment.amount, 'Void');
+                onPaymentClose();
+              }}>Void</Button>
+            )}
             {selectedPayment && (
               <Button color="default" className="bg-gray-600 font-semibold text-white" onPress={() => handlePrintReceipt(selectedPayment)}>Receipt</Button>
             )}
@@ -2063,7 +2160,9 @@ export default function InvoicesPaymentsPage() {
                             {(() => {
                               const folio = frontOfficeStore.getOrCreateFolio(selectedFolio.id);
                               const reservations = frontOfficeStore.reservations.filter(r => r.id !== selectedFolio.id);
-                              return folio.charges.map((charge) => (
+                              return folio.charges.map((charge) => {
+                                const reversal = (charge.description || '').startsWith('VOID') || (charge.amount || 0) < 0;
+                                return (
                                 <TableRow key={charge.id}>
                                   <TableCell>{new Date(charge.date).toLocaleDateString()}</TableCell>
                                   <TableCell>{charge.description}</TableCell>
@@ -2071,8 +2170,14 @@ export default function InvoicesPaymentsPage() {
                                   <TableCell className="text-right">₵{formatMoney((charge.tax || 0))}</TableCell>
                                   <TableCell>
                                     <div className="flex gap-2">
-                                      {settings.hasPermission('frontdesk.void-charge') && (
-                                        <Button size="sm" variant="light" onPress={() => handleVoidCharge(selectedFolio.id, charge.id)}>Void</Button>
+                                      {!reversal && (
+                                        <Button size="sm" variant="light" onPress={() => setChargeEdit({ id: charge.id, description: charge.description, amount: String(charge.amount), original: charge.amount })}>Edit</Button>
+                                      )}
+                                      {!reversal && (
+                                        <Button size="sm" variant="light" color="danger" onPress={() => chargeAlreadyCounted('this charge')}>Delete</Button>
+                                      )}
+                                      {!reversal && settings.hasPermission('frontdesk.void-charge') && (
+                                        <Button size="sm" variant="light" color="warning" onPress={() => handleVoidCharge(selectedFolio.id, charge.id)}>Void</Button>
                                       )}
                                       <Button size="sm" variant="light" color="secondary" onPress={() => openSplitModal(charge.id, charge.amount)}>Split</Button>
                                       {reservations.length > 0 && (
@@ -2081,7 +2186,8 @@ export default function InvoicesPaymentsPage() {
                                     </div>
                                   </TableCell>
                                 </TableRow>
-                              ));
+                                );
+                              });
                             })()}
                           </TableBody>
                         </Table>
@@ -2114,8 +2220,26 @@ export default function InvoicesPaymentsPage() {
                                   </TableCell>
                                   <TableCell>{(payment as any).reference || '-'}</TableCell>
                                   <TableCell>
-                                    {payment.amount > 0 && (
-                                      <Button size="sm" variant="light" onPress={() => frontOfficeStore.refundPayment(selectedFolio.id, payment.id, payment.amount, 'Guest refund')}>Refund</Button>
+                                    {payment.status !== 'refunded' && (
+                                      <div className="flex gap-2">
+                                        <Button size="sm" variant="light" onPress={() => setPaymentEdit({ id: payment.id, amount: String(payment.amount), method: payment.method, notes: payment.notes || '', original: payment.amount, status: payment.status })}>Edit</Button>
+                                        <Button size="sm" variant="light" color="danger" onPress={async () => {
+                                          if (payment.status === 'pending') {
+                                            const ok = await confirmDelete('this payment', 'A payment that was never taken will be permanently removed.');
+                                            if (!ok) return;
+                                            frontOfficeStore.removeFolioPayment(selectedFolio.id, payment.id);
+                                            return;
+                                          }
+                                          await chargeAlreadyCounted('this payment');
+                                        }}>Delete</Button>
+                                        {payment.amount > 0 && (
+                                          <Button size="sm" variant="light" color="warning" onPress={async () => {
+                                            const ok = await confirmVoid('this payment', 'The payment stays on file as a refund so the guest owes it again and the books stay even.');
+                                            if (!ok) return;
+                                            frontOfficeStore.refundPayment(selectedFolio.id, payment.id, payment.amount, 'Void');
+                                          }}>Void</Button>
+                                        )}
+                                      </div>
                                     )}
                                   </TableCell>
                                 </TableRow>
@@ -2196,6 +2320,46 @@ export default function InvoicesPaymentsPage() {
             >
               Process Adjustment
             </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={!!chargeEdit} onClose={() => setChargeEdit(null)} size="md">
+        <ModalContent>
+          <ModalHeader>Edit charge</ModalHeader>
+          <ModalBody className="space-y-3">
+            <Input label="Description" value={chargeEdit?.description || ''} onValueChange={(description) => setChargeEdit((row) => row ? { ...row, description } : row)} />
+            <Input label="Amount" type="number" value={chargeEdit?.amount || ''} onValueChange={(amount) => setChargeEdit((row) => row ? { ...row, amount } : row)} startContent={<span className="text-gray-400">₵</span>} />
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="light" onPress={() => setChargeEdit(null)}>Cancel</Button>
+            <Button color="primary" onPress={saveChargeEdit}>Save</Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={!!paymentEdit} onClose={() => setPaymentEdit(null)} size="md">
+        <ModalContent>
+          <ModalHeader>Edit payment</ModalHeader>
+          <ModalBody className="space-y-3">
+            <Select
+              label="Method"
+              selectedKeys={paymentEdit ? [paymentEdit.method] : []}
+              onSelectionChange={(keys) => {
+                const method = typeof keys === 'string' ? keys : String(Array.from(keys)[0] || '');
+                if (method) setPaymentEdit((row) => row ? { ...row, method } : row);
+              }}
+            >
+              {['Cash', 'Card', 'Mobile Money', 'Bank Transfer', 'Credit', 'Corporate Account', 'Check'].map((method) => (
+                <SelectItem key={method}>{method}</SelectItem>
+              ))}
+            </Select>
+            <Input label="Amount" type="number" value={paymentEdit?.amount || ''} onValueChange={(amount) => setPaymentEdit((row) => row ? { ...row, amount } : row)} startContent={<span className="text-gray-400">₵</span>} />
+            <Input label="Note" value={paymentEdit?.notes || ''} onValueChange={(notes) => setPaymentEdit((row) => row ? { ...row, notes } : row)} />
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="light" onPress={() => setPaymentEdit(null)}>Cancel</Button>
+            <Button color="primary" onPress={savePaymentEdit}>Save</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

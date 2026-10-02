@@ -418,7 +418,8 @@ export default function CashierShiftPanel({
 
   const handleDelete = async () => {
     if (!selected) return;
-    if (!window.confirm(`Delete this ${selected.status} shift for ${selected.cashierName} on ${selected.businessDate}?`)) return;
+    const { confirmDelete } = await import('./DangerConfirm');
+    if (!(await confirmDelete('this cashier shift', `${selected.cashierName} on ${selected.businessDate} (${selected.status}) will be permanently removed.`))) return;
     setDeleting(true);
     setModalError(null);
     const result = await deleteShift(selected.id);

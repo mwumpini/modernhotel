@@ -281,13 +281,14 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
         alert(`${item.name} has ${item.usedCount} order line${item.usedCount === 1 ? '' : 's'} and cannot be deleted. It is already unavailable.`);
         return;
       }
-      if (
-        !confirm(
-          `${item.name} has ${item.usedCount} order line${item.usedCount === 1 ? '' : 's'} and cannot be deleted. Mark it Unavailable so it stays off new orders but history is kept?`
-        )
-      ) {
-        return;
-      }
+      const { confirmDanger } = await import('./DangerConfirm');
+      const retire = await confirmDanger({
+        tone: 'delete',
+        title: `Deactivate ${item.name}?`,
+        message: `${item.name} has ${item.usedCount} order line${item.usedCount === 1 ? '' : 's'} and cannot be deleted. It will be marked Unavailable so it stays off new orders. History is kept.`,
+        confirmLabel: 'Deactivate',
+      });
+      if (!retire) return;
       await fetch('/api/fb/menu', {
         method: 'PATCH',
         headers: fbHeaders(),
@@ -296,7 +297,8 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
       reloadMenu();
       return;
     }
-    if (!confirm(`Delete ${item.name}? This action cannot be undone.`)) return;
+    const { confirmDelete } = await import('./DangerConfirm');
+    if (!(await confirmDelete(item.name, 'This menu item was never sold and will be permanently removed.'))) return;
     await fetch(`/api/fb/menu?id=${encodeURIComponent(item.id)}`, { method: 'DELETE', headers: fbHeaders() });
     reloadMenu();
   };
@@ -852,6 +854,15 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
             )}
             {openReservation && (openReservation.status === 'pending' || openReservation.status === 'confirmed') && (
               <Button color="danger" variant="flat" onPress={() => setReservationStatus(openReservation, 'cancelled')}>Cancel</Button>
+            )}
+            {openReservation?.status === 'pending' && (
+              <Button color="danger" variant="light" onPress={async () => {
+                const { confirmDelete } = await import('./DangerConfirm');
+                if (!(await confirmDelete('this table reservation', 'A booking that never happened will be permanently removed.'))) return;
+                await fetch(`/api/fb/reservations?id=${encodeURIComponent(openReservation.id)}`, { method: 'DELETE', headers: fbHeaders() });
+                setViewingReservationId(null);
+                reloadReservations();
+              }}>Delete</Button>
             )}
             {openReservation?.status === 'confirmed' && (
               <Button color="secondary" variant="flat" onPress={() => setReservationStatus(openReservation, 'completed')}>Complete</Button>

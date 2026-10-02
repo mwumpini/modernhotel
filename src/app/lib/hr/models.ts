@@ -207,7 +207,7 @@ export interface Attendance {
   totalHours: number;
   overtimeHours: number;
   breakTime: number;
-  status: 'present' | 'absent' | 'late' | 'half_day' | 'on_leave' | 'holiday';
+  status: 'present' | 'absent' | 'late' | 'half_day' | 'on_leave' | 'holiday' | 'void';
   shift: 'morning' | 'afternoon' | 'night' | 'flexible';
   location: string;
   notes?: string;
@@ -225,7 +225,7 @@ export interface LeaveRequest {
   endDate: Date;
   totalDays: number;
   reason: string;
-  status: 'pending' | 'approved' | 'rejected' | 'cancelled';
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled' | 'void';
   requestedBy: string;
   requestedAt: Date;
   approvedBy?: string;

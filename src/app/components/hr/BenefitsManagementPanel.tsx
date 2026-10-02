@@ -6,6 +6,7 @@ import { useBenefitsStore } from '@/app/lib/hr/benefitsStore';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { formatMoney } from '@/app/lib/format/currency';
 import { printDetailSheet } from '@/app/lib/print/simpleReport';
+import { confirmDelete } from '@/app/components/DangerConfirm';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { DetailGrid, DetailField } from '../frontoffice/detailView';
 import { useDeskPagination } from '../dashboard/deskTableUi';
@@ -309,7 +310,12 @@ export default function BenefitsManagementPanel() {
                   >
                     Print
                   </Button>
-                  <Button color="danger" variant="flat" onPress={() => { deletePackage(viewPkg.id); setViewPkg(null); }}>Delete</Button>
+                  <Button color="danger" variant="flat" onPress={async () => {
+                    const ok = await confirmDelete('this benefits package', 'The package will be permanently removed. This cannot be undone.');
+                    if (!ok) return;
+                    deletePackage(viewPkg.id);
+                    setViewPkg(null);
+                  }}>Delete</Button>
                 </div>
               </ModalFooter>
             </>

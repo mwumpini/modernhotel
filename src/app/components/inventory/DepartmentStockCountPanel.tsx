@@ -439,9 +439,10 @@ export default function DepartmentStockCountPanel({
     openHtmlPrintWindow(html);
   };
 
-  const voidCount = (count: StockCount) => {
+  const voidCount = async (count: StockCount) => {
     if (count.status === 'completed' || count.status === 'cancelled') return;
-    if (!confirm(`Void stock count ${count.countNumber}?`)) return;
+    const { confirmVoid } = await import('../DangerConfirm');
+    if (!(await confirmVoid(count.countNumber, 'The count stays on file as Void.'))) return;
     const updated: StockCount = {
       ...count,
       status: 'cancelled',
@@ -452,9 +453,10 @@ export default function DepartmentStockCountPanel({
     setViewing(updated);
   };
 
-  const removeCount = (count: StockCount) => {
+  const removeCount = async (count: StockCount) => {
     if (count.status === 'completed') return;
-    if (!confirm(`Delete stock count ${count.countNumber}?`)) return;
+    const { confirmDelete } = await import('../DangerConfirm');
+    if (!(await confirmDelete(count.countNumber, 'This stock count will be permanently removed.'))) return;
     deleteStockCount(count.id);
     setViewing(null);
     onViewClose();

@@ -91,6 +91,14 @@ export async function createReservationViaApi(_self: StoreLike, tenantSubdomain:
   return created;
 }
 
+export async function deleteReservationViaApi(tenantSubdomain: string, id: string) {
+  const res = await fetch(`/api/reservations/${id}`, {
+    method: 'DELETE',
+    headers: tenantHeaders(tenantSubdomain),
+  });
+  if (!res.ok && res.status !== 404) throw await errorFrom(res, 'Failed to delete reservation');
+}
+
 export async function updateReservationViaApi(_self: StoreLike, tenantSubdomain: string, id: string, patch: any) {
   const res = await fetch(`/api/reservations/${id}`, {
     method: 'PATCH',

@@ -213,7 +213,7 @@ export interface GoodsIssue {
   department: string;
   issuedTo: string;
   issueDate: Date;
-  status: 'issued' | 'cancelled';
+  status: 'issued' | 'cancelled' | 'void';
   totalItems: number;
   totalValue: number;
   items: GoodsIssueItem[];
@@ -405,7 +405,7 @@ export interface GoodsReceiptNote {
   items: GRNItem[];
   totalItems: number;
   totalValue: number;
-  status: 'pending' | 'quality-check' | 'approved' | 'rejected' | 'completed';
+  status: 'pending' | 'quality-check' | 'approved' | 'rejected' | 'completed' | 'void';
   qualityCheckedBy?: string;
   qualityCheckedAt?: Date;
   qualityStatus?: 'passed' | 'failed' | 'partial';
@@ -455,7 +455,7 @@ export interface SupplierInvoice {
   discountAmount: number;
   totalAmount: number;
   currency: string;
-  status: 'pending' | 'matched' | 'approved' | 'rejected' | 'paid' | 'cancelled';
+  status: 'pending' | 'matched' | 'approved' | 'rejected' | 'paid' | 'cancelled' | 'void';
   matchingStatus: {
     isQuantityMatched: boolean;
     isPriceMatched: boolean;

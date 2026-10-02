@@ -479,7 +479,8 @@ export default function TaxRateBuilder() {
   };
 
   const handleDelete = async (ruleId: string) => {
-    if (confirm('Are you sure you want to delete this tax rule?')) {
+    const { confirmDelete } = await import('./DangerConfirm');
+    if (await confirmDelete('this tax rule', 'The rule will be permanently removed.')) {
       try {
         const response = await fetch(`/api/compliance/taxes/manage?id=${ruleId}`, {
           method: 'DELETE',
@@ -525,6 +526,9 @@ export default function TaxRateBuilder() {
 
   const bulkDelete = async () => {
     const ids = Array.from(selectedRuleIds);
+    if (ids.length === 0) return;
+    const { confirmDelete } = await import('./DangerConfirm');
+    if (!(await confirmDelete(`${ids.length} tax rule${ids.length === 1 ? '' : 's'}`, 'The selected rules will be permanently removed.'))) return;
     for (const id of ids) {
       removeTaxRuleFromAccounting(id);
       try { await fetch(`/api/compliance/taxes/manage?id=${id}`, { method: 'DELETE', headers: taxTenantHeaders() }); } catch {}
@@ -1138,7 +1142,8 @@ export default function TaxRateBuilder() {
                             }}>Apply</Button>
                             <Button size="sm" variant="bordered" onPress={() => { setIsEditingType(true); setEditingTypeId(String(t.id)); setTypeForm({ countryCode: selectedCountry, name: t.name, description: t.description || '', domain: (t as any).domain || 'sales', operation: (t as any).operation || 'both' }); onOpenType(); }}>Edit</Button>
                             <Button size="sm" color="danger" variant="light" onPress={async () => {
-                              const ok = typeof window !== 'undefined' ? window.confirm(`Delete tax type "${t.name}"? Rules are kept but unassigned from this type.`) : true;
+                              const { confirmDelete } = await import('./DangerConfirm');
+                              const ok = await confirmDelete(t.name, 'Rules are kept but unassigned from this type.');
                               if (!ok) return;
                               try {
                                 await fetch(`/api/compliance/tax-types/manage?id=${encodeURIComponent(String(t.id))}`, { method: 'DELETE', headers: taxTenantHeaders() });

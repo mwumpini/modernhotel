@@ -391,7 +391,8 @@ export default function FoodBeverageKitchen({
     }
   };
   const deleteRecipeById = async (id: string) => {
-    if (!confirm('Delete this recipe? This cannot be undone.')) return;
+    const { confirmDelete } = await import('./DangerConfirm');
+    if (!(await confirmDelete('this recipe', 'The recipe will be permanently removed. This cannot be undone.'))) return;
     await fetch(`/api/fb/recipes?id=${id}`, { method: 'DELETE', headers: fbHeaders() });
     setViewingRecipe(null);
     reloadRecipes();

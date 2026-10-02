@@ -7,6 +7,7 @@ import type { DepartmentStaffMember } from '../../lib/hr/useDepartmentStaff';
 import { addDays, leaveOn, todayKey, weekStart } from '../../lib/hr/leaveDates';
 import { printSimpleReport } from '../../lib/print/simpleReport';
 import { notifySuccess } from '../../lib/notifications/notify';
+import { confirmDelete } from '../DangerConfirm';
 
 const PRESETS = [
   { label: 'Morning', start: '06:00', end: '14:00' },
@@ -297,7 +298,9 @@ export default function DepartmentShiftsPanel({
                       <Button
                         variant="flat"
                         color="danger"
-                        onPress={() => {
+                        onPress={async () => {
+                          const ok = await confirmDelete('this shift', 'The shift will be permanently removed.');
+                          if (!ok) return;
                           deleteShift(draft.shiftId!);
                           setDraft(null);
                         }}

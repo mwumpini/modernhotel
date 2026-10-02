@@ -1,7 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
-import { requireAuth } from '@/app/lib/api/auth-guard'
-import { updateReservationRow, isRoomAvailable } from '@/app/lib/frontoffice/repository'
+import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
+import { updateReservationRow, deleteReservationRow, isRoomAvailable } from '@/app/lib/frontoffice/repository'
+
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
+    const perm = await requirePermission(request, 'frontdesk.delete')
+    if (!perm.ok) return perm.response
+    const subdomain = getTenantFromRequest(request)
+    if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
+    const ctx = await getTenantContext(subdomain)
+    if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
+    const { id } = await params
+    const result = await deleteReservationRow(ctx.tenantId, id)
+    if (result === 'not-found') return NextResponse.json({ error: 'Reservation not found' }, { status: 404 })
+    if (result !== 'deleted') {
+      return NextResponse.json({ error: 'Only a pending reservation with no charges or payments can be deleted. Void it instead.' }, { status: 409 })
+    }
+    const sessionUserId = (auth.session as any).user?.id
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'RESERVATION_DELETED', 'Reservation', id, undefined, undefined, request)
+    return NextResponse.json({ ok: true })
+  } catch (error) {
+    console.error('[reservations/:id][DELETE] error', error)
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+  }
+}
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {

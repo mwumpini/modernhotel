@@ -658,7 +658,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       // (their status has since moved on) or, for a past date, anyone who's
       // since checked out — neither means they didn't arrive. Only
       // cancelled/no-show reservations genuinely never arrived.
-      .filter(reservation => dateInRange(reservation.arrival, date, endDate) && reservation.status !== 'cancelled' && reservation.status !== 'no-show')
+      .filter(reservation => dateInRange(reservation.arrival, date, endDate) && reservation.status !== 'cancelled' && reservation.status !== 'no-show' && reservation.status !== 'void')
       .map(reservation => {
         const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
@@ -699,7 +699,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       // once they actually complete it, status flips to 'checked-out' and
       // they'd vanish, which is backwards for a report meant to answer "who
       // departed on this date" (past or present).
-      .filter(reservation => dateInRange(reservation.departure, date, endDate) && reservation.status !== 'cancelled' && reservation.status !== 'no-show')
+      .filter(reservation => dateInRange(reservation.departure, date, endDate) && reservation.status !== 'cancelled' && reservation.status !== 'no-show' && reservation.status !== 'void')
       .map(reservation => {
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
         const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId);
@@ -1017,7 +1017,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     const stayOvers = inHouse.filter(r => (r.arrival || '').slice(0, 10) < date && (r.departure || '').slice(0, 10) > date).length;
 
     const arrivalReservations = frontOfficeStore.reservations.filter(r =>
-      (r.arrival || '').slice(0, 10) === date && r.status !== 'cancelled' && r.status !== 'no-show'
+      (r.arrival || '').slice(0, 10) === date && r.status !== 'cancelled' && r.status !== 'no-show' && r.status !== 'void'
     );
     const arrivals = arrivalReservations.length;
     const guaranteedArrivals = arrivalReservations.filter(r => r.isGuaranteed).length;
@@ -1027,7 +1027,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     ).length;
 
     const departures = frontOfficeStore.reservations.filter(r =>
-      (r.departure || '').slice(0, 10) === date && r.status !== 'cancelled' && r.status !== 'no-show'
+      (r.departure || '').slice(0, 10) === date && r.status !== 'cancelled' && r.status !== 'no-show' && r.status !== 'void'
     ).length;
     const noShows = frontOfficeStore.reservations.filter(r =>
       (r.arrival || '').slice(0, 10) === date && r.status === 'no-show'
@@ -1410,7 +1410,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     // Any guest travelling on a passport, or whose recorded nationality isn't Ghanaian, arriving in
     // the period. Visa numbers aren't captured anywhere in the system, so — honestly — there's no
     // visa column here; adding one would mean making the numbers up.
-    const inRange = frontOfficeStore.reservations.filter((r) => dateInRange(r.arrival, startDate, endDate) && r.status !== 'cancelled' && r.status !== 'no-show');
+    const inRange = frontOfficeStore.reservations.filter((r) => dateInRange(r.arrival, startDate, endDate) && r.status !== 'cancelled' && r.status !== 'no-show' && r.status !== 'void');
     return inRange
       .map((r) => {
         const guest = frontOfficeStore.guests.find((g) => g.id === r.guestId);
@@ -1471,7 +1471,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     // Excludes only cancelled/no-show — a reservation whose current status has
     // since moved on to checked-in/checked-out still genuinely arrived that day.
     const arrivals = frontOfficeStore.reservations.filter(r =>
-      dateInRange(r.arrival, date, endDate) && r.status !== 'cancelled' && r.status !== 'no-show'
+      dateInRange(r.arrival, date, endDate) && r.status !== 'cancelled' && r.status !== 'no-show' && r.status !== 'void'
     );
     if (arrivals.length === 0) return [];
 

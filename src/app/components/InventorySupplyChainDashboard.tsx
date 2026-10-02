@@ -500,8 +500,9 @@ export default function InventorySupplyChainDashboard({
     setEditingItem(null);
   };
 
-  const handleDeleteItem = (itemId: string) => {
-    if (confirm('Are you sure you want to delete this item?')) {
+  const handleDeleteItem = async (itemId: string) => {
+    const { confirmDelete } = await import('./DangerConfirm');
+    if (await confirmDelete('this stock item', 'Only an item that has never moved can be removed. This cannot be undone.')) {
       deleteStockItem(itemId);
       trackEvent('Stores.Issued', { action: 'delete_item', itemId });
     }
@@ -2052,8 +2053,9 @@ export default function InventorySupplyChainDashboard({
     setRequisitionPage(1);
   }, [requisitionSearchTerm, requisitionFilterStatus, requisitionSort.column, requisitionSort.direction]);
 
-  const handleDeleteSupplier = (supplierId: string) => {
-    if (confirm('Are you sure you want to delete this supplier? This will also remove it from accounting.')) {
+  const handleDeleteSupplier = async (supplierId: string) => {
+    const { confirmDelete } = await import('./DangerConfirm');
+    if (await confirmDelete('this supplier', 'The supplier will be removed here and from accounting. This cannot be undone.')) {
       const supplier = mergedSuppliers.find(s => s.id === supplierId);
       if (supplier) {
         // Delete from inventory store
@@ -3354,13 +3356,14 @@ export default function InventorySupplyChainDashboard({
     onStockCountOpen();
   };
 
-  const handleVoidStockCount = (count: StockCount) => {
+  const handleVoidStockCount = async (count: StockCount) => {
     if (count.status === 'completed') {
       alert('Completed counts cannot be voided — stock was already adjusted.');
       return;
     }
     if (count.status === 'cancelled') return;
-    if (!confirm(`Void stock count ${count.countNumber}? It will be marked cancelled.`)) return;
+    const { confirmVoid } = await import('./DangerConfirm');
+    if (!(await confirmVoid(count.countNumber, 'The count stays on file as Void and will be marked cancelled. Completed counts that already adjusted stock cannot be voided.'))) return;
     const updated: StockCount = {
       ...count,
       status: 'cancelled',
@@ -3372,12 +3375,13 @@ export default function InventorySupplyChainDashboard({
     trackEvent('Stores.Issued', { action: 'void_stock_count', countNumber: count.countNumber });
   };
 
-  const handleDeleteStockCount = (count: StockCount) => {
+  const handleDeleteStockCount = async (count: StockCount) => {
     if (count.status === 'completed') {
       alert('Completed counts cannot be deleted — stock was already adjusted.');
       return;
     }
-    if (!confirm(`Delete stock count ${count.countNumber}? This cannot be undone.`)) return;
+    const { confirmDelete } = await import('./DangerConfirm');
+    if (!(await confirmDelete(count.countNumber, 'This stock count will be permanently removed. This cannot be undone.'))) return;
     deleteStockCount(count.id);
     setViewingStockCount(null);
     onStockCountViewClose();
@@ -4379,6 +4383,9 @@ export default function InventorySupplyChainDashboard({
               <ModalFooter className="flex flex-wrap gap-2">
                 <Button variant="bordered" onPress={() => setViewOpen(false)}>Close</Button>
                 {viewingItem && (
+                  <Button color="danger" variant="light" onPress={() => { setViewOpen(false); void handleDeleteItem(viewingItem.id); }}>Delete</Button>
+                )}
+                {viewingItem && (
                   <Button color="warning" variant="flat" onPress={() => {
                     setViewOpen(false);
                     handleEditItem(viewingItem);
@@ -4680,6 +4687,9 @@ export default function InventorySupplyChainDashboard({
               </ModalBody>
               <ModalFooter>
                 <Button variant="bordered" onPress={() => setSupplierViewOpen(false)}>Close</Button>
+                {viewingSupplier && (
+                  <Button color="danger" variant="light" onPress={() => { setSupplierViewOpen(false); void handleDeleteSupplier(viewingSupplier.id); }}>Delete</Button>
+                )}
                 {viewingSupplier && (
                   <Button color="primary" onPress={() => {
                     setSupplierViewOpen(false);
@@ -5231,15 +5241,26 @@ export default function InventorySupplyChainDashboard({
                 ✅ Mark Delivered
               </Button>
             )}
-            {viewingPO && (viewingPO.status === 'draft' || viewingPO.status === 'sent' || viewingPO.status === 'confirmed') && (
-              <Button color="danger" variant="flat" onPress={() => {
-                if (confirm('Are you sure you want to cancel this purchase order?')) {
-                  cancelPurchaseOrder(viewingPO.id, 'Cancelled by user');
-                  trackEvent('Stores.Issued', { action: 'cancel_po', poNumber: viewingPO.poNumber });
-                  setViewingPO({ ...viewingPO, status: 'cancelled' });
-                }
+            {viewingPO && viewingPO.status === 'draft' && (
+              <Button color="danger" variant="light" onPress={async () => {
+                const { confirmDelete } = await import('./DangerConfirm');
+                if (!(await confirmDelete(viewingPO.poNumber, 'This draft purchase order will be permanently removed.'))) return;
+                deletePurchaseOrder(viewingPO.id);
+                trackEvent('Stores.Issued', { action: 'delete_po', poNumber: viewingPO.poNumber });
+                onPOViewClose();
               }}>
-                ❌ Cancel
+                Delete
+              </Button>
+            )}
+            {viewingPO && viewingPO.status !== 'draft' && viewingPO.status !== 'cancelled' && viewingPO.status !== 'delivered' && (
+              <Button color="warning" variant="flat" onPress={async () => {
+                const { confirmVoid } = await import('./DangerConfirm');
+                if (!(await confirmVoid(viewingPO.poNumber, 'The order stays on file as cancelled. It was never fully received.'))) return;
+                cancelPurchaseOrder(viewingPO.id, 'Void');
+                trackEvent('Stores.Issued', { action: 'void_po', poNumber: viewingPO.poNumber });
+                setViewingPO({ ...viewingPO, status: 'cancelled' });
+              }}>
+                Void
               </Button>
             )}
           </ModalFooter>
@@ -5970,6 +5991,27 @@ export default function InventorySupplyChainDashboard({
           <ModalFooter className="flex flex-wrap gap-2">
             <Button variant="bordered" onPress={onGRNViewClose}>Close</Button>
             {viewingGRN?.status === 'pending' && (
+              <Button color="danger" variant="light" onPress={async () => {
+                const { confirmDelete } = await import('./DangerConfirm');
+                if (!(await confirmDelete(viewingGRN.grnNumber, 'A receipt that was never approved will be permanently removed.'))) return;
+                useSupplierStore.setState((state) => ({ goodsReceiptNotes: state.goodsReceiptNotes.filter((g) => g.id !== viewingGRN.id) }));
+                onGRNViewClose();
+              }}>Delete</Button>
+            )}
+            {viewingGRN && viewingGRN.status !== 'pending' && viewingGRN.status !== 'void' && viewingGRN.status !== 'rejected' && (
+              <Button color="warning" variant="flat" onPress={async () => {
+                const { confirmVoid } = await import('./DangerConfirm');
+                if (!(await confirmVoid(viewingGRN.grnNumber, 'The receipt stays on file as Void. A reversing journal entry keeps the books even.'))) return;
+                try {
+                  const { useAccountingStore } = await import('../lib/accounting/store');
+                  const entry = useAccountingStore.getState().journalEntries.find((e) => e.id === `JE-GRN-${viewingGRN.id}` || e.sourceTransactionId === viewingGRN.id);
+                  if (entry && entry.status === 'Posted') await useAccountingStore.getState().voidJournalEntry(entry.id);
+                } catch {}
+                updateGRN(viewingGRN.id, { status: 'void' });
+                setViewingGRN({ ...viewingGRN, status: 'void' });
+              }}>Void</Button>
+            )}
+            {viewingGRN?.status === 'pending' && (
               <Button
                 color="warning"
                 onPress={() => {
@@ -6160,6 +6202,16 @@ export default function InventorySupplyChainDashboard({
           </ModalBody>
           <ModalFooter>
             <Button variant="bordered" onPress={onGoodsIssueViewClose}>Close</Button>
+            {viewingGoodsIssue && viewingGoodsIssue.status === 'issued' && (
+              <Button color="warning" variant="flat" onPress={async () => {
+                const { confirmVoid } = await import('./DangerConfirm');
+                if (!(await confirmVoid(viewingGoodsIssue.issueNumber, 'The issue stays on file as Void and the stock is put back.'))) return;
+                viewingGoodsIssue.items.forEach((item) => updateStockLevel(item.itemId, item.quantity, 'add'));
+                const voided = { ...viewingGoodsIssue, status: 'void' as const, updatedAt: new Date() };
+                upsertGoodsIssue(voided);
+                setViewingGoodsIssue(voided);
+              }}>Void</Button>
+            )}
           </ModalFooter>
         </ModalContent>
       </Modal>
@@ -7350,6 +7402,22 @@ export default function InventorySupplyChainDashboard({
           </ModalBody>
           <ModalFooter className="flex flex-wrap gap-2">
             <Button variant="bordered" onPress={onInvoiceViewClose}>Close</Button>
+            {viewingInvoice?.status === 'pending' && (
+              <Button color="danger" variant="light" onPress={async () => {
+                const { confirmDelete } = await import('./DangerConfirm');
+                if (!(await confirmDelete(viewingInvoice.invoiceNumber, 'A draft supplier invoice will be permanently removed.'))) return;
+                useSupplierStore.setState((state) => ({ supplierInvoices: state.supplierInvoices.filter((inv) => inv.id !== viewingInvoice.id) }));
+                onInvoiceViewClose();
+              }}>Delete</Button>
+            )}
+            {viewingInvoice && !['pending', 'void', 'rejected', 'cancelled'].includes(viewingInvoice.status) && (
+              <Button color="warning" variant="flat" onPress={async () => {
+                const { confirmVoid } = await import('./DangerConfirm');
+                if (!(await confirmVoid(viewingInvoice.invoiceNumber, 'The bill stays on file as Void.'))) return;
+                updateSupplierInvoice(viewingInvoice.id, { status: 'void' });
+                setViewingInvoice({ ...viewingInvoice, status: 'void' });
+              }}>Void</Button>
+            )}
             {viewingInvoice?.status === 'pending' && (
               <Button
                 color="warning"

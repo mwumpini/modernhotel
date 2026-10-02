@@ -2830,12 +2830,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           .then((data) => {
             if (!Array.isArray(data?.users) || data.users.length === 0) return;
             const mapped: User[] = data.users.map((u: any) => {
-              const [firstName, ...rest] = String(u.name || u.email).split(' ');
+              const [firstName, ...rest] = String(u.name || u.email || u.username || '').split(' ');
               return {
                 id: u.id,
                 username: u.username || '',
-                email: u.email,
-                firstName: firstName || u.email,
+                email: u.email || '',
+                firstName: firstName || u.email || u.username || '',
                 lastName: rest.join(' '),
                 roleId: u.role,
                 isActive: u.isActive,
@@ -3680,8 +3680,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   updateUser: async (userId, updates, newPassword) => {
     const patch: { email?: string; username?: string; name?: string; role?: string; isActive?: boolean; password?: string; profile?: Partial<User['profile']> } = {};
-    if (updates.email) patch.email = updates.email;
-    // Sent even when blank, so clearing the box removes the username.
+    // Sent even when blank, so clearing a box removes the email or username
+    // (the server keeps at least one of the two).
+    if (typeof updates.email === 'string') patch.email = updates.email;
     if (typeof updates.username === 'string') patch.username = updates.username;
     if (updates.firstName || updates.lastName) {
       const state = get();

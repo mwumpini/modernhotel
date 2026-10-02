@@ -976,6 +976,65 @@ class FrontOfficeStore {
       }
     } catch {}
   }
+
+  deleteReservation(id: string) {
+    const res = this.reservations.find(r => r.id === id);
+    if (!res || res.status !== 'pending') return false;
+    const folio = this.folios?.find(f => f.id === id);
+    const hasMoney = (folio?.charges?.length || 0) > 0 || (folio?.payments?.length || 0) > 0;
+    if (hasMoney) return false;
+    this.reservations = this.reservations.filter(r => r.id !== id);
+    this.folios = (this.folios || []).filter(f => f.id !== id);
+    this.notify();
+    trackEvent('FO.Reservation.Deleted', { id });
+    const t = this.tenant();
+    if (t) this.enqueueWrite(() => apiHelpers.deleteReservationViaApi(t, id));
+    return true;
+  }
+
+  /**
+   * True once a stay's money is in Accounting: the checkout invoice (with its
+   * journal entries) or a night-audit no-show penalty. Voiding the folio alone
+   * would leave that revenue and cash in the books, so such a stay is reversed
+   * in Accounting → Accounts Receivable instead.
+   */
+  stayPostedToBooks(id: string) {
+    const res = this.reservations.find(r => r.id === id);
+    if (!res) return false;
+    if (res.invoiceGenerated) return true;
+    if (res.status === 'no-show') {
+      const folio = this.folios?.find(f => f.id === id);
+      return (folio?.charges?.length || 0) > 0 || (folio?.payments?.length || 0) > 0;
+    }
+    return false;
+  }
+
+  voidReservation(id: string, reason = 'Void') {
+    const res = this.reservations.find(r => r.id === id);
+    if (!res || res.status === 'void' || res.status === 'cancelled' || res.status === 'pending') return false;
+    if (this.stayPostedToBooks(id)) return false;
+    const folio = this.getOrCreateFolio(id);
+    for (const charge of [...(folio.charges || [])]) {
+      if (String(charge.description || '').startsWith('VOID ')) continue;
+      if ((charge.amount || 0) < 0) continue;
+      this.voidCharge(id, charge.id, reason);
+    }
+    for (const payment of [...(folio.payments || [])]) {
+      if ((payment as any).status === 'completed') {
+        this.refundPayment(id, payment.id, payment.amount, reason);
+      }
+    }
+    const roomId = res.roomId && res.roomId !== 'TBD' ? res.roomId : '';
+    if (roomId && (res.status === 'checked-in' || res.status === 'checked-out')) {
+      try { housekeepingStore.updateRoomStatus(roomId, 'dirty', 'FrontDesk', 'Stay voided'); } catch {}
+    }
+    this.reservations = this.reservations.map(r => r.id === id ? { ...r, status: 'void', roomId: '', updatedAt: new Date().toISOString() } : r);
+    this.notify();
+    trackEvent('FO.Reservation.Voided', { id });
+    this.persistReservationPatch(id, { status: 'void', roomId: '' });
+    return true;
+  }
+
   assignRoom(id: string, roomId: string, options?: { keepRate?: boolean }) {
     const stay = this.reservations.find((r) => r.id === id);
     const previous = stay?.roomId && stay.roomId !== 'TBD' ? stay.roomId : '';
@@ -1058,12 +1117,13 @@ class FrontOfficeStore {
     }
   }
 
-  checkIn(id: string) {
+  checkIn(id: string, options?: { leaveRoomOpen?: boolean }) {
     const res = this.reservations.find(r => r.id === id);
 
-    // Auto-assign a room if none is assigned yet so Check-Ins view reflects immediately
+    // Auto-assign a room if none is assigned yet so Check-Ins view reflects immediately.
+    // leaveRoomOpen is the clerk's override: check in and keep the room unassigned.
     let assignedRoomId = (res?.roomId && res.roomId !== 'TBD') ? res.roomId : undefined;
-    const shouldAutoAssign = autoAssignRoomsEnabled();
+    const shouldAutoAssign = !options?.leaveRoomOpen && autoAssignRoomsEnabled();
     try {
       if (!assignedRoomId && res && shouldAutoAssign) {
         assignedRoomId = this.pickOptimalRoomNumber(res);
@@ -1269,6 +1329,9 @@ class FrontOfficeStore {
 
   addPayment(reservationId: string, method: 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check', amount: number, options?: { invoiceId?: string; creditApplied?: number; notes?: string; processedBy?: string; ref?: string; }) {
     return folioHelpers.addPayment(this as any, reservationId, method, amount, options);
+  }
+  updateFolioCharge(reservationId: string, chargeId: string, patch: { description?: string; amount?: number }) {
+    return folioHelpers.updateFolioCharge(this as any, reservationId, chargeId, patch);
   }
   updateFolioPayment(reservationId: string, paymentId: string, patch: { amount?: number; method?: 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check'; notes?: string; ref?: string; }) {
     return folioHelpers.updateFolioPayment(this as any, reservationId, paymentId, patch);

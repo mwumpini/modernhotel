@@ -15,6 +15,7 @@ interface IncidentStore {
   assignIncident: (id: string, assignedTo: string) => void;
   resolveIncident: (id: string, resolution: string) => void;
   updateIncidentStatus: (id: string, status: SecurityIncident['status']) => void;
+  deleteIncident: (id: string) => void;
 
   getIncidentAnalytics: (period: 'daily' | 'weekly' | 'monthly') => {
     totalIncidents: number;
@@ -122,6 +123,12 @@ export const useIncidentStore = create<IncidentStore>((set, get) => ({
       }),
     }));
     if (updated) syncIncidentToApi(updated);
+  },
+
+  deleteIncident: (id) => {
+    const current = get().incidents.find((i) => i.id === id);
+    if (!current || current.status !== 'reported') return;
+    set((state) => ({ incidents: state.incidents.filter((i) => i.id !== id) }));
   },
 
   getIncidentAnalytics: (period) => {

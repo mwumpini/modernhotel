@@ -1,6 +1,7 @@
 import { prisma } from '../database/client'
 import { Reservation, GuestProfile, Folio } from './types'
 import { loadFolioRounding, mergedFolioWrite } from './folioServer'
+import { asLineArray } from './folioLedger'
 
 function stripUndefined<T extends Record<string, any>>(obj: T): Partial<T> {
   const out: Record<string, any> = {}
@@ -195,6 +196,29 @@ export async function updateReservationRow(
     include: { guest: true },
   })
   return toStoreReservation(row)
+}
+
+/**
+ * Hard-delete a reservation that never became a stay. Refused once it is past
+ * pending or its folio holds any charge or payment (those are voided instead,
+ * so the money stays on file). Folios are not linked by a foreign key, so an
+ * empty folio is removed here too rather than left orphaned.
+ */
+export async function deleteReservationRow(
+  tenantId: string,
+  id: string,
+): Promise<'deleted' | 'not-found' | 'not-pending' | 'has-money'> {
+  const existing = await prisma.reservation.findFirst({ where: { id, tenantId } })
+  if (!existing) return 'not-found'
+  if (existing.status !== 'pending') return 'not-pending'
+  const folios = await prisma.guestFolio.findMany({ where: { tenantId, reservationId: id } })
+  const hasMoney = folios.some((f) => asLineArray(f.charges).length > 0 || asLineArray(f.payments).length > 0)
+  if (hasMoney) return 'has-money'
+  await prisma.$transaction([
+    prisma.guestFolio.deleteMany({ where: { tenantId, reservationId: id } }),
+    prisma.reservation.delete({ where: { id } }),
+  ])
+  return 'deleted'
 }
 
 // Date-range overlap against active reservations for the same room.

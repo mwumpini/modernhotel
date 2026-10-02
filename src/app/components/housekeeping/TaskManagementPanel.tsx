@@ -1174,6 +1174,22 @@ export default function TaskManagementPanel({
             />
           </ModalBody>
           <ModalFooter className="py-3">
+            {!isCreatingTask && selectedTask?.status === 'pending' && (
+              <Button color="danger" variant="light" onPress={async () => {
+                const { confirmDelete } = await import('../DangerConfirm');
+                if (!(await confirmDelete('this task', 'A task that was never started will be permanently removed.'))) return;
+                housekeepingStore.removeTask(selectedTask.id);
+                setTaskModalOpen(false);
+              }}>Delete</Button>
+            )}
+            {!isCreatingTask && selectedTask && selectedTask.status !== 'pending' && selectedTask.status !== 'void' && (
+              <Button color="warning" variant="flat" onPress={async () => {
+                const { confirmVoid } = await import('../DangerConfirm');
+                if (!(await confirmVoid('this task', 'The task stays on file as Void.'))) return;
+                housekeepingStore.updateTask(selectedTask.id, { status: 'void' });
+                setTaskModalOpen(false);
+              }}>Void</Button>
+            )}
             <Button variant="flat" onPress={() => setTaskModalOpen(false)}>
               Cancel
             </Button>

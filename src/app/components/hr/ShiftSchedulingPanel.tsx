@@ -8,6 +8,7 @@ import { addDays, leaveOn, todayKey, weekStart } from '@/app/lib/hr/leaveDates';
 import { useSectionExport } from '@/app/lib/export/useSectionExport';
 import { notifySuccess } from '@/app/lib/notifications/notify';
 import ExportButtons from '@/app/components/ExportButtons';
+import { confirmDelete } from '@/app/components/DangerConfirm';
 import type { ExportFormat } from '@/app/lib/frontoffice/reportExportFormat';
 
 const PRESETS = [
@@ -177,7 +178,12 @@ export default function ShiftSchedulingPanel() {
               </ModalBody>
               <ModalFooter className="justify-between">
                 <div>
-                  {draft.shiftId && <Button variant="flat" color="danger" onPress={() => { deleteShift(draft.shiftId!); setDraft(null); }}>Delete</Button>}
+                  {draft.shiftId && <Button variant="flat" color="danger" onPress={async () => {
+                    const ok = await confirmDelete('this shift', 'The shift will be permanently removed.');
+                    if (!ok) return;
+                    deleteShift(draft.shiftId!);
+                    setDraft(null);
+                  }}>Delete</Button>}
                 </div>
                 <div className="flex gap-2">
                   <Button variant="flat" onPress={() => setDraft(null)}>Cancel</Button>

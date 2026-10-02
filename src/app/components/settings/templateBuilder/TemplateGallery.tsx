@@ -37,7 +37,9 @@ export default function TemplateGallery({ docType, onEdit, onView, onCreateNew }
     settingsStore.addDocBuilderTemplate(copy);
   };
 
-  const remove = (t: BlockTemplate) => {
+  const remove = async (t: BlockTemplate) => {
+    const { confirmDelete } = await import('../../DangerConfirm');
+    if (!(await confirmDelete(t.name, 'This print template will be permanently removed.'))) return;
     if (activeId === t.id) {
       // Fall back to the type's first built-in preset so a real Print button never
       // resolves to a template that no longer exists.

@@ -5091,7 +5091,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     trackEvent('Events.VenueBooked', { action: 'deactivated', venueId: venue.id });
   };
 
-  const handleDeleteVenue = (venue: VenueDetails) => {
+  const handleDeleteVenue = async (venue: VenueDetails) => {
     const linked = getEventsUsingVenue(venue);
     if (linked.length) {
       if (venue.status === 'inactive') {
@@ -5100,18 +5100,20 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         );
         return;
       }
-      if (
-        !confirm(
-          `${venue.name} has ${linked.length} event${linked.length === 1 ? '' : 's'} and cannot be deleted. Mark it Inactive so it stays off new bookings but history is kept?`
-        )
-      ) {
-        return;
-      }
+      const { confirmDanger } = await import('./DangerConfirm');
+      const retire = await confirmDanger({
+        tone: 'delete',
+        title: `Deactivate ${venue.name}?`,
+        message: `${venue.name} has ${linked.length} event${linked.length === 1 ? '' : 's'} and cannot be deleted. It will be marked Inactive so it stays off new bookings. History is kept.`,
+        confirmLabel: 'Deactivate',
+      });
+      if (!retire) return;
       deactivateVenue(venue);
       return;
     }
 
-    if (!confirm(`Delete ${venue.name}? This action cannot be undone.`)) {
+    const { confirmDelete } = await import('./DangerConfirm');
+    if (!(await confirmDelete(venue.name, 'This venue will be permanently removed. This cannot be undone.'))) {
       return;
     }
 
@@ -8878,8 +8880,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
   };
 
   // Delete folio entry
-  const deleteFolioEntry = (folio: EventFolio, entryId: string) => {
-    if (!confirm('Are you sure you want to delete this entry? This action cannot be undone and will recalculate all subsequent balances.')) {
+  const deleteFolioEntry = async (folio: EventFolio, entryId: string) => {
+    const { confirmDelete } = await import('./DangerConfirm');
+    if (!(await confirmDelete('this folio entry', 'It will be permanently removed and later balances will be recalculated. This cannot be undone.'))) {
       return;
     }
     
@@ -8923,8 +8926,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
   };
 
   // Reverse folio entry (create opposite entry)
-  const reverseFolioEntry = (folio: EventFolio, entry: EventFolioEntry) => {
-    if (!confirm(`Create a reversal entry for: ${entry.description}? This will create an opposite entry to cancel out this transaction.`)) {
+  const reverseFolioEntry = async (folio: EventFolio, entry: EventFolioEntry) => {
+    const { confirmVoid } = await import('./DangerConfirm');
+    if (!(await confirmVoid(entry.description || 'this folio line', 'An opposite entry is posted so the line stays on file and the books stay even.'))) {
       return;
     }
     
@@ -11987,8 +11991,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       setEditingRate(null);
     };
 
-    const handleDeleteRate = (rateId: string) => {
-      if (confirm('Are you sure you want to delete this rate?')) {
+    const handleDeleteRate = async (rateId: string) => {
+      const { confirmDelete } = await import('./DangerConfirm');
+      if (await confirmDelete('this rate', 'The rate will be permanently removed.')) {
         setConferenceRates(prev => prev.filter(r => r.id !== rateId));
         trackEvent('Analytics.ActionClicked', { action: 'ConferenceRateDeleted', rateId });
       }

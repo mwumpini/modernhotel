@@ -656,6 +656,31 @@ export function addPayment(self: StoreLike, reservationId: string, method: 'Cash
 	return payment;
 }
 
+export function updateFolioCharge(
+	self: StoreLike,
+	reservationId: string,
+	chargeId: string,
+	patch: { description?: string; amount?: number },
+) {
+	const f = findMainFolio(self.folios, reservationId);
+	if (!f) return false;
+	const charge = f.charges.find((c) => c.id === chargeId);
+	if (!charge) return false;
+	if (patch.description != null) charge.description = patch.description;
+	if (patch.amount != null && patch.amount !== charge.amount && charge.amount) {
+		const ratio = patch.amount / charge.amount;
+		charge.tax = roundMoney2((charge.tax || 0) * ratio);
+		charge.serviceCharge = roundMoney2((charge.serviceCharge || 0) * ratio);
+		charge.discountAmount = roundMoney2((charge.discountAmount || 0) * ratio);
+		charge.amount = patch.amount;
+	} else if (patch.amount != null) {
+		charge.amount = patch.amount;
+	}
+	updateFolioBalances(self, f);
+	self.notify();
+	return true;
+}
+
 export function updateFolioPayment(
 	self: StoreLike,
 	reservationId: string,

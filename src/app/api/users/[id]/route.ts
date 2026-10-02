@@ -6,7 +6,7 @@ import { prisma } from '@/app/lib/database/client'
 import { passwordPolicyError } from '@/app/lib/settings/passwordPolicy'
 import { readTenantSecurity } from '@/app/lib/settings/securityPolicyDb'
 import { publicUser, withoutPinKeys } from '@/app/lib/auth/posPin'
-import { normalizeUsername, usernameError, usernameTaken } from '@/app/lib/auth/loginLookup'
+import { emailError, NEEDS_SIGN_IN_NAME, normalizeEmail, normalizeUsername, usernameError, usernameTaken } from '@/app/lib/auth/loginLookup'
 
 const USER_SELECT = {
   id: true,
@@ -44,9 +44,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     // (settings.toggle-user-status / settings.reset-password), separate from
     // general profile editing (settings.edit) — a role can have one without the
     // others.
-    // A username change counts even when it clears the username.
+    // Email and username changes count even when they clear the field.
     const changingUsername = typeof body.username === 'string' && normalizeUsername(body.username) !== (target.username || '')
-    const changingProfile = changingUsername || ['email', 'name', 'role'].some((k) => typeof body[k] === 'string' && body[k].trim())
+    const changingEmail = typeof body.email === 'string' && normalizeEmail(body.email) !== (target.email || '')
+    const changingProfile = changingUsername || changingEmail || ['name', 'role'].some((k) => typeof body[k] === 'string' && body[k].trim())
     if (changingProfile) {
       const perm = await requirePermission(request, 'settings.edit')
       if (!perm.ok) return perm.response
@@ -84,7 +85,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     const data: Record<string, unknown> = {}
-    if (typeof body.email === 'string' && body.email.trim()) data.email = body.email.trim().toLowerCase()
+    if (changingEmail) {
+      const email = normalizeEmail(body.email)
+      const badEmail = emailError(email)
+      if (badEmail) return NextResponse.json({ error: badEmail }, { status: 400 })
+      data.email = email || null
+    }
     if (typeof body.name === 'string' && body.name.trim()) data.name = body.name.trim()
     if (changingUsername) {
       const username = normalizeUsername(body.username)
@@ -95,6 +101,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       }
       data.username = username || null
     }
+    const finalEmail = 'email' in data ? data.email : target.email
+    const finalUsername = 'username' in data ? data.username : target.username
+    if (!finalEmail && !finalUsername) return NextResponse.json({ error: NEEDS_SIGN_IN_NAME }, { status: 400 })
     if (typeof body.role === 'string' && body.role.trim()) data.role = body.role.trim()
     if (typeof body.isActive === 'boolean') data.isActive = body.isActive
     if (typeof body.password === 'string' && body.password) {

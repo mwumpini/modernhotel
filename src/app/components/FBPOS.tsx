@@ -39,6 +39,7 @@ import { computeSalesTaxTotal } from '../lib/tax/engine';
 import { useSettingsStore } from '../lib/settings/store';
 import { managerPinMatches } from '../lib/settings/managerPin';
 import { notifyError } from '../lib/notifications/notify';
+import { confirmDelete, confirmVoid } from './DangerConfirm';
 import { issueOrderIdentity, lineTicket, parseTicketTag } from '../lib/fb/ticketTag';
 import { useSession } from 'next-auth/react';
 import { menuImageSrc } from './fb/MenuPhotoPicker';
@@ -1148,14 +1149,13 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     }
   };
 
+  const orderWasPosted = (status?: string) => ['sent', 'preparing', 'served', 'billed', 'paid'].includes(String(status || '').toLowerCase());
+
   const refundBilledOrder = async (orderId: string, _orderVenue?: string) => {
-    const reason = window.prompt('Refund reason (required):', 'Guest request');
-    if (!reason || !reason.trim()) return;
-    if (!window.confirm(`Refund order ${orderId}? This restocks inventory, voids the folio charge (if any), and reverses accounting.`)) {
-      return;
-    }
+    const ok = await confirmVoid(`order ${orderId}`, 'This restocks inventory, voids the folio charge if any, and reverses accounting. The order stays on file as Void.');
+    if (!ok) return;
     try {
-      const patched = await patchFbOrderStatus(orderId, 'refunded', { refundReason: reason.trim() });
+      const patched = await patchFbOrderStatus(orderId, 'refunded', { refundReason: 'Void' });
       ordersStore.update({ id: orderId, status: 'cancelled' } as any);
       setPendingOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: 'cancelled' } : o)));
       setActivitySelected(null);
@@ -1215,11 +1215,21 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     ordersStore.remove(orderId);
   };
 
-  const requestDeleteWithPin = (orderId: string) => {
+  const requestDeleteWithPin = async (orderId: string) => {
+    const ok = await confirmDelete(`order ${orderId}`, 'This order was never posted. It will be permanently removed after the manager PIN.');
+    if (!ok) return;
     setPendingManagerAction({ type: 'delete', orderId });
     setPinValue('');
     setPinError('');
     managerPinModal.onOpen();
+  };
+
+  const askRemoveOrder = (orderId: string, status?: string) => {
+    if (orderWasPosted(status)) {
+      void refundBilledOrder(orderId);
+      return;
+    }
+    void requestDeleteWithPin(orderId);
   };
 
   const confirmManagerPin = () => {
@@ -2409,7 +2419,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                   <Button variant="flat" className="bg-green-600 text-white" onClick={() => changeOrderStatus(selectedOrder.id, 'served')}>Mark Served</Button>
                   <Button variant="flat" className="bg-ghana-gold text-white" onClick={() => changeOrderStatus(selectedOrder.id, 'billed')}>Mark Billed</Button>
                   <Button variant="flat" className="bg-gray-700 text-white" onClick={() => { loadOrderIntoCart(selectedOrder); orderDetailModal.onClose(); }}>Edit in Cart</Button>
-                  <Button variant="flat" className="bg-red-600 text-white" onClick={() => { requestDeleteWithPin(selectedOrder.id); }}>Delete</Button>
+                  <Button variant="flat" className={orderWasPosted(selectedOrder.status) ? 'bg-amber-600 text-white' : 'bg-red-600 text-white'} onClick={() => askRemoveOrder(selectedOrder.id, selectedOrder.status)}>{orderWasPosted(selectedOrder.status) ? 'Void' : 'Delete'}</Button>
                 </div>
               </div>
             )}
@@ -2536,7 +2546,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                       setActivitySelected(null);
                     }}>Edit in cart</Button>
                     <Button size="sm" variant="light" className="text-red-600" onClick={() => cancelReasonModal.onOpen()}>Cancel item</Button>
-                    <Button size="sm" variant="light" className="text-red-600" onClick={() => requestDeleteWithPin(o.id)}>Delete order</Button>
+                    <Button size="sm" variant="light" className="text-red-600" onClick={() => askRemoveOrder(o.id, o.status)}>{orderWasPosted(o.status) ? 'Void order' : 'Delete order'}</Button>
                   </div>
                   <Button variant="flat" className="bg-gray-200" onClick={() => setActivitySelected(null)}>Close</Button>
                 </ModalFooter>

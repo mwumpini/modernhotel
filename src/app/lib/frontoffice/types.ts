@@ -1,4 +1,4 @@
-export type ReservationStatus = 'pending' | 'confirmed' | 'cancelled' | 'checked-in' | 'checked-out' | 'no-show';
+export type ReservationStatus = 'pending' | 'confirmed' | 'cancelled' | 'checked-in' | 'checked-out' | 'no-show' | 'void';
 
 export type StayReason = 'personal' | 'business' | 'corporate' | 'conference' | 'training' | 'medical' | 'tourism' | 'leisure' | 'other';
 

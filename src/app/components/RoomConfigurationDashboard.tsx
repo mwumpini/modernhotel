@@ -537,7 +537,7 @@ export default function RoomConfigurationDashboard() {
     frontOfficeStore.roomTypeHasHistory(typeId) ||
     settingsStore.roomManagement.rooms.some((room) => room.typeId === typeId && roomHasStayHistory(room));
 
-  const handleDeleteRoomType = (roomType: RoomType) => {
+  const handleDeleteRoomType = async (roomType: RoomType) => {
     if (!canManageRoomPricing) { alert('You do not have permission to manage room types.'); return; }
     const used = roomTypeHasStayHistory(roomType.id);
     if (used) {
@@ -545,18 +545,20 @@ export default function RoomConfigurationDashboard() {
         alert(`${roomType.name} has stay history and cannot be deleted. It is already inactive.`);
         return;
       }
-      if (
-        !confirm(
-          `${roomType.name} has reservations and cannot be deleted. Mark it Inactive so it stays off new bookings but history is kept?`
-        )
-      ) {
-        return;
-      }
+      const { confirmDanger } = await import('./DangerConfirm');
+      const retire = await confirmDanger({
+        tone: 'delete',
+        title: `Deactivate ${roomType.name}?`,
+        message: 'This room type has reservations and cannot be deleted. It will be marked Inactive so it stays off new bookings. History is kept.',
+        confirmLabel: 'Deactivate',
+      });
+      if (!retire) return;
       settingsStore.updateRoomType(roomType.id, { isActive: false });
       logAction('DEACTIVATE_ROOM_TYPE', { roomTypeId: roomType.id });
       return;
     }
-    if (!confirm(`Delete "${roomType.name}"? Unused rooms of this type will also be removed.`)) {
+    const { confirmDelete } = await import('./DangerConfirm');
+    if (!(await confirmDelete(roomType.name, 'Unused rooms of this type will also be removed. This cannot be undone.'))) {
       return;
     }
     const roomsToDelete = settingsStore.roomManagement.rooms.filter(room => room.typeId === roomType.id);
@@ -651,25 +653,27 @@ export default function RoomConfigurationDashboard() {
     }
   };
 
-  const handleDeleteRoom = (room: Room) => {
+  const handleDeleteRoom = async (room: Room) => {
     if (!canManageRoomPricing) { alert('You do not have permission to manage rooms.'); return; }
     if (roomHasStayHistory(room)) {
       if (!room.isActive) {
         alert(`Room ${room.number} has stay history and cannot be deleted. It is already inactive.`);
         return;
       }
-      if (
-        !confirm(
-          `Room ${room.number} has reservations and cannot be deleted. Mark it Inactive so it stays off new bookings but history is kept?`
-        )
-      ) {
-        return;
-      }
+      const { confirmDanger } = await import('./DangerConfirm');
+      const retire = await confirmDanger({
+        tone: 'delete',
+        title: `Deactivate room ${room.number}?`,
+        message: 'This room has reservations and cannot be deleted. It will be marked Inactive so it stays off new bookings. History is kept.',
+        confirmLabel: 'Deactivate',
+      });
+      if (!retire) return;
       settingsStore.updateRoom(room.id, { isActive: false });
       logAction('DEACTIVATE_ROOM', { roomId: room.id, roomNumber: room.number });
       return;
     }
-    if (!confirm(`Delete room ${room.number}? This action cannot be undone.`)) {
+    const { confirmDelete } = await import('./DangerConfirm');
+    if (!(await confirmDelete(`room ${room.number}`, 'This room will be permanently removed. This cannot be undone.'))) {
       return;
     }
     settingsStore.deleteRoom(room.id);
@@ -2784,9 +2788,10 @@ export default function RoomConfigurationDashboard() {
                               variant="light" 
                               color="danger" 
                               isIconOnly
-                              onClick={() => {
+                              onClick={async () => {
                                 if (!canManageRoomPricing) { alert('You do not have permission to manage rate plans.'); return; }
-                                if (confirm(`Are you sure you want to delete rate plan "${plan.name}"?`)) {
+                                const { confirmDelete } = await import('./DangerConfirm');
+                                if (await confirmDelete(plan.name, 'This rate plan will be permanently removed.')) {
                                   settingsStore.deleteRatePlan(plan.id);
                                   logAction('DELETE_RATE_PLAN', { ratePlan: plan });
                                 }

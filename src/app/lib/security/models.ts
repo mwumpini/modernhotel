@@ -5,7 +5,7 @@ export interface SecurityIncident {
   incidentNumber: string;
   type: 'theft' | 'vandalism' | 'trespassing' | 'suspicious_activity' | 'medical_emergency' | 'fire_alarm' | 'power_outage' | 'water_leak' | 'equipment_failure' | 'other';
   severity: 'low' | 'medium' | 'high' | 'critical';
-  status: 'reported' | 'investigating' | 'resolved' | 'closed' | 'escalated';
+  status: 'reported' | 'investigating' | 'resolved' | 'closed' | 'escalated' | 'void';
   location: string;
   floor?: string;
   room?: string;

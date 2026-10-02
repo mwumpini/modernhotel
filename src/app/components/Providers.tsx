@@ -9,6 +9,7 @@ import HelpF12Shortcut from './HelpF12Shortcut';
 import NightAuditScheduler from './NightAuditScheduler';
 import SessionIdleGuard from './SessionIdleGuard';
 import NotificationToaster from './NotificationToaster';
+import DangerConfirmHost from './DangerConfirm';
 import ThemeProvider from './ThemeProvider';
 
 interface ProvidersProps {
@@ -22,6 +23,7 @@ export default function Providers({ children, session = null }: ProvidersProps) 
       <HeroUIProvider>
         <ThemeProvider>
           <NotificationToaster />
+          <DangerConfirmHost />
           <HelpF12Shortcut />
           <NightAuditScheduler />
           <SessionIdleGuard />

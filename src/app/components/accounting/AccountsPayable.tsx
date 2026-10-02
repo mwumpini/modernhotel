@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo, useCallback } from 'react';
 import HeadingInfo from '../HeadingInfo';
+import { confirmDelete, confirmVoid } from '../DangerConfirm';
 import {
   Card, CardBody, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
@@ -710,7 +711,7 @@ export default function AccountsPayablePage() {
       window.alert('Void linked payments on this bill first.');
       return;
     }
-    if (!window.confirm(`Void bill ${invoice.invoiceNumber || invoice.id}? A reversing GL entry will be posted.`)) return;
+    if (!(await confirmVoid(invoice.invoiceNumber || 'this bill', 'A reversing GL entry will be posted. The bill stays on file as Void.'))) return;
     await voidInvoice(invoice.id);
     const err = useAccountingStore.getState().error;
     if (err) {
@@ -739,11 +740,10 @@ export default function AccountsPayablePage() {
     }
     const label = invoice.invoiceNumber || invoice.id;
     const isDraft = invoice.status === 'Draft';
-    if (!window.confirm(
-      isDraft
-        ? `Permanently delete ${label}? This cannot be undone.`
-        : `Permanently delete ${label}? The bill will be voided (GL reversed) then removed.`,
-    )) return;
+    if (!(await confirmDelete(label, isDraft
+      ? 'This draft will be permanently removed. This cannot be undone.'
+      : 'The bill will be voided (GL reversed) then removed.',
+    ))) return;
     if (!isDraft && invoice.status === 'Posted') {
       await voidInvoice(invoice.id);
       const err = useAccountingStore.getState().error;
@@ -762,7 +762,7 @@ export default function AccountsPayablePage() {
       return;
     }
     if (payment.status === 'Void') return;
-    if (!window.confirm(`Void payment ${payment.paymentNumber || payment.id}? This reverses GL and reopens bill balance.`)) return;
+    if (!(await confirmVoid(payment.paymentNumber || 'this payment', 'This reverses GL and reopens the bill balance. The payment stays on file as Void.'))) return;
     await voidPayment(payment.id);
     const err = useAccountingStore.getState().error;
     if (err) {
@@ -787,11 +787,10 @@ export default function AccountsPayablePage() {
       return;
     }
     const label = payment.paymentNumber || payment.id;
-    if (!window.confirm(
-      isDraft
-        ? `Permanently delete ${label}? This cannot be undone.`
-        : `Permanently delete ${label}? The payment will be voided then removed.`,
-    )) return;
+    if (!(await confirmDelete(label, isDraft
+      ? 'This draft will be permanently removed. This cannot be undone.'
+      : 'The payment will be voided then removed.',
+    ))) return;
     if (!isDraft && payment.status === 'Posted') {
       await voidPayment(payment.id);
       const err = useAccountingStore.getState().error;

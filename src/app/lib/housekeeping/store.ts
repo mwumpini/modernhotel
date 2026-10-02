@@ -857,6 +857,16 @@ class HousekeepingStore {
     return [...this.staff];
   }
 
+  removeTask(taskId: string) {
+    const task = this.tasks.find(t => t.id === taskId);
+    if (!task || task.status !== 'pending') return false;
+    this.tasks = this.tasks.filter(t => t.id !== taskId);
+    this.notify();
+    trackEvent('HK.Task.Deleted', { taskId });
+    fetch(`/api/housekeeping/tasks/${encodeURIComponent(taskId)}`, { method: 'DELETE', headers: hkHeaders() }).catch(() => {});
+    return true;
+  }
+
   updateTask(taskId: string, updatedTask: Partial<HousekeepingTask>) {
     const task = this.tasks.find(t => t.id === taskId);
     if (!task) return;
@@ -876,6 +886,22 @@ class HousekeepingStore {
         details: taskDetailsPayload(task),
       }),
     }).catch((e) => console.warn('HK: Failed to sync task update:', e));
+  }
+
+  removeMaintenanceRequest(requestId: string) {
+    const request = this.maintenanceRequests.find(r => r.id === requestId);
+    if (!request || request.status !== 'reported') return false;
+    this.maintenanceRequests = this.maintenanceRequests.filter(r => r.id !== requestId);
+    this.notify();
+    return true;
+  }
+
+  voidInspection(inspectionId: string) {
+    const inspection = this.inspections.find(i => i.id === inspectionId);
+    if (!inspection || inspection.status === 'void') return false;
+    inspection.status = 'void';
+    this.notify();
+    return true;
   }
 
   updateMaintenanceRequest(requestId: string, updatedRequest: Partial<MaintenanceRequest>) {
