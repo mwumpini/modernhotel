@@ -1620,45 +1620,45 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
               <Tab key="summary" title="🧾 Summary / Print">
                 {selectedReservation ? (
                   <div className="space-y-4 pt-2" id="reservation-summary">
-                    {/* Reservation Details */}
-                    <div className="mb-6">
-                      <h2 className="text-lg font-semibold text-gray-900 mb-4">Reservation Details</h2>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                      <Card><CardBody>
-                        <div className="text-sm text-gray-600">Reservation ID</div>
-                        <div className="font-semibold text-ghana-black">{selectedReservation.resId || selectedReservation.id}</div>
-                      </CardBody></Card>
-                      <Card><CardBody>
-                        <div className="text-sm text-gray-600">Guest</div>
-                        <div className="font-semibold text-ghana-black">{selectedReservation.guestName}</div>
-                      </CardBody></Card>
-                      <Card><CardBody>
-                        <div className="text-sm text-gray-600">Room Type</div>
-                        <div className="font-semibold text-ghana-black">{frontOfficeStore.roomTypes.find(rt => rt.id === selectedReservation.roomTypeId)?.name || 'Unknown'}</div>
-                      </CardBody></Card>
-                      <Card><CardBody>
-                        <div className="text-sm text-gray-600">Check-in</div>
-                        <div className="font-semibold text-ghana-black">{new Date(selectedReservation.arrival).toLocaleDateString()}</div>
-                      </CardBody></Card>
-                      <Card><CardBody>
-                        <div className="text-sm text-gray-600">Check-out</div>
-                        <div className="font-semibold text-ghana-black">{new Date(selectedReservation.departure).toLocaleDateString()}</div>
-                      </CardBody></Card>
-                      <Card><CardBody>
-                        <div className="text-sm text-gray-600">Nights</div>
-                        <div className="font-semibold text-ghana-black">{calculateNights(selectedReservation.arrival, selectedReservation.departure)}</div>
-                      </CardBody></Card>
-                    </div>
+                    {/* Same coloured sections as the Guest & stay tab. */}
+                    <div className="bg-purple-50 p-3 rounded-lg border">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <h4 className="font-medium text-purple-900">📋 Reservation Details</h4>
+                        <Chip size="sm" variant="flat" color={getStatusColor(selectedReservation.status) as any}>{selectedReservation.status}</Chip>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {[
+                          ['Reservation ID', selectedReservation.resId || selectedReservation.id],
+                          ['Guest', selectedReservation.guestName],
+                          ['Room Type', frontOfficeStore.roomTypes.find(rt => rt.id === selectedReservation.roomTypeId)?.name || 'Unknown'],
+                          ['Check-in', new Date(selectedReservation.arrival).toLocaleDateString()],
+                          ['Check-out', new Date(selectedReservation.departure).toLocaleDateString()],
+                          ['Nights', String(calculateNights(selectedReservation.arrival, selectedReservation.departure))],
+                        ].map(([label, value]) => (
+                          <div key={label} className="bg-white p-3 rounded-lg border border-purple-200">
+                            <div className="text-sm text-gray-600">{label}</div>
+                            <div className="font-semibold text-ghana-black">{value}</div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                     {(() => { const { nights, nightly, subtotal, taxRate, tax, grandTotal } = getComputedTotalsForReservation(selectedReservation); return (
-                      <div className="mb-2">
-                        <div className="text-xs font-medium text-gray-500 mb-2">Rate Quote — contracted rate × nights, not the live folio</div>
-                        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                          <Card><CardBody><div className="text-xs text-gray-600">Nightly</div><div className="text-lg font-semibold">₵{nightly.toFixed(2)}</div></CardBody></Card>
-                          <Card><CardBody><div className="text-xs text-gray-600">Nights</div><div className="text-lg font-semibold">{nights}</div></CardBody></Card>
-                          <Card><CardBody><div className="text-xs text-gray-600">Subtotal</div><div className="text-lg font-semibold">₵{subtotal.toFixed(2)}</div></CardBody></Card>
-                          <Card><CardBody><div className="text-xs text-gray-600">Taxes ({Math.round(taxRate*100)}%)</div><div className="text-lg font-semibold">₵{tax.toFixed(2)}</div></CardBody></Card>
-                          <Card><CardBody><div className="text-xs text-gray-600">Quoted Total</div><div className="text-lg font-semibold">₵{grandTotal.toFixed(2)}</div></CardBody></Card>
+                      <div className="bg-blue-50 p-4 rounded-lg border">
+                        <h4 className="font-medium text-blue-900">💰 Rate Quote</h4>
+                        <p className="mb-3 text-xs text-blue-800">Contracted rate × nights, not the live folio</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                          {[
+                            ['Nightly', `₵${nightly.toFixed(2)}`],
+                            ['Nights', String(nights)],
+                            ['Subtotal', `₵${subtotal.toFixed(2)}`],
+                            [`Taxes (${Math.round(taxRate * 100)}%)`, `₵${tax.toFixed(2)}`],
+                            ['Quoted Total', `₵${grandTotal.toFixed(2)}`],
+                          ].map(([label, value]) => (
+                            <div key={label} className="bg-white p-3 rounded-lg border border-blue-200">
+                              <div className="text-xs text-gray-600">{label}</div>
+                              <div className="whitespace-nowrap text-lg font-semibold tabular-nums">{value}</div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     ); })()}
@@ -1668,45 +1668,56 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       if (!folio) return null;
                       const { totalCharges, totalPayments, outstandingBalance } = getFolioDisplayTotals(folio);
                       return (
-                        <Card className="border-primary-200 bg-primary-50">
-                          <CardBody>
-                            <div className="flex items-center justify-between flex-wrap gap-3">
-                              <div>
-                                <div className="text-xs font-medium text-gray-500 mb-1">Folio — actually posted to date</div>
-                                <div className="flex gap-4 text-sm">
-                                  <span>Charged: <strong>₵{totalCharges.toFixed(2)}</strong></span>
-                                  <span>Paid: <strong>₵{totalPayments.toFixed(2)}</strong></span>
-                                  <span>Balance: <strong className={outstandingBalance > 0 ? 'text-orange-600' : 'text-green-600'}>₵{outstandingBalance.toFixed(2)}</strong></span>
-                                </div>
-                              </div>
-                              <Button
-                                size="sm"
-                                color="primary"
-                                variant="flat"
-                                onClick={() => { onClose(); router.push('/guest-services/client-services/invoices-payments'); }}
-                              >
-                                View Folio →
-                              </Button>
+                        <div className="bg-green-50 p-4 rounded-lg border">
+                          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                            <div>
+                              <h4 className="font-medium text-green-900">🧾 Folio</h4>
+                              <p className="text-xs text-green-800">Actually posted to date</p>
                             </div>
-                          </CardBody>
-                        </Card>
+                            <Button
+                              size="sm"
+                              color="success"
+                              variant="flat"
+                              onClick={() => { onClose(); router.push('/guest-services/client-services/invoices-payments'); }}
+                            >
+                              View Folio →
+                            </Button>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div className="bg-white p-3 rounded-lg border border-green-200">
+                              <div className="text-xs text-gray-600">Charged</div>
+                              <div className="whitespace-nowrap text-lg font-semibold tabular-nums">₵{totalCharges.toFixed(2)}</div>
+                            </div>
+                            <div className="bg-white p-3 rounded-lg border border-green-200">
+                              <div className="text-xs text-gray-600">Paid</div>
+                              <div className="whitespace-nowrap text-lg font-semibold tabular-nums">₵{totalPayments.toFixed(2)}</div>
+                            </div>
+                            <div className="bg-white p-3 rounded-lg border border-green-200">
+                              <div className="text-xs text-gray-600">Balance</div>
+                              <div className={`whitespace-nowrap text-lg font-semibold tabular-nums ${outstandingBalance > 0 ? 'text-orange-600' : 'text-green-600'}`}>₵{outstandingBalance.toFixed(2)}</div>
+                            </div>
+                          </div>
+                        </div>
                       );
                     })()}
 
                     {(selectedReservation.remarksToGuest || selectedReservation.internalNotes) && (
-                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                        {selectedReservation.remarksToGuest && (
-                          <Card><CardBody>
-                            <div className="text-sm text-gray-600">Remarks to Guest</div>
-                            <div className="text-ghana-black">{selectedReservation.remarksToGuest}</div>
-                          </CardBody></Card>
-                        )}
-                        {selectedReservation.internalNotes && (
-                          <Card><CardBody>
-                            <div className="text-sm text-gray-600">Internal Notes</div>
-                            <div className="text-ghana-black">{selectedReservation.internalNotes}</div>
-                          </CardBody></Card>
-                        )}
+                      <div className="bg-amber-50 p-4 rounded-lg border">
+                        <h4 className="mb-3 font-medium text-amber-900">📝 Notes</h4>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                          {selectedReservation.remarksToGuest && (
+                            <div className="bg-white p-3 rounded-lg border border-amber-200">
+                              <div className="text-sm text-gray-600">Remarks to Guest</div>
+                              <div className="text-ghana-black">{selectedReservation.remarksToGuest}</div>
+                            </div>
+                          )}
+                          {selectedReservation.internalNotes && (
+                            <div className="bg-white p-3 rounded-lg border border-amber-200">
+                              <div className="text-sm text-gray-600">Internal Notes</div>
+                              <div className="text-ghana-black">{selectedReservation.internalNotes}</div>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
 
@@ -2675,6 +2686,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
 
               <Tab key="additional" title="Additional">
                 <div className="space-y-4 pt-2">
+                  <div className="bg-amber-50 p-4 rounded-lg border space-y-4">
+                  <h4 className="font-medium text-amber-900">📝 Notes</h4>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Remarks to Guest</label>
                     <Textarea
@@ -2694,7 +2707,10 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       rows={3}
                     />
                   </div>
-                  
+                  </div>
+
+                  <div className="bg-blue-50 p-4 rounded-lg border space-y-4">
+                  <h4 className="font-medium text-blue-900">🏷️ Booking Details</h4>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Market Codes</label>
                     <div className="flex flex-wrap gap-2">
@@ -2728,6 +2744,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                     <label htmlFor="guaranteed" className="text-sm font-medium text-gray-700">
                       Reservation is guaranteed (deposit received)
                     </label>
+                  </div>
                   </div>
                 </div>
               </Tab>
