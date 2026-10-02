@@ -1719,9 +1719,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       </div>
                     )}
 
-                    <div className="flex flex-wrap gap-2 justify-end pt-2">
-                      <Button color="primary" variant="flat" onClick={() => printConfirmation(selectedReservation)}>Print</Button>
-                      <Button variant="flat" onClick={async () => {
+                    {/* Print and Send to guest live in the window footer. */}
+                    <div className="flex flex-wrap gap-2 justify-end">
+                      <Button size="sm" variant="flat" onClick={async () => {
                         let cleanup: (() => void) | undefined;
                         try {
                           const { el, cleanup: c } = await renderReservationPdfSource(selectedReservation!);
@@ -1742,9 +1742,6 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           window.print();
                         }
                       }}>Download PDF</Button>
-                      {((formData.email || '').trim() || (frontOfficeStore.guests.find(g => g.id === selectedReservation.guestId)?.email || '').trim()) && (
-                        <Button color="primary" onClick={() => sendConfirmation(selectedReservation)}>Send to guest</Button>
-                      )}
                     </div>
                   </div>
                 ) : (
