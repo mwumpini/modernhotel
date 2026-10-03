@@ -6,6 +6,8 @@ import { passwordExpired } from '@/app/lib/settings/passwordPolicy';
 import { readTenantSecurity } from '@/app/lib/settings/securityPolicyDb';
 import { normalizeTenantSubdomain } from '@/app/lib/api/tenantSubdomain';
 import { findUserForLogin } from '@/app/lib/auth/loginLookup';
+import { resolveLoginTenant, operatorSignIn, isPlatformOperator } from '@/app/lib/platform/operator';
+import { hotelSignInOpen } from '@/app/lib/platform/billing';
 
 /**
  * Password check that runs before a session is created.
@@ -23,12 +25,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
     }
 
-    const tenant = await prisma.tenant.findUnique({ where: { subdomain } });
-    if (!tenant || tenant.status !== 'active') {
+    let tenant = await resolveLoginTenant(subdomain);
+    let user = tenant && tenant.status === 'active' ? await findUserForLogin(tenant.id, login) : null;
+    const hotelOk = !!(user?.isActive && user.password && await bcrypt.compare(password, user.password));
+    if (!hotelOk) {
+      const operator = await operatorSignIn(login, password);
+      if (!operator) return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
+      tenant = operator.tenant;
+      user = operator.user;
+    }
+    if (!tenant || !user || !user.password) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
     }
-    const user = await findUserForLogin(tenant.id, login);
-    if (!user || !user.isActive || !user.password || !(await bcrypt.compare(password, user.password))) {
+    if (!isPlatformOperator(user, tenant) && !hotelSignInOpen(tenant.status, tenant.metadata)) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
     }
 

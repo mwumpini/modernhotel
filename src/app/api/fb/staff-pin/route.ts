@@ -3,6 +3,7 @@ import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/li
 import { requireAuth } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
 import { checkPin, isValidPin } from '@/app/lib/auth/posPin'
+import { readTenantSecurity } from '@/app/lib/settings/securityPolicyDb'
 
 /**
  * POST /api/fb/staff-pin  { staffId, pin }
@@ -20,7 +21,8 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json().catch(() => ({}))
     const staffId = typeof body.staffId === 'string' ? body.staffId : ''
-    if (!staffId || !isValidPin(body.pin)) {
+    const { policy } = await readTenantSecurity(ctx.tenantId)
+    if (!staffId || !isValidPin(body.pin, policy.pinPolicy)) {
       return NextResponse.json({ ok: false, error: 'Wrong PIN.' }, { status: 401 })
     }
 

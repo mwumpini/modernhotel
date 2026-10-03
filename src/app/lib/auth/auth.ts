@@ -7,6 +7,8 @@ import { createAuditLog } from '@/app/lib/api/tenant'
 import { verifyTotp } from '@/app/lib/auth/totp'
 import { passwordExpired } from '@/app/lib/settings/passwordPolicy'
 import { readTenantSecurity } from '@/app/lib/settings/securityPolicyDb'
+import { resolveLoginTenant, operatorSignIn, isPlatformOperator } from '@/app/lib/platform/operator'
+import { hotelSignInOpen } from '@/app/lib/platform/billing'
 
 // Extend the built-in session types
 declare module 'next-auth' {
@@ -78,16 +80,17 @@ export const authOptions: NextAuthOptions = {
 
           // `tenantId` from the login form is actually the tenant's subdomain (e.g. "demo"),
           // not its database id — resolve the real tenant first.
-          const tenant = await prisma.tenant.findUnique({
-            where: { subdomain: credentials.tenantId.trim().toLowerCase() },
-          })
-          if (!tenant || tenant.status !== 'active') return null
-
-          const user = await findUserForLogin(tenant.id, credentials.email)
-          if (!user || !user.isActive || !user.password) return null
-
-          const passwordValid = await bcrypt.compare(credentials.password, user.password)
-          if (!passwordValid) return null
+          let tenant = await resolveLoginTenant(credentials.tenantId.trim().toLowerCase())
+          let user = tenant && tenant.status === 'active' ? await findUserForLogin(tenant.id, credentials.email) : null
+          const passwordValid = !!(user?.isActive && user.password && await bcrypt.compare(credentials.password, user.password))
+          if (!passwordValid) {
+            const operator = await operatorSignIn(credentials.email, credentials.password)
+            if (!operator) return null
+            tenant = operator.tenant
+            user = operator.user
+          }
+          if (!tenant || !user) return null
+          if (!isPlatformOperator(user, tenant) && !hotelSignInOpen(tenant.status, tenant.metadata)) return null
 
           const { policy } = await readTenantSecurity(tenant.id)
           const prefs = (user.preferences && typeof user.preferences === 'object' ? user.preferences : {}) as Record<string, unknown>

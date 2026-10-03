@@ -1,4 +1,5 @@
 import { prisma } from '../database/client'
+import { recordBelongsToOtherTenant } from './tenantGuard'
 
 function stripUndefined<T extends Record<string, any>>(obj: T): Partial<T> {
   const out: Record<string, any> = {}
@@ -17,7 +18,7 @@ async function ownershipCheckedUpsert<T>(
   createExtra: Record<string, any> = {},
 ): Promise<T> {
   const existing = await model.findUnique({ where: { id } })
-  if (existing && existing.tenantId !== tenantId) {
+  if (recordBelongsToOtherTenant(existing?.tenantId, tenantId)) {
     throw new Error('Record belongs to a different tenant')
   }
   if (existing) {

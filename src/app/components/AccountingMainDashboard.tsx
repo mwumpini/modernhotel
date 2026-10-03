@@ -12,6 +12,7 @@ import {
 } from "@heroui/react";
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { useAccountingStore } from '../lib/accounting/store';
+import { useAccountingLedgerLiveRefresh } from '../lib/accounting/useLedgerLiveRefresh';
 import { useComplianceStore } from '../lib/compliance/store';
 import {
   formatAccountingCurrency,
@@ -96,6 +97,7 @@ export default function AccountingMainDashboard({
 }: {
   fullPage?: boolean;
 } = {}) {
+  useAccountingLedgerLiveRefresh();
   const leanMode = isLeanAccountingUI();
   const [selectedTab, setSelectedTab] = useState('receivables');
   const [tabsReady, setTabsReady] = useState(false);

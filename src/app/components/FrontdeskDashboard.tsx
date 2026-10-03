@@ -15,6 +15,7 @@ import {
 import OfflineIndicator from './OfflineIndicator';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
+import { useFrontOfficeLiveRefresh } from '../lib/frontoffice/useLiveRefresh';
 import { useSettingsStore } from '../lib/settings/store';
 import { useComplianceStore } from '../lib/compliance/store';
 import { HideCardButton } from './dashboard/CustomizeViewControl';
@@ -98,6 +99,7 @@ export default function FrontdeskDashboard({
   const customizeSections = FO_KPI_SECTIONS_BY_TAB[selectedTab]
     ?? (!fullPage ? FO_OVERVIEW_SECTIONS : []);
 
+  useFrontOfficeLiveRefresh();
   const settings = useSettingsStore();
   const reservations = frontOfficeStore.reservations;
   const rooms = frontOfficeStore.rooms;

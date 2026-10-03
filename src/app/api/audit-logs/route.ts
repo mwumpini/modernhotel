@@ -33,10 +33,14 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const q = searchParams.get('q') || undefined
+    const from = searchParams.get('from') || undefined
+    const to = searchParams.get('to') || undefined
+    const sort = searchParams.get('sort') || undefined
+    const dir = searchParams.get('dir') || undefined
     const format = searchParams.get('format')
 
     if (format === 'csv') {
-      const { entries } = await listAuditLogs(ctx.tenantId, { q, page: 1, limit: 5000 })
+      const { entries } = await listAuditLogs(ctx.tenantId, { q, from, to, sort, dir, page: 1, limit: 5000 })
       const csv = toCsv(entries)
       return new NextResponse(csv, {
         headers: {
@@ -48,7 +52,7 @@ export async function GET(request: NextRequest) {
 
     const page = Number(searchParams.get('page') || '1')
     const limit = Number(searchParams.get('limit') || '50')
-    const result = await listAuditLogs(ctx.tenantId, { q, page, limit })
+    const result = await listAuditLogs(ctx.tenantId, { q, from, to, sort, dir, page, limit })
     return NextResponse.json(result)
   } catch (error) {
     console.error('[audit-logs][GET] error', error)

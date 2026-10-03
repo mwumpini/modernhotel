@@ -178,7 +178,7 @@ export const helpTopics: HelpTopic[] = [
   {
     id: 'rooms-pricing',
     title: 'Rooms & pricing',
-    description: 'Room types, rate plans, seasonal pricing, event rates, and operational policies.',
+    description: 'Room types, rate plans, seasonal pricing, and operational policies.',
     keywords: ['rates', 'pricing', 'room types', 'seasonal', 'rate plan', 'bar'],
     category: 'configuration',
     section: 'settings',
@@ -186,7 +186,6 @@ export const helpTopics: HelpTopic[] = [
     steps: [
       'Settings → Rooms & Pricing → Rate Plans for nightly prices.',
       'Use seasonal rates on each plan for peak/off-peak.',
-      'Event & Conference Rates tab for conference packages.',
     ],
     notHere: 'VAT or NHIL percentages — tax preview uses rules from Compliance.',
   },
@@ -452,7 +451,7 @@ export const helpTopics: HelpTopic[] = [
       'Invoices and Receipts sit on the Event Management screen next to Event Master.',
       'Venue Management is the halls. Guest Rates are the prices for event guests. Staff Management is the crew.',
     ],
-    notHere: 'Conference package prices are maintained under Settings → Rooms & Pricing → Event & Conference Rates.',
+    notHere: 'Nightly room prices are under Settings → Rooms & Pricing → Rate Plans.',
   },
   {
     id: 'inv',

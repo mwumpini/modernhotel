@@ -246,6 +246,64 @@ export function retryPendingGlPost(self: StoreLike, reservationId: string): bool
   }
 }
 
+/**
+ * A payment taken after the stay is already in Accounting (checkout left the
+ * balance on account, then the guest paid some or all of it). The folio line
+ * alone never reaches Receipts, so write the cash receipt against that invoice now.
+ * Payments already on the folio at checkout are posted with the invoice instead.
+ */
+export function postFolioReceiptAfterInvoice(self: StoreLike, reservationId: string, payment: { id: string; amount?: number; method?: string; date?: string; status?: string; ref?: string }) {
+  const reservation = self.reservations.find((r: any) => r.id === reservationId);
+  if (!reservation?.invoiceGenerated) return;
+  if (payment.status && payment.status !== 'completed') return;
+  const amount = Number(payment.amount);
+  if (!(amount > 0) || Number.isNaN(amount)) return;
+  if (payment.method === 'Credit' || payment.method === 'Corporate Account') return;
+
+  const accounting = useAccountingStore.getState();
+  const refs = [reservation.resId, reservation.id].filter(Boolean).map((value: unknown) => String(value));
+  const invoice = accounting.invoices.find((inv) =>
+    inv.type === 'Sales' &&
+    inv.status !== 'Void' &&
+    (inv as { sourceModule?: string }).sourceModule === 'front_office_checkout' &&
+    refs.includes(String(inv.reference || '')),
+  );
+  if (!invoice) {
+    console.warn('[FO Invoice] Checkout invoice not found for receipt', reservationId);
+    return;
+  }
+
+  const payId = `A-PAY-${invoice.id}-${payment.id}`;
+  if (accounting.payments.some((p) => p.id === payId)) return;
+
+  const method =
+    payment.method === 'Card' || payment.method === 'Mobile Money' || payment.method === 'Bank Transfer'
+      ? payment.method
+      : payment.method === 'Check'
+        ? 'Cheque'
+        : 'Cash';
+  const now = new Date().toISOString();
+  const settings = useSettingsStore.getState();
+  accounting.addPayment({
+    id: payId,
+    paymentNumber: settings.getNextReceiptNumber(),
+    date: payment.date || now,
+    type: 'Receipt',
+    businessPartnerId: invoice.businessPartnerId,
+    customerName: reservation.guestName,
+    invoiceId: invoice.id,
+    reference: payment.ref || reservation.resId || reservation.id,
+    description: `Payment for ${invoice.invoiceNumber}`,
+    amount,
+    currency: 'GHS',
+    paymentMethod: method,
+    status: 'Posted',
+    createdAt: now,
+    updatedAt: now,
+    sourceModule: 'front_office',
+  } as any);
+}
+
 /** Sweep every reservation stuck in 'gl_pending' and retry its GL post. Returns counts for logging/UI. */
 export function retryAllPendingGlPosts(self: StoreLike): { attempted: number; recovered: number } {
   const pendingIds = self.reservations

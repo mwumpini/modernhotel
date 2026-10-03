@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs'
 import { buildPrebuiltChartOfAccounts } from '../src/app/lib/accounting/prebuiltChartOfAccounts'
 import { seedChartOfAccountsForTenant } from '../src/app/lib/accounting/seedChartOfAccounts'
 import { ensureDefaultRolesForTenant } from '../src/app/lib/settings/roleRepository'
+import { ensurePlatformOperator } from '../src/app/lib/platform/operator'
 
 const prisma = new PrismaClient()
 
@@ -19,6 +20,9 @@ const ACCOUNT_TYPE_MAP: Record<string, AccountType> = {
 
 async function main() {
   console.log('🌱 Starting database seeding...')
+
+  const operator = await ensurePlatformOperator()
+  console.log(operator ? '✅ Platform operator ready' : '⏭️ Platform operator skipped (set PLATFORM_OPERATOR_PASSWORD)')
 
   // Create demo tenant
   const demoTenant = await prisma.tenant.upsert({

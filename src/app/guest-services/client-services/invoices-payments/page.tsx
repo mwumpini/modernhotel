@@ -40,6 +40,7 @@ import { FoDeskKpiCustomize, FO_INVOICES_KPI_SECTIONS, useFrontOfficeDeskVisibil
 import { useHostSummaryCollapsed } from '../../../lib/dashboard/useSummaryCollapsed';
 import { periodToDateFilter } from '../../../lib/dashboard/useDashboardPeriod';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
+import { useFrontOfficeLiveRefresh } from '../../../lib/frontoffice/useLiveRefresh';
 import { useSettingsStore } from '../../../lib/settings/store';
 import { useCurrentUserName } from '../../../lib/auth/useCurrentUserName';
 import { listAllTemplates, openPrintPreview } from '../../../lib/print/engine';
@@ -114,6 +115,7 @@ interface Invoice {
 const INVOICES_PAYMENTS_DASHBOARD_SECTIONS = FO_INVOICES_KPI_SECTIONS;
 
 export default function InvoicesPaymentsPage() {
+  useFrontOfficeLiveRefresh();
   const pathname = usePathname();
   // frontOfficeStore.rooms/reservations/folios are empty during SSR (and on
   // the client's first paint, before the store's client-side hydration

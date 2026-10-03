@@ -211,7 +211,7 @@ export default function FoodBeveragePosActivity({
   return (
     <div className="px-2 pb-2">
       <Card className="border-0 shadow-lg">
-        <CardBody className="px-2 py-3">
+        <CardBody className="overflow-x-hidden px-2 py-3">
           <div className="mb-[18px] flex flex-wrap items-center gap-2">
             <Input
               aria-label="Search transactions"
@@ -350,7 +350,7 @@ export default function FoodBeveragePosActivity({
             </TableBody>
           </Table>
           </div>
-          <div className="mt-3 flex justify-end">
+          <div className="mt-3 flex justify-end overflow-x-hidden">
             <Pagination page={pageSafe} total={pages} onChange={setPage} showControls size="sm" />
           </div>
         </CardBody>

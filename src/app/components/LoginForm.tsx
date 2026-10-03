@@ -17,6 +17,7 @@ export default function LoginForm() {
   const [code, setCode] = useState('');
 
   const finishSignIn = async (otp?: string) => {
+    setClientTenantSubdomain(tenantId.trim().toLowerCase());
     const result = await signIn('credentials', {
       email,
       password,
@@ -28,7 +29,6 @@ export default function LoginForm() {
       setError(otp ? 'That code is not valid. Try the current 6-digit code.' : 'Invalid credentials. Please try again.');
       return;
     }
-    setClientTenantSubdomain(tenantId.trim().toLowerCase());
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

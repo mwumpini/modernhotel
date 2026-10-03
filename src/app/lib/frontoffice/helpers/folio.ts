@@ -628,7 +628,8 @@ export function addCharge(self: StoreLike, reservationId: string, description: s
 }
 
 /**
- * Post a payment to folio and update balances. Cash/bank and AR are posted at checkout.
+ * Post a payment to the folio and update balances. If the stay is already in
+ * Accounting, the store also writes the receipt against that invoice.
  */
 export function addPayment(self: StoreLike, reservationId: string, method: 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check', amount: number, options?: {
 	invoiceId?: string;

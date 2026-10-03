@@ -1,19 +1,25 @@
 'use client';
 
+import { isPlatformOperator } from './lib/platform/operatorRole';
 import React from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import { Spinner } from '@heroui/react';
 import { useSettingsStore } from './lib/settings/store';
-import { setClientTenantSubdomain } from './lib/api/clientTenant';
+import { getClientTenantSubdomain, setClientTenantSubdomain } from './lib/api/clientTenant';
 import Navigation from './components/Navigation';
 import LoginForm from './components/LoginForm';
+import OperatorConsole from './components/OperatorConsole';
 
 function readLocalSetupCompleted(): boolean {
   if (typeof window === 'undefined') return false;
   try {
     const raw = window.localStorage.getItem('system.settings');
-    return !!(raw && JSON.parse(raw)?.initialSetupCompleted);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    const saved = String(parsed?.tenant?.subdomain || '').trim().toLowerCase();
+    if (!saved || saved !== getClientTenantSubdomain()) return false;
+    return !!parsed?.initialSetupCompleted;
   } catch {
     return false;
   }
@@ -78,26 +84,33 @@ export default function Home() {
   // here too, since this component always mounts regardless of which branch it
   // renders. loadSettings() is safe to call more than once (the setup-status
   // fetch is shared across calls — see fetchSetupStatusOnce in settings/store.ts).
+  // Role name alone isn't enough (a hotel can name a staff role anything): it must be the platform's own sign-in.
+  const isOperator = status === 'authenticated' && isPlatformOperator(session?.user as { role?: string } | undefined, (session?.user as { tenant?: { subdomain?: string } } | undefined)?.tenant);
+
   React.useEffect(() => {
-    if (status === 'authenticated') {
+    if (isOperator) setClientTenantSubdomain('platform');
+  }, [isOperator]);
+
+  React.useEffect(() => {
+    if (status === 'authenticated' && !isOperator) {
       useSettingsStore.getState().loadSettings();
     }
-  }, [status]);
+  }, [status, isOperator]);
 
   // Role-based landing (client-safe, runs after mount)
   React.useEffect(() => {
-    if (status !== 'authenticated') return;
+    if (status !== 'authenticated' || isOperator) return;
     if (initialSetupCompleted || localPersistedComplete) return;
     // No local record — wait for the server check (kicked off above) before
     // deciding. Only a tenant the server also has no record for is genuinely new.
     if (!setupStatusChecked) return;
     router.replace('/setup');
-  }, [status, initialSetupCompleted, localPersistedComplete, setupStatusChecked, router]);
+  }, [status, isOperator, initialSetupCompleted, localPersistedComplete, setupStatusChecked, router]);
 
   // While a device with no local setup record waits on the server's answer,
   // show a spinner rather than flashing the dashboard (or the wizard) before
   // the real, shared answer is known.
-  const awaitingSetupCheck = status === 'authenticated' && !initialSetupCompleted && !localPersistedComplete && !setupStatusChecked;
+  const awaitingSetupCheck = status === 'authenticated' && !isOperator && !initialSetupCompleted && !localPersistedComplete && !setupStatusChecked;
 
   if (!mounted || status === 'loading' || awaitingSetupCheck) {
     return (
@@ -109,6 +122,17 @@ export default function Home() {
 
   if (status !== 'authenticated') {
     return <LoginForm />;
+  }
+
+  if (isOperator) {
+    return (
+      <OperatorConsole
+        onLogout={() => {
+          sessionStorage.removeItem('session.lastActivity');
+          signOut({ callbackUrl: '/' });
+        }}
+      />
+    );
   }
 
   return (

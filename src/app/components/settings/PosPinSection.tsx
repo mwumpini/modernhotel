@@ -3,12 +3,15 @@
 import React, { useState } from 'react';
 import { Button, Input } from '@heroui/react';
 import { getClientTenantSubdomain } from '../../lib/api/clientTenant';
+import { pinLengthError } from '../../lib/auth/posPin';
+import { useSettingsStore } from '../../lib/settings/store';
 
 /**
  * Sets or removes the short PIN a staff member types to switch in on a shared POS terminal.
  * Saved straight away (not with the rest of the Edit User form); the PIN is hashed on the server.
  */
 export default function PosPinSection({ userId, userName }: { userId: string; userName: string }) {
+  const pinRule = useSettingsStore((s) => s.security.pinPolicy);
   const [pin, setPin] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
@@ -36,13 +39,16 @@ export default function PosPinSection({ userId, userName }: { userId: string; us
     }
   };
 
-  const valid = /^\d{4,6}$/.test(pin);
+  const lengthHint = pinRule.minLength === pinRule.maxLength
+    ? `${pinRule.minLength} digits`
+    : `${pinRule.minLength} to ${pinRule.maxLength} digits`;
+  const valid = pinLengthError(pin, pinRule) === null;
 
   return (
     <div className="mt-4 rounded-xl border border-slate-200 p-4">
       <p className="text-sm font-semibold text-ghana-black">POS PIN</p>
       <p className="mt-0.5 text-xs text-slate-500">
-        4 to 6 digits. On a shared POS terminal, staff tap their name and type this PIN to take an order — no need to sign the computer out.
+        {lengthHint}. On a shared POS terminal, staff tap their name and type this PIN to take an order — no need to sign the computer out.
       </p>
       <div className="mt-3 flex flex-wrap items-end gap-2">
         <Input
@@ -52,7 +58,7 @@ export default function PosPinSection({ userId, userName }: { userId: string; us
           autoComplete="new-password"
           label="New PIN"
           value={pin}
-          onValueChange={(v) => setPin(v.replace(/\D/g, '').slice(0, 6))}
+          onValueChange={(v) => setPin(v.replace(/\D/g, '').slice(0, pinRule.maxLength))}
           className="w-40"
         />
         <Button size="sm" color="primary" isDisabled={!valid || busy} isLoading={busy} onPress={() => call('PUT')}>

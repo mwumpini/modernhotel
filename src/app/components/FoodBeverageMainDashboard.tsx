@@ -101,7 +101,7 @@ export default function FoodBeverageMainDashboard({
   fullPage?: boolean;
 } = {}) {
   const [, setTick] = useState(0);
-  const [selectedTab, setSelectedTab] = useState(resolveFbTab(initialTab || null) || 'tables');
+  const [selectedTab, setSelectedTab] = useState(resolveFbTab(initialTab || null) || 'activity');
   const { collapsed: summaryCollapsed, toggle: toggleSummary } = useSummaryCollapsed('restaurant.summaryCollapsed');
   const [suppliesView, setSuppliesView] = useState<SuppliesView>(() => resolveSuppliesView(initialTab));
   const [showPOS, setShowPOS] = useState(false);

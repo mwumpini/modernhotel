@@ -12,8 +12,22 @@ export const POS_PIN_KEYS = ['posPinHash', 'posPinFailures', 'posPinLockedUntil'
 const MAX_FAILURES = 5
 const LOCK_MINUTES = 5
 
-export function isValidPin(pin: unknown): pin is string {
-  return typeof pin === 'string' && /^\d{4,6}$/.test(pin)
+export type PinLength = { minLength: number; maxLength: number }
+
+export const DEFAULT_PIN_LENGTH: PinLength = { minLength: 4, maxLength: 6 }
+
+/** Digits only, within the hotel's saved PIN length. */
+export function pinLengthError(pin: string, rule: PinLength = DEFAULT_PIN_LENGTH): string | null {
+  const min = rule.minLength
+  const max = rule.maxLength
+  if (!/^\d+$/.test(pin) || pin.length < min || pin.length > max) {
+    return min === max ? `The PIN must be ${min} digits.` : `The PIN must be ${min} to ${max} digits.`
+  }
+  return null
+}
+
+export function isValidPin(pin: unknown, rule: PinLength = DEFAULT_PIN_LENGTH): pin is string {
+  return typeof pin === 'string' && pinLengthError(pin, rule) === null
 }
 
 export async function hashPin(pin: string): Promise<string> {

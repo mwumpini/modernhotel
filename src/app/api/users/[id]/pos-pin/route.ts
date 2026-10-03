@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
-import { hashPin, isValidPin, withoutPinKeys } from '@/app/lib/auth/posPin'
+import { hashPin, pinLengthError, withoutPinKeys } from '@/app/lib/auth/posPin'
+import { readTenantSecurity } from '@/app/lib/settings/securityPolicyDb'
 
 /**
  * PUT    /api/users/:id/pos-pin  { pin }  — set or change a staff member's POS PIN (4–6 digits)
@@ -32,7 +33,9 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const r = await resolve(request, id)
     if ('response' in r) return r.response
     const body = await request.json().catch(() => ({}))
-    if (!isValidPin(body.pin)) return NextResponse.json({ error: 'The PIN must be 4 to 6 digits.' }, { status: 400 })
+    const { policy } = await readTenantSecurity(r.ctx.tenantId)
+    const pinError = pinLengthError(String(body.pin ?? ''), policy.pinPolicy)
+    if (pinError) return NextResponse.json({ error: pinError }, { status: 400 })
 
     const prefs = withoutPinKeys((r.target.preferences as Record<string, unknown>) || {})
     await prisma.user.update({ where: { id }, data: { preferences: { ...prefs, posPinHash: await hashPin(body.pin) } } })

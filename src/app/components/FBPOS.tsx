@@ -164,6 +164,8 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
   const [switchBusy, setSwitchBusy] = useState(false);
   // Hotel setting (Settings → Security): off by default — orders are then simply recorded under the
   // signed-in person, with no "Who's ordering?" step and no lock.
+  const pinMin = useSettingsStore((s) => s.security.pinPolicy.minLength);
+  const pinMax = useSettingsStore((s) => s.security.pinPolicy.maxLength);
   const [waiterSwitchOn, setWaiterSwitchOn] = useState(false);
   const [showMenuImages, setShowMenuImages] = useState(false);
   React.useEffect(() => {
@@ -1408,7 +1410,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     if (key === 'back') return setSwitchPin(p => p.slice(0, -1));
     if (key === 'ok') return void confirmWaiterPin();
     setSwitchError('');
-    setSwitchPin(p => (p.length >= 6 ? p : p + key));
+    setSwitchPin(p => (p.length >= pinMax ? p : p + key));
   };
 
   const waiterName = verifiedWaiter?.name || waiters.find(w => w.id === waiterId)?.name || waiterId;
@@ -2150,7 +2152,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
             ) : (
               <div className="mx-auto w-full max-w-xs">
                 <div className="mb-3 flex justify-center gap-2" aria-live="polite" aria-label={`${switchPin.length} digits entered`}>
-                  {Array.from({ length: Math.max(4, switchPin.length) }).map((_, i) => (
+                  {Array.from({ length: Math.max(pinMin, switchPin.length) }).map((_, i) => (
                     <span key={i} className={`h-3.5 w-3.5 rounded-full ${i < switchPin.length ? 'bg-ghana-black' : 'bg-slate-200'}`} />
                   ))}
                 </div>
@@ -2163,7 +2165,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                   aria-label="PIN"
                   className="sr-only"
                   value={switchPin}
-                  onChange={(e) => { setSwitchError(''); setSwitchPin(e.target.value.replace(/\D/g, '').slice(0, 6)); }}
+                  onChange={(e) => { setSwitchError(''); setSwitchPin(e.target.value.replace(/\D/g, '').slice(0, pinMax)); }}
                   onKeyDown={(e) => { if (e.key === 'Enter') void confirmWaiterPin(); }}
                 />
                 {switchError && <p className="mb-2 text-center text-sm text-red-600" role="alert">{switchError}</p>}
@@ -2173,7 +2175,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                       key={k}
                       type="button"
                       onClick={() => pressPinKey(k)}
-                      disabled={switchBusy || (k === 'ok' && switchPin.length < 4)}
+                      disabled={switchBusy || (k === 'ok' && switchPin.length < pinMin)}
                       aria-label={k === 'back' ? 'Delete last digit' : k === 'ok' ? 'Confirm PIN' : k}
                       className={`h-14 rounded-xl text-xl font-semibold disabled:opacity-40 ${k === 'ok' ? 'bg-ghana-green text-base text-white' : 'bg-slate-100 text-ghana-black active:bg-slate-200'}`}
                     >

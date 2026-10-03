@@ -493,8 +493,8 @@ export default function SetupWizardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 md:p-8">
-      <div className="max-w-5xl mx-auto space-y-6 relative">
+    <div className="fixed inset-0 z-50 h-dvh w-screen overflow-y-auto bg-gray-50">
+      <div className="mx-auto min-h-full w-full max-w-6xl space-y-6 px-4 py-6 md:px-8 md:py-8 relative">
         <Button
           isIconOnly
           variant="light"

@@ -57,7 +57,7 @@ export default function PosWaiterSwitchSetting({ isDisabled }: { isDisabled?: bo
   return (
     <>
       {ROWS.map((row) => (
-        <div key={row.key} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+        <div key={row.key} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
           <div>
             <h4 className="text-sm font-medium">{row.title}</h4>
             <p className="text-xs text-gray-600">{row.help}</p>

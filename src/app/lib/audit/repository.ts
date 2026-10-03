@@ -87,15 +87,42 @@ export interface ListAuditLogsResult {
  * small separate lookup — AuditLog.userId has no FK relation (rows must
  * survive a deleted user), so it can't be joined in one query.
  */
+const AUDIT_SORTS = ['time', 'category', 'action', 'entity', 'details', 'user', 'ip', 'device'] as const
+export type AuditSortKey = (typeof AUDIT_SORTS)[number]
+
+function auditOrderBy(sort: AuditSortKey, dir: 'asc' | 'desc') {
+  // Category, details, and device are derived for display. Ordering by the
+  // stored field they come from keeps the sort stable across pages.
+  if (sort === 'time') return { createdAt: dir }
+  if (sort === 'category' || sort === 'action') return { action: dir }
+  if (sort === 'entity') return { entity: dir }
+  if (sort === 'details') return { newValues: dir }
+  if (sort === 'user') return { userId: dir }
+  if (sort === 'ip') return { ipAddress: dir }
+  return { userAgent: dir }
+}
+
+function dayBound(iso: string | undefined, end: boolean): Date | undefined {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return undefined
+  return new Date(`${iso}T${end ? '23:59:59.999' : '00:00:00.000'}Z`)
+}
+
 export async function listAuditLogs(
   tenantId: string,
-  opts: { q?: string; page?: number; limit?: number } = {}
+  opts: { q?: string; page?: number; limit?: number; from?: string; to?: string; sort?: string; dir?: string } = {}
 ): Promise<ListAuditLogsResult> {
   const page = Math.max(1, opts.page ?? 1)
-  const limit = Math.min(500, Math.max(1, opts.limit ?? 50))
+  const limit = Math.min(5000, Math.max(1, opts.limit ?? 50))
   const q = opts.q?.trim()
+  const sort: AuditSortKey = AUDIT_SORTS.includes(opts.sort as AuditSortKey) ? (opts.sort as AuditSortKey) : 'time'
+  const dir = opts.dir === 'asc' ? 'asc' : 'desc'
+  const from = dayBound(opts.from, false)
+  const to = dayBound(opts.to, true)
 
   const where: any = { tenantId }
+  if (from || to) {
+    where.createdAt = { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) }
+  }
   if (q) {
     const userWhere: any = {
       tenantId,
@@ -116,7 +143,7 @@ export async function listAuditLogs(
     prisma.auditLog.count({ where }),
     prisma.auditLog.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      orderBy: auditOrderBy(sort, dir),
       skip: (page - 1) * limit,
       take: limit,
     }),

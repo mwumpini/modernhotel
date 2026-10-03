@@ -1,11 +1,17 @@
 import type { PasswordPolicy } from './passwordPolicy';
 
+export type PinPolicy = {
+  minLength: number;
+  maxLength: number;
+};
+
 export type SecurityPolicy = {
   sessionTimeout: number;
   twoFactorAuth: boolean;
   ipWhitelist: string[];
   passwordPolicy: PasswordPolicy & { expiryDays: number };
   loginAttempts: { maxAttempts: number; lockoutDuration: number };
+  pinPolicy: PinPolicy;
 };
 
 export const DEFAULT_SECURITY_POLICY: SecurityPolicy = {
@@ -21,6 +27,7 @@ export const DEFAULT_SECURITY_POLICY: SecurityPolicy = {
     expiryDays: 90,
   },
   loginAttempts: { maxAttempts: 5, lockoutDuration: 15 },
+  pinPolicy: { minLength: 4, maxLength: 6 },
 };
 
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
@@ -42,6 +49,9 @@ export function normalizeSecurityPolicy(raw: unknown): SecurityPolicy {
   const attempts = src.loginAttempts && typeof src.loginAttempts === 'object'
     ? (src.loginAttempts as Record<string, unknown>)
     : {};
+  const pin = src.pinPolicy && typeof src.pinPolicy === 'object'
+    ? (src.pinPolicy as Record<string, unknown>)
+    : {};
   const whitelist = Array.isArray(src.ipWhitelist)
     ? src.ipWhitelist.filter((ip): ip is string => typeof ip === 'string' && ip.trim().length > 0).slice(0, 50)
     : DEFAULT_SECURITY_POLICY.ipWhitelist;
@@ -62,7 +72,14 @@ export function normalizeSecurityPolicy(raw: unknown): SecurityPolicy {
       maxAttempts: clampInt(attempts.maxAttempts, 1, 20, base.loginAttempts.maxAttempts),
       lockoutDuration: clampInt(attempts.lockoutDuration, 1, 24 * 60, base.loginAttempts.lockoutDuration),
     },
+    pinPolicy: normalizePinPolicy(pin.minLength, pin.maxLength, base.pinPolicy),
   };
+}
+
+function normalizePinPolicy(minRaw: unknown, maxRaw: unknown, base: PinPolicy): PinPolicy {
+  const minLength = clampInt(minRaw, 4, 8, base.minLength);
+  const maxLength = Math.max(minLength, clampInt(maxRaw, 4, 8, base.maxLength));
+  return { minLength, maxLength };
 }
 
 export function securityFromGeneral(general: unknown): { configured: boolean; policy: SecurityPolicy } {

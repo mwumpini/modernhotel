@@ -84,6 +84,11 @@ class FrontOfficeStore {
   private businessDateSynced = false;
   private hydratedNightAuditState: boolean = false;
   private lastRefreshFromApiAt: number = 0;
+  private pullInFlight: Promise<void> | null = null;
+  private liveRefreshUsers = 0;
+  private liveRefreshTimer: number | null = null;
+  /** How often an open front-desk screen re-reads reservations and folios. */
+  private static readonly LIVE_REFRESH_MS = 15_000;
   // Serializes API writes so a reservation's POST always lands before its PATCH.
   private writeQueue: Promise<unknown> = Promise.resolve();
   clientServices: Array<{
@@ -365,9 +370,19 @@ class FrontOfficeStore {
   // (housekeeping, orders, kitchen ops, etc.) can cascade into re-subscribing
   // this store too, and without a floor here that turns into the same
   // uncontrolled repeat-fetch loop refreshFromApi's throttle was added for.
-  private async pullFromApi() {
-    if (Date.now() - this.lastRefreshFromApiAt < FrontOfficeStore.MIN_REFRESH_INTERVAL_MS) return;
+  private async pullFromApi(force = false) {
+    if (this.pullInFlight) return this.pullInFlight;
+    if (!force && Date.now() - this.lastRefreshFromApiAt < FrontOfficeStore.MIN_REFRESH_INTERVAL_MS) return;
     this.lastRefreshFromApiAt = Date.now();
+    let job!: Promise<void>;
+    job = this.runPullFromApi().finally(() => {
+      if (this.pullInFlight === job) this.pullInFlight = null;
+    });
+    this.pullInFlight = job;
+    return job;
+  }
+
+  private async runPullFromApi() {
     const t = this.tenant(); if (!t) return;
     try {
       const res = await fetch('/api/reservations', { headers: { 'x-tenant-subdomain': t } });
@@ -494,10 +509,34 @@ class FrontOfficeStore {
   // actual rate limiting against overly-frequent triggers lives in
   // pullFromApi() itself, since that's reachable through more than one path.
   private static readonly MIN_REFRESH_INTERVAL_MS = 10_000;
-  async refreshFromApi() {
+  async refreshFromApi(opts?: { force?: boolean }) {
     if (typeof window === 'undefined') return;
     try { await this.writeQueue; } catch {}
-    await this.pullFromApi();
+    await this.pullFromApi(!!opts?.force);
+  }
+
+  /**
+   * While a front-desk screen is open: load immediately, then every 15s.
+   * Clicking back into the window still refreshes through the focus listener.
+   * Callers must pair begin with end (a refcount, so nested screens share one timer).
+   */
+  beginLiveRefresh() {
+    if (typeof window === 'undefined') return;
+    this.ensureHydratedFromApi();
+    this.liveRefreshUsers += 1;
+    if (this.liveRefreshUsers !== 1) return;
+    void this.refreshFromApi({ force: true });
+    this.liveRefreshTimer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      void this.refreshFromApi();
+    }, FrontOfficeStore.LIVE_REFRESH_MS);
+  }
+
+  endLiveRefresh() {
+    this.liveRefreshUsers = Math.max(0, this.liveRefreshUsers - 1);
+    if (this.liveRefreshUsers > 0 || this.liveRefreshTimer == null) return;
+    window.clearInterval(this.liveRefreshTimer);
+    this.liveRefreshTimer = null;
   }
   notify() {
     // Only persist after initial hydration to avoid overwriting stored data with empty arrays
@@ -1326,7 +1365,9 @@ class FrontOfficeStore {
   addCharge(reservationId: string, description: string, amount: number, forceExempt?: boolean, taxCategory?: string) { folioHelpers.addCharge(this as any, reservationId, description, amount, forceExempt, taxCategory); }
 
   addPayment(reservationId: string, method: 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check', amount: number, options?: { invoiceId?: string; creditApplied?: number; notes?: string; processedBy?: string; ref?: string; }) {
-    return folioHelpers.addPayment(this as any, reservationId, method, amount, options);
+    const payment = folioHelpers.addPayment(this as any, reservationId, method, amount, options);
+    try { invoiceHelpers.postFolioReceiptAfterInvoice(this as any, reservationId, payment); } catch (e) { console.warn('FO: later receipt was not posted to Accounting', e); }
+    return payment;
   }
   updateFolioCharge(reservationId: string, chargeId: string, patch: { description?: string; amount?: number }) {
     return folioHelpers.updateFolioCharge(this as any, reservationId, chargeId, patch);

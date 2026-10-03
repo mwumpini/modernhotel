@@ -831,6 +831,10 @@ export interface SystemSettings {
       maxAttempts: number;
       lockoutDuration: number; // minutes
     };
+    pinPolicy: {
+      minLength: number;
+      maxLength: number;
+    };
   };
   
   // POS Settings
@@ -2021,6 +2025,7 @@ const defaultSettings: SystemSettings = {
       maxAttempts: 5,
       lockoutDuration: 15,
     },
+    pinPolicy: { minLength: 4, maxLength: 6 },
   },
   
   posSettings: {
@@ -2644,6 +2649,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       const systemSettings = localStorage.getItem('system.settings');
       if (systemSettings) {
         const parsed = JSON.parse(systemSettings);
+        const savedTenant = String(parsed?.tenant?.subdomain || '').trim().toLowerCase();
+        const currentTenant = getClientTenantSubdomain();
+        // A browser that already finished setup for one hotel must not treat that
+        // flag as done for a different hotel, or push it up to that hotel's server.
+        if (savedTenant && currentTenant && savedTenant !== currentTenant) {
+          parsed.initialSetupCompleted = false;
+        }
         // Defensive: strip `subscribers` even if it's present in already-persisted data
         // from before saveSettings() excluded it — a raw merge here would otherwise
         // replace the real Set with whatever JSON.stringify turned it into (`{}`),
@@ -2651,6 +2663,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         delete (parsed as any).subscribers;
         if (parsed.numberingDefaultsVersion == null) parsed.numberingDefaultsVersion = 0;
         set(parsed);
+        set(state => ({
+          security: {
+            ...defaultSettings.security,
+            ...state.security,
+            passwordPolicy: { ...defaultSettings.security.passwordPolicy, ...(state.security?.passwordPolicy || {}) },
+            loginAttempts: { ...defaultSettings.security.loginAttempts, ...(state.security?.loginAttempts || {}) },
+            pinPolicy: { ...defaultSettings.security.pinPolicy, ...(state.security?.pinPolicy || {}) },
+          },
+        }));
 
         // Self-heal: `set(parsed)` above replaces `printing` wholesale (Zustand's
         // `set` only shallow-merges at the top level), so a settings save made
@@ -2813,6 +2834,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
                   ...data.policy,
                   passwordPolicy: { ...current.passwordPolicy, ...data.policy.passwordPolicy },
                   loginAttempts: { ...current.loginAttempts, ...(data.policy.loginAttempts || {}) },
+                  pinPolicy: { ...current.pinPolicy, ...(data.policy.pinPolicy || {}) },
                 },
               });
               return;

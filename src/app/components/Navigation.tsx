@@ -137,8 +137,8 @@ function resolveNavSection(target: string): ActiveSection {
 export default function Navigation({ onLogout }: NavigationProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['dashboard']));
-  const [activeSection, setActiveSection] = React.useState<ActiveSection>('dashboard');
+  const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['restaurant']));
+  const [activeSection, setActiveSection] = React.useState<ActiveSection>('restaurant');
   // (narrow screens: choosing a section closes the open pane — see the effect after the sidebar state)
   const [hasMounted, setHasMounted] = React.useState(false);
   React.useEffect(() => {
@@ -422,7 +422,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
         { title: '📄 Documents', href: '#' },
         { title: '📦 Stock', href: '#' },
         { title: '🔒 Security', href: '#' },
-        { title: '🏢 Setup', href: '#' },
+        { title: '⚙️ System Setup', href: '#' },
       ]
     }
   ];
@@ -684,7 +684,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
         : itemTitle === '📦 Stock' ? 'locations'
         : itemTitle === '🔒 Security' ? 'security'
         : null;
-      if (itemTitle === '🏢 Setup' || itemTitle === 'System Setup Wizard') {
+      if (itemTitle === '⚙️ System Setup' || itemTitle === '🏢 Setup' || itemTitle === 'System Setup Wizard') {
         try { window.location.href = '/setup'; } catch {}
       } else if (itemTitle === 'Reports & Analytics') {
         setActiveSection('reports-analytics');

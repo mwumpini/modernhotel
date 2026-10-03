@@ -32,57 +32,64 @@ import {
 import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 import { useSettingsStore } from '../lib/settings/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
-import EventRateManagement from './EventRateManagement';
 import HeadingInfo from './HeadingInfo';
 import ServiceChargePricingPanel from './settings/ServiceChargePricingPanel';
 import { reverseToSubtotalFromGross } from '../lib/frontoffice/helpers/rates';
-import { hourStamp } from '../lib/frontoffice/operationalPolicies';
 // Dynamic imports for PDF generation to avoid SSR issues
 // import jsPDF from 'jspdf';
 // import 'jspdf-autotable';
 
 /** Derive tax-exclusive subtotal from a stored plan price — via the compliance engine
  * (same source the live preview below uses), not the old disconnected tax/engine.ts. */
-const policyInput = 'mt-1 w-full h-9 rounded-lg border border-gray-300 px-3 text-sm';
-const policyLabel = 'text-xs font-medium text-gray-500';
-
-function PolicyGroup({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
-  return (
-    <section className="space-y-3">
-      <div>
-        <h3 className="text-base font-semibold text-ghana-black">{title}</h3>
-        <p className="text-sm text-gray-500">{description}</p>
-      </div>
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">{children}</div>
-    </section>
-  );
-}
-
-function PolicyCard({ title, children, wide }: { title: string; children: React.ReactNode; wide?: boolean }) {
-  return (
-    <Card className={`border-0 shadow-md ${wide ? 'xl:col-span-2' : ''}`}>
-      <CardHeader className="pb-1">
-        <h4 className="text-sm font-semibold text-ghana-black">{title}</h4>
-      </CardHeader>
-      <CardBody className="pt-0">{children}</CardBody>
-    </Card>
-  );
-}
-
-function PolicyRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-2 py-3 border-b border-gray-200 last:border-0 sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0 sm:pr-4">
-        <div className="text-sm font-medium text-ghana-black">{label}</div>
-        {hint ? <p className="text-xs text-gray-500 mt-0.5">{hint}</p> : null}
-      </div>
-      <div className="w-full sm:max-w-xs shrink-0">{children}</div>
-    </div>
-  );
-}
-
 function subtotalFromPlanPrice(basePrice: number, priceType?: string): number {
   return priceType === 'gross_total' ? reverseToSubtotalFromGross(basePrice) : basePrice;
+}
+
+type BulkRoomMode = 'numbered' | 'named';
+
+function blankBulkRooms() {
+  return {
+    mode: 'numbered' as BulkRoomMode,
+    roomType: '',
+    building: '',
+    floor: '1',
+    floorNumber: '1',
+    roomsOnFloor: '1',
+    startRoomNumber: '1',
+    prefix: '',
+    suffix: '',
+    names: '',
+  };
+}
+
+function namedRoomLines(value: string) {
+  return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+/** Digits count up (1 → 01, 02). Letters count A, B, C … Z, AA. */
+function roomTokenAt(start: string, offset: number): string {
+  const token = start.trim();
+  if (/^\d+$/.test(token)) {
+    return String(Number(token) + offset).padStart(Math.max(2, token.length), '0');
+  }
+  if (/^[A-Za-z]+$/.test(token)) {
+    const lower = token === token.toLowerCase();
+    let n = 0;
+    for (const ch of token.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
+    n += offset;
+    let out = '';
+    while (n > 0) {
+      n -= 1;
+      out = String.fromCharCode((n % 26) + 65) + out;
+      n = Math.floor(n / 26);
+    }
+    return lower ? out.toLowerCase() : out;
+  }
+  const mixed = /^(.*?)(\d+)$/.exec(token);
+  if (mixed) {
+    return `${mixed[1]}${String(Number(mixed[2]) + offset).padStart(mixed[2].length, '0')}`;
+  }
+  return offset === 0 ? token : `${token}${offset + 1}`;
 }
 
 interface RoomType {
@@ -167,9 +174,15 @@ export default function RoomConfigurationDashboard() {
   useEffect(() => {
     try {
       const tab = localStorage.getItem('rooms.tab');
-      if (tab) {
+      if (tab === 'operations-policies') {
+        localStorage.removeItem('rooms.tab');
+        localStorage.setItem('settings.tab', 'policies');
+        window.dispatchEvent(new Event('settings-navigate'));
+      } else if (tab && tab !== 'event-rates' && tab !== 'bulk-operations') {
         localStorage.removeItem('rooms.tab');
         setActiveTab(tab);
+      } else if (tab) {
+        localStorage.removeItem('rooms.tab');
       }
     } catch {}
   }, []);
@@ -196,8 +209,6 @@ export default function RoomConfigurationDashboard() {
   });
   const [seasonalFormError, setSeasonalFormError] = useState<string | null>(null);
 
-  // Bulk Operations tab — room type selected for "Activate All Rooms of Type"
-  const [bulkActivateRoomTypeId, setBulkActivateRoomTypeId] = useState<string>('');
   const [roomTypeFormError, setRoomTypeFormError] = useState<string | null>(null);
   const [editRoomTypeFormError, setEditRoomTypeFormError] = useState<string | null>(null);
   const [ratePlanFormError, setRatePlanFormError] = useState<string | null>(null);
@@ -211,8 +222,14 @@ export default function RoomConfigurationDashboard() {
   useEffect(() => {
     try {
       const requested = localStorage.getItem('room-config.openTab');
-      if (requested) {
+      if (requested === 'operations-policies') {
+        localStorage.removeItem('room-config.openTab');
+        localStorage.setItem('settings.tab', 'policies');
+        window.dispatchEvent(new Event('settings-navigate'));
+      } else if (requested && requested !== 'event-rates' && requested !== 'bulk-operations') {
         setActiveTab(requested);
+        localStorage.removeItem('room-config.openTab');
+      } else if (requested) {
         localStorage.removeItem('room-config.openTab');
       }
     } catch {}
@@ -280,16 +297,7 @@ export default function RoomConfigurationDashboard() {
     mealPlan: 'room_only'
   });
   
-  const [bulkRoomData, setBulkRoomData] = useState({
-    roomType: '',
-    building: '',
-    floor: '1',
-    floorNumber: '1', // Keep as string for input compatibility
-    roomsOnFloor: '1', // Keep as string for input compatibility
-    startRoomNumber: '1', // Keep as string for input compatibility
-    prefix: '',
-    suffix: ''
-  });
+  const [bulkRoomData, setBulkRoomData] = useState(blankBulkRooms);
 
   // Edit rate plan modal state
   const [editRatePlanModalOpen, setEditRatePlanModalOpen] = useState(false);
@@ -728,56 +736,6 @@ export default function RoomConfigurationDashboard() {
     });
   };
 
-  // Bulk operations for seasonal management
-  const handleBulkRoomStatusChange = (criteria: {
-    roomTypes?: string[];
-    floors?: number[];
-    status?: string;
-    isActive?: boolean;
-  }, newStatus: string, newActiveState?: boolean) => {
-    const roomsToUpdate = settingsStore.roomManagement.rooms.filter(room => {
-      if (criteria.roomTypes && !criteria.roomTypes.includes(room.typeId)) return false;
-      if (criteria.floors && !criteria.floors.includes(Number(room.floor))) return false;
-      if (criteria.status && room.status !== criteria.status) return false;
-      if (criteria.isActive !== undefined && room.isActive !== criteria.isActive) return false;
-      return true;
-    });
-
-    if (roomsToUpdate.length === 0) {
-      alert('No rooms match the selected criteria.');
-      return;
-    }
-
-    const action = `update ${roomsToUpdate.length} rooms`;
-    if (confirm(`Are you sure you want to ${action}?\n\nThis will affect:\n${roomsToUpdate.map(r => `• ${r.number} (${getRoomTypeName(r.typeId)})`).join('\n')}`)) {
-      roomsToUpdate.forEach(room => {
-        const updates: any = { status: newStatus };
-        if (newActiveState !== undefined) {
-          updates.isActive = newActiveState;
-        }
-        
-        // Apply smart defaults
-        if (newStatus === 'maintenance') {
-          updates.isActive = false;
-        } else if (newStatus === 'available' && !room.isActive) {
-          updates.isActive = true;
-        }
-        
-        settingsStore.updateRoom(room.id, updates);
-      });
-
-      logAction('BULK_ROOM_UPDATE', { 
-        totalRooms: roomsToUpdate.length,
-        criteria,
-        newStatus,
-        newActiveState,
-        affectedRooms: roomsToUpdate.map(r => ({ id: r.id, number: r.number }))
-      });
-
-      alert(`Successfully updated ${roomsToUpdate.length} rooms.`);
-    }
-  };
-
   const handleAddRatePlan = () => {
     if (!canManageRoomPricing) { setRatePlanFormError('You do not have permission to manage rate plans.'); return; }
     if (!newRatePlan.name.trim()) {
@@ -873,69 +831,63 @@ export default function RoomConfigurationDashboard() {
     setSelectedRatePlan(null);
   };
 
+  const numberedRoomLabel = (offset: number) => {
+    const token = roomTokenAt(bulkRoomData.startRoomNumber || '1', offset);
+    return `${bulkRoomData.prefix}${bulkRoomData.building || ''}${bulkRoomData.floor || ''}${token}${bulkRoomData.suffix}`;
+  };
+
+  const bulkRoomLabels = () => {
+    if (bulkRoomData.mode === 'named') return namedRoomLines(bulkRoomData.names);
+    const count = Number(bulkRoomData.roomsOnFloor);
+    if (!Number.isFinite(count) || count < 1) return [];
+    return Array.from({ length: count }, (_, offset) => numberedRoomLabel(offset));
+  };
+
   const handleBulkAddRooms = () => {
-    if (bulkRoomData.roomType && Number(bulkRoomData.roomsOnFloor) > 0) {
-      const rooms: Room[] = [];
-      
-      console.log('Bulk creating rooms with typeId:', bulkRoomData.roomType, 'Building:', bulkRoomData.building, 'Floor:', bulkRoomData.floor);
-      
-                          for (let roomNum = 1; roomNum <= Number(bulkRoomData.roomsOnFloor); roomNum++) {
-        const roomNumber = `${bulkRoomData.prefix}${bulkRoomData.building || ''}${bulkRoomData.floor || ''}${String(Number(bulkRoomData.startRoomNumber) + roomNum - 1).padStart(2, '0')}${bulkRoomData.suffix}`;
-        
-        // Check for duplicate room number
-        if (isRoomNumberDuplicate(roomNumber)) {
-          alert(`Room number "${roomNumber}" already exists. Please adjust your bulk room settings to avoid conflicts.`);
-          logAction('BULK_DUPLICATE_ROOM_NUMBER_ATTEMPT', { 
-            attemptedNumber: roomNumber,
-            bulkSettings: bulkRoomData 
-          });
-          return;
-        }
-        
-        rooms.push({
-          id: Date.now().toString() + Math.random(),
-          number: roomNumber,
-          typeId: bulkRoomData.roomType,
-          floor: bulkRoomData.floor || '1',
-          floorNumber: Number(bulkRoomData.floorNumber), // Convert string to number
-          status: 'available',
-          isActive: true,
-          notes: '',
-          features: [],
-          maintenance: {
-            lastInspection: '',
-            nextInspection: '',
-            issues: [],
-          }
-        });
+    if (!bulkRoomData.roomType) return;
+    const labels = bulkRoomLabels();
+    if (labels.length === 0) return;
+
+    const seen = new Set<string>();
+    for (const roomNumber of labels) {
+      const key = roomNumber.toLowerCase();
+      if (seen.has(key) || settingsStore.roomManagement.rooms.some((room) => room.number.trim().toLowerCase() === key)) {
+        alert(`Room "${roomNumber}" is already used. Each room name has to be unique.`);
+        logAction('BULK_DUPLICATE_ROOM_NUMBER_ATTEMPT', { attemptedNumber: roomNumber, bulkSettings: bulkRoomData });
+        return;
       }
-      
-      rooms.forEach(room => {
-        settingsStore.addRoom(room);
-        logAction('BULK_ADD_ROOM', { room });
-      });
-      
-             logAction('BULK_ADD_ROOMS_COMPLETE', { 
-         totalRooms: rooms.length, 
-         building: bulkRoomData.building,
-         floor: bulkRoomData.floor,
-         floorNumber: Number(bulkRoomData.floorNumber), // Convert string to number
-         roomsOnFloor: Number(bulkRoomData.roomsOnFloor), // Convert string to number
-         startRoomNumber: Number(bulkRoomData.startRoomNumber) // Convert string to number
-       });
-      
-      setBulkModalOpen(false);
-      setBulkRoomData({ 
-        roomType: '', 
-        building: '',
-        floor: '1', 
-        floorNumber: '1',
-        roomsOnFloor: '1', 
-        startRoomNumber: '1',
-        prefix: '',
-        suffix: ''
-      });
+      seen.add(key);
     }
+
+    const rooms: Room[] = labels.map((roomNumber) => ({
+      id: Date.now().toString() + Math.random(),
+      number: roomNumber,
+      typeId: bulkRoomData.roomType,
+      floor: bulkRoomData.floor || '1',
+      floorNumber: Number(bulkRoomData.floorNumber),
+      status: 'available',
+      isActive: true,
+      notes: '',
+      features: [],
+      maintenance: {
+        lastInspection: '',
+        nextInspection: '',
+        issues: [],
+      },
+    }));
+
+    rooms.forEach((room) => {
+      settingsStore.addRoom(room);
+      logAction('BULK_ADD_ROOM', { room });
+    });
+    logAction('BULK_ADD_ROOMS_COMPLETE', {
+      totalRooms: rooms.length,
+      mode: bulkRoomData.mode,
+      building: bulkRoomData.building,
+      floor: bulkRoomData.floor,
+    });
+    setBulkModalOpen(false);
+    setBulkRoomData(blankBulkRooms());
   };
 
   const toggleAmenity = (amenityId: string) => {
@@ -955,9 +907,7 @@ export default function RoomConfigurationDashboard() {
     logAction('TOGGLE_AMENITY_FOR_ROOM_TYPE', { amenityId, roomTypeId: currentType.id, enabled: !currentlyEnabled });
   };
 
-  const getTotalRooms = () => {
-    return Number(bulkRoomData.roomsOnFloor);
-  };
+  const getTotalRooms = () => bulkRoomLabels().length;
 
   const getRoomCountByType = (typeId: string) => {
     return settingsStore.roomManagement.rooms.filter(room => room.typeId === typeId).length;
@@ -1572,38 +1522,9 @@ export default function RoomConfigurationDashboard() {
 
   return (
     <div className="pt-2">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <h1 className="text-xl font-bold text-ghana-black">🏠 Rooms & Pricing</h1>
-          <HeadingInfo label="About rooms and pricing">Manage room types, rate plans, service charges, seasonal pricing, and event rates</HeadingInfo>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button 
-            color="primary" 
-            variant="flat"
-            size="sm"
-            onClick={() => setActiveTab('event-rates')}
-            className="bg-purple-600 text-white hover:bg-purple-700"
-          >
-            🎯 Event Rates
-          </Button>
-          <Button 
-            color="warning" 
-            variant="flat"
-            size="sm"
-            onClick={() => setActiveTab('operations-policies')}
-          >
-            📜 Operational Policies
-          </Button>
-          <Button 
-            color="primary" 
-            variant="flat"
-            size="sm"
-            onClick={() => setBulkModalOpen(true)}
-          >
-            Bulk Add Rooms
-          </Button>
-        </div>
+      <div className="mb-3 flex items-center gap-1.5">
+        <h1 className="text-xl font-bold text-ghana-black">🏠 Rooms & Pricing</h1>
+        <HeadingInfo label="About rooms and pricing">Manage room types, rate plans, service charges, and seasonal pricing</HeadingInfo>
       </div>
 
       <Tabs 
@@ -2021,8 +1942,16 @@ export default function RoomConfigurationDashboard() {
 
         <Tab key="rooms" title="Rooms">
           <Card className="mb-6">
-            <CardHeader>
+            <CardHeader className="justify-between gap-2">
               <h3 className="text-xl font-semibold">Add Single Room</h3>
+              <Button
+                color="primary"
+                variant="flat"
+                size="sm"
+                onClick={() => setBulkModalOpen(true)}
+              >
+                Bulk Add Rooms
+              </Button>
             </CardHeader>
             <CardBody>
                              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -3080,394 +3009,6 @@ export default function RoomConfigurationDashboard() {
           <ServiceChargePricingPanel />
         </Tab>
 
-        <Tab key="event-rates" title="🎯 Event & Conference Rates">
-          <Card className="mb-6 bg-purple-50 border-purple-200">
-            <CardHeader>
-              <h3 className="text-lg font-semibold text-purple-800">🎯 Event & Conference Rate Management</h3>
-              <p className="text-sm text-purple-600">Manage conference rates, event packages, and resource pricing integrated with your room system</p>
-            </CardHeader>
-            <CardBody>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-3">
-                  <h4 className="font-medium text-purple-700">Event Rate Plans</h4>
-                  <ul className="text-sm text-purple-600 space-y-1">
-                    <li>• Special rates for conference attendees</li>
-                    <li>• Package pricing for events</li>
-                    <li>• Seasonal adjustments for events</li>
-                    <li>• Integration with room booking system</li>
-                  </ul>
-                </div>
-                <div className="space-y-3">
-                  <h4 className="font-medium text-purple-700">Event Resources & Packages</h4>
-                  <ul className="text-sm text-purple-600 space-y-1">
-                    <li>• Venue hire (conference halls, meeting rooms)</li>
-                    <li>• Equipment rental (AV, furniture)</li>
-                    <li>• Service packages (catering, setup)</li>
-                    <li>• Bundled offerings for events</li>
-                  </ul>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
-
-          {/* Event Rate Management Component */}
-          <div className="space-y-6">
-            <EventRateManagement />
-          </div>
-        </Tab>
-
-        <Tab key="operations-policies" title="📜 Operational Policies">
-          <div className="space-y-8">
-            <p className="text-sm text-gray-500">Front desk rules for arrival, departure, booking changes, company accounts, and night audit. Each change saves immediately.</p>
-            <PolicyGroup title="Check-in and checkout" description="Standard arrival and departure times, and what happens when a guest leaves early or stays past checkout.">
-              <PolicyCard title="Standard times">
-                <div className="grid grid-cols-2 gap-3 max-w-md">
-                  <div>
-                    <label className={policyLabel}>Check-in hour (24h)</label>
-                    <input type="number" className={policyInput} value={(settingsStore.roomManagement.standardCheckInHour ?? 14).toString()} onChange={(e)=> { const hour = Math.max(0, Math.min(23, Number(e.target.value||'0'))); settingsStore.updateNestedSetting('roomManagement.standardCheckInHour', hour); settingsStore.updateNestedSetting('hotelSettings.checkInTime', hourStamp(hour, 14)); }} />
-                  </div>
-                  <div>
-                    <label className={policyLabel}>Check-out hour (24h)</label>
-                    <input type="number" className={policyInput} value={(settingsStore.roomManagement.standardCheckOutHour ?? 11).toString()} onChange={(e)=> { const hour = Math.max(0, Math.min(23, Number(e.target.value||'0'))); settingsStore.updateNestedSetting('roomManagement.standardCheckOutHour', hour); settingsStore.updateNestedSetting('hotelSettings.checkOutTime', hourStamp(hour, 11)); }} />
-                  </div>
-                </div>
-              </PolicyCard>
-
-              <PolicyCard title="Late checkout">
-                <PolicyRow label="Late checkout fee" hint="Charge a guest who stays past the grace period.">
-                  <Switch
-                    isSelected={!!settingsStore.roomManagement.lateCheckoutFeeEnabled}
-                    onValueChange={(v) => settingsStore.updateNestedSetting('roomManagement.lateCheckoutFeeEnabled', v)}
-                  >
-                    {settingsStore.roomManagement.lateCheckoutFeeEnabled ? 'Enabled' : 'Disabled'}
-                  </Switch>
-                </PolicyRow>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3">
-                  <div>
-                    <label className={policyLabel}>Grace minutes</label>
-                    <input type="number" className={policyInput} value={(settingsStore.roomManagement.lateCheckoutGraceMinutes ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.lateCheckoutGraceMinutes', Math.max(0, parseInt(e.target.value||'0')))} />
-                  </div>
-                  <div>
-                    <label className={policyLabel}>Fee type</label>
-                    <select className={policyInput} value={settingsStore.roomManagement.lateCheckoutFeeType || 'flat'} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.lateCheckoutFeeType', e.target.value)}>
-                      <option value="flat">Flat amount (₵)</option>
-                      <option value="percent_of_nightly">% of nightly rate</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className={policyLabel}>Fee value</label>
-                    <input type="number" className={policyInput} value={(settingsStore.roomManagement.lateCheckoutFeeValue ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.lateCheckoutFeeValue', Math.max(0, Number(e.target.value||'0')))} />
-                  </div>
-                </div>
-              </PolicyCard>
-
-              <PolicyCard title="Early checkout" wide>
-                <PolicyRow label="Remove unused nights" hint="When on, unused nights come off the folio if the guest leaves before the scheduled departure. No extra charge is added.">
-                  <Switch
-                    isSelected={!!settingsStore.roomManagement.earlyCheckoutPolicyEnabled}
-                    onValueChange={(v) => settingsStore.updateNestedSetting('roomManagement.earlyCheckoutPolicyEnabled', v)}
-                  >
-                    {settingsStore.roomManagement.earlyCheckoutPolicyEnabled ? 'On' : 'Off'}
-                  </Switch>
-                </PolicyRow>
-                <div className="max-w-xs pt-3">
-                  <label className={policyLabel}>Cutoff hour (24h)</label>
-                  <input type="number" className={policyInput} value={(settingsStore.roomManagement.earlyCheckoutCutoffHour ?? 11).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.earlyCheckoutCutoffHour', Math.max(0, Math.min(23, Number(e.target.value||'0'))))} />
-                </div>
-                <div className="pt-3 mt-3 border-t border-gray-200">
-                  <label className="flex items-center gap-2 text-sm text-ghana-black">
-                    <input type="checkbox" className="accent-ghana-green" checked={!!settingsStore.roomManagement.earlyCheckoutAdvancedEnabled} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.earlyCheckoutAdvancedEnabled', e.target.checked)} />
-                    Advanced refund and penalty
-                  </label>
-                  {settingsStore.roomManagement.earlyCheckoutAdvancedEnabled && (
-                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div>
-                        <label className={policyLabel}>Refund or penalty</label>
-                        <select className={policyInput} value={settingsStore.roomManagement.earlyCheckoutRefundType || 'nightly_prorate'} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.earlyCheckoutRefundType', e.target.value)}>
-                          <option value="nightly_prorate">Prorate unused nights</option>
-                          <option value="none">No refund (charge remaining)</option>
-                          <option value="percent_penalty">% penalty on remaining</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className={policyLabel}>Penalty %</label>
-                        <input type="number" className={policyInput} value={(settingsStore.roomManagement.earlyCheckoutPenaltyPercent ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.earlyCheckoutPenaltyPercent', Math.max(0, Number(e.target.value||'0')))} />
-                      </div>
-                      <div>
-                        <label className={policyLabel}>Note</label>
-                        <input type="text" className={policyInput} placeholder="How early checkout is handled" value={settingsStore.roomManagement.earlyCheckoutNote || ''} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.earlyCheckoutNote', e.target.value)} />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </PolicyCard>
-            </PolicyGroup>
-
-            <PolicyGroup title="Company accounts" description="Who can leave without paying immediately, and the terms written on a corporate invoice.">
-              <PolicyCard title="Pay later and credit" wide>
-                <PolicyRow label="Who can pay later" hint="Guests allowed to check out without immediate payment.">
-                  <select
-                    className={policyInput}
-                    value={settingsStore.roomManagement.payLaterPolicy || 'both'}
-                    onChange={(e) => settingsStore.updateNestedSetting('roomManagement.payLaterPolicy', e.target.value)}
-                  >
-                    <option value="both">Corporate and individual</option>
-                    <option value="corporate">Corporate only</option>
-                    <option value="individual">Individual only</option>
-                  </select>
-                </PolicyRow>
-                <PolicyRow label="Default credit terms" hint="Days given on a corporate invoice unless the account says otherwise.">
-                  <input
-                    type="number"
-                    className={policyInput}
-                    value={(settingsStore.roomManagement.defaultCreditTermsDays ?? 30).toString()}
-                    onChange={(e) => settingsStore.updateNestedSetting('roomManagement.defaultCreditTermsDays', Math.max(0, parseInt(e.target.value || '0')))}
-                  />
-                </PolicyRow>
-                <PolicyRow label="Corporate reference" hint="Purchase order, project, or cost center on a corporate pay-later stay.">
-                  <Switch
-                    isSelected={!!settingsStore.roomManagement.requireCorporateReference}
-                    onValueChange={(v) => settingsStore.updateNestedSetting('roomManagement.requireCorporateReference', v)}
-                  >
-                    {settingsStore.roomManagement.requireCorporateReference ? 'Required' : 'Optional'}
-                  </Switch>
-                </PolicyRow>
-              </PolicyCard>
-            </PolicyGroup>
-
-            <PolicyGroup title="Booking changes" description="What the hotel charges when a guest does not arrive, cancels late, or must put down a deposit.">
-              <PolicyCard title="No-show">
-                <PolicyRow label="No-show charge" hint="Applied when the guest has not arrived by the cutoff.">
-                  <Switch isSelected={!!settingsStore.roomManagement.noShowPolicyEnabled} onValueChange={(v)=> settingsStore.updateNestedSetting('roomManagement.noShowPolicyEnabled', v)}>
-                    {settingsStore.roomManagement.noShowPolicyEnabled ? 'Enabled' : 'Disabled'}
-                  </Switch>
-                </PolicyRow>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3">
-                  <div>
-                    <label className={policyLabel}>Charge type</label>
-                    <select className={policyInput} value={settingsStore.roomManagement.noShowChargeType || 'first_night'} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.noShowChargeType', e.target.value)}>
-                      <option value="first_night">First night</option>
-                      <option value="percent_reservation">% of reservation</option>
-                      <option value="flat">Flat amount</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className={policyLabel}>Charge value</label>
-                    <input type="number" className={policyInput} value={(settingsStore.roomManagement.noShowChargeValue ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.noShowChargeValue', Math.max(0, Number(e.target.value||'0')))} />
-                  </div>
-                  <div>
-                    <label className={policyLabel}>Cutoff hour (24h)</label>
-                    <input type="number" className={policyInput} value={(settingsStore.roomManagement.noShowCutoffHour ?? 23).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.noShowCutoffHour', Math.max(0, Math.min(23, Number(e.target.value||'0'))))} />
-                  </div>
-                </div>
-              </PolicyCard>
-
-              <PolicyCard title="Cancellation">
-                <PolicyRow label="Cancellation fee" hint="Free until the hours-before-arrival window closes, then the late fee applies.">
-                  <Switch isSelected={!!settingsStore.roomManagement.cancellationPolicyEnabled} onValueChange={(v)=> settingsStore.updateNestedSetting('roomManagement.cancellationPolicyEnabled', v)}>
-                    {settingsStore.roomManagement.cancellationPolicyEnabled ? 'Enabled' : 'Disabled'}
-                  </Switch>
-                </PolicyRow>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3">
-                  <div>
-                    <label className={policyLabel}>Free window (hours before arrival)</label>
-                    <input type="number" className={policyInput} value={(settingsStore.roomManagement.freeCancellationHours ?? 24).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.freeCancellationHours', Math.max(0, Number(e.target.value||'0')))} />
-                  </div>
-                  <div>
-                    <label className={policyLabel}>Late fee type</label>
-                    <select className={policyInput} value={settingsStore.roomManagement.lateCancellationFeeType || 'first_night'} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.lateCancellationFeeType', e.target.value)}>
-                      <option value="first_night">First night</option>
-                      <option value="percent_reservation">% of reservation</option>
-                      <option value="flat">Flat amount</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className={policyLabel}>Late fee value</label>
-                    <input type="number" className={policyInput} value={(settingsStore.roomManagement.lateCancellationFeeValue ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.lateCancellationFeeValue', Math.max(0, Number(e.target.value||'0')))} />
-                  </div>
-                </div>
-              </PolicyCard>
-
-              <PolicyCard title="Deposit" wide>
-                <PolicyRow label="Require a deposit" hint="How much is collected to hold the reservation.">
-                  <Switch isSelected={!!settingsStore.roomManagement.depositPolicyEnabled} onValueChange={(v)=> settingsStore.updateNestedSetting('roomManagement.depositPolicyEnabled', v)}>
-                    {settingsStore.roomManagement.depositPolicyEnabled ? 'Enabled' : 'Disabled'}
-                  </Switch>
-                </PolicyRow>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3">
-                  <div>
-                    <label className={policyLabel}>Deposit type</label>
-                    <select className={policyInput} value={settingsStore.roomManagement.depositType || 'percent'} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.depositType', e.target.value)}>
-                      <option value="percent">% of reservation</option>
-                      <option value="flat">Flat amount</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className={policyLabel}>Deposit value</label>
-                    <input type="number" className={policyInput} value={(settingsStore.roomManagement.depositValue ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.depositValue', Math.max(0, Number(e.target.value||'0')))} />
-                  </div>
-                  <div className="flex items-end pb-2">
-                    <label className="flex items-center gap-2 text-sm text-ghana-black">
-                      <input type="checkbox" className="accent-ghana-green" checked={!!settingsStore.roomManagement.requireDepositToConfirm} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.requireDepositToConfirm', e.target.checked)} />
-                      Required to confirm
-                    </label>
-                  </div>
-                </div>
-              </PolicyCard>
-            </PolicyGroup>
-
-            <PolicyGroup title="Night audit and billing" description="When room charges post, and how invoice totals are rounded.">
-              <PolicyCard title="Room charges">
-                <PolicyRow label="Post the first night at check-in" hint="The folio shows the first night right away. Night audit will not post that night a second time.">
-                  <Switch
-                    isSelected={!!settingsStore.roomManagement.postFirstNightAtCheckin}
-                    onValueChange={(v) => settingsStore.updateNestedSetting('roomManagement.postFirstNightAtCheckin', v)}
-                  >
-                    {settingsStore.roomManagement.postFirstNightAtCheckin ? 'On' : 'Off'}
-                  </Switch>
-                </PolicyRow>
-                <PolicyRow label="Run night audit at 1:00am" hint="Runs while the app is open. A failure notifies the Night Manager role.">
-                  <Switch
-                    isSelected={settingsStore.roomManagement.nightAuditAutoRun !== false}
-                    onValueChange={(v) => settingsStore.updateNestedSetting('roomManagement.nightAuditAutoRun', v)}
-                  >
-                    {settingsStore.roomManagement.nightAuditAutoRun !== false ? 'On' : 'Off'}
-                  </Switch>
-                </PolicyRow>
-              </PolicyCard>
-
-              <PolicyCard title="Rounding">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className={policyLabel}>Line and tax rounding</label>
-                    <select
-                      className={policyInput}
-                      value={settingsStore.financialSettings.roundingRule || 'nearest'}
-                      onChange={(e) => settingsStore.updateNestedSetting('financialSettings.roundingRule', e.target.value)}
-                    >
-                      <option value="nearest">Nearest pesewa</option>
-                      <option value="up">Round up</option>
-                      <option value="down">Round down</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className={policyLabel}>Round the amount due to</label>
-                    <div className="mt-1 flex gap-2">
-                      <select
-                        className="h-9 flex-1 rounded-lg border border-gray-300 px-3 text-sm"
-                        value={(() => {
-                          const presets: Array<[string, number]> = [['0', 0], ['0.01', 0.01], ['0.05', 0.05], ['0.10', 0.1], ['0.50', 0.5], ['1.00', 1]];
-                          const current = Number(settingsStore.financialSettings.roundToNearest ?? 0.5);
-                          const match = presets.find(([, amount]) => Math.abs(amount - current) < 0.0001);
-                          return match ? match[0] : 'custom';
-                        })()}
-                        onChange={(e) => {
-                          if (e.target.value === 'custom') return;
-                          settingsStore.updateNestedSetting('financialSettings.roundToNearest', Number(e.target.value));
-                        }}
-                      >
-                        <option value="0">Off (exact pesewa)</option>
-                        <option value="0.01">₵0.01</option>
-                        <option value="0.05">₵0.05</option>
-                        <option value="0.10">₵0.10</option>
-                        <option value="0.50">₵0.50</option>
-                        <option value="1.00">₵1.00</option>
-                        <option value="custom">Custom…</option>
-                      </select>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        className="h-9 w-24 rounded-lg border border-gray-300 px-3 text-sm"
-                        value={settingsStore.financialSettings.roundToNearest ?? 0.5}
-                        onChange={(e) => settingsStore.updateNestedSetting('financialSettings.roundToNearest', Math.max(0, Number(e.target.value || '0')))}
-                      />
-                    </div>
-                  </div>
-                </div>
-                <p className="text-xs text-gray-500 mt-3">
-                  Line rounding applies to taxes and line items on invoices, folios, and POS. Rounding the amount due nudges the total to a cash figure, and the difference posts as a Rounding Adjustment (GL 4900) at checkout. The same values are used in Setup.
-                </p>
-              </PolicyCard>
-            </PolicyGroup>
-          </div>
-        </Tab>
-
-        {/* Bulk Operations standalone tab placed after Rate Plans */}
-        <Tab key="bulk-operations" title="🔄 Bulk Operations">
-          <Card className="mb-4 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200">
-            <CardHeader className="py-2">
-              <h3 className="text-base font-semibold text-blue-800">🔄 Bulk Operations & Workflow Management</h3>
-              <p className="text-xs text-blue-600">Smart room management with automated workflows and bulk operations</p>
-            </CardHeader>
-            <CardBody className="p-3">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {/* Seasonal Management */}
-                <div className="p-3 bg-white rounded-lg border border-blue-200">
-                  <h4 className="text-sm font-medium text-blue-800 mb-2">🌤️ Seasonal Management</h4>
-                  <div className="space-y-2">
-                    <Button size="sm" color="primary" variant="flat" onClick={() => handleBulkRoomStatusChange({ status: 'available' }, 'available', true)}>
-                      Activate All Available Rooms
-                    </Button>
-                    <Button size="sm" color="warning" variant="flat" onClick={() => handleBulkRoomStatusChange({ status: 'available' }, 'available', false)}>
-                      Deactivate All Available Rooms
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Floor-based Operations */}
-                <div className="p-3 bg-white rounded-lg border border-blue-200">
-                  <h4 className="text-sm font-medium text-blue-800 mb-2">🏢 Floor Management</h4>
-                  <div className="space-y-2">
-                    <Button size="sm" color="primary" variant="flat" onClick={() => { const floor = prompt('Enter floor number to activate all rooms:'); if (floor && !isNaN(Number(floor))) { handleBulkRoomStatusChange({ floors: [Number(floor)] }, 'available', true); } }}>
-                      Activate Floor
-                    </Button>
-                    <Button size="sm" color="warning" variant="flat" onClick={() => { const floor = prompt('Enter floor number to deactivate all rooms:'); if (floor && !isNaN(Number(floor))) { handleBulkRoomStatusChange({ floors: [Number(floor)] }, 'available', false); } }}>
-                      Deactivate Floor
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Room Type Operations */}
-                <div className="p-3 bg-white rounded-lg border border-blue-200">
-                  <h4 className="text-sm font-medium text-blue-800 mb-2">🏷️ Room Type Management</h4>
-                  <div className="space-y-2">
-                    <Select size="sm" label="Select Room Type" placeholder="Choose room type" selectedKeys={bulkActivateRoomTypeId ? [bulkActivateRoomTypeId] : []} onChange={(e) => setBulkActivateRoomTypeId(e.target.value)}>
-                      {settingsStore.roomManagement.roomTypes.map((type) => (
-                        <SelectItem key={type.id}>{type.name}</SelectItem>
-                      ))}
-                    </Select>
-                    <Button
-                      size="sm"
-                      color="success"
-                      variant="flat"
-                      className="w-full"
-                      isDisabled={!bulkActivateRoomTypeId}
-                      onClick={() => {
-                        if (!bulkActivateRoomTypeId) return;
-                        const typeName = settingsStore.roomManagement.roomTypes.find(t => t.id === bulkActivateRoomTypeId)?.name || bulkActivateRoomTypeId;
-                        if (!confirm(`Activate all ${typeName} rooms?`)) return;
-                        handleBulkRoomStatusChange({ roomTypes: [bulkActivateRoomTypeId] }, 'available', true);
-                      }}
-                    >
-                      Activate All Rooms of Type
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Workflow Status */}
-              <div className="mt-3 p-3 bg-blue-100 rounded-lg border border-blue-300">
-                <h4 className="text-sm font-medium text-blue-800 mb-1">⚡ Smart Workflow Status</h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
-                  <div className="text-blue-700 leading-snug"><strong>Auto-deactivation:</strong> Rooms automatically deactivate when status changes to maintenance</div>
-                  <div className="text-blue-700 leading-snug"><strong>Auto-reactivation:</strong> Rooms automatically reactivate when returning to available status</div>
-                  <div className="text-blue-700 leading-snug"><strong>Smart defaults:</strong> Workflow-aware room management with minimal manual intervention</div>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
-        </Tab>
       </Tabs>
 
       {/* Edit Room Type Modal */}
@@ -3771,9 +3312,9 @@ export default function RoomConfigurationDashboard() {
                   content={
                     <div className="max-w-sm text-sm space-y-2">
                       <div className="text-blue-700">Create rooms for a specific building and floor. Perfect for adding floors one by one!</div>
-                      <div><strong className="text-green-700">Example:</strong> Building 1, Floor A (Floor #1) → 1A01, 1A02, 1A03...</div>
-                      <div><strong className="text-blue-700">Then:</strong> Building 1, Floor 2B (Floor #2) → 12B01, 12B02, 12B03...</div>
-                      <div><strong className="text-purple-700">Pattern:</strong> Prefix + Building + Floor + Room Number + Suffix</div>
+                      <div><strong className="text-green-700">Numbers:</strong> Building 1, Floor A, start 1 → 1A01, 1A02. Start A with the floor identifier cleared → A, B, C.</div>
+                      <div><strong className="text-blue-700">Names:</strong> One room name per line. The name is the room. Building and floor are only the location.</div>
+                      <div><strong className="text-purple-700">Number pattern:</strong> Prefix + Building + Floor + Room Number + Suffix</div>
                       <div><strong className="text-orange-700">Floor System:</strong> Floor Identifier (A, B, 1A) + Floor Number (0=Ground, 1=1st, 2=2nd)</div>
                       <div><strong className="text-indigo-700">Analytics:</strong> Floor Number tracks actual level for occupancy, pricing, and maintenance analysis</div>
                     </div>
@@ -3788,6 +3329,25 @@ export default function RoomConfigurationDashboard() {
                     i
                   </span>
                 </Tooltip>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  color={bulkRoomData.mode === 'numbered' ? 'primary' : 'default'}
+                  variant={bulkRoomData.mode === 'numbered' ? 'solid' : 'flat'}
+                  onPress={() => setBulkRoomData({ ...bulkRoomData, mode: 'numbered' })}
+                >
+                  Numbers
+                </Button>
+                <Button
+                  size="sm"
+                  color={bulkRoomData.mode === 'named' ? 'primary' : 'default'}
+                  variant={bulkRoomData.mode === 'named' ? 'solid' : 'flat'}
+                  onPress={() => setBulkRoomData({ ...bulkRoomData, mode: 'named' })}
+                >
+                  Names
+                </Button>
               </div>
               
               {/* Basic Settings */}
@@ -3813,7 +3373,7 @@ export default function RoomConfigurationDashboard() {
                  />
               </div>
               
-                             <div className="grid grid-cols-4 gap-4">
+                             <div className={`grid grid-cols-1 gap-4 ${bulkRoomData.mode === 'named' ? 'md:grid-cols-2' : 'md:grid-cols-4'}`}>
                  <Input
                    label="Floor Identifier (Optional)"
                    placeholder="e.g., 1, A, 1A, 2B"
@@ -3829,7 +3389,9 @@ export default function RoomConfigurationDashboard() {
                    value={bulkRoomData.floorNumber}
                    onChange={(e) => setBulkRoomData({...bulkRoomData, floorNumber: e.target.value})}
                  />
-                 
+
+                 {bulkRoomData.mode === 'numbered' && (
+                   <>
                  <Input
                    label="Rooms on Floor"
                    type="number"
@@ -3840,13 +3402,15 @@ export default function RoomConfigurationDashboard() {
                  
                  <Input
                    label="Starting Room Number"
-                   type="number"
-                   min="1"
+                   placeholder="1 or A"
                    value={bulkRoomData.startRoomNumber}
                    onChange={(e) => setBulkRoomData({...bulkRoomData, startRoomNumber: e.target.value})}
                  />
+                   </>
+                 )}
                </div>
-               
+
+               {bulkRoomData.mode === 'numbered' && (
                <div className="grid grid-cols-2 gap-4">
                  <Input
                    label="Prefix (Optional)"
@@ -3862,21 +3426,33 @@ export default function RoomConfigurationDashboard() {
                    onChange={(e) => setBulkRoomData({...bulkRoomData, suffix: e.target.value})}
                  />
                </div>
+               )}
+
+               {bulkRoomData.mode === 'named' && (
+                 <Textarea
+                   label="Room names"
+                   placeholder={'Rose\nOrchid\nPalm Suite'}
+                   minRows={5}
+                   value={bulkRoomData.names}
+                   description="One name per line. The name is the room. Nothing is added in front of it."
+                   onChange={(e) => setBulkRoomData({ ...bulkRoomData, names: e.target.value })}
+                 />
+               )}
               
               {/* Preview */}
                              <div className="p-4 bg-green-50 rounded-lg">
                  <p className="text-sm text-green-800">
-                   This will create <strong>{getTotalRooms()} rooms</strong> of type "{bulkRoomData.roomType || '[Select Type]'}" 
-                   in Building <strong>{bulkRoomData.building || '[Select Building]'}</strong>
-                   on Floor <strong>{bulkRoomData.floor || '[Select Floor]'}</strong> (Level {bulkRoomData.floorNumber})
-                   starting from room <strong>{bulkRoomData.startRoomNumber}</strong>.
+                   This will create <strong>{getTotalRooms()} rooms</strong> of type "{bulkRoomData.roomType ? getRoomTypeName(bulkRoomData.roomType) : '[Select Type]'}"
+                   {bulkRoomData.mode === 'named'
+                     ? ' using the names below.'
+                     : <> in Building <strong>{bulkRoomData.building || '[Select Building]'}</strong> on Floor <strong>{bulkRoomData.floor || '[Select Floor]'}</strong> (Level {bulkRoomData.floorNumber}), starting from <strong>{bulkRoomData.startRoomNumber || '1'}</strong>.</>}
                  </p>
                 
-                                 {bulkRoomData.building && bulkRoomData.roomType && (
+                                 {getTotalRooms() > 0 && (
                    <div className="mt-3 p-3 bg-white rounded border">
-                     <h5 className="font-medium text-green-800 mb-2">Example Room Numbers:</h5>
+                     <h5 className="font-medium text-green-800 mb-2">{bulkRoomData.mode === 'named' ? 'Room names' : 'Example room numbers'}</h5>
                      <div className="text-sm text-green-700">
-                       <p>{bulkRoomData.prefix}{bulkRoomData.building}{bulkRoomData.floor}{String(bulkRoomData.startRoomNumber).padStart(2, '0')}{bulkRoomData.suffix}, {bulkRoomData.prefix}{bulkRoomData.building}{bulkRoomData.floor}{String(bulkRoomData.startRoomNumber + 1).padStart(2, '0')}{bulkRoomData.suffix}, {bulkRoomData.prefix}{bulkRoomData.building}{bulkRoomData.floor}{String(bulkRoomData.startRoomNumber + 2).padStart(2, '0')}{bulkRoomData.suffix}...</p>
+                       <p>{bulkRoomLabels().slice(0, 8).join(', ')}{getTotalRooms() > 8 ? '…' : ''}</p>
                      </div>
                    </div>
                  )}
@@ -3887,7 +3463,7 @@ export default function RoomConfigurationDashboard() {
             <Button variant="light" onPress={() => setBulkModalOpen(false)}>
               Cancel
             </Button>
-            <Button color="primary" onPress={handleBulkAddRooms}>
+            <Button color="primary" onPress={handleBulkAddRooms} isDisabled={!bulkRoomData.roomType || getTotalRooms() < 1}>
               Add {getTotalRooms()} Rooms
             </Button>
           </ModalFooter>

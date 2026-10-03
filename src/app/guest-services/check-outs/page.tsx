@@ -35,6 +35,7 @@ import {
 import CustomizeViewControl, { HideCardButton } from '../../components/dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../../lib/dashboard/useDashboardVisibility';
 import { frontOfficeStore } from '../../lib/frontoffice/store';
+import { useFrontOfficeLiveRefresh } from '../../lib/frontoffice/useLiveRefresh';
 import { resolveGuestAddress } from '../../lib/frontoffice/helpers/guests';
 import { listAllTemplates, openPrintPreview } from '../../lib/print/engine';
 import { buildOrgProfile } from '../../lib/print/buildOrgProfile';
@@ -98,6 +99,7 @@ const CHECKOUTS_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
 ];
 
 export default function CheckOutsPage() {
+  useFrontOfficeLiveRefresh();
   const currentUserName = useCurrentUserName();
   const { isHidden, hide, toggle: toggleStatSection, showAll: showAllStats, hiddenCount: hiddenStatsCount } =
     useDashboardVisibility('dashboard.hidden.checkouts', CHECKOUTS_DASHBOARD_SECTIONS);

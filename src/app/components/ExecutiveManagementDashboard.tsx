@@ -797,7 +797,7 @@ export default function ExecutiveManagementDashboard() {
       </div>
 
       {quickModules.length > 0 && (
-        <nav aria-label="Open a module" className="mb-4 flex flex-wrap gap-1.5">
+        <nav aria-label="Open a module" className="mb-4 hidden flex-wrap gap-1.5 lg:flex">
           {quickModules.map((m) => (
             <button
               key={m.key}

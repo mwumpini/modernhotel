@@ -9,8 +9,6 @@ import {
   Badge,
   Tabs,
   Tab,
-  Switch,
-  Input,
 } from '@heroui/react';
 import { useSettingsStore } from '../lib/settings/store';
 import { useRouter } from 'next/navigation';
@@ -23,12 +21,13 @@ import ApprovalThresholdsPanel from './settings/ApprovalThresholdsPanel';
 import ModulesPanel from './settings/ModulesPanel';
 import StockLocationsPanel from './settings/StockLocationsPanel';
 import SampleDataPanel from './settings/SampleDataPanel';
-import PosWaiterSwitchSetting from './settings/PosWaiterSwitchSetting';
+import SecurityPolicyPanel from './settings/SecurityPolicyPanel';
+import OperationalPoliciesPanel from './settings/OperationalPoliciesPanel';
 import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 import { useSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
 import { SummaryToggle } from './dashboard/SummaryToggle';
 
-const VALID_TABS = ['users', 'rooms', 'numbering', 'templates', 'locations', 'security', 'approvals', 'modules', 'sample-data', 'audit'] as const;
+const VALID_TABS = ['users', 'rooms', 'policies', 'numbering', 'templates', 'locations', 'security', 'approvals', 'modules', 'sample-data', 'audit'] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
 
 function resolveInitialTab(searchParams: URLSearchParams): SettingsTab {
@@ -53,10 +52,7 @@ export default function SystemSettingsMainDashboard() {
   );
   const router = useRouter();
   const settings = useSettingsStore();
-  const updateNestedSetting = useSettingsStore((s) => s.updateNestedSetting);
   const initialSetupCompleted = useSettingsStore((s) => s.initialSetupCompleted);
-  const canManage2fa = settings.hasPermission('settings.manage-2fa');
-  const canManageSecurityPolicy = settings.hasPermission('settings.manage-security-policy');
   const { collapsed: summaryCollapsed, toggle: toggleSummary } = useSummaryCollapsed('settings.summaryCollapsed');
 
   const userCount = settings.users.length;
@@ -97,7 +93,9 @@ export default function SystemSettingsMainDashboard() {
     router.replace(`?${params.toString()}`);
   };
 
-  const openSystemSetup = () => router.replace('/setup');
+  const openSystemSetup = () => {
+    window.location.assign('/setup');
+  };
 
   const openComplianceTax = () => {
     try {
@@ -158,6 +156,10 @@ export default function SystemSettingsMainDashboard() {
               <RoomConfigurationDashboard />
             </Tab>
 
+            <Tab key="policies" title="📜 Operational Policies">
+              <OperationalPoliciesPanel />
+            </Tab>
+
             <Tab key="numbering" title="Document Numbering">
               <NumberingSettingsPanel />
             </Tab>
@@ -171,109 +173,7 @@ export default function SystemSettingsMainDashboard() {
             </Tab>
 
             <Tab key="security" title="Security">
-              <div className="mt-2 max-w-2xl space-y-2">
-                <p className="text-xs text-gray-600">
-                  Password and session rules apply to all staff accounts. Company name, country, and currency are in{' '}
-                  <Button size="sm" variant="light" className="inline h-auto min-h-0 p-0 align-baseline text-xs" onPress={openSystemSetup}>
-                    System Setup
-                  </Button>
-                  . Tax rates (VAT, NHIL, levies) are in{' '}
-                  <Button size="sm" variant="light" className="inline h-auto min-h-0 p-0 align-baseline text-xs" onPress={openComplianceTax}>
-                    Compliance → Tax rules
-                  </Button>.
-                </p>
-                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-                  <div>
-                    <h4 className="text-sm font-medium">Two-Factor Authentication</h4>
-                    <p className="text-xs text-gray-600">Sign-in asks every staff member for a code from an authenticator app</p>
-                  </div>
-                  <Switch
-                    size="sm"
-                    isSelected={settings.security.twoFactorAuth}
-                    onValueChange={(v) => updateNestedSetting('security.twoFactorAuth', v)}
-                    isDisabled={!canManage2fa}
-                  />
-                </div>
-                <PosWaiterSwitchSetting isDisabled={!canManageSecurityPolicy} />
-                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-                  <div>
-                    <h4 className="text-sm font-medium">Session Timeout</h4>
-                    <p className="text-xs text-gray-600">Auto-logout after inactivity (minutes)</p>
-                  </div>
-                  <Input
-                    type="number"
-                    size="sm"
-                    className="max-w-[100px]"
-                    value={String(settings.security.sessionTimeout)}
-                    onChange={(e) => updateNestedSetting('security.sessionTimeout', Number(e.target.value))}
-                    isDisabled={!canManageSecurityPolicy}
-                  />
-                </div>
-                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-                  <div>
-                    <h4 className="text-sm font-medium">Password Minimum Length</h4>
-                    <p className="text-xs text-gray-600">Minimum characters required for passwords</p>
-                  </div>
-                  <Input
-                    type="number"
-                    size="sm"
-                    className="max-w-[100px]"
-                    value={String(settings.security.passwordPolicy.minLength)}
-                    onChange={(e) => updateNestedSetting('security.passwordPolicy.minLength', Number(e.target.value))}
-                    isDisabled={!canManageSecurityPolicy}
-                  />
-                </div>
-                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-                  <div>
-                    <h4 className="text-sm font-medium">Password Expiry</h4>
-                    <p className="text-xs text-gray-600">Days before passwords must be changed (0 = never)</p>
-                  </div>
-                  <Input
-                    type="number"
-                    size="sm"
-                    className="max-w-[100px]"
-                    value={String(settings.security.passwordPolicy.expiryDays)}
-                    onChange={(e) => updateNestedSetting('security.passwordPolicy.expiryDays', Number(e.target.value))}
-                    isDisabled={!canManageSecurityPolicy}
-                  />
-                </div>
-                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-                  <div>
-                    <h4 className="text-sm font-medium">Require Uppercase Letters</h4>
-                    <p className="text-xs text-gray-600">Passwords must include uppercase</p>
-                  </div>
-                  <Switch
-                    size="sm"
-                    isSelected={settings.security.passwordPolicy.requireUppercase}
-                    onValueChange={(v) => updateNestedSetting('security.passwordPolicy.requireUppercase', v)}
-                    isDisabled={!canManageSecurityPolicy}
-                  />
-                </div>
-                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-                  <div>
-                    <h4 className="text-sm font-medium">Require Lowercase Letters</h4>
-                    <p className="text-xs text-gray-600">Passwords must include lowercase</p>
-                  </div>
-                  <Switch
-                    size="sm"
-                    isSelected={settings.security.passwordPolicy.requireLowercase}
-                    onValueChange={(v) => updateNestedSetting('security.passwordPolicy.requireLowercase', v)}
-                    isDisabled={!canManageSecurityPolicy}
-                  />
-                </div>
-                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-                  <div>
-                    <h4 className="text-sm font-medium">Require Numbers</h4>
-                    <p className="text-xs text-gray-600">Passwords must include digits</p>
-                  </div>
-                  <Switch
-                    size="sm"
-                    isSelected={settings.security.passwordPolicy.requireNumbers}
-                    onValueChange={(v) => updateNestedSetting('security.passwordPolicy.requireNumbers', v)}
-                    isDisabled={!canManageSecurityPolicy}
-                  />
-                </div>
-              </div>
+              <SecurityPolicyPanel onOpenSetup={openSystemSetup} onOpenTax={openComplianceTax} />
             </Tab>
 
             <Tab key="approvals" title="Approvals">
@@ -292,7 +192,7 @@ export default function SystemSettingsMainDashboard() {
               <AuditLogPanel />
             </Tab>
 
-            <Tab key="setup" title="Company & localization → Setup" />
+            <Tab key="setup" title="System Setup" />
           </Tabs>
         </CardBody>
       </Card>

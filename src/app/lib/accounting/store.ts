@@ -69,6 +69,28 @@ import {
   type ManualBankTransactionInput,
 } from './bankTransactionLedger';
 
+/**
+ * Keep whichever copy — local or server — was touched more recently.
+ * persistInvoicePatch / persistPayment are queued, not awaited, so a refresh
+ * fired right after a local write can otherwise land before that write and
+ * silently revert it (a receipt's invoice paid-amount bump did exactly that).
+ */
+function mergeServerRecordsByRecency<T extends { id: string; updatedAt?: string }>(
+  localRecords: T[],
+  serverRecords: T[],
+): T[] {
+  const byId = new Map(localRecords.map((r) => [r.id, r]));
+  for (const server of serverRecords) {
+    const local = byId.get(server.id);
+    const serverTime = new Date(server.updatedAt || 0).getTime();
+    const localTime = local ? new Date(local.updatedAt || 0).getTime() : -Infinity;
+    if (!local || serverTime >= localTime) byId.set(server.id, server);
+  }
+  return Array.from(byId.values());
+}
+
+let ledgerRefreshInFlight: Promise<void> | null = null;
+
 interface AccountingState {
   // Chart of Accounts
   chartOfAccounts: ChartOfAccounts[];
@@ -322,6 +344,8 @@ interface AccountingState {
   
   // Initialize
   initializeAccounting: () => Promise<void>;
+  /** Re-read invoices, receipts, and journal entries already saved on the server. */
+  refreshLedgerFromServer: () => Promise<void>;
 }
 
 export const useAccountingStore = create<AccountingState>((set, get) => ({
@@ -1465,7 +1489,9 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     const added = state.payments.find(p => p.id === payment.id);
     if (added && added.status === 'Posted') {
       const src = added.sourceModule;
-      if (!src || src === 'manual' || src === 'manual_ar_ap') {
+      // front_office is a cash receipt taken after checkout. Checkout's own
+      // receipts use front_office_checkout and are posted with the sales entry.
+      if (!src || src === 'manual' || src === 'manual_ar_ap' || src === 'front_office') {
         const partner = state.businessPartners.find(p => p.id === added.businessPartnerId);
         syncPaymentToLedger(added, partner, get());
       }
@@ -3050,6 +3076,49 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   setLoading: (loading) => set({ isLoading: loading }),
   setError: (error) => set({ error }),
 
+  refreshLedgerFromServer: () => {
+    if (ledgerRefreshInFlight) return ledgerRefreshInFlight;
+    let job!: Promise<void>;
+    job = (async () => {
+      const [serverJEs, serverInvoices, serverPayments] = await Promise.all([
+        fetchJournalEntries(),
+        fetchInvoices(),
+        fetchPayments(),
+      ]);
+      if (serverJEs && serverJEs.length > 0) {
+        set((s) => ({ journalEntries: mergeServerRecordsByRecency(s.journalEntries, serverJEs) }));
+      }
+      if (serverInvoices && serverInvoices.length > 0) {
+        set((s) => {
+          const invoices = mergeServerRecordsByRecency(s.invoices, serverInvoices);
+          try {
+            useSettingsStore.getState().reconcileNumberFloor(
+              'invoice',
+              invoices.filter((i) => i.type === 'Sales').map((i) => i.invoiceNumber),
+            );
+          } catch {}
+          return { invoices };
+        });
+      }
+      if (serverPayments && serverPayments.length > 0) {
+        set((s) => {
+          const payments = mergeServerRecordsByRecency(s.payments, serverPayments);
+          return {
+            payments,
+            whtCertificates: mergeWhtCertificateLists(
+              s.whtCertificates,
+              whtCertificatesFromPayments(payments),
+            ),
+          };
+        });
+      }
+    })().finally(() => {
+      if (ledgerRefreshInFlight === job) ledgerRefreshInFlight = null;
+    });
+    ledgerRefreshInFlight = job;
+    return job;
+  },
+
   // Initialize
   initializeAccounting: async () => {
     const snapshot = get();
@@ -3169,27 +3238,6 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       const demoMode = isAccountingDemoMode();
       const mergeTx = <T extends { id: string }>(seed: T[], existing: T[]) =>
         demoMode ? mergeById(seed, existing) : existing;
-
-      // persistInvoicePatch/persistPayment/persistJournalEntryStatus are fire-and-forget
-      // (queued, not awaited by their callers — see helpers/api.ts), so a refresh fired right
-      // after a local write (e.g. saveReceipt's handleRefresh) can race ahead of that write
-      // landing on the server. Letting the server row win unconditionally then silently
-      // reverts the just-applied local change (this is exactly how a receipt's invoice-paidAmount
-      // bump was observed disappearing). Keep whichever copy — local or server — was touched
-      // more recently instead of always trusting the server.
-      const mergeServerRecordsByRecency = <T extends { id: string; updatedAt?: string }>(
-        localRecords: T[],
-        serverRecords: T[],
-      ): T[] => {
-        const byId = new Map(localRecords.map((r) => [r.id, r]));
-        for (const server of serverRecords) {
-          const local = byId.get(server.id);
-          const serverTime = new Date(server.updatedAt || 0).getTime();
-          const localTime = local ? new Date(local.updatedAt || 0).getTime() : -Infinity;
-          if (!local || serverTime >= localTime) byId.set(server.id, server);
-        }
-        return Array.from(byId.values());
-      };
 
       set({
         chartOfAccounts: resolveChartOfAccounts(accounts, prev.chartOfAccounts),
