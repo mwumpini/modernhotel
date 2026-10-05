@@ -210,7 +210,8 @@ export default function RoomResponsibilitiesPanel({ staff }: { staff: Department
   };
 
   const clearResponsibility = async (id: string) => {
-    if (!confirm('Clear this responsibility? You can assign someone else afterward.')) return;
+    const { confirmDelete } = await import('../DangerConfirm');
+    if (!(await confirmDelete('this responsibility', 'You can assign someone else afterward.'))) return;
     setError('');
     try {
       const res = await fetch(`/api/housekeeping/room-responsibilities?id=${encodeURIComponent(id)}`, {

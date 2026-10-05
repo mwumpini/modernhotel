@@ -22,7 +22,6 @@ import {
   ModalFooter,
   useDisclosure,
   Chip,
-  Divider,
   Textarea,
   Switch,
   Tooltip,
@@ -44,11 +43,9 @@ import { useCalculateTax } from '@/app/hooks/useCalculateTax';
 import { TaxRule } from '@/app/lib/models';
 import {
   COMPLIANCE_CATEGORIES,
-  COMPLIANCE_COUNTRIES,
   DEFAULT_COMPLIANCE_COUNTRY,
   buildTemplateRules,
   findTemplateKeyForTypeName,
-  formatRulesReferenceSummary,
   getCountryDisplayName,
   getCountryQuickApply,
   getDefaultTemplatesForCountry,
@@ -103,7 +100,8 @@ interface TaxRuleForm {
 function defaultClaimableOnPurchases(name: string, domain?: string): boolean {
   const n = (name || '').toLowerCase();
   if (n.includes('withholding')) return false;
-  if (n.includes('nhil') || n.includes('getfund') || n.includes('get fund') || n.includes('tourism')) return false;
+  if (n.includes('tourism') || n.includes('covid')) return false;
+  if (n.includes('nhil') || n.includes('getfund') || n.includes('get fund')) return true;
   if (n.includes('vat')) return true;
   return domain === 'purchases';
 }
@@ -111,6 +109,16 @@ function defaultClaimableOnPurchases(name: string, domain?: string): boolean {
 function ruleIsClaimable(rule: TaxRule): boolean {
   if (typeof rule.isRecoverable === 'boolean') return rule.isRecoverable;
   return defaultClaimableOnPurchases(rule.name, rule.domain);
+}
+
+/** Page filter. "Both" lists guest-bill and supplier rules together.
+ *  A rule stored as both (custom) is still added to a guest bill, so it stays on Guest bills.
+ *  Supplier bills stays the withholding list. */
+function matchesTaxAreaFilter(domain: string | undefined, area: string): boolean {
+  const d = (domain || 'sales').toLowerCase();
+  if (area === 'both') return d === 'sales' || d === 'purchases' || d === 'custom';
+  if (area === 'sales') return d === 'sales' || d === 'custom';
+  return d === area;
 }
 
 export default function TaxRateBuilder() {
@@ -127,7 +135,7 @@ export default function TaxRateBuilder() {
       alert(`Some tax rules did not sync to accounting:\n${errs.join('\n')}`);
     }
   }, []);
-  const [filterDomain, setFilterDomain] = useState<'sales' | 'purchases' | 'payroll' | 'corporate' | 'custom'>('sales');
+  const [filterDomain, setFilterDomain] = useState<'both' | 'sales' | 'purchases' | 'payroll' | 'corporate' | 'custom'>('sales');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRuleIds, setSelectedRuleIds] = useState<Set<string>>(new Set());
   const [sim, setSim] = useState({ amount: 1000, category: 'HOTEL', domain: 'sales', numPersons: 1, numNights: 1, roomType: '', industry: '' });
@@ -136,6 +144,7 @@ export default function TaxRateBuilder() {
   // shows several Apply buttons at once) only spins the one actually clicked instead of all
   // of them -- isApplyingTemplate itself stays the single re-entrancy guard below.
   const [applyingTemplateKey, setApplyingTemplateKey] = useState<string | null>(null);
+  const [openTemplateKey, setOpenTemplateKey] = useState<string | null>(null);
   const [autoAppliedCountries, setAutoAppliedCountries] = useState<Set<string>>(new Set());
   const [workspaceTab, setWorkspaceTab] = useState<'rules' | 'types' | 'simulator'>('rules');
   const [selectedTypeId, setSelectedTypeId] = useState<string | null>(null);
@@ -387,12 +396,12 @@ export default function TaxRateBuilder() {
     try {
       const chart = useAccountingStore.getState().chartOfAccounts;
       if (String(formData.glCode || '').trim() && !chartHasGlCode(chart, formData.glCode)) {
-        const ok =
-          typeof window !== 'undefined'
-            ? window.confirm(
-                `GL code "${formData.glCode}" is not on the chart of accounts yet. The rule will be saved for compliance, but accounting will not sync until that account exists. Continue?`
-              )
-            : true;
+        const { confirmChoice } = await import('./DangerConfirm');
+        const ok = await confirmChoice(
+          `GL code ${formData.glCode} is not on the chart yet`,
+          'The rule will be saved for compliance, but accounting will not sync until that account exists.',
+          'Save anyway',
+        );
         if (!ok) return;
       }
 
@@ -644,11 +653,6 @@ export default function TaxRateBuilder() {
     setApplyingTemplateKey(null);
   };
 
-  const getCountryFlag = (code: string) => {
-    const c = COMPLIANCE_COUNTRIES.find((x) => x.code === code);
-    return c?.flag || '🌍';
-  };
-
   const getTemplateKeyForType = (type: any): string | null =>
     findTemplateKeyForTypeName(type?.name, type?.tags);
 
@@ -667,7 +671,7 @@ export default function TaxRateBuilder() {
     return taxRules
       .filter(rule => rule.countryCode === selectedCountry)
       .filter(rule => (selectedTypeId ? String((rule as any).typeId || '') === String(selectedTypeId) : true))
-      .filter(rule => ((rule as any).domain || 'sales') === filterDomain)
+      .filter(rule => matchesTaxAreaFilter((rule as any).domain, filterDomain))
       .filter(rule => {
         if (!searchTerm?.trim()) return true;
         const q = searchTerm.toLowerCase();
@@ -709,9 +713,12 @@ export default function TaxRateBuilder() {
 
   const mergeDuplicateTaxTypes = async () => {
     if (!selectedCountry || duplicateTaxTypesCount === 0) return;
-    const ok = typeof window !== 'undefined' ? window.confirm(
-      `Merge ${duplicateTaxTypesCount} duplicate tax type(s) for this country? Rules will be moved to the kept type (the one with the most rules).`
-    ) : true;
+    const { confirmChoice } = await import('./DangerConfirm');
+    const ok = await confirmChoice(
+      `Merge ${duplicateTaxTypesCount} duplicate tax type${duplicateTaxTypesCount === 1 ? '' : 's'}?`,
+      'Rules will be moved to the type that already has the most rules.',
+      'Merge',
+    );
     if (!ok) return;
     try {
       const res = await fetch('/api/compliance/tax-types/dedupe', {
@@ -754,16 +761,6 @@ export default function TaxRateBuilder() {
     await applyTemplate(key);
   };
 
-  const salesRulesSummary = React.useMemo(
-    () =>
-      formatRulesReferenceSummary(
-        taxRules
-          .filter((r) => r.countryCode === selectedCountry && ((r as any).domain || 'sales') === 'sales')
-          .map((r) => ({ name: r.name, rate: r.rate, glCode: r.glCode }))
-      ),
-    [taxRules, selectedCountry]
-  );
-
   const countryQuickApply = getCountryQuickApply(selectedCountry);
 
   const filteredRules = React.useMemo(
@@ -771,7 +768,7 @@ export default function TaxRateBuilder() {
       taxRules
         .filter((rule) => rule.countryCode === selectedCountry)
         .filter((rule) => (selectedTypeId ? ((rule as any).typeId || '') === selectedTypeId : true))
-        .filter((rule) => ((rule as any).domain || 'sales') === filterDomain)
+        .filter((rule) => matchesTaxAreaFilter((rule as any).domain, filterDomain))
         .filter((rule) => {
           if (!searchTerm?.trim()) return true;
           const q = searchTerm.toLowerCase();
@@ -797,7 +794,7 @@ export default function TaxRateBuilder() {
       case 'sales': return 'external';
       case 'purchases': return 'internal';
       case 'payroll': return 'internal';
-      default: return 'both'; // Unrestricted — matches either centre
+      default: return 'both'; // Both sales and purchases — matches either centre
     }
   };
 
@@ -806,11 +803,11 @@ export default function TaxRateBuilder() {
 
   const taxAreaLabel = (domain: string | undefined): string => {
     switch (domain || 'sales') {
-      case 'sales': return 'Sales';
-      case 'purchases': return 'Purchases';
+      case 'sales': return 'Sales only';
+      case 'purchases': return 'Purchases only';
       case 'payroll': return 'Payroll';
-      case 'custom': return 'Unrestricted';
-      default: return domain || 'Sales';
+      case 'custom': return 'Both sales and purchases';
+      default: return domain || 'Sales only';
     }
   };
 
@@ -856,32 +853,40 @@ export default function TaxRateBuilder() {
 
   return (
     <div className="space-y-3">
-      {/* Compact filter toolbar — country is controlled by the page header */}
-      <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-3 p-3 rounded-lg bg-default-50 border border-default-200">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1">
-          <div>
-            <span className="text-sm font-medium text-gray-700">Tax Area</span>
-            <Select
-              className="mt-1.5"
-              selectedKeys={[filterDomain]}
-              onSelectionChange={(keys) => setFilterDomain(Array.from(keys)[0] as any)}
-              variant="bordered"
-              size="sm"
-            >
-              <SelectItem key="sales">Sales</SelectItem>
-              <SelectItem key="purchases">Purchases</SelectItem>
-              <SelectItem key="custom">Unrestricted</SelectItem>
-            </Select>
-            <p className="text-xs text-gray-500 mt-1">Payroll rates (PAYE, SSNIT, Tier 2/3) live under Payroll tax, not here.</p>
-          </div>
-          <div>
-            <span className="text-sm font-medium text-gray-700">Search rules</span>
-            <Input className="mt-1.5" placeholder="Name or GL code" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} variant="bordered" size="sm" />
-          </div>
+      {/* Which bills this list is about. The stored domain and the tax maths stay the same. */}
+      <div className="space-y-2">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          {([
+            ['sales', 'Guest bills', 'Added to a guest bill. VAT, NHIL, and GETFund can still be claimed back on a supplier bill.'],
+            ['purchases', 'Supplier bills', 'Withheld from a supplier. Not added to a guest bill.'],
+            ['both', 'Both', 'Guest-bill taxes and supplier withholding, in one list.'],
+          ] as const).map(([key, title, detail]) => {
+            const selected = filterDomain === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => setFilterDomain(key)}
+                className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                  selected
+                    ? 'border-ghana-green bg-ghana-green/10'
+                    : 'border-default-200 bg-white hover:border-default-400'
+                }`}
+              >
+                <span className={`block text-sm font-semibold ${selected ? 'text-ghana-green' : 'text-gray-900'}`}>{title}</span>
+                <span className="mt-0.5 block text-xs text-gray-500">{detail}</span>
+              </button>
+            );
+          })}
         </div>
-        <div className="flex flex-wrap gap-2 shrink-0">
-          <Button size="sm" variant="bordered" onPress={onOpenType}>+ Tax Type</Button>
-          <Button size="sm" className="bg-ghana-green text-white" onPress={() => handleOpenModal()}>+ Tax Rule</Button>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <p className="text-xs text-gray-500">Staff income tax is on the Payroll tax tab.</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input className="w-44" placeholder="Name or GL code" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} variant="bordered" size="sm" aria-label="Search rules" />
+            <Button size="sm" variant="bordered" onPress={onOpenType}>+ Tax Type</Button>
+            <Button size="sm" className="bg-ghana-green text-white" onPress={() => handleOpenModal()}>+ Tax Rule</Button>
+          </div>
         </div>
       </div>
 
@@ -911,41 +916,7 @@ export default function TaxRateBuilder() {
           <Tab key="types" title={`Tax Types (${countryTypesCount})`} />
           <Tab key="simulator" title="Simulator" />
         </Tabs>
-        {countryQuickApply && (
-          <Accordion
-            variant="bordered"
-            className="min-w-0 flex-1 sm:max-w-xs"
-            itemClasses={{
-              base: 'px-2',
-              title: 'text-xs font-medium',
-              trigger: 'py-1.5 min-h-9 gap-2',
-              content: 'pt-0 pb-2',
-            }}
-          >
-            <AccordionItem
-              key="country-ref"
-              aria-label="Country tax reference"
-              title={`${getCountryFlag(selectedCountry)} Loaded sales rules`}
-            >
-              <div className="flex flex-col gap-2">
-                <p className="text-xs text-gray-600">
-                  {salesRulesSummary}
-                  {countryQuickApply.note ? ` — ${countryQuickApply.note}` : ''}
-                </p>
-                <Button
-                  size="sm"
-                  className="bg-ghana-green text-white shrink-0 self-start"
-                  onPress={reApplyCountryTemplate}
-                  isLoading={isApplyingTemplate}
-                >
-                  Apply country template
-                </Button>
-              </div>
-            </AccordionItem>
-          </Accordion>
-        )}
       </div>
-
       <Tabs
         selectedKey={workspaceTab}
         onSelectionChange={(key) => setWorkspaceTab(key as 'rules' | 'types' | 'simulator')}
@@ -966,7 +937,7 @@ export default function TaxRateBuilder() {
                   {taxRules.filter((r) => r.countryCode === selectedCountry).length > filteredRules.length
                     ? ` (${taxRules.filter((r) => r.countryCode === selectedCountry).length} total for country)`
                     : ''}
-                  {' '}· syncs to accounting on save
+                  {' '}· used on bills after you save
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -999,8 +970,8 @@ export default function TaxRateBuilder() {
                   <TableColumn>TYPE</TableColumn>
                   <TableColumn>RATE</TableColumn>
                   <TableColumn>GL</TableColumn>
-                  <TableColumn>INPUT TAX</TableColumn>
-                  <TableColumn>PRIORITY</TableColumn>
+                  <TableColumn>CLAIM BACK</TableColumn>
+                  <TableColumn>ORDER</TableColumn>
                   <TableColumn>ACTIONS</TableColumn>
                 </TableHeader>
                 <TableBody emptyContent="No rules match these filters. Add a rule or adjust filters.">
@@ -1025,7 +996,7 @@ export default function TaxRateBuilder() {
                           variant="flat"
                           size="sm"
                         >
-                          {ruleIsClaimable(rule) ? 'Claimable' : 'Not claimable'}
+                          {ruleIsClaimable(rule) ? 'Yes' : 'No'}
                         </Chip>
                       </TableCell>
                       <TableCell>
@@ -1078,26 +1049,47 @@ export default function TaxRateBuilder() {
                       updates it to the template's current rates rather than duplicating it.
                     </p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      {availableTemplates.map(({ key, meta, ruleCount }) => (
-                        <div key={key} className="flex items-center justify-between gap-3 p-3 rounded-lg border border-default-200">
-                          <div>
-                            <p className="text-sm font-medium">{meta!.title}</p>
-                            <p className="text-xs text-gray-500">
-                              {taxAreaLabel(meta!.domain)} · {ruleCount} rule{ruleCount === 1 ? '' : 's'}
-                            </p>
+                      {availableTemplates.map(({ key, meta, ruleCount }) => {
+                        const open = openTemplateKey === key;
+                        const templateRules = open ? buildTemplateRules(key, selectedCountry) : [];
+                        return (
+                        <div
+                          key={key}
+                          className={`rounded-lg border cursor-pointer ${open ? 'border-ghana-green' : 'border-default-200 hover:border-default-400'}`}
+                          onClick={() => setOpenTemplateKey(open ? null : key)}
+                        >
+                          <div className="flex items-center justify-between gap-3 p-3">
+                            <div>
+                              <p className="text-sm font-medium">{meta!.title}</p>
+                              <p className="text-xs text-gray-500">
+                                {taxAreaLabel(meta!.domain)} · {ruleCount} rule{ruleCount === 1 ? '' : 's'}
+                              </p>
+                            </div>
+                            <div onClick={(e) => e.stopPropagation()}>
+                              <Button
+                                size="sm"
+                                variant="flat"
+                                className="bg-ghana-green text-white shrink-0"
+                                isLoading={applyingTemplateKey === key}
+                                isDisabled={isApplyingTemplate && applyingTemplateKey !== key}
+                                onPress={() => applyTemplate(key)}
+                              >
+                                Apply
+                              </Button>
+                            </div>
                           </div>
-                          <Button
-                            size="sm"
-                            variant="flat"
-                            className="bg-ghana-green text-white shrink-0"
-                            isLoading={applyingTemplateKey === key}
-                            isDisabled={isApplyingTemplate && applyingTemplateKey !== key}
-                            onPress={() => applyTemplate(key)}
-                          >
-                            Apply
-                          </Button>
+                          {open && (
+                            <ul className="px-3 pb-3 text-xs text-gray-600 space-y-0.5">
+                              {templateRules.map((rule) => (
+                                <li key={String(rule.name)}>
+                                  {String(rule.name)} {String(rule.rate)}% · GL {String(rule.glCode)}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </AccordionItem>
                 </Accordion>
@@ -1106,23 +1098,21 @@ export default function TaxRateBuilder() {
                 {(taxTypes || [])
                   .filter((t) => t.countryCode === selectedCountry)
                   .filter((t) => !typeSearch.trim() ? true : (t.name.toLowerCase().includes(typeSearch.toLowerCase()) || (t.description || '').toLowerCase().includes(typeSearch.toLowerCase())))
-                  .filter((t) => (filterDomain ? ((t as any).domain || 'sales') === filterDomain || (t as any).domain === 'custom' : true))
+                  .filter((t) => matchesTaxAreaFilter((t as any).domain, filterDomain))
                   .map((t) => {
                     const count = taxRules.filter((r) => r.countryCode === selectedCountry && (r as any).typeId === t.id).length;
                     const selected = selectedTypeId === t.id;
                     return (
                       <Card
                         key={t.id}
-                        isPressable
-                        className={`border transition-shadow ${selected ? 'border-ghana-green shadow-md' : 'border-default-200 hover:border-default-400'}`}
-                        onPress={() => { setSelectedTypeId(String(t.id)); setWorkspaceTab('rules'); }}
+                        className={`border transition-shadow cursor-pointer ${selected ? 'border-ghana-green shadow-md' : 'border-default-200 hover:border-default-400'}`}
                       >
-                        <CardBody className="gap-2">
+                        <CardBody className="gap-2" onClick={() => { setSelectedTypeId(String(t.id)); setWorkspaceTab('rules'); }}>
                           <div className="flex items-start justify-between gap-2">
                             <div>
                               <p className={`font-medium ${selected ? 'text-ghana-green' : ''}`}>{t.name}</p>
                               <p className="text-xs text-gray-500 mt-0.5">
-                                {taxAreaLabel((t as any).domain)} · {(t as any).operation || 'both'}
+                                {taxAreaLabel((t as any).domain)}
                               </p>
                               {getTaxTypeUsage((t as any).domain) && (
                                 <p className="text-xs text-ghana-green mt-0.5">Used in: {getTaxTypeUsage((t as any).domain)}</p>
@@ -1172,9 +1162,8 @@ export default function TaxRateBuilder() {
                 <Input label="Amount" type="number" value={String(sim.amount)} onChange={(e) => setSim({ ...sim, amount: parseFloat(e.target.value || '0') })} variant="bordered" size="sm" />
                 <Input label="Category" value={sim.category} onChange={(e) => setSim({ ...sim, category: e.target.value })} variant="bordered" size="sm" />
                 <Select label="Tax Area" selectedKeys={[sim.domain]} onSelectionChange={(k) => setSim({ ...sim, domain: Array.from(k)[0] as any })} variant="bordered" size="sm">
-                  <SelectItem key="sales">Sales</SelectItem>
-                  <SelectItem key="purchases">Purchases</SelectItem>
-                  <SelectItem key="custom">Unrestricted</SelectItem>
+                  <SelectItem key="sales">Sales only</SelectItem>
+                  <SelectItem key="purchases">Purchases only</SelectItem>
                 </Select>
                 <div className="flex flex-col justify-end">
                   <span className="text-xs text-gray-500">Centre</span>
@@ -1235,16 +1224,16 @@ export default function TaxRateBuilder() {
                 <div>
                   <label className="text-sm font-medium">Tax Area <span className="text-danger-600">*</span></label>
                   <Select selectedKeys={[typeForm.domain]} onSelectionChange={(k) => setTypeForm(prev => ({ ...prev, domain: Array.from(k)[0] as any }))} isRequired variant="bordered">
-                    <SelectItem key="sales">Sales</SelectItem>
-                    <SelectItem key="purchases">Purchases</SelectItem>
+                    <SelectItem key="custom">Both sales and purchases</SelectItem>
+                    <SelectItem key="sales">Sales only</SelectItem>
+                    <SelectItem key="purchases">Purchases only</SelectItem>
                     <SelectItem key="payroll">Payroll</SelectItem>
-                    <SelectItem key="custom">Unrestricted</SelectItem>
                   </Select>
                 </div>
               </div>
               <div>
                 <label className="text-sm font-medium flex items-center gap-1">Centre
-                  <Tooltip content="Follows Tax Area automatically — Sales is always Revenue Centre, Purchases and Payroll are always Cost Centre.">
+                  <Tooltip content="Follows the tax area. Sales only is the revenue centre. Purchases only and Payroll are the cost centre. Both covers both centres.">
                     <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-700 text-xs cursor-help ml-1">i</span>
                   </Tooltip>
                 </label>
@@ -1347,24 +1336,38 @@ export default function TaxRateBuilder() {
             <div className="space-y-4">
               {/* Status removed: Active moved next to Tax Type below */}
 
-              {/* Tax Type Context (selection happens in cards above) */}
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-4 items-end">
                 <div>
-                <label className="text-sm font-medium">Tax Type <span className="text-danger-600">*</span></label>
-                <div className="mt-1 flex items-center justify-between gap-4">
-                  {selectedTypeId ? (
-                    <div className="flex items-center gap-2">
-                      <Chip variant="flat">{(taxTypes || []).find(t => t.id === selectedTypeId)?.name || 'Selected Type'}</Chip>
-                        </div>
-                  ) : (
-                    <div className="text-xs text-danger-600">Select a Tax Type from the list above to add rules under it.</div>
-                  )}
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-600">Active</span>
-                    <Switch
-                      isSelected={formData.isActive}
-                      onValueChange={(value) => setFormData(prev => ({ ...prev, isActive: value }))}
-                    />
-                  </div>
+                  <label className="text-sm font-medium">Tax type <span className="text-danger-600">*</span></label>
+                  <Select
+                    className="mt-1"
+                    placeholder="Which group this rule belongs to"
+                    selectedKeys={formData.typeId ? [String(formData.typeId)] : []}
+                    onSelectionChange={(keys) => {
+                      const id = String(Array.from(keys)[0] || '');
+                      const type = (taxTypes || []).find((t) => String(t.id) === id);
+                      setSelectedTypeId(id || null);
+                      setFormData((prev) => ({
+                        ...prev,
+                        typeId: id,
+                        domain: (type as any)?.domain || prev.domain,
+                      }));
+                    }}
+                    variant="bordered"
+                  >
+                    {(taxTypes || [])
+                      .filter((t) => t.countryCode === selectedCountry)
+                      .map((t) => (
+                        <SelectItem key={String(t.id)}>{t.name}</SelectItem>
+                      ))}
+                  </Select>
+                </div>
+                <div className="flex items-center gap-2 pb-2">
+                  <span className="text-sm text-gray-600">Active</span>
+                  <Switch
+                    isSelected={formData.isActive}
+                    onValueChange={(value) => setFormData(prev => ({ ...prev, isActive: value }))}
+                  />
                 </div>
               </div>
 
@@ -1438,20 +1441,38 @@ export default function TaxRateBuilder() {
                 </div>
               </div>
 
-              {/* Description */}
-              <div>
-                <label className="text-sm font-medium">Description (Optional)</label>
-                <Textarea
-                  placeholder="Enter description for this tax rule..."
-                  value={formData.description}
-                  onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                  variant="bordered"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium">What it does</label>
+                  <Select
+                    className="mt-1"
+                    selectedKeys={[formData.effect || 'add']}
+                    onSelectionChange={(keys) => {
+                      const selectedKey = Array.from(keys)[0] as any;
+                      setFormData(prev => ({ ...prev, effect: selectedKey }));
+                    }}
+                    variant="bordered"
+                  >
+                    <SelectItem key="add">Add to the bill</SelectItem>
+                    <SelectItem key="subtract">Withhold from the payment</SelectItem>
+                    <SelectItem key="exclude_total">Track only</SelectItem>
+                    <SelectItem key="informational">Show on the paper only</SelectItem>
+                  </Select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Description (optional)</label>
+                  <Input
+                    className="mt-1"
+                    placeholder="Short note"
+                    value={formData.description}
+                    onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                  />
+                </div>
               </div>
 
-              {/* Advanced Settings */}
-              <Divider className="my-2" />
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Accordion variant="bordered">
+                <AccordionItem key="more" aria-label="More options" title="More options">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pb-2">
                 <div>
                   <label className="text-sm font-medium flex items-center gap-1"> 
                     <span>Calculation Order</span>
@@ -1660,7 +1681,7 @@ export default function TaxRateBuilder() {
                 </div>
                 <div>
                   <label className="text-sm font-medium flex items-center gap-1">Tax Area
-                    <Tooltip content="Which part of the business this rule belongs to: Sales/Revenue, Purchases/Procurement, Payroll, or Unrestricted (matches regardless of area). Centre (Cost vs Revenue) is chosen separately.">
+                    <Tooltip content="Sales only is guest bills. Purchases only is supplier bills and withholding. Both applies on guest bills and on supplier bills.">
                       <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-700 text-xs cursor-help ml-1">i</span>
                     </Tooltip>
                   </label>
@@ -1673,10 +1694,10 @@ export default function TaxRateBuilder() {
                     isDisabled={Boolean(selectedTypeId || formData.typeId)}
                     variant="bordered"
                   >
-                    <SelectItem key="sales">Sales</SelectItem>
-                    <SelectItem key="purchases">Purchases</SelectItem>
+                    <SelectItem key="custom">Both sales and purchases</SelectItem>
+                    <SelectItem key="sales">Sales only</SelectItem>
+                    <SelectItem key="purchases">Purchases only</SelectItem>
                     <SelectItem key="payroll">Payroll</SelectItem>
-                    <SelectItem key="custom">Unrestricted</SelectItem>
                   </Select>
                   {Boolean(selectedTypeId || formData.typeId) && (
                     <div className="text-xs text-gray-500 mt-1">Inherited from selected tax type</div>
@@ -1684,7 +1705,7 @@ export default function TaxRateBuilder() {
                 </div>
                 <div>
                   <label className="text-sm font-medium flex items-center gap-1">Centre
-                    <Tooltip content="Follows Tax Area automatically — Sales is always Revenue Centre, Purchases and Payroll are always Cost Centre.">
+                    <Tooltip content="Follows the tax area. Sales only is the revenue centre. Purchases only and Payroll are the cost centre. Both covers both centres.">
                       <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-700 text-xs cursor-help ml-1">i</span>
                     </Tooltip>
                   </label>
@@ -1697,26 +1718,6 @@ export default function TaxRateBuilder() {
                     </div>
                   )}
                 </div>
-                <div>
-                  <label className="text-sm font-medium flex items-center gap-1">Effect
-                    <Tooltip content="Add: increases the total (most taxes — VAT, NHIL, levies). Subtract: reduces what's paid out (e.g. resident Withholding Tax). Exclude from Total: tracked for reporting but not added/subtracted (e.g. a zero-rated line). Informational: shown on the document but doesn't affect any total.">
-                      <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-700 text-xs cursor-help ml-1">i</span>
-                    </Tooltip>
-                  </label>
-                  <Select
-                    selectedKeys={[formData.effect || 'add']}
-                    onSelectionChange={(keys) => {
-                      const selectedKey = Array.from(keys)[0] as any;
-                      setFormData(prev => ({ ...prev, effect: selectedKey }));
-                    }}
-                    variant="bordered"
-                  >
-                    <SelectItem key="add">Add to Total</SelectItem>
-                    <SelectItem key="subtract">Subtract (Withholding)</SelectItem>
-                    <SelectItem key="exclude_total">Exclude from Total</SelectItem>
-                    <SelectItem key="informational">Informational Only</SelectItem>
-                  </Select>
-                </div>
                 <div className="sm:col-span-2">
                   <Switch
                     isSelected={Boolean(formData.isRecoverable)}
@@ -1725,7 +1726,7 @@ export default function TaxRateBuilder() {
                     Claimable on purchases (input tax)
                   </Switch>
                   <p className="text-xs text-gray-500 mt-1">
-                    On for Ghana VAT today. Off for NHIL, GETFund, Tourism, and withholding. Turn on later if the law lets you reclaim that levy on purchases; turn off if VAT stops being claimable.
+                    On for VAT, NHIL, and GETFund (claimable on supplier bills). Off for the Tourism levy and for withholding.
                   </p>
                 </div>
                 <div>
@@ -1747,13 +1748,15 @@ export default function TaxRateBuilder() {
                   />
                 </div>
               </div>
+                </AccordionItem>
+              </Accordion>
             </div>
           </ModalBody>
           <ModalFooter>
             <Button variant="bordered" onPress={onClose}>
               Cancel
             </Button>
-            <Button 
+            <Button
               className="bg-ghana-green text-white"
               onPress={handleSave}
               isDisabled={!formData.name || !formData.glCode || !formData.typeId}

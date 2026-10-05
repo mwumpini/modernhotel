@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@heroui/react';
 import { DEFAULT_MONTHLY_FEE, todayISO } from '@/app/lib/platform/billing';
+import { allPaidModulesOn, frontDeskOnly, PAID_MODULES, type PaidModules } from '@/app/lib/platform/hotelModules';
 
 type Hosting = 'cloud' | 'local' | 'sync';
 type DeskTab = 'overview' | 'payments' | 'reports';
@@ -27,6 +28,7 @@ type Hotel = {
   paidUntil: string | null;
   paymentDue: boolean;
   payments?: FeePayment[];
+  modules: PaidModules;
   createdAt: string;
 };
 
@@ -102,6 +104,7 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
   const [adminName, setAdminName] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [modules, setModules] = useState<PaidModules>(frontDeskOnly);
 
   const load = async () => {
     setError('');
@@ -163,6 +166,7 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
     setHosting('cloud');
     setFee(String(DEFAULT_MONTHLY_FEE.cloud));
     setFeeTouched(false);
+    setModules(frontDeskOnly());
   };
 
   const createHotel = async (e: React.FormEvent) => {
@@ -180,14 +184,14 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
       const res = await fetch('/api/platform/tenants', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, subdomain, hosting, monthlyFee, adminName, adminEmail, password }),
+        body: JSON.stringify({ name, subdomain, hosting, monthlyFee, adminName, adminEmail, password, modules }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.error || 'Could not open this hotel.');
         return;
       }
-      setNotice(`${data.name} is open. The admin signs in with hotel address “${data.subdomain}” and ${data.adminEmail}.`);
+      setNotice(`${data.name} is open. The admin signs in with Tenant ID “${data.subdomain}” and ${data.adminEmail}.`);
       resetForm();
       setCreating(false);
       await load();
@@ -264,6 +268,27 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
     }
   };
 
+  const saveModules = async (hotel: Hotel, next: PaidModules) => {
+    setError('');
+    setBusy('modules');
+    try {
+      const res = await fetch(`/api/platform/tenants/${hotel.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modules: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || 'Could not update the modules.');
+        return;
+      }
+      setHotels((rows) => rows.map((row) => (row.id === hotel.id ? { ...row, ...data } : row)));
+      await refreshSelected(hotel.id);
+    } finally {
+      setBusy('');
+    }
+  };
+
   const chooseHosting = (value: Hosting) => {
     setHosting(value);
     if (!feeTouched) setFee(String(DEFAULT_MONTHLY_FEE[value]));
@@ -319,6 +344,7 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
             }}
             onStatus={setStatus}
             onPaid={markPaid}
+            onModules={saveModules}
             onDeleteAsk={() => setDeleteOpen(true)}
             onDeleteText={setDeleteText}
             onDelete={deleteHotel}
@@ -381,7 +407,7 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
             <form id="open-hotel" onSubmit={createHotel} className="space-y-4 pb-2">
               <div className="grid gap-4 sm:grid-cols-2">
                 <Input label="Hotel name" value={name} onChange={(e) => setName(e.target.value)} isRequired variant="bordered" classNames={fieldClass} />
-                <Input label="Web address" description="Short name they type at sign-in, such as sunrise" value={subdomain} onChange={(e) => setSubdomain(e.target.value)} isRequired variant="bordered" classNames={fieldClass} />
+                <Input label="Tenant ID" description="What they type at sign-in, such as sunrise" value={subdomain} onChange={(e) => setSubdomain(e.target.value)} isRequired variant="bordered" classNames={fieldClass} />
               </div>
               <fieldset>
                 <legend className="mb-2 text-sm font-medium text-ghana-black">Where it runs</legend>
@@ -398,6 +424,26 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
                   ))}
                 </div>
                 <p className="mt-2 text-xs text-gray-500">{HOSTING_OPTIONS.find((option) => option.value === hosting)?.hint}</p>
+              </fieldset>
+              <fieldset>
+                <legend className="mb-2 text-sm font-medium text-ghana-black">Modules they are paying for</legend>
+                <div className="flex flex-wrap gap-2">
+                  {PAID_MODULES.map((mod) => {
+                    const on = modules[mod.key];
+                    return (
+                      <button
+                        key={mod.key}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() => setModules((current) => ({ ...current, [mod.key]: !current[mod.key] }))}
+                        className={`rounded-full border px-3 py-1.5 text-sm font-medium ${on ? 'border-ghana-green bg-ghana-green text-white' : 'border-gray-300 bg-white text-gray-700'}`}
+                      >
+                        {mod.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 text-xs text-gray-500">Front desk starts on. A restaurant with no rooms can turn the front desk off and leave Restaurant & bar on.</p>
               </fieldset>
               <Input
                 type="number"
@@ -546,7 +592,7 @@ function CompanyFinancials({
       <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
         {sheet === 'fees' && (
           <MoneyTable
-            columns={['Hotel', 'Web address', 'Monthly fee', 'Paid until', 'Standing']}
+            columns={['Hotel', 'Tenant ID', 'Monthly fee', 'Paid until', 'Standing']}
             empty="No hotel is on a monthly fee yet."
             rows={hotels.map((hotel) => ({
               warn: hotel.paymentDue,
@@ -755,6 +801,7 @@ function HotelDesk({
   onBack,
   onStatus,
   onPaid,
+  onModules,
   onDeleteAsk,
   onDeleteText,
   onDelete,
@@ -770,6 +817,7 @@ function HotelDesk({
   onBack: () => void;
   onStatus: (hotel: Hotel, status: 'active' | 'suspended') => void;
   onPaid: (hotel: Hotel) => void;
+  onModules: (hotel: Hotel, modules: PaidModules) => void;
   onDeleteAsk: () => void;
   onDeleteText: (value: string) => void;
   onDelete: (hotel: Hotel) => void;
@@ -816,12 +864,34 @@ function HotelDesk({
       {tab === 'overview' && (
         <section className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
-            <Fact label="Web address" value={detail.subdomain} />
+            <Fact label="Tenant ID" value={detail.subdomain} />
             <Fact label="Where it runs" value={hostingLabel(detail.hosting)} />
             <Fact label="Opened" value={formatDay(detail.createdAt)} />
             <Fact label="First admin" value={detail.adminName ? `${detail.adminName}${detail.adminEmail ? ` · ${detail.adminEmail}` : ''}` : 'No admin on file'} />
             <Fact label="Last sign-in" value={detail.lastLoginAt ? formatWhen(detail.lastLoginAt) : 'Has not signed in'} />
             <Fact label="Monthly fee" value={detail.monthlyFee == null ? 'Not billed' : cedis(detail.monthlyFee)} />
+          </div>
+          <div className="rounded-2xl border border-gray-200 bg-white p-4">
+            <h3 className="text-sm font-semibold text-ghana-black">Modules</h3>
+            <p className="mt-1 text-xs text-gray-500">What this hotel has paid for. The hotel cannot turn these on.</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {PAID_MODULES.map((mod) => {
+                const current = detail.modules ?? allPaidModulesOn();
+                const on = current[mod.key] === true;
+                return (
+                  <button
+                    key={mod.key}
+                    type="button"
+                    aria-pressed={on}
+                    disabled={busy === 'modules'}
+                    onClick={() => onModules(detail, { ...current, [mod.key]: !on })}
+                    className={`rounded-full border px-3 py-1.5 text-sm font-medium ${on ? 'border-ghana-green bg-ghana-green text-white' : 'border-gray-300 bg-white text-gray-700'}`}
+                  >
+                    {mod.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
           <div className="flex flex-wrap gap-2">
             {detail.status === 'suspended' ? (
@@ -834,7 +904,7 @@ function HotelDesk({
           {deleteOpen && (
             <div className="max-w-md space-y-3 rounded-2xl border border-red-200 bg-red-50 p-4">
               <p className="text-sm text-red-800">This removes the hotel and everything inside it. Type <span className="font-semibold">{detail.subdomain}</span> to confirm.</p>
-              <Input label="Web address" value={deleteText} onChange={(e) => onDeleteText(e.target.value)} variant="bordered" classNames={fieldClass} />
+              <Input label="Tenant ID" value={deleteText} onChange={(e) => onDeleteText(e.target.value)} variant="bordered" classNames={fieldClass} />
               <Button color="danger" isLoading={busy === 'delete'} isDisabled={deleteText.trim().toLowerCase() !== detail.subdomain} onPress={() => onDelete(detail)}>Delete hotel</Button>
             </div>
           )}

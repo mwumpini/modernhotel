@@ -6,11 +6,14 @@ import {
   Card,
   CardBody,
   Chip,
+  Input,
   Modal,
   ModalBody,
   ModalContent,
   ModalFooter,
   ModalHeader,
+  Select,
+  SelectItem,
   Tab,
   Tabs,
   Table,
@@ -28,9 +31,14 @@ import {
   dueDateLabel,
   formatDueDateForSchedule,
   getDaysUntilDueForSchedule,
+  getNextDueDateForSchedule,
   scheduleInputFromRule as scheduleInput,
+  toIsoDateLocal,
+  type DueRule,
 } from '@/app/lib/compliance/dueDates';
 import { syncOpenSalesTaxFilings } from '@/app/lib/compliance/salesFilingSync';
+import { getClientTenantSubdomain } from '@/app/lib/api/clientTenant';
+import { normalizeTenantSubdomain } from '@/app/lib/api/tenantSubdomain';
 import { worksheetTableClassNames } from './frontoffice/StayWorksheetTable';
 import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 import ComplianceHospitalityReference from './ComplianceHospitalityReference';
@@ -44,6 +52,47 @@ function latestFilingForRule(reports: ComplianceReport[], rule: ReportingRule): 
   return reports
     .filter((r) => r.countryCode === rule.countryCode && r.reportType === rule.reportType)
     .sort((a, b) => (b.period || '').localeCompare(a.period || ''))[0];
+}
+
+function filingHeaders(): HeadersInit {
+  const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
+  return { 'x-tenant-subdomain': sub, 'x-tenant-id': sub, 'Content-Type': 'application/json' };
+}
+
+type DueKind = DueRule['type'];
+
+function dueKindOf(rule: ReportingRule): DueKind {
+  const kind = rule.dueRule?.type as DueKind | undefined;
+  if (kind) return kind;
+  return 'dayOfFollowingMonth';
+}
+
+function buildDueRule(
+  kind: DueKind,
+  day: number,
+  days: number,
+  months: number,
+  datesText: string,
+): { rule: DueRule } | { error: string } {
+  if (kind === 'lastWorkingDayOfNextMonth') return { rule: { type: 'lastWorkingDayOfNextMonth' } };
+  if (kind === 'dayOfFollowingMonth') {
+    if (day < 1 || day > 28) return { error: 'Use a day from 1 to 28.' };
+    return { rule: { type: 'dayOfFollowingMonth', day } };
+  }
+  if (kind === 'daysAfterPeriodEnd') {
+    if (days < 1) return { error: 'Enter how many days after the period ends.' };
+    return { rule: { type: 'daysAfterPeriodEnd', days } };
+  }
+  if (kind === 'monthsAfterYearEnd') {
+    if (months < 1) return { error: 'Enter how many months after the year ends.' };
+    return { rule: { type: 'monthsAfterYearEnd', months } };
+  }
+  if (kind === 'quarterEndOfAccountingYear') return { rule: { type: 'quarterEndOfAccountingYear' } };
+  const dates = datesText.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+  if (!dates.length || dates.some((d) => !/^\d{2}-\d{2}$/.test(d))) {
+    return { error: 'Dates look like 03-31, 06-30, 09-30, 12-31.' };
+  }
+  return { rule: { type: 'fixedCalendarDates', dates } };
 }
 
 function filingStatusChip(filing: ComplianceReport | undefined, daysUntilDue: number) {
@@ -91,6 +140,9 @@ export default function ComplianceReports() {
   const reportingRulesAll = useComplianceStore((s) => s.reportingRules);
   const reports = useComplianceStore((s) => s.reports);
   const hydrateReportFilingsFromApi = useComplianceStore((s) => s.hydrateReportFilingsFromApi);
+  const updateReportingRule = useComplianceStore((s) => s.updateReportingRule);
+  const upsertReport = useComplianceStore((s) => s.upsertReport);
+  const updateReport = useComplianceStore((s) => s.updateReport);
 
   useEffect(() => {
     void hydrateReportFilingsFromApi().then(() => {
@@ -110,6 +162,16 @@ export default function ComplianceReports() {
   const filingSnapshots = useFilingSnapshots();
   const [viewTab, setViewTab] = useState<'schedule' | 'reference'>('schedule');
   const [selectedRule, setSelectedRule] = useState<ReportingRule | null>(null);
+  const [editFrequency, setEditFrequency] = useState<ReportingRule['frequency']>('Monthly');
+  const [editDueKind, setEditDueKind] = useState<DueKind>('lastWorkingDayOfNextMonth');
+  const [editDay, setEditDay] = useState('15');
+  const [editDays, setEditDays] = useState('30');
+  const [editMonths, setEditMonths] = useState('4');
+  const [editDates, setEditDates] = useState('03-31, 06-30, 09-30, 12-31');
+  const [editAmount, setEditAmount] = useState('');
+  const [editStatus, setEditStatus] = useState<ComplianceReport['status']>('pending');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const { isOpen, onOpen, onClose } = useDisclosure();
 
   const goPrepareFiling = () => {
@@ -124,8 +186,98 @@ export default function ComplianceReports() {
   };
 
   const openRuleDetail = (rule: ReportingRule) => {
+    const filing = latestFilingForRule(reports, rule);
+    const snapshot = filingSnapshots.get(rule.id);
+    const amount =
+      filing && filing.amount > 0
+        ? filing.amount
+        : snapshot && snapshot.suggestedAmount > 0
+          ? snapshot.suggestedAmount
+          : 0;
+    const ruleDates = rule.dueRule?.dates;
     setSelectedRule(rule);
+    setEditFrequency(rule.frequency);
+    setEditDueKind(dueKindOf(rule));
+    setEditDay(String(rule.dueRule?.day || rule.dueDay || 15));
+    setEditDays(String(rule.dueRule?.days || 30));
+    setEditMonths(String(rule.dueRule?.months || 4));
+    setEditDates(Array.isArray(ruleDates) && ruleDates.length ? ruleDates.join(', ') : '03-31, 06-30, 09-30, 12-31');
+    setEditAmount(amount > 0 ? String(amount) : '');
+    setEditStatus(filing?.status || 'pending');
+    setSaveError('');
     onOpen();
+  };
+
+  const saveRule = async () => {
+    if (!selectedRule) return;
+    const built = buildDueRule(
+      editDueKind,
+      Number(editDay),
+      Number(editDays),
+      Number(editMonths),
+      editDates,
+    );
+    if ('error' in built) {
+      setSaveError(built.error);
+      return;
+    }
+    setSaving(true);
+    setSaveError('');
+    const nextRule: ReportingRule = {
+      ...selectedRule,
+      frequency: editFrequency,
+      dueRule: built.rule,
+      dueDay: built.rule.type === 'dayOfFollowingMonth' ? built.rule.day : selectedRule.dueDay,
+      lastUpdated: new Date().toISOString(),
+    };
+    try {
+      const res = await fetch('/api/compliance/reports', {
+        method: 'PUT',
+        headers: filingHeaders(),
+        body: JSON.stringify(nextRule),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || 'Could not save this schedule');
+      }
+      const saved = (await res.json()) as ReportingRule;
+      updateReportingRule(saved);
+
+      const filing = latestFilingForRule(reports, selectedRule);
+      const snapshot = filingSnapshots.get(selectedRule.id);
+      const shownAmount =
+        filing && filing.amount > 0
+          ? filing.amount
+          : snapshot && snapshot.suggestedAmount > 0
+            ? snapshot.suggestedAmount
+            : 0;
+      const nextAmount = editAmount.trim() === '' ? 0 : Number(editAmount);
+      const amountChanged = Number.isFinite(nextAmount) && Math.abs(nextAmount - shownAmount) > 0.001;
+      const statusChanged = editStatus !== (filing?.status || 'pending');
+      if (amountChanged || statusChanged) {
+        const period = filing?.period || snapshot?.period || new Date().toISOString().slice(0, 7);
+        const dueDate = filing?.dueDate || toIsoDateLocal(getNextDueDateForSchedule(scheduleInput(saved)));
+        if (filing) {
+          updateReport(filing.id, { amount: nextAmount, status: editStatus, dueDate });
+        } else {
+          upsertReport({
+            countryCode: selectedRule.countryCode,
+            reportType: selectedRule.reportType,
+            period,
+            dueDate,
+            status: editStatus,
+            amount: nextAmount,
+            currency: 'GHS',
+          });
+        }
+      }
+      setSelectedRule(saved);
+      onClose();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Could not save this schedule');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const selectedRuleFilings = useMemo(() => {
@@ -276,7 +428,7 @@ export default function ComplianceReports() {
                             Prepare
                           </Button>
                           <Button size="sm" variant="light" onPress={() => openRuleDetail(rule)}>
-                            View
+                            Edit
                           </Button>
                         </div>
                       </TableCell>
@@ -298,58 +450,101 @@ export default function ComplianceReports() {
                 {selectedRule.reportType} filing
               </ModalHeader>
               <ModalBody>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <p className="text-gray-500">Frequency</p>
-                    <p className="font-medium">{selectedRule.frequency}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-500">Due rule</p>
-                    <p className="font-medium">{dueDateLabel(scheduleInput(selectedRule))}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-500">Next due</p>
-                    <p className="font-medium font-mono">
-                      {formatDueDateForSchedule(scheduleInput(selectedRule))}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-gray-500">Days left</p>
-                    <p className="font-medium">
-                      {getDaysUntilDueForSchedule(scheduleInput(selectedRule))} days
-                    </p>
-                  </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <Select
+                    label="Frequency"
+                    selectedKeys={[editFrequency]}
+                    onSelectionChange={(keys) => {
+                      const value = String(Array.from(keys)[0] || '');
+                      if (value === 'Monthly' || value === 'Quarterly' || value === 'Annually') setEditFrequency(value);
+                    }}
+                    variant="bordered"
+                  >
+                    <SelectItem key="Monthly">Monthly</SelectItem>
+                    <SelectItem key="Quarterly">Quarterly</SelectItem>
+                    <SelectItem key="Annually">Annually</SelectItem>
+                  </Select>
+                  <Select
+                    label="Due rule"
+                    selectedKeys={[editDueKind]}
+                    onSelectionChange={(keys) => {
+                      const value = String(Array.from(keys)[0] || '') as DueKind;
+                      if (value) setEditDueKind(value);
+                    }}
+                    variant="bordered"
+                  >
+                    <SelectItem key="lastWorkingDayOfNextMonth">Last working day of next month</SelectItem>
+                    <SelectItem key="dayOfFollowingMonth">A day of the following month</SelectItem>
+                    <SelectItem key="daysAfterPeriodEnd">Days after the period ends</SelectItem>
+                    <SelectItem key="quarterEndOfAccountingYear">End of each accounting quarter</SelectItem>
+                    <SelectItem key="monthsAfterYearEnd">Months after the year ends</SelectItem>
+                    <SelectItem key="fixedCalendarDates">Fixed dates each year</SelectItem>
+                  </Select>
+                  {editDueKind === 'dayOfFollowingMonth' && (
+                    <Input
+                      type="number"
+                      label="Day of the following month"
+                      value={editDay}
+                      onChange={(e) => setEditDay(e.target.value)}
+                      variant="bordered"
+                    />
+                  )}
+                  {editDueKind === 'daysAfterPeriodEnd' && (
+                    <Input
+                      type="number"
+                      label="Days after the period ends"
+                      value={editDays}
+                      onChange={(e) => setEditDays(e.target.value)}
+                      variant="bordered"
+                    />
+                  )}
+                  {editDueKind === 'monthsAfterYearEnd' && (
+                    <Input
+                      type="number"
+                      label="Months after the year ends"
+                      value={editMonths}
+                      onChange={(e) => setEditMonths(e.target.value)}
+                      variant="bordered"
+                    />
+                  )}
+                  {editDueKind === 'fixedCalendarDates' && (
+                    <Input
+                      className="sm:col-span-2"
+                      label="Dates (month-day)"
+                      value={editDates}
+                      onChange={(e) => setEditDates(e.target.value)}
+                      variant="bordered"
+                    />
+                  )}
+                  <Input
+                    type="number"
+                    label="Amount (GHS)"
+                    value={editAmount}
+                    onChange={(e) => setEditAmount(e.target.value)}
+                    variant="bordered"
+                  />
+                  <Select
+                    label="Status"
+                    selectedKeys={[editStatus]}
+                    onSelectionChange={(keys) => {
+                      const value = String(Array.from(keys)[0] || '') as ComplianceReport['status'];
+                      if (value) setEditStatus(value);
+                    }}
+                    variant="bordered"
+                  >
+                    <SelectItem key="pending">Pending</SelectItem>
+                    <SelectItem key="submitted">Submitted</SelectItem>
+                    <SelectItem key="approved">Approved</SelectItem>
+                    <SelectItem key="rejected">Rejected</SelectItem>
+                  </Select>
                 </div>
+                <p className="text-xs text-gray-500">
+                  Next due and days left follow the due rule. The report name stays.
+                </p>
+                {saveError && <p className="text-sm text-danger-600">{saveError}</p>}
                 {selectedRule.description && (
                   <p className="mt-3 text-sm text-gray-600">{selectedRule.description}</p>
                 )}
-
-                {(() => {
-                  const snapshot = filingSnapshots.get(selectedRule.id);
-                  const filing = latestFilingForRule(reports, selectedRule);
-                  const amount =
-                    filing && filing.amount > 0
-                      ? filing.amount
-                      : snapshot && snapshot.suggestedAmount > 0
-                        ? snapshot.suggestedAmount
-                        : 0;
-                  if (amount <= 0) return null;
-                  return (
-                    <div className="mt-3 rounded-lg bg-slate-50 p-3 text-sm">
-                      <p className="text-gray-500">Amount</p>
-                      <p className="font-mono font-semibold">GHS {money(amount)}</p>
-                      {filing?.period && (
-                        <p className="text-xs text-gray-400">Period {filing.period} · {filing.status}</p>
-                      )}
-                      {!filing && snapshot?.source && snapshot.source !== 'none' && (
-                        <p className="text-xs text-gray-400 capitalize">
-                          Suggested from {snapshot.source}
-                          {snapshot.detail ? ` — ${snapshot.detail}` : ''}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })()}
 
                 <div className="mt-4">
                   <p className="mb-2 text-xs font-medium uppercase text-gray-500">Required fields</p>
@@ -409,8 +604,11 @@ export default function ComplianceReports() {
                 </div>
               </ModalBody>
               <ModalFooter>
-                <Button variant="light" onPress={onClose}>
-                  Close
+                <Button variant="light" onPress={onClose} isDisabled={saving}>
+                  Cancel
+                </Button>
+                <Button className="bg-ghana-green text-white" onPress={saveRule} isLoading={saving}>
+                  Save
                 </Button>
                 <Button
                   color="primary"

@@ -15,6 +15,9 @@ export type PrintType =
   | 'event-proforma'
   | 'event-invoice'
   | 'event-receipt'
+  // Event services contract. Its own type so a contract layout never changes
+  // an invoice or proforma. The wording lives on the template.
+  | 'event-contract'
   // Printed at check-in — guest/stay details + signature, no charges (nothing's
   // been billed yet). Kept as its own type rather than reusing 'accommodation-proforma'
   // so customizing one never silently changes the other (same reasoning as the
@@ -205,6 +208,8 @@ export interface PrintData {
   /** Payment Voucher lines — debit/credit rather than qty/price. When present, the
    *  line-items-table block renders these columns instead of `items`. */
   debitCreditLines?: PrintDebitCreditLine[];
+  /** Event contract: the event details shown in the {{event.summary}} block (one line per detail). */
+  event?: { summary?: string };
   /** Day-by-day category matrix (see PrintMatrixTable) — when present, the
    *  matrix-table block renders this instead of a plain items list. */
   matrixTable?: PrintMatrixTable;
@@ -241,6 +246,13 @@ function cssBase() {
     .right { text-align:right; }
     .bill-grid { width:max-content; min-width:50%; max-width:100%; margin-left:auto; border:1px solid var(--border); box-sizing:border-box; }
     .bill-grid table { width:100%; margin:0; border:none; }
+    table.data-grid { border-collapse:collapse; border:none; }
+    table.data-grid th, table.data-grid td { border:1px solid var(--border); }
+    .right { text-align:right; }
+    .bill-grid { width:max-content; min-width:50%; max-width:100%; margin-left:auto; border:1px solid var(--border); box-sizing:border-box; }
+    .bill-grid table { width:100%; margin:0; border:none; }
+    table.totals { border:none; }
+    .totals td { border:none; }
     .bill-grid .lbl { white-space:nowrap; }
     .bill-grid .amt { white-space:nowrap; min-width:11em; text-align:right; font-weight:600; }
     .footer { margin-top:16px; font-size:11px; color:var(--muted); }
@@ -304,10 +316,7 @@ function itemsTable(items: PrintLineItem[], currency: string) {
     </tr>
   `).join('');
   return `
-  <table>
-    <thead>
-      <tr><th>#</th><th>Description</th><th class="right">Qty</th><th>Unit</th><th class="right">Rate</th><th class="right">Amount</th></tr>
-    </thead>
+  <table class="data-grid">
     <tbody>${rows}</tbody>
   </table>`;
 }
@@ -413,6 +422,8 @@ export const printTemplates: Record<PrintType, Record<string, (p: PrintData) => 
   'event-proforma': {},
   'event-invoice': {},
   'event-receipt': {},
+  // Block builder only (see blockDefaults 'event-contract').
+  'event-contract': {},
   'registration-card': {},
   'fb-receipt': {},
   // No legacy hand-written variants — payslip only ever existed in the block builder.

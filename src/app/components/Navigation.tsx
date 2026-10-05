@@ -137,8 +137,8 @@ function resolveNavSection(target: string): ActiveSection {
 export default function Navigation({ onLogout }: NavigationProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['restaurant']));
-  const [activeSection, setActiveSection] = React.useState<ActiveSection>('restaurant');
+  const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['dashboard']));
+  const [activeSection, setActiveSection] = React.useState<ActiveSection>('dashboard');
   // (narrow screens: choosing a section closes the open pane — see the effect after the sidebar state)
   const [hasMounted, setHasMounted] = React.useState(false);
   React.useEffect(() => {

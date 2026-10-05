@@ -6,6 +6,7 @@ import { pickOperationalPolicy } from '../frontoffice/operationalPolicies';
 import type { BlockTemplate } from '../print/blocks';
 import type { PrintType } from '../print/templates';
 import { grantCovers, permissionIdsFor } from './permissionCatalog';
+import { allPaidModulesOn, applyPaidModules, isPaidModuleKey, type PaidModules } from '../platform/hotelModules';
 
 const ROOM_CONFIG_KEYS = ['roomTypes', 'rooms', 'ratePlans', 'roomStatuses'] as const;
 
@@ -794,8 +795,6 @@ export interface SystemSettings {
     baseCurrencyLocked: boolean;
     roundingRule: 'nearest' | 'up' | 'down';
   };
-  // SaaS Platform Settings
-  tenantId: string;
   tenant: Tenant;
   
   // General System Settings
@@ -1407,6 +1406,7 @@ interface SettingsStore extends SystemSettings {
     'event-proforma': string; 'event-invoice': string; 'event-receipt': string;
     'registration-card': string;
     'fb-receipt': string;
+    'event-contract': string;
     payslip: string;
   };
   // No-code document template builder — tenant-created templates, all document types.
@@ -1542,6 +1542,8 @@ interface SettingsStore extends SystemSettings {
 
   // Module Settings (SaaS)
   moduleSettings: ModuleSettings;
+  /** Areas the operator has turned on for this hotel. Missing means every area stays on. */
+  paidModules: PaidModules;
   
   // Room Management
   roomManagement: RoomManagementSettings;
@@ -1809,7 +1811,6 @@ const defaultSettings: SystemSettings = {
   initialSetupCompleted: false,
 
   // SaaS Platform Settings
-  tenantId: 'demo-tenant-001',
   tenant: {
     id: 'demo-tenant-001',
     name: 'Demo Hotel Chain',
@@ -2582,6 +2583,7 @@ const DEFAULT_PRINTING: SettingsStore['printing'] = {
   'registration-card': 'builtin-registration-card-standard',
   'fb-receipt': 'builtin-fb-receipt-thermal',
   payslip: 'builtin-payslip-grid',
+  'event-contract': 'builtin-event-contract-classic',
 };
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
@@ -2932,6 +2934,23 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     } finally {
       set({ hydrated: true });
       try { get().adoptSimpleNumberDefaults(); } catch (e) { console.warn('[Settings] numbering defaults', e); }
+      void fetch('/api/tenant/modules', { cache: 'no-store' })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!data?.modules) return;
+          const paidModules = data.modules as PaidModules;
+          set((state) => ({ paidModules, moduleSettings: applyPaidModules(state.moduleSettings, paidModules) }));
+          try {
+            const raw = localStorage.getItem('system.settings');
+            const parsed = raw ? JSON.parse(raw) : {};
+            parsed.paidModules = paidModules;
+            parsed.moduleSettings = get().moduleSettings;
+            localStorage.setItem('system.settings', JSON.stringify(parsed));
+          } catch {
+            /* the next sign-in fetches the same choice */
+          }
+        })
+        .catch(() => {});
     }
   },
 
@@ -3055,18 +3074,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   // Module Management Methods
   toggleModule: (module: keyof ModuleSettings) => {
-    const state = get();
-    const current = state.moduleSettings;
-    const newModuleSettings = { ...current, [module]: !current[module] } as ModuleSettings;
-    set({ moduleSettings: newModuleSettings });
-    get().saveSettings();
-    get().publish();
+    if (isPaidModuleKey(module) || module === 'maintenance') return;
+    get().updateModuleSettings({ [module]: !get().moduleSettings[module] });
   },
 
   updateModuleSettings: (settings: Partial<ModuleSettings>) => {
     const state = get();
-    const newModuleSettings = { ...state.moduleSettings, ...settings };
-    set({ moduleSettings: newModuleSettings });
+    const hotelChoice: Partial<ModuleSettings> = {};
+    if (typeof settings.kitchenTerminal === 'boolean') hotelChoice.kitchenTerminal = settings.kitchenTerminal;
+    if (typeof settings.analytics === 'boolean') hotelChoice.analytics = settings.analytics;
+    if (typeof settings.security === 'boolean') hotelChoice.security = settings.security;
+    const moduleSettings = applyPaidModules({ ...state.moduleSettings, ...hotelChoice }, state.paidModules);
+    set({ moduleSettings });
     get().saveSettings();
     get().publish();
   },
@@ -4230,6 +4249,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     analytics: true,
     kitchenTerminal: true,
   },
+  paidModules: allPaidModulesOn(),
   
   // Room Management - Clean Slate Configuration
   // All sample data has been removed. Configure your rooms from scratch.

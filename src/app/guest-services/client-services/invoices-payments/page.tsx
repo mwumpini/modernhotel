@@ -165,7 +165,7 @@ export default function InvoicesPaymentsPage() {
   const [payerFilter, setPayerFilter] = useState<'all'|'guest'|'company'>('all');
   const [balanceFilter, setBalanceFilter] = useState<'all'|'zero'|'positive'>('all');
   const [folioSortKey, setFolioSortKey] = useState<StaySortKey>('arrival');
-  const [folioSortDir, setFolioSortDir] = useState<'asc' | 'desc'>('asc');
+  const [folioSortDir, setFolioSortDir] = useState<'asc' | 'desc'>('desc');
   const [folioDateFilterMode, setFolioDateFilterMode] = useState<'all' | 'today' | 'specific' | 'range'>('all');
   const [folioDateSingle, setFolioDateSingle] = useState('');
   const [folioDateFrom, setFolioDateFrom] = useState<string>('');
@@ -569,6 +569,7 @@ export default function InvoicesPaymentsPage() {
   };
 
   const handlePrintReceipt = (payment: Payment) => {
+    if (payment.status !== 'completed') return;
     const inv = invoices.find(i => i.id === payment.invoiceId);
     const org = buildOrgProfile(settings);
     const data = {
@@ -1032,9 +1033,16 @@ export default function InvoicesPaymentsPage() {
                         <TableCell>{shortDay(payment.processedAt)}</TableCell>
                         <TableCell>{getPaymentMethodLabel(payment.paymentMethod)}</TableCell>
                         <TableCell>
-                          <span className={`tabular-nums font-semibold ${payment.amount < 0 ? 'text-purple-700' : 'text-ghana-black'}`}>
-                            {payment.amount < 0 ? '−' : ''}₵{formatMoney(Math.abs(payment.amount))}
-                          </span>
+                          {payment.status === 'completed' ? (
+                            <span className={`tabular-nums font-semibold ${payment.amount < 0 ? 'text-purple-700' : 'text-ghana-black'}`}>
+                              {payment.amount < 0 ? '−' : ''}₵{formatMoney(Math.abs(payment.amount))}
+                            </span>
+                          ) : (
+                            <div className="text-right">
+                              <div className="tabular-nums font-semibold text-slate-400">₵{formatMoney(0)}</div>
+                              <div className="text-[11px] tabular-nums text-slate-500 line-through">void ₵{formatMoney(Math.abs(payment.amount))}</div>
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell>
                           <span className={`tabular-nums font-semibold ${balance > 0.005 ? 'text-orange-700' : 'text-green-700'}`}>
@@ -1208,7 +1216,7 @@ export default function InvoicesPaymentsPage() {
                 if (folioSortKey === key) setFolioSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'));
                 else {
                   setFolioSortKey(key);
-                  setFolioSortDir('asc');
+                  setFolioSortDir(key === 'arrival' || key === 'departure' ? 'desc' : 'asc');
                 }
               }}
               onOpen={(id) => {
@@ -1406,7 +1414,14 @@ export default function InvoicesPaymentsPage() {
                                 </div>
                               </TableCell>
                               <TableCell>
-                                <span className="font-medium">₵{formatMoney(payment.amount)}</span>
+                                {payment.status === 'completed' ? (
+                                  <span className="font-medium">₵{formatMoney(payment.amount)}</span>
+                                ) : (
+                                  <div>
+                                    <div className="font-medium text-slate-400">₵{formatMoney(0)}</div>
+                                    <div className="text-[11px] tabular-nums text-slate-500 line-through">void ₵{formatMoney(Math.abs(payment.amount))}</div>
+                                  </div>
+                                )}
                               </TableCell>
                               <TableCell>
                                 <Badge color={getPaymentStatusColor(payment.status)} variant="flat" size="sm">
@@ -1485,6 +1500,8 @@ export default function InvoicesPaymentsPage() {
               const statusColor = selectedPayment.status === 'completed' ? 'success' : selectedPayment.status === 'failed' ? 'danger' : selectedPayment.status === 'refunded' ? 'secondary' : selectedPayment.status === 'pending' ? 'warning' : 'default';
               const reference = String(selectedPayment.reference ?? '').trim();
               const notes = String(selectedPayment.notes ?? '').trim();
+              const countsAsPaid = selectedPayment.status === 'completed';
+              const thisPayment = countsAsPaid ? selectedPayment.amount : 0;
               const showReference = reference !== '' && reference !== '0';
               const showNotes = notes !== '' && notes !== '0';
               const facts = [
@@ -1495,6 +1512,7 @@ export default function InvoicesPaymentsPage() {
                 ['Date', shortDay(selectedPayment.processedAt)],
                 ['Taken by', selectedPayment.processedBy || '—'],
                 ...(showReference ? [['Reference', reference] as [string, string]] : []),
+                ...(!countsAsPaid ? [['Voided', `₵${formatMoney(Math.abs(selectedPayment.amount))}`] as [string, string]] : []),
               ];
               return (
                 <div className="space-y-4">
@@ -1503,11 +1521,11 @@ export default function InvoicesPaymentsPage() {
                     <Chip size="sm" variant="flat" color={statusColor}>{statusLabel}</Chip>
                   </div>
                   <div className="grid grid-cols-3 gap-2">
-                    <div className="rounded-lg bg-green-50 px-3 py-2 text-center">
-                      <div className={`text-base font-semibold tabular-nums ${selectedPayment.amount < 0 ? 'text-purple-700' : 'text-green-700'}`}>
-                        {selectedPayment.amount < 0 ? '−' : ''}₵{formatMoney(Math.abs(selectedPayment.amount))}
+                    <div className={`rounded-lg px-3 py-2 text-center ${countsAsPaid ? 'bg-green-50' : 'bg-gray-50'}`}>
+                      <div className={`text-base font-semibold tabular-nums ${!countsAsPaid ? 'text-slate-400' : thisPayment < 0 ? 'text-purple-700' : 'text-green-700'}`}>
+                        {thisPayment < 0 ? '−' : ''}₵{formatMoney(Math.abs(thisPayment))}
                       </div>
-                      <div className="text-xs text-green-600">This payment</div>
+                      <div className={`text-xs ${countsAsPaid ? 'text-green-600' : 'text-slate-400'}`}>This payment</div>
                     </div>
                     <div className="rounded-lg bg-gray-50 px-3 py-2 text-center">
                       <div className="text-base font-semibold tabular-nums text-ghana-black">₵{formatMoney(figures?.amount || 0)}</div>
@@ -1538,6 +1556,18 @@ export default function InvoicesPaymentsPage() {
           </ModalBody>
           <ModalFooter>
             <Button variant="light" onPress={onPaymentClose}>Close</Button>
+            {selectedPayment && (
+              <Button color="danger" variant="flat" onPress={async () => {
+                const ok = await confirmDelete('this receipt', 'The receipt is removed from the folio and from Accounting. Nothing is left on file.');
+                if (!ok) return;
+                const removed = frontOfficeStore.removeFolioPayment(selectedPayment.invoiceId, selectedPayment.id);
+                if (!removed) {
+                  showNotification('error', 'This receipt could not be deleted.');
+                  return;
+                }
+                onPaymentClose();
+              }}>Delete</Button>
+            )}
             {selectedPayment && selectedPayment.status === 'completed' && (
               <Button color="warning" variant="flat" onPress={async () => {
                 const ok = await confirmVoid('this payment', 'The payment stays on file as a refund so the guest owes it again and the books stay even.');
@@ -1546,7 +1576,7 @@ export default function InvoicesPaymentsPage() {
                 onPaymentClose();
               }}>Void</Button>
             )}
-            {selectedPayment && (
+            {selectedPayment && selectedPayment.status === 'completed' && (
               <Button color="default" className="bg-gray-600 font-semibold text-white" onPress={() => handlePrintReceipt(selectedPayment)}>Receipt</Button>
             )}
           </ModalFooter>

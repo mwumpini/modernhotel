@@ -131,10 +131,56 @@ async function ensureTaxRulesSeeded(tenantId: string, countryCode: string) {
   })
 }
 
+const ACT_1151_VAT_NOTE = 'VAT 15% of the same taxable value as NHIL and GETFund. Not calculated on top of those levies (Act 1151).'
+
+/** Ghana Act 1151 (1 Jan 2026) for hotels seeded before it: VAT no longer compounds on the
+ * levies, NHIL/GETFund become claimable, Tourism is not, and rent WHT splits into 15%
+ * commercial + 8% residential. Mirrors the file-side migration in db.ts. Each row is touched
+ * once (marked `act1151`), so a hotel's later edits are never overwritten. */
+function act1151Patch(data: Record<string, any>): Record<string, any> | null {
+  if (data.act1151) return null
+  const id = String(data.id || '')
+  if (id === 'gh-vat' && (data.calculationBase === 'subtotal_plus_applied' || data.stacking === 'compound')) {
+    return { calculationBase: 'subtotal', stacking: 'additive', isRecoverable: true, description: ACT_1151_VAT_NOTE }
+  }
+  if ((id === 'gh-nhil' || id === 'gh-getfund') && data.isRecoverable !== true) return { isRecoverable: true }
+  if (id === 'gh-tourism' && data.isRecoverable === true) return { isRecoverable: false }
+  if (id === 'gh-wht-rent' && Number(data.rate) === 8) {
+    return {
+      name: 'Withholding Tax (Rent — commercial)',
+      rate: 15,
+      description: 'Resident WHT on rent of non-residential business premises — 15%. Final tax. Residential rent is the separate 8% rule.',
+    }
+  }
+  return null
+}
+
+async function migrateAct1151(tenantId: string, countryCode: string, rows: any[]) {
+  if (countryCode !== 'GH') return rows
+  let changed = false
+  let addResidential = false
+  for (const row of rows) {
+    const data = { ...(row.data as Record<string, any>), id: row.code }
+    const patch = act1151Patch(data)
+    if (!patch) continue
+    if (row.code === 'gh-wht-rent') addResidential = true
+    await prisma.complianceTaxRule.update({ where: { id: row.id }, data: { data: { ...data, ...patch, act1151: true } } })
+    changed = true
+  }
+  if (addResidential && !rows.some((r) => r.code === 'gh-wht-rent-residential')) {
+    const seed = getSeedTaxes().find((t) => t.id === 'gh-wht-rent-residential')
+    if (seed) {
+      await prisma.complianceTaxRule.create({ data: { tenantId, countryCode, code: 'gh-wht-rent-residential', data: seed as any } })
+      changed = true
+    }
+  }
+  return changed ? prisma.complianceTaxRule.findMany({ where: { tenantId, countryCode } }) : rows
+}
+
 export async function listTaxRules(tenantId: string, countryCode: string) {
   await ensureTaxRulesSeeded(tenantId, countryCode)
   const rows = await prisma.complianceTaxRule.findMany({ where: { tenantId, countryCode } })
-  return rows.map(toStoreTaxRule)
+  return (await migrateAct1151(tenantId, countryCode, rows)).map(toStoreTaxRule)
 }
 
 export async function upsertTaxRule(tenantId: string, rule: Record<string, any>) {
@@ -322,4 +368,18 @@ export async function listReportingRules(tenantId: string, countryCode: string) 
   await ensureReportingRulesSeeded(tenantId, countryCode)
   const rows = await prisma.complianceReportingRule.findMany({ where: { tenantId, countryCode } })
   return rows.map(toStoreReportingRule)
+}
+
+export async function upsertReportingRule(tenantId: string, rule: Record<string, any>) {
+  const countryCode = String(rule.countryCode || '')
+  const code = String(rule.id || '')
+  if (!countryCode || !code) throw new Error('countryCode and id are required')
+  const existing = await prisma.complianceReportingRule.findUnique({ where: { tenantId_code: { tenantId, code } } })
+  const data = existing ? { ...(existing.data as Record<string, any>), ...rule, id: code } : { ...rule, id: code }
+  const row = await prisma.complianceReportingRule.upsert({
+    where: { tenantId_code: { tenantId, code } },
+    update: { countryCode, data },
+    create: { tenantId, countryCode, code, data },
+  })
+  return toStoreReportingRule(row)
 }

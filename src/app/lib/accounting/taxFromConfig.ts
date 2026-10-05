@@ -122,8 +122,8 @@ export function taxConfigsFromGhanaTemplate(): TaxConfig[] {
                 : key === 'NHIL'
                   ? 'NHIL'
                   : 'Other';
-    // NHIL, GETFund and Tourism are non-creditable — businesses cannot claim input tax
-    // relief on them. They appear on sales invoices but are a cost (not recoverable) on purchases.
+    // Act 1151 makes NHIL and GETFund claimable input tax, on the same taxable value as VAT.
+    // Tourism is still not claimable: it is a Ghana Tourism Authority levy, not part of the VAT return.
     // WITHHOLDING_VAT is the purchase-side VAT withholding (account 2170). It is applied
     // by purchaseWht.ts, not by the guest sales stack — leaving it as type Other put 7%
     // onto checkout journals and then scaled the real levies down to fit the folio tax.

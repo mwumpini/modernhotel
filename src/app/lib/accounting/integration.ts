@@ -593,6 +593,24 @@ export function recognizeDeferredRevenue(
   return { journalEntryIds: postedIds };
 }
 
+/** Undo recognizeDeferredRevenue when an event was ended by mistake. */
+export function reverseRecognizedRevenue(source: DepartmentSource, reference: string) {
+  const store = useAccountingStore.getState();
+  const revenueCenterCode = getRevenueCenterCode(source);
+  const recognized = store.journalEntries.filter(
+    (je) =>
+      je.status === 'Posted' &&
+      je.sourceModule === source &&
+      je.reference === reference &&
+      String(je.id || '').startsWith('JE-RECOGNIZE-')
+  );
+  recognized.forEach((entry) => {
+    const amount = Number(entry.totalCredit || 0) || entry.lines.reduce((sum, line) => sum + (line.credit || 0), 0);
+    void store.voidJournalEntry(entry.id);
+    if (amount > 0) store.recordRevenue(revenueCenterCode, -amount);
+  });
+}
+
 /**
  * Convert proforma to sales invoice
  * Called when a proforma is confirmed and becomes an actual invoice

@@ -22,7 +22,7 @@ import {
   Tooltip,
   useDisclosure,
 } from '@heroui/react';
-import { confirmDanger, confirmDelete, confirmVoid } from '../DangerConfirm';
+import { confirmDanger, confirmDelete, confirmUnvoid, confirmVoid } from '../DangerConfirm';
 import { CompanyStatement } from './CompanyAccounts';
 import { deskResizableTableClassNames } from './columnResize';
 import { FOLIO_PAGE_SIZE, compareFolioValues, folioAccountColumnList, renderFolioAccountColumn, useFolioAccountColumns, type FolioAccountCol } from './folioAccountColumns';
@@ -33,6 +33,7 @@ import { companyKeyOf, guestEarlierStays, lookupCompanyName } from '../../lib/fr
 import { stayFigures } from '../../lib/frontoffice/stayWorksheet';
 import { postDueRoomCharges } from '../../lib/frontoffice/roomCharges';
 import { chargeGross, type FolioLineJson } from '../../lib/frontoffice/folioLedger';
+import { getFolioDisplayTotals } from '../../lib/frontoffice/helpers/folio';
 import type { Folio, FolioCharge, FolioPayment } from '../../lib/frontoffice/types';
 import { formatMoney } from '../../lib/format/currency';
 import { buildOrgProfile } from '../../lib/print/buildOrgProfile';
@@ -162,7 +163,8 @@ function printFolio(reservation: ReservationLike) {
   const body = rows.length
     ? rows.map((row) => `<tr><td>${row.date ? new Date(row.date).toLocaleDateString() : '—'}</td><td>${row.description}</td><td>${row.reference}</td><td class="right">${row.charge == null ? '—' : fmt(row.charge)}</td><td class="right">${row.payment == null ? '—' : fmt(row.payment)}</td><td class="right">${fmt(row.balance)}</td></tr>`).join('')
     : '<tr><td colspan="6" class="empty">No charges or payments on this visit yet.</td></tr>';
-  const due = folio.balance || 0;
+  const figures = getFolioDisplayTotals(folio);
+  const due = figures.balance || 0;
   const html = `<!doctype html><html><head><meta charset="utf-8" /><title>Folio — ${reservation.guestName || ''}</title>
     <style>
       body { font-family: Arial, sans-serif; color:#111; margin:0; padding:24px; }
@@ -173,7 +175,7 @@ function printFolio(reservation: ReservationLike) {
     </style></head><body>
       <h1>${org.name || 'Guest folio'} · ${folio.id}</h1>
       <p>${reservation.guestName || 'Guest'} · ${reservation.resId || reservation.id} · Room ${roomLabel(reservation.roomId)}</p>
-      <p>Charges ${fmt(folio.totalCharges)} · Payments ${fmt(folio.totalPayments)} · ${due < -0.01 ? 'Credit' : 'Amount due'} ${fmt(Math.abs(due))}</p>
+      <p>Charges ${fmt(figures.totalCharges)} · Payments ${fmt(figures.totalPayments)} · ${due < -0.01 ? 'Credit' : 'Amount due'} ${fmt(Math.abs(due))}</p>
       <table><thead><tr><th>Date</th><th>Description</th><th>Reference</th><th class="right">Charge</th><th class="right">Payment</th><th class="right">Balance</th></tr></thead><tbody>${body}</tbody></table>
     </body></html>`;
   openHtmlPrintWindow(html);
@@ -206,7 +208,7 @@ export default function GuestFolioModal({
   const [receiptNote, setReceiptNote] = useState('');
   const [entrySearch, setEntrySearch] = useState('');
   const [sortKey, setSortKey] = useState<FolioAccountCol>('date');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [accountPage, setAccountPage] = useState(1);
   const accountCols = useFolioAccountColumns();
   const [chargeEdit, setChargeEdit] = useState<{ id: string; description: string; amount: string; original: number } | null>(null);
@@ -266,11 +268,12 @@ export default function GuestFolioModal({
   const pageRows = sorted.slice((page - 1) * FOLIO_PAGE_SIZE, page * FOLIO_PAGE_SIZE);
   const sortAccount = (key: FolioAccountCol) => {
     setAccountPage(1);
-    setSortDir((dir) => (sortKey === key ? (dir === 'asc' ? 'desc' : 'asc') : 'asc'));
+    setSortDir((dir) => (sortKey === key ? (dir === 'asc' ? 'desc' : 'asc') : (key === 'date' ? 'desc' : 'asc')));
     setSortKey(key);
   };
   const status = stayStatus(stay?.status);
-  const due = folio?.balance || 0;
+  const figures = folio ? getFolioDisplayTotals(folio) : null;
+  const due = figures?.balance || 0;
   const nights = nightCount(stay?.arrival, stay?.departure);
 
   const clearChargeComposer = () => {
@@ -376,11 +379,11 @@ export default function GuestFolioModal({
                 <div className="grid grid-cols-3 gap-3 text-sm">
                   <div>
                     <p className="text-slate-500">Charges</p>
-                    <p className="font-semibold text-slate-900">₵{formatMoney(folio.totalCharges || 0)}</p>
+                    <p className="font-semibold text-slate-900">₵{formatMoney(figures?.totalCharges || 0)}</p>
                   </div>
                   <div>
                     <p className="text-slate-500">Payments</p>
-                    <p className="font-semibold text-slate-900">₵{formatMoney(folio.totalPayments || 0)}</p>
+                    <p className="font-semibold text-slate-900">₵{formatMoney(figures?.totalPayments || 0)}</p>
                   </div>
                   <div>
                     <p className="text-slate-500">{due < -0.01 ? 'Credit' : 'Amount due'}</p>
@@ -494,12 +497,30 @@ export default function GuestFolioModal({
                             <TableCell>{row.description}</TableCell>
                             <TableCell className="text-slate-600">{row.reference}</TableCell>
                             <TableCell className="text-right tabular-nums">{row.charge == null ? '—' : `₵${formatMoney(row.charge)}`}</TableCell>
-                            <TableCell className="text-right tabular-nums">{row.payment == null ? '—' : `₵${formatMoney(row.payment)}`}</TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {row.payment == null ? '—' : row.reversal ? (
+                                <span className="text-slate-400 line-through" title="Voided amount">₵{formatMoney(row.payment)}</span>
+                              ) : `₵${formatMoney(row.payment)}`}
+                            </TableCell>
                             <TableCell className={`text-right tabular-nums font-semibold ${row.balance > 0.01 ? 'text-red-700' : row.balance < -0.01 ? 'text-emerald-700' : 'text-slate-900'}`}>
                               ₵{formatMoney(row.balance)}
                             </TableCell>
                             <TableCell className="w-px">
-                              {row.kind === 'rounding' || locked || row.reversal ? (
+                              {row.kind === 'charge' && row.reversal && !locked ? (
+                                <Tooltip content="Unvoid this charge">
+                                  <Button size="sm" color="warning" variant="light" className="min-w-8 h-8" onPress={async () => {
+                                    const ok = await confirmUnvoid(row.description || 'this charge', 'The charge counts again. Charges and amount due go back up. If this stay is already in Accounting, that invoice goes up by the same amount.');
+                                    if (ok) { frontOfficeStore.unvoidCharge(stay.id, row.id); changed(); }
+                                  }}>Unvoid</Button>
+                                </Tooltip>
+                              ) : row.paymentStatus === 'refunded' && !locked ? (
+                                <Tooltip content="Unvoid this payment">
+                                  <Button size="sm" color="warning" variant="light" className="min-w-8 h-8" onPress={async () => {
+                                    const ok = await confirmUnvoid(row.description || 'this payment', 'The payment counts again. Payments go up and amount due goes down. The receipt in Accounting is put back if the invoice is still live.');
+                                    if (ok) { frontOfficeStore.unvoidPayment(stay.id, row.id); changed(); }
+                                  }}>Unvoid</Button>
+                                </Tooltip>
+                              ) : row.kind === 'rounding' || locked || row.reversal ? (
                                 <span className="text-slate-400">—</span>
                               ) : row.kind === 'charge' ? (
                                 <div className="flex items-center justify-end gap-1 whitespace-nowrap">
@@ -509,15 +530,19 @@ export default function GuestFolioModal({
                                     setChargeEdit({ id: charge.id, description: charge.description, amount: String(charge.amount), original: charge.amount });
                                   }}>Edit</Button>
                                   {canVoid && (
-                                    <Tooltip content="Reverse this line">
+                                    <Tooltip content="Void this charge">
                                       <Button size="sm" color="warning" variant="light" isIconOnly className="min-w-8 h-8" onPress={async () => {
-                                        const ok = await confirmVoid('this charge', 'This posts a reversing entry. The original charge stays on the folio as Void.');
+                                        const charge = (folio.charges || []).find((item) => item.id === row.id);
+                                        const ok = await confirmVoid(charge?.description || 'this charge', 'Charges and amount due go down by this amount. The charge stays on the folio so you can see it was voided. If this stay is already in Accounting, that invoice goes down by the same amount.');
                                         if (ok) { frontOfficeStore.voidCharge(stay.id, row.id, 'User action'); changed(); }
                                       }}>↻</Button>
                                     </Tooltip>
                                   )}
-                                  <Tooltip content="Remove this line">
-                                    <Button size="sm" color="danger" variant="light" isIconOnly className="min-w-8 h-8" onPress={() => confirmDanger({ tone: 'delete', title: 'Delete this charge?', message: 'This is already on the folio, so it cannot be deleted. Use Void. The original stays on file and the books stay even.', confirmLabel: 'OK' })}>✖</Button>
+                                  <Tooltip content="Delete this charge">
+                                    <Button size="sm" color="danger" variant="light" isIconOnly className="min-w-8 h-8" onPress={() => {
+                                      const charge = (folio.charges || []).find((item) => item.id === row.id);
+                                      confirmDanger({ tone: 'delete', title: `Delete ${charge?.description || 'this charge'}?`, message: 'This charge is already on the folio, so it cannot be deleted. Use Void. Charges and amount due will go down, and Accounting will follow.', confirmLabel: 'OK' });
+                                    }}>✖</Button>
                                   </Tooltip>
                                   <Button size="sm" variant="light" className="min-w-8 h-8" onPress={() => {
                                     const charge = (folio.charges || []).find((item) => item.id === row.id);
@@ -528,8 +553,6 @@ export default function GuestFolioModal({
                                     openSplit();
                                   }}>Split</Button>
                                 </div>
-                              ) : row.paymentStatus === 'refunded' ? (
-                                <span className="text-slate-400">—</span>
                               ) : (
                                 <div className="flex items-center justify-end gap-1 whitespace-nowrap">
                                   <Button size="sm" variant="light" className="min-w-8 h-8" onPress={() => {
@@ -537,24 +560,24 @@ export default function GuestFolioModal({
                                     if (!payment) return;
                                     setPaymentEdit({ id: payment.id, amount: String(payment.amount), method: payment.method, notes: payment.notes || '', original: payment.amount, status: payment.status || '' });
                                   }}>Edit</Button>
-                                  <Tooltip content="Reverse this line">
+                                  <Tooltip content="Void this payment">
                                     <Button size="sm" color="warning" variant="light" isIconOnly className="min-w-8 h-8" onPress={async () => {
                                       const payment = (folio.payments || []).find((item) => item.id === row.id);
                                       if (!payment || !(payment.amount > 0)) return;
-                                      const ok = await confirmVoid('this payment', 'The payment stays on file as a refund so the guest owes it again and the books stay even.');
+                                      const ok = await confirmVoid(payment.method ? `this ${payment.method} payment` : 'this payment', 'Payments go down and amount due goes up by this amount. The payment stays on the folio as voided. The receipt in Accounting is reversed.');
                                       if (ok) { frontOfficeStore.refundPayment(stay.id, payment.id, payment.amount, 'Void'); changed(); }
                                     }}>↻</Button>
                                   </Tooltip>
-                                  <Tooltip content="Remove this line">
+                                  <Tooltip content="Delete this payment">
                                     <Button size="sm" color="danger" variant="light" isIconOnly className="min-w-8 h-8" onPress={async () => {
                                       const payment = (folio.payments || []).find((item) => item.id === row.id);
                                       if (!payment) return;
                                       if (payment.status === 'pending') {
-                                        const ok = await confirmDelete('this payment', 'A payment that was never taken will be permanently removed.');
+                                        const ok = await confirmDelete('this payment', 'This payment was never completed, so it is removed. Payments go down and amount due goes up. It is also taken off Accounting if it was sent there.');
                                         if (ok) { frontOfficeStore.removeFolioPayment(stay.id, payment.id); changed(); }
                                         return;
                                       }
-                                      await confirmDanger({ tone: 'delete', title: 'Delete this payment?', message: 'This is already on the folio, so it cannot be deleted. Use Void. The original stays on file and the books stay even.', confirmLabel: 'OK' });
+                                      await confirmDanger({ tone: 'delete', title: 'Delete this payment?', message: 'This payment was already taken, so it cannot be deleted. Use Void. Payments will go down, amount due will go up, and the receipt in Accounting will be reversed.', confirmLabel: 'OK' });
                                     }}>✖</Button>
                                   </Tooltip>
                                 </div>

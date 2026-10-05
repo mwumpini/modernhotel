@@ -688,18 +688,24 @@ export default function RoomConfigurationDashboard() {
     logAction('DELETE_ROOM', { roomId: room.id, roomNumber: room.number });
   };
 
-  const handleToggleRoomActive = (room: Room) => {
+  const handleToggleRoomActive = async (room: Room) => {
     const newActiveState = !room.isActive;
     const action = newActiveState ? 'activate' : 'deactivate';
-    
-    if (confirm(`Are you sure you want to ${action} room "${room.number}"?`)) {
-      settingsStore.updateRoom(room.id, { isActive: newActiveState });
-      logAction('TOGGLE_ROOM_ACTIVE', { 
-        roomId: room.id, 
-        roomNumber: room.number, 
-        newState: newActiveState 
-      });
-    }
+    const { confirmChoice } = await import('./DangerConfirm');
+    const ok = await confirmChoice(
+      `${newActiveState ? 'Activate' : 'Deactivate'} room ${room.number}?`,
+      newActiveState
+        ? 'The room will show as active and can be sold again.'
+        : 'The room will be hidden from new bookings. History is kept.',
+      newActiveState ? 'Activate' : 'Deactivate',
+    );
+    if (!ok) return;
+    settingsStore.updateRoom(room.id, { isActive: newActiveState });
+    logAction('TOGGLE_ROOM_ACTIVE', {
+      roomId: room.id,
+      roomNumber: room.number,
+      newState: newActiveState,
+    });
   };
 
   // Smart workflow integration: Auto-deactivate rooms in maintenance

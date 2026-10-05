@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
+import dynamic from 'next/dynamic';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import {
   Card,
@@ -23,18 +24,49 @@ import { toRollupCoa } from '../lib/accounting/coaHierarchy';
 import { buildFinancialAccountTree } from '../lib/accounting/financialReportRollup';
 import { GHANA_CHART_OF_ACCOUNTS } from '../lib/accounting/models';
 
-// Import specialized accounting components
-import ChartOfAccounts from './accounting/ChartOfAccounts';
-import BankCashReceivables from './accounting/BankCashReceivables';
-import AccountsPayable from './accounting/AccountsPayable';
-import BooksTaxes from './accounting/BooksTaxes';
-import AccountsReceivable from './accounting/AccountsReceivable';
-import InventoryFixedAssets from './accounting/InventoryFixedAssets';
-import FinancialReports from './accounting/FinancialReports';
-import ReportsAnalysis from './accounting/ReportsAnalysis';
-import JournalRegister from './accounting/JournalRegister';
-import AuditControls from './accounting/AuditControls';
-import CostRevenueCenters from './accounting/CostRevenueCenters';
+function DeskLoading({ name }: { name: string }) {
+  return (
+    <div className="flex min-h-[16rem] items-center justify-center p-6 text-sm text-gray-500">
+      Opening {name}…
+    </div>
+  );
+}
+
+// Each desk is its own file. Loading them all up front is what made Accounting
+// sit on "Loading…" after a click. Only the desk that is open is fetched.
+const AccountsReceivable = dynamic(() => import('./accounting/AccountsReceivable'), {
+  loading: () => <DeskLoading name="Accounts Receivable" />,
+});
+const AccountsPayable = dynamic(() => import('./accounting/AccountsPayable'), {
+  loading: () => <DeskLoading name="Accounts Payable" />,
+});
+const BankCashReceivables = dynamic(() => import('./accounting/BankCashReceivables'), {
+  loading: () => <DeskLoading name="Bank & Cash" />,
+});
+const InventoryFixedAssets = dynamic(() => import('./accounting/InventoryFixedAssets'), {
+  loading: () => <DeskLoading name="PPE & Assets" />,
+});
+const BooksTaxes = dynamic(() => import('./accounting/BooksTaxes'), {
+  loading: () => <DeskLoading name="Taxes" />,
+});
+const JournalRegister = dynamic(() => import('./accounting/JournalRegister'), {
+  loading: () => <DeskLoading name="Journal" />,
+});
+const FinancialReports = dynamic(() => import('./accounting/FinancialReports'), {
+  loading: () => <DeskLoading name="Statements" />,
+});
+const ReportsAnalysis = dynamic(() => import('./accounting/ReportsAnalysis'), {
+  loading: () => <DeskLoading name="Reports" />,
+});
+const AuditControls = dynamic(() => import('./accounting/AuditControls'), {
+  loading: () => <DeskLoading name="Activity log" />,
+});
+const ChartOfAccounts = dynamic(() => import('./accounting/ChartOfAccounts'), {
+  loading: () => <DeskLoading name="Books" />,
+});
+const CostRevenueCenters = dynamic(() => import('./accounting/CostRevenueCenters'), {
+  loading: () => <DeskLoading name="Cost & Income" />,
+});
 import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';

@@ -8,7 +8,7 @@
     "appliesTo": [
       "ALL"
     ],
-    "description": "National Health Insurance Levy (Act 1151)",
+    "description": "National Health Insurance Levy — 2.5% of the taxable value. Claimable as input tax on purchases (Act 1151).",
     "enabled": true,
     "priority": 50,
     "calculationBase": "subtotal",
@@ -16,7 +16,8 @@
     "stacking": "additive",
     "domain": "sales",
     "operation": "external",
-    "effect": "add"
+    "effect": "add",
+    "isRecoverable": true
   },
   {
     "id": "gh-getfund",
@@ -31,6 +32,7 @@
     "enabled": true,
     "priority": 180,
     "calculationBase": "subtotal",
+    "isRecoverable": true,
     "method": "rate",
     "stacking": "additive",
     "domain": "sales",
@@ -46,15 +48,16 @@
     "appliesTo": [
       "ALL"
     ],
-    "description": "VAT 15% on (subtotal + NHIL + GETFund) — Act 1151, effective Jan 2026",
+    "description": "VAT 15% of the same taxable value as NHIL and GETFund. Not calculated on top of those levies (Act 1151).",
     "enabled": true,
     "priority": 310,
-    "calculationBase": "subtotal_plus_applied",
+    "calculationBase": "subtotal",
     "method": "rate",
-    "stacking": "compound",
+    "stacking": "additive",
     "domain": "sales",
     "operation": "external",
-    "effect": "add"
+    "effect": "add",
+    "isRecoverable": true
   },
   {
     "id": "gh-tourism",
@@ -68,9 +71,10 @@
       "FOOD",
       "EVENT"
     ],
-    "description": "Tourism Development Levy (L.I. 2185) — separate from VAT base",
+    "description": "Tourism Development Levy (L.I. 2185) — 1% of the bill, separate from VAT. Not claimable.",
     "enabled": true,
     "priority": 440,
+    "isRecoverable": false,
     "calculationBase": "subtotal",
     "method": "rate",
     "stacking": "additive",
@@ -249,13 +253,33 @@
   {
     "id": "gh-wht-rent",
     "countryCode": "GH",
-    "name": "Withholding Tax (Rent)",
-    "rate": 8,
-    "glCode": "2160",
+    "name": "Withholding Tax (Rent — commercial)",
+    "rate": 15,
     "appliesTo": [
       "RENT"
     ],
-    "description": "Resident WHT on rent of business premises — 2026 rate",
+    "description": "Resident WHT on rent of non-residential business premises — 15%. Final tax. Residential rent is the separate 8% rule.",
+    "priority": 5,
+    "calculationBase": "subtotal",
+    "method": "rate",
+    "stacking": "additive",
+    "domain": "purchases",
+    "operation": "internal",
+    "effect": "subtract",
+    "isRecoverable": false,
+    "glCode": "2160",
+    "enabled": true
+  },
+  {
+    "id": "gh-wht-rent-residential",
+    "countryCode": "GH",
+    "name": "Withholding Tax (Rent — residential)",
+    "rate": 8,
+    "glCode": "2160",
+    "appliesTo": [
+      "RENT_RESIDENTIAL"
+    ],
+    "description": "Resident WHT on rent of residential property — 8%. Final tax. A hotel's own business premises use the 15% commercial rule.",
     "enabled": true,
     "priority": 5,
     "calculationBase": "subtotal",
@@ -263,6 +287,7 @@
     "stacking": "additive",
     "domain": "purchases",
     "operation": "internal",
-    "effect": "subtract"
+    "effect": "subtract",
+    "isRecoverable": false
   }
 ]

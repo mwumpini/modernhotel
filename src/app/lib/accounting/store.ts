@@ -48,7 +48,7 @@ import { buildOperationalAccountingSeed, EMPTY_TRANSACTION_SEED } from './operat
 import { buildDemoTransactionSeed } from './demoAccountingSeed';
 import { computeCostCenterActual, computeRevenueCenterActual } from './costRevenueRollup';
 import { isAccountingDemoMode } from './tenantAccountingConfig';
-import { persistJournalEntry, persistJournalEntryStatus, fetchJournalEntries, fetchAccountingAuditTrail, persistInvoice, persistInvoicePatch, persistInvoiceDelete, fetchInvoices, persistPayment, persistPaymentPatch, fetchPayments, persistChartOfAccount, persistChartOfAccountsBulk, persistChartOfAccountDelete, fetchChartOfAccounts, persistBankAccount, persistBankAccountDelete, fetchBankAccounts, persistCostCenter, persistCostCenterDelete, fetchCostCenters, persistRevenueCenter, persistRevenueCenterDelete, fetchRevenueCenters, persistBusinessPartner, persistBusinessPartnerDelete, fetchBusinessPartners, persistBankTransaction, persistBankTransactionDelete, fetchBankTransactions } from './helpers/api';
+import { persistJournalEntry, persistJournalEntryStatus, fetchJournalEntries, fetchAccountingBootstrap, fetchAccountingAuditTrail, persistInvoice, persistInvoicePatch, persistInvoiceDelete, fetchInvoices, persistPayment, persistPaymentPatch, persistPaymentDelete, fetchPayments, persistChartOfAccount, persistChartOfAccountsBulk, persistChartOfAccountDelete, fetchChartOfAccounts, persistBankAccount, persistBankAccountDelete, fetchBankAccounts, persistCostCenter, persistCostCenterDelete, fetchCostCenters, persistRevenueCenter, persistRevenueCenterDelete, fetchRevenueCenters, persistBusinessPartner, persistBusinessPartnerDelete, fetchBusinessPartners, persistBankTransaction, persistBankTransactionDelete, fetchBankTransactions } from './helpers/api';
 import { useSettingsStore } from '../settings/store';
 import {
   syncInvoiceToLedger,
@@ -58,7 +58,7 @@ import {
   applyJournalEntryToGlBalances,
 } from './invoicePostingBridge';
 import { findJournalEntryForInvoice, MANUAL_AR_AP_SOURCE } from './accountingProcessPolicy';
-import { isManualArApSource, postJournalEntryReversal } from './journalReversal';
+import { findVoidReversal, isManualArApSource, postJournalEntryReversal } from './journalReversal';
 import { isPettyCashAccount, resolveBankGlAccountCode } from './bankCoaLink';
 import { syncBankOpeningBalanceToLedger } from './bankOpeningBalance';
 import { mirrorGlCashToCashbook } from './cashbookMirror';
@@ -90,6 +90,7 @@ function mergeServerRecordsByRecency<T extends { id: string; updatedAt?: string 
 }
 
 let ledgerRefreshInFlight: Promise<void> | null = null;
+let accountingInitInFlight: Promise<void> | null = null;
 
 interface AccountingState {
   // Chart of Accounts
@@ -161,6 +162,7 @@ interface AccountingState {
   setCurrentJournalEntry: (entry: JournalEntry | null) => void;
   postJournalEntry: (id: string) => Promise<void>;
   voidJournalEntry: (id: string) => Promise<void>;
+  unvoidJournalEntry: (id: string) => Promise<void>;
   
   // General Ledger
   setGLBalances: (balances: GLBalance[]) => void;
@@ -221,14 +223,17 @@ interface AccountingState {
   deleteInvoice: (id: string) => void;
   postInvoice: (id: string) => Promise<void>;
   voidInvoice: (id: string) => Promise<void>;
+  unvoidInvoice: (id: string) => Promise<void>;
   
   // Payments
   setPayments: (payments: Payment[]) => void;
   addPayment: (payment: Payment) => void;
   updatePayment: (id: string, updates: Partial<Payment>) => void;
   deletePayment: (id: string) => void;
+  purgePayment: (id: string) => void;
   postPayment: (id: string) => Promise<void>;
   voidPayment: (id: string) => Promise<void>;
+  unvoidPayment: (id: string) => Promise<void>;
   setPaymentReceipt: (id: string, receipt: {
     receivedBy?: string;
     receiverContact?: string;
@@ -685,6 +690,45 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       });
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to void journal entry' });
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  unvoidJournalEntry: async (id) => {
+    set({ isLoading: true, error: null });
+    try {
+      const original = get().journalEntries.find((entry) => entry.id === id);
+      if (!original) throw new Error('Journal entry not found');
+      if (original.status !== 'Void') return;
+      const reversal = findVoidReversal(get().journalEntries, id);
+      if (reversal) {
+        const rev = postJournalEntryReversal(reversal.id, get(), {
+          postedBy: 'current-user',
+          reason: `Unvoid ${original.entryNumber}`,
+          persistEntry: persistJournalEntry,
+          markOriginalVoid: (entryId) => {
+            set((state) => ({
+              journalEntries: state.journalEntries.map((entry) =>
+                entry.id === entryId
+                  ? { ...entry, status: 'Void' as const, updatedAt: new Date().toISOString() }
+                  : entry,
+              ),
+            }));
+            persistJournalEntryStatus(entryId, { status: 'Void' });
+          },
+        });
+        if (!rev.ok) throw new Error(rev.error);
+      }
+      const now = new Date().toISOString();
+      set((state) => ({
+        journalEntries: state.journalEntries.map((entry) =>
+          entry.id === id ? { ...entry, status: 'Posted' as const, updatedAt: now } : entry,
+        ),
+      }));
+      persistJournalEntryStatus(id, { status: 'Posted' });
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : 'Failed to unvoid journal entry' });
     } finally {
       set({ isLoading: false });
     }
@@ -1375,21 +1419,29 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         (e) => e.id === `JE-FO-CHK-${invoice.id}` && e.status === 'Posted',
       );
       if (checkoutSales) {
-        const voidedAt = new Date().toISOString();
-        set((s) => ({
-          journalEntries: s.journalEntries.map((e) =>
-            e.id === checkoutSales.id ? { ...e, status: 'Void' as const, updatedAt: voidedAt } : e,
-          ),
-        }));
-        persistJournalEntryStatus(checkoutSales.id, { status: 'Void' });
+        const rev = postJournalEntryReversal(checkoutSales.id, get(), {
+          postedBy: 'current-user',
+          reason: `Void invoice ${invoice.invoiceNumber}`,
+          persistEntry: persistJournalEntry,
+          markOriginalVoid: (entryId) => {
+            set((s) => ({
+              journalEntries: s.journalEntries.map((e) =>
+                e.id === entryId ? { ...e, status: 'Void' as const, updatedAt: new Date().toISOString() } : e,
+              ),
+            }));
+            persistJournalEntryStatus(entryId, { status: 'Void' });
+          },
+        });
+        if (!rev.ok) throw new Error(rev.error);
       }
 
       const now = new Date().toISOString();
       const openAmount = roundMoney2(invoice.total - (invoice.paidAmount || 0));
+      const statusBeforeVoid = invoice.status === 'Paid' || invoice.status === 'Draft' ? invoice.status : 'Posted';
 
       set((s) => ({
         invoices: s.invoices.map((inv) =>
-          inv.id === id ? { ...inv, status: 'Void' as const, updatedAt: now } : inv,
+          inv.id === id ? { ...inv, status: 'Void' as const, statusBeforeVoid, updatedAt: now } : inv,
         ),
         businessPartners: s.businessPartners.map((p) => {
           if (p.id !== invoice.businessPartnerId || openAmount <= 0) return p;
@@ -1403,7 +1455,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         }),
       }));
 
-      persistInvoicePatch(id, { status: 'Void', updatedAt: now });
+      persistInvoicePatch(id, { status: 'Void', statusBeforeVoid, updatedAt: now });
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to void invoice' });
     } finally {
@@ -1542,6 +1594,29 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     payments: state.payments.filter(payment => payment.id !== id)
     };
   }),
+
+  // Remove the receipt row after its books effect is already reversed.
+  // Does not move the customer balance again.
+  purgePayment: (id) => {
+    const payment = get().payments.find((p) => p.id === id);
+    if (!payment) return;
+    set((state) => ({ payments: state.payments.filter((p) => p.id !== id) }));
+    persistPaymentDelete(id);
+    get().addAuditTrail({
+      id: `AT-PAYDEL-${Date.now()}`,
+      tableName: 'Payment',
+      recordId: id,
+      action: 'Delete',
+      oldValues: {
+        paymentNumber: payment.paymentNumber,
+        amount: payment.amount,
+        status: payment.status,
+        invoiceId: payment.invoiceId,
+      },
+      userId: 'current-user',
+      timestamp: new Date().toISOString(),
+    });
+  },
   
   postPayment: async (id) => {
     set({ isLoading: true, error: null });
@@ -1677,7 +1752,12 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       if (!payment) throw new Error('Payment not found');
       if (payment.status === 'Void') return;
 
-      if (isManualArApSource(payment.sourceModule)) {
+      const reversesCash =
+        isManualArApSource(payment.sourceModule) ||
+        payment.sourceModule === 'front_office' ||
+        payment.sourceModule === 'front_office_checkout' ||
+        payment.sourceModule === 'conference';
+      if (reversesCash) {
         const entryId = payment.journalEntryId;
         if (entryId) {
           const originalJe = state.journalEntries.find((e) => e.id === entryId);
@@ -1790,7 +1870,14 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
 
         return {
           payments: s.payments.map((p) =>
-            p.id === id ? { ...p, status: 'Void' as const, updatedAt: now } : p,
+            p.id === id
+              ? {
+                  ...p,
+                  status: 'Void' as const,
+                  statusBeforeVoid: payment.status === 'Draft' || payment.status === 'Pending Approval' ? payment.status : 'Posted',
+                  updatedAt: now,
+                }
+              : p,
           ),
           invoices,
           businessPartners: partners,
@@ -1802,6 +1889,22 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         persistInvoicePatch(invoiceIdToPatch, invoicePatch);
       }
 
+      get().addAuditTrail({
+        id: `AT-PAYVOID-${Date.now()}`,
+        tableName: 'Payment',
+        recordId: id,
+        action: 'Void',
+        oldValues: {
+          paymentNumber: payment.paymentNumber,
+          amount: payment.amount,
+          status: payment.status,
+          invoiceId: payment.invoiceId,
+        },
+        newValues: { status: 'Void', amountCounted: 0 },
+        userId: 'current-user',
+        timestamp: now,
+      });
+
       const voidedCert = payment.whtCertificateId
         ? get().whtCertificates.find((c) => c.id === payment.whtCertificateId)
         : undefined;
@@ -1812,10 +1915,119 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
           updatedAt: now,
         });
       } else {
-        persistPaymentPatch(id, { status: 'Void', updatedAt: now });
+        persistPaymentPatch(id, {
+          status: 'Void',
+          statusBeforeVoid: payment.status === 'Draft' || payment.status === 'Pending Approval' ? payment.status : 'Posted',
+          updatedAt: now,
+        });
       }
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to void payment' });
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  unvoidInvoice: async (id) => {
+    set({ isLoading: true, error: null });
+    try {
+      const invoice = get().invoices.find((item) => item.id === id);
+      if (!invoice) throw new Error('Invoice not found');
+      if (invoice.status !== 'Void') return;
+      const journalIds = [invoice.journalEntryId, `JE-FO-CHK-${invoice.id}`].filter(Boolean) as string[];
+      for (const journalId of journalIds) {
+        const entry = get().journalEntries.find((item) => item.id === journalId);
+        if (entry?.status !== 'Void') continue;
+        await get().unvoidJournalEntry(journalId);
+        if (get().error) throw new Error(get().error || 'Could not restore the journal');
+      }
+      const now = new Date().toISOString();
+      const openAmount = roundMoney2(invoice.total - (invoice.paidAmount || 0));
+      const restored = invoice.statusBeforeVoid
+        || ((invoice.paidAmount || 0) + 0.009 >= invoice.total ? 'Paid' : 'Posted');
+      set((s) => ({
+        invoices: s.invoices.map((inv) =>
+          inv.id === id ? { ...inv, status: restored, statusBeforeVoid: undefined, updatedAt: now } : inv,
+        ),
+        businessPartners: s.businessPartners.map((partner) => {
+          if (partner.id !== invoice.businessPartnerId || openAmount <= 0) return partner;
+          if (invoice.type === 'Sales' && (partner.type === 'Customer' || partner.type === 'Both')) {
+            return { ...partner, balance: roundMoney2(partner.balance + openAmount) };
+          }
+          if (invoice.type === 'Purchase' && (partner.type === 'Supplier' || partner.type === 'Both')) {
+            return { ...partner, balance: roundMoney2(partner.balance + openAmount) };
+          }
+          return partner;
+        }),
+      }));
+      persistInvoicePatch(id, { status: restored, statusBeforeVoid: undefined, updatedAt: now });
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : 'Failed to unvoid invoice' });
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  unvoidPayment: async (id) => {
+    set({ isLoading: true, error: null });
+    try {
+      const payment = get().payments.find((item) => item.id === id);
+      if (!payment) throw new Error('Payment not found');
+      if (payment.status !== 'Void') return;
+      if (payment.invoiceId) {
+        const invoice = get().invoices.find((item) => item.id === payment.invoiceId);
+        if (invoice?.status === 'Void') throw new Error('Unvoid the invoice first');
+      }
+      if (payment.journalEntryId) {
+        await get().unvoidJournalEntry(payment.journalEntryId);
+        if (get().error) throw new Error(get().error || 'Could not restore the journal');
+      }
+      const now = new Date().toISOString();
+      const restored = payment.statusBeforeVoid || 'Posted';
+      let invoiceIdToPatch: string | undefined;
+      let invoicePatch: Partial<Invoice> | undefined;
+      set((s) => {
+        let invoices = s.invoices;
+        if (payment.invoiceId) {
+          invoices = s.invoices.map((inv) => {
+            if (inv.id !== payment.invoiceId || inv.status === 'Void') return inv;
+            const newPaid = roundMoney2((inv.paidAmount || 0) + payment.amount);
+            const newStatus = newPaid + 0.009 >= inv.total ? 'Paid' : 'Posted';
+            invoiceIdToPatch = inv.id;
+            invoicePatch = { paidAmount: newPaid, status: newStatus, paidDate: newStatus === 'Paid' ? now : inv.paidDate, updatedAt: now };
+            return { ...inv, paidAmount: newPaid, status: newStatus, paidDate: newStatus === 'Paid' ? now : inv.paidDate, updatedAt: now };
+          });
+        }
+        const partners = s.businessPartners.map((partner) => {
+          if (partner.id !== payment.businessPartnerId) return partner;
+          if (payment.type === 'Payment' && (partner.type === 'Supplier' || partner.type === 'Both')) {
+            return { ...partner, balance: roundMoney2(partner.balance - payment.amount) };
+          }
+          if (payment.type === 'Receipt' && (partner.type === 'Customer' || partner.type === 'Both')) {
+            return { ...partner, balance: roundMoney2(partner.balance - payment.amount) };
+          }
+          return partner;
+        });
+        const whtCertificates = payment.whtCertificateId
+          ? s.whtCertificates.map((cert) =>
+              cert.id === payment.whtCertificateId && cert.status === 'Void'
+                ? { ...cert, status: (cert.verifiedDate ? 'Verified' : 'Pending') as 'Verified' | 'Pending', updatedAt: now }
+                : cert,
+            )
+          : s.whtCertificates;
+        return {
+          payments: s.payments.map((item) =>
+            item.id === id ? { ...item, status: restored, statusBeforeVoid: undefined, updatedAt: now } : item,
+          ),
+          invoices,
+          businessPartners: partners,
+          whtCertificates,
+        };
+      });
+      if (invoiceIdToPatch && invoicePatch) persistInvoicePatch(invoiceIdToPatch, invoicePatch);
+      persistPaymentPatch(id, { status: restored, statusBeforeVoid: undefined, updatedAt: now });
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : 'Failed to unvoid payment' });
     } finally {
       set({ isLoading: false });
     }
@@ -3119,8 +3331,15 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     return job;
   },
 
-  // Initialize
-  initializeAccounting: async () => {
+  // Initialize once. Later callers, from any module, share this same load.
+  initializeAccounting: () => {
+    if (accountingInitInFlight) return accountingInitInFlight;
+    let release: () => void = () => {};
+    accountingInitInFlight = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    void (async () => {
+    let failed = false;
     const snapshot = get();
     const hasExistingData =
       snapshot.chartOfAccounts.length > 0 ||
@@ -3257,28 +3476,51 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         auditTrail: demoMode ? mergeById(sampleAudit, prev.auditTrail) : prev.auditTrail,
       });
 
-      // Hydrate persisted records from the database (server authoritative when tenant is set).
-      // Demo transaction seed loads only when NEXT_PUBLIC_DEMO_MODE=true.
-      const [serverJEs, serverInvoices, serverPayments, serverCoa, serverBankAccounts, serverCostCenters, serverRevenueCenters, serverPartners, serverBankTxns, serverAudit] = await Promise.all([
-        fetchJournalEntries(),
-        fetchInvoices(),
-        fetchPayments(),
-        fetchChartOfAccounts(),
-        fetchBankAccounts(),
-        fetchCostCenters(),
-        fetchRevenueCenters(),
-        fetchBusinessPartners(),
-        fetchBankTransactions(),
-        fetchAccountingAuditTrail(),
-      ]);
+      // One request for the whole book. If that route is unavailable, fall back
+      // to the individual reads so a fresh deploy still opens.
+      const boot = await fetchAccountingBootstrap();
+      const loaded = boot ?? await (async () => {
+        const [serverJEs, serverInvoices, serverPayments, serverCoa, serverBankAccounts, serverCostCenters, serverRevenueCenters, serverPartners, serverBankTxns, serverAudit] = await Promise.all([
+          fetchJournalEntries(),
+          fetchInvoices(),
+          fetchPayments(),
+          fetchChartOfAccounts(),
+          fetchBankAccounts(),
+          fetchCostCenters(),
+          fetchRevenueCenters(),
+          fetchBusinessPartners(),
+          fetchBankTransactions(),
+          fetchAccountingAuditTrail(),
+        ]);
+        return {
+          journalEntries: serverJEs,
+          invoices: serverInvoices,
+          payments: serverPayments,
+          chartOfAccounts: serverCoa,
+          bankAccounts: serverBankAccounts,
+          costCenters: serverCostCenters,
+          revenueCenters: serverRevenueCenters,
+          businessPartners: serverPartners,
+          bankTransactions: serverBankTxns,
+          auditTrail: serverAudit,
+        };
+      })();
+      const serverJEs = loaded.journalEntries;
+      const serverInvoices = loaded.invoices;
+      const serverPayments = loaded.payments;
+      const serverCoa = loaded.chartOfAccounts;
+      const serverBankAccounts = loaded.bankAccounts;
+      const serverCostCenters = loaded.costCenters;
+      const serverRevenueCenters = loaded.revenueCenters;
+      const serverPartners = loaded.businessPartners;
+      const serverBankTxns = loaded.bankTransactions;
+      const serverAudit = loaded.auditTrail;
       // Chart of accounts and bank accounts are only ever edited one action at a time through
       // their own screens (no concurrent-write race like invoices/payments can have), and the
       // client always re-seeds a fresh in-memory copy with a brand-new `updatedAt` on every
       // load — a recency merge would let that fresh reseed always "win" over a real rename
       // sitting on the server. Server wins outright whenever it has anything.
-      if (serverCoa && serverCoa.length > 0) {
-        set({ chartOfAccounts: normalizeCoaList(serverCoa) });
-      } else {
+      if (!(serverCoa && serverCoa.length > 0)) {
         // First visit ever (for this tenant): nothing on the server yet — persist the seed
         // already shown above so it's there next time, and for any other device/tab.
         const seeded = get().chartOfAccounts;
@@ -3289,46 +3531,43 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       // it, editing just one seeded row (e.g. one bank account) would persist only that row, and
       // this same-length-check would then replace the in-memory list with that lone server row,
       // silently deleting every other still-unpersisted seed row on the next reload.
-      if (serverBankAccounts && serverBankAccounts.length > 0) {
-        set({ bankAccounts: serverBankAccounts });
-      } else {
+      if (!(serverBankAccounts && serverBankAccounts.length > 0)) {
         const seeded = get().bankAccounts;
         seeded.forEach((a) => persistBankAccount(a));
       }
-      if (serverCostCenters && serverCostCenters.length > 0) {
-        set({ costCenters: serverCostCenters });
-      } else {
+      if (!(serverCostCenters && serverCostCenters.length > 0)) {
         const seeded = get().costCenters;
         seeded.forEach((c) => persistCostCenter(c));
       }
-      if (serverRevenueCenters && serverRevenueCenters.length > 0) {
-        set({ revenueCenters: serverRevenueCenters });
-      } else {
+      if (!(serverRevenueCenters && serverRevenueCenters.length > 0)) {
         const seeded = get().revenueCenters;
         seeded.forEach((c) => persistRevenueCenter(c));
       }
       // Same server-wins-outright-or-seed rule — business partners and bank ledger
       // transactions were previously in-memory only (only merged with the demo seed).
-      if (serverPartners && serverPartners.length > 0) {
-        set({ businessPartners: serverPartners });
-      } else {
+      if (!(serverPartners && serverPartners.length > 0)) {
         const seeded = get().businessPartners;
         seeded.forEach((p) => persistBusinessPartner(p));
       }
-      if (serverBankTxns && serverBankTxns.length > 0) {
-        set({ bankTransactions: serverBankTxns });
-      } else {
+      if (!(serverBankTxns && serverBankTxns.length > 0)) {
         const seeded = get().bankTransactions;
         seeded.forEach((t) => persistBankTransaction(t));
       }
-      if (serverAudit && serverAudit.length > 0) {
-        set({ auditTrail: serverAudit });
-      }
-      if (serverJEs && serverJEs.length > 0) {
-        set((s) => ({ journalEntries: mergeServerRecordsByRecency(s.journalEntries, serverJEs) }));
-      }
-      if (serverInvoices && serverInvoices.length > 0) {
-        set((s) => {
+      // One paint for the whole book. Separate updates were re-rendering every
+      // accounting screen once per list, which is what made the click feel stuck.
+      set((s) => {
+        const next: Partial<typeof s> = {};
+        if (serverCoa && serverCoa.length > 0) next.chartOfAccounts = normalizeCoaList(serverCoa);
+        if (serverBankAccounts && serverBankAccounts.length > 0) next.bankAccounts = serverBankAccounts;
+        if (serverCostCenters && serverCostCenters.length > 0) next.costCenters = serverCostCenters;
+        if (serverRevenueCenters && serverRevenueCenters.length > 0) next.revenueCenters = serverRevenueCenters;
+        if (serverPartners && serverPartners.length > 0) next.businessPartners = serverPartners;
+        if (serverBankTxns && serverBankTxns.length > 0) next.bankTransactions = serverBankTxns;
+        if (serverAudit && serverAudit.length > 0) next.auditTrail = serverAudit;
+        if (serverJEs && serverJEs.length > 0) {
+          next.journalEntries = mergeServerRecordsByRecency(s.journalEntries, serverJEs);
+        }
+        if (serverInvoices && serverInvoices.length > 0) {
           const invoices = mergeServerRecordsByRecency(s.invoices, serverInvoices);
           // invoiceSettings.nextNumber only lives in this browser's localStorage —
           // raise it past every invoiceNumber the server already has, so a fresh or
@@ -3339,28 +3578,30 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
               invoices.filter((i) => i.type === 'Sales').map((i) => i.invoiceNumber)
             );
           } catch {}
-          return { invoices };
-        });
-      }
-      if (serverPayments && serverPayments.length > 0) {
-        set((s) => {
+          next.invoices = invoices;
+        }
+        if (serverPayments && serverPayments.length > 0) {
           const payments = mergeServerRecordsByRecency(s.payments, serverPayments);
-          return {
-            payments,
-            whtCertificates: mergeWhtCertificateLists(
-              s.whtCertificates,
-              whtCertificatesFromPayments(payments),
-            ),
-          };
-        });
-      }
+          next.payments = payments;
+          next.whtCertificates = mergeWhtCertificateLists(
+            s.whtCertificates,
+            whtCertificatesFromPayments(payments),
+          );
+        }
+        return next;
+      });
       // Demo mode only: re-add the canonical demo bank accounts/txns if a user deleted them
       // (ids 1/2, BT-1/BT-2). A real hotel's books must never get sample banks written into them.
       if (demoMode) get().restoreMissingDemoBankAccounts();
     } catch (error) {
+      failed = true;
       set({ error: error instanceof Error ? error.message : 'Failed to initialize accounting' });
     } finally {
       set({ isLoading: false });
+      if (failed) accountingInitInFlight = null;
+      release();
     }
+    })();
+    return accountingInitInFlight;
   }
 }));

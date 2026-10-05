@@ -208,6 +208,9 @@ export default function LoginForm() {
               <p className="text-xs text-gray-500 mt-1">
                 Also try: manager@demohotel.com or staff@demohotel.com (same password)
               </p>
+              <p className="text-xs text-gray-500 mt-1">
+                Operator: platform / operator@platform.local / password123
+              </p>
             </div>
           )}
         </form>

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
-import { updatePayment } from '@/app/lib/accounting/repository'
+import { updatePayment, deletePayment } from '@/app/lib/accounting/repository'
 import { prisma } from '@/app/lib/database/client'
 import { getApprovalRequirement } from '@/app/lib/api/approvalThresholds'
 
@@ -48,6 +48,38 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return NextResponse.json({ payment })
   } catch (error) {
     console.error('[accounting/payments/:id][PATCH] error', error)
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+  }
+}
+
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
+    const perm = await requirePermission(request, 'accounting.void-transaction')
+    if (!perm.ok) return perm.response
+    const sessionUserId = (auth.session as any).user?.id
+    const subdomain = getTenantFromRequest(request)
+    if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
+    const ctx = await getTenantContext(subdomain)
+    if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
+
+    const { id } = await params
+    const payment = await deletePayment(ctx.tenantId, id)
+    if (!payment) return NextResponse.json({ error: 'Payment not found' }, { status: 404 })
+    await createAuditLog(
+      ctx.tenantId,
+      sessionUserId ?? null,
+      'PAYMENT_DELETED',
+      'Payment',
+      id,
+      { paymentNumber: payment.paymentNumber, amount: payment.amount, status: payment.status },
+      undefined,
+      request,
+    )
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error('[accounting/payments/:id][DELETE] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 }

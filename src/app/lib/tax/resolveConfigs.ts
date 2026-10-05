@@ -57,7 +57,7 @@ function inferTypeFromName(name: string, explicit?: string | null): TaxConfig['t
 
 export function mapPrismaTaxRowToConfig(t: PrismaTaxRow, countryCode = 'GH'): TaxConfig {
   const type = inferTypeFromName(t.name, t.type);
-  const nonCreditable = type === 'NHIL' || type === 'GETFund' || type === 'Tourism';
+  const nonCreditable = type === 'Tourism';
   const gl =
     t.glAccountCode?.trim() ||
     (type === 'VAT'

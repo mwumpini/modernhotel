@@ -156,7 +156,7 @@ export default function SystemSettingsMainDashboard() {
               <RoomConfigurationDashboard />
             </Tab>
 
-            <Tab key="policies" title="📜 Operational Policies">
+            <Tab key="policies" title="Operational Policies">
               <OperationalPoliciesPanel />
             </Tab>
 

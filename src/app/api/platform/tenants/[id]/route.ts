@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getHotel, markHotelPaid, removeHotel, setHotelStatus } from '@/app/lib/platform/operator';
+import { getHotel, markHotelPaid, removeHotel, setHotelModules, setHotelStatus } from '@/app/lib/platform/operator';
 import { requireOperator } from '@/app/lib/platform/requireOperator';
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -28,6 +28,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (body?.paid === true) {
     const result = await markHotelPaid(id);
     if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
+    return NextResponse.json(result.hotel);
+  }
+  if (body?.modules && typeof body.modules === 'object') {
+    const result = await setHotelModules(id, body.modules);
+    if (result.error) return NextResponse.json({ error: result.error }, { status: 404 });
     return NextResponse.json(result.hotel);
   }
   if (body.status !== 'active' && body.status !== 'suspended') {

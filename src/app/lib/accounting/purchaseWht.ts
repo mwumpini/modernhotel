@@ -15,13 +15,14 @@ export interface PurchaseWhtLine {
   glCode: string;
 }
 
-export type PurchaseWhtCategory = 'SERVICE' | 'GOODS' | 'WORKS' | 'RENT';
+export type PurchaseWhtCategory = 'SERVICE' | 'GOODS' | 'WORKS' | 'RENT' | 'RENT_RESIDENTIAL';
 
 export const PURCHASE_WHT_CATEGORIES: { key: PurchaseWhtCategory; label: string }[] = [
   { key: 'SERVICE', label: 'Services' },
   { key: 'GOODS', label: 'Goods' },
   { key: 'WORKS', label: 'Works' },
-  { key: 'RENT', label: 'Rent' },
+  { key: 'RENT', label: 'Rent — commercial' },
+  { key: 'RENT_RESIDENTIAL', label: 'Rent — residential' },
 ];
 
 /** Computes WHT on a purchase invoice's subtotal for the given supplier-transaction category, or null if no active WHT rule applies. */

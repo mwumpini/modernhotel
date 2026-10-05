@@ -6,7 +6,7 @@ import PageLayout from '../../../components/PageLayout';
 import HeadingInfo from '../../../components/HeadingInfo';
 import { confirmDanger, confirmDelete } from '../../../components/DangerConfirm';
 import FrontOfficeBackButton from '../../../components/FrontOfficeBackButton';
-import { Card, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Badge, Chip, Switch, Tooltip, Pagination } from '@heroui/react';
+import { Card, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Badge, Chip, Switch, Tooltip } from '@heroui/react';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Textarea, useDisclosure } from '@heroui/react';
 import { worksheetTableClassNames } from '../../../components/frontoffice/StayWorksheetTable';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
@@ -1318,7 +1318,8 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 										removeWrapper
 										classNames={{
 											...worksheetTableClassNames,
-											td: `${worksheetTableClassNames.td} overflow-hidden text-ellipsis`,
+											th: `${worksheetTableClassNames.th} py-2`,
+											td: `${worksheetTableClassNames.td} overflow-hidden text-ellipsis py-1.5`,
 										}}
 									>
 						<TableHeader>
@@ -1416,22 +1417,16 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 												case 'reservations':
 													return (
 														<TableCell style={{ width: colWidths.reservations }}>
-										<div className="text-center">
-											<span className="font-medium">{row.reservationCount}</span>
-											<p className="text-xs text-gray-500">bookings</p>
-										</div>
-									</TableCell>
+															<span className="block text-center font-medium">{row.reservationCount}</span>
+														</TableCell>
 													);
 												case 'services':
 													return <TableCell style={{ width: colWidths.services }}>{row.services}</TableCell>;
 												case 'dateJoined':
 													return (
 														<TableCell style={{ width: colWidths.dateJoined }}>
-											<div className="text-center">
-																<span className="text-sm">{new Date(row.createdAt).toLocaleDateString()}</span>
-																<p className="text-xs text-gray-500">joined</p>
-											</div>
-									</TableCell>
+															<span className="block text-center text-sm">{new Date(row.createdAt).toLocaleDateString()}</span>
+														</TableCell>
 													);
 												default:
 													return <TableCell>—</TableCell>;
@@ -1640,12 +1635,6 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 									</div>
 							</div>
 							)}
-							{totalPages > 1 && (
-								<div className="flex justify-center py-3">
-									<Pagination total={totalPages} page={currentPage} onChange={setCurrentPage} showControls size="sm" color="primary" />
-								</div>
-							)}
-
 
 				</div>
 			</div>

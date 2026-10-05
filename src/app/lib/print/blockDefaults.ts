@@ -64,6 +64,16 @@ function standardBlocks(recipientHeading: string): BlockConfig[] {
   ];
 }
 
+/** Standard layout plus a payment box, so the guest can see where to pay. */
+function withBankDetails(blocks: BlockConfig[]): BlockConfig[] {
+  const signatureAt = blocks.findIndex((item) => item.type === 'signature-block');
+  const notesAt = blocks.findIndex((item) => item.type === 'notes-text');
+  const at = signatureAt >= 0 ? signatureAt : notesAt >= 0 ? notesAt : blocks.length;
+  const next = [...blocks];
+  next.splice(at, 0, block({ id: 'bank-details', type: 'bank-details', order: at, heading: 'Payment Details', spacing: 'medium' }));
+  return next.map((item, index) => ({ ...item, order: index }));
+}
+
 /** Mirrors variantTopClassInvoice() in templates.ts — same blocks + watermark + signatures. */
 function premiumBlocks(recipientHeading: string, signatures: Array<{ label: string; role?: string }>): BlockConfig[] {
   return standardBlocks(recipientHeading).map(b =>
@@ -1070,6 +1080,117 @@ function corporateRfqBlocks(recipientHeading: string, signatures: Array<{ label:
   ];
 }
 
+const CONTRACT_TERMS = [
+  { heading: 'Payment', body: '50% deposit required upon booking, balance due 7 days before the event.' },
+  { heading: 'Cancellation', body: '30 days notice required for a full refund, 14 days for a 50% refund.' },
+  { heading: 'Force majeure', body: 'Events beyond our control may result in rescheduling or a refund.' },
+  { heading: 'Liability', body: '{{org.name}} liability is limited to the contract value.' },
+  { heading: 'Governing law', body: 'This contract is governed by the laws of Ghana.' },
+];
+
+function contractTerms(order: number): BlockConfig {
+  return block({ id: 'terms-conditions', type: 'terms-conditions', order, termsSections: CONTRACT_TERMS.map((section) => ({ ...section })) });
+}
+
+function contractRates(order: number): BlockConfig {
+  return block({ id: 'line-items-table', type: 'line-items-table', order, columns: ['unit', 'unitPrice'] });
+}
+
+function contractEvent(order: number, border: 'thin' | 'thick' = 'thin'): BlockConfig {
+  return block({
+    id: 'event-details', type: 'custom-text', order, columnSpan: 'half', border,
+    text: 'Event\n{{event.summary}}',
+  });
+}
+
+function contractClient(order: number, border: 'thin' | 'thick' = 'thin'): BlockConfig {
+  return block({ id: 'guest-details', type: 'guest-details', order, columnSpan: 'half', heading: 'Client', border });
+}
+
+function contractSignatures(order: number): BlockConfig {
+  return block({
+    id: 'signature-block', type: 'signature-block', order, signatureDisplay: 'line',
+    signatures: [{ label: 'Client' }, { label: 'For the hotel' }],
+  });
+}
+
+/** Hotel name centered, client and event side by side, rates, then the terms. */
+function classicContractBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { fontSize: 'lg', bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center', spacing: 'none' }),
+    block({ id: 'company-contact', type: 'company-contact', order: 2, align: 'center', spacing: 'none', dividerBelow: true }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, align: 'center', heading: 'Event Services Contract' }),
+    block({ id: 'doc-date', type: 'doc-date', order: 4, align: 'center', spacing: 'none' }),
+    contractClient(5),
+    contractEvent(6),
+    contractRates(7),
+    contractTerms(8),
+    contractSignatures(9),
+  ];
+}
+
+/** Logo and hotel name on the left, like a letterhead. */
+function letterheadContractBlocks(): BlockConfig[] {
+  return [
+    letterheadHeaderRow(0),
+    block({ id: 'doc-title', type: 'doc-title', order: 1, heading: 'Event Services Contract' }),
+    contractClient(2),
+    contractEvent(3),
+    contractRates(4),
+    contractTerms(5),
+    contractSignatures(6),
+  ];
+}
+
+/** Client and event each in a heavy box, the way an invoice boxes the guest. */
+function boxedContractBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { fontSize: 'lg', bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center', spacing: 'none' }),
+    block({ id: 'company-contact', type: 'company-contact', order: 2, align: 'center', spacing: 'none' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, align: 'center', heading: 'Event Services Contract', underline: true }),
+    contractClient(4, 'thick'),
+    contractEvent(5, 'thick'),
+    contractRates(6),
+    contractTerms(7),
+    contractSignatures(8),
+  ];
+}
+
+/** Dark band across the top, then the names underneath. */
+function bannerContractBlocks(): BlockConfig[] {
+  return [
+    block({
+      id: 'banner', type: 'container', order: 0, direction: 'row', gap: 'medium', spacing: 'none',
+      background: '#111827', backgroundTextColor: '#ffffff',
+      children: [
+        block({ id: 'logo', type: 'logo', order: 0, flexWeight: 0 }),
+        block({ id: 'company-name', type: 'company-name', order: 1, flexWeight: 1, align: 'center', style: { fontSize: 'lg', bold: true } }),
+      ],
+    }),
+    block({ id: 'doc-title', type: 'doc-title', order: 1, align: 'center', heading: 'Event Services Contract', spacing: 'medium' }),
+    contractClient(2),
+    contractEvent(3),
+    contractRates(4),
+    contractTerms(5),
+    contractSignatures(6),
+  ];
+}
+
+/** Rates and terms first. The client box and the signature lines sit at the bottom. */
+function bottomContractBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { fontSize: 'lg', bold: true } }),
+    block({ id: 'doc-title', type: 'doc-title', order: 1, align: 'center', heading: 'Event Services Contract' }),
+    contractRates(2),
+    contractTerms(3),
+    contractClient(4),
+    contractEvent(5),
+    contractSignatures(6),
+  ];
+}
+
 function template(id: string, docType: PrintType, name: string, blocks: BlockConfig[], styleOverrides?: Partial<TemplateStyle>): BlockTemplate {
   return {
     id,
@@ -1094,6 +1215,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-invoice-modern-banner', 'invoice', 'Mamani', modernBannerBlocks('Guest / Client')),
     template('builtin-invoice-statement', 'invoice', 'Statement (corporate account)', statementBlocks('Guest / Client')),
     template('builtin-invoice-tax-invoice', 'invoice', 'Tax Invoice (GRA compliance)', taxInvoiceBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
+    template('builtin-invoice-bank-details', 'invoice', 'Bank details', withBankDetails(standardBlocks('Guest / Client'))),
   ],
   receipt: [
     template('builtin-receipt-standard', 'receipt', 'Standard', standardBlocks('Guest / Client')),
@@ -1104,6 +1226,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-receipt-thermal', 'receipt', 'Thermal / POS Slip (80mm)', thermalReceiptBlocks('Guest / Client'), { fontFamily: 'mono', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm' }),
     template('builtin-receipt-thank-you', 'receipt', 'Wumpini', thankYouReceiptBlocks('Guest / Client'), { showWatermark: true, watermarkText: 'PAID', primaryColor: '#0A7D34' }),
     template('builtin-receipt-corporate', 'receipt', 'Corporate (for expense reports)', corporateReceiptBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
+    template('builtin-receipt-bank-details', 'receipt', 'Bank details', withBankDetails(standardBlocks('Guest / Client'))),
   ],
   proforma: [
     template('builtin-proforma-standard', 'proforma', 'Standard', standardBlocks('Client')),
@@ -1119,6 +1242,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-proforma-corporate-rfq', 'proforma', 'Corporate RFQ Response', corporateRfqBlocks('Client', [
       { label: 'Prepared By' }, { label: 'Client Acceptance' },
     ]), { fontFamily: 'serif', borderWidth: 'thick' }),
+    template('builtin-proforma-bank-details', 'proforma', 'Bank details', withBankDetails(standardBlocks('Client'))),
   ],
   // Events & Conferences — Accommodation leg. Kept as its own document type
   // (rather than the generic invoice/receipt/proforma above) so editing this
@@ -1137,6 +1261,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-accommodation-proforma-corporate-rfq', 'accommodation-proforma', 'Corporate RFQ Response', corporateRfqBlocks('Client', [
       { label: 'Prepared By' }, { label: 'Client Acceptance' },
     ]), { fontFamily: 'serif', borderWidth: 'thick' }),
+    template('builtin-accommodation-proforma-bank-details', 'accommodation-proforma', 'Bank details', withBankDetails(standardBlocks('Client'))),
   ],
   'accommodation-invoice': [
     template('builtin-accommodation-invoice-standard', 'accommodation-invoice', 'Standard', standardBlocks('Guest / Client')),
@@ -1146,6 +1271,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-accommodation-invoice-modern-banner', 'accommodation-invoice', 'Modern Banner', modernBannerBlocks('Guest / Client')),
     template('builtin-accommodation-invoice-statement', 'accommodation-invoice', 'Statement (corporate account)', statementBlocks('Guest / Client')),
     template('builtin-accommodation-invoice-tax-invoice', 'accommodation-invoice', 'Tax Invoice (GRA compliance)', taxInvoiceBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
+    template('builtin-accommodation-invoice-bank-details', 'accommodation-invoice', 'Bank details', withBankDetails(standardBlocks('Guest / Client'))),
   ],
   'accommodation-receipt': [
     template('builtin-accommodation-receipt-standard', 'accommodation-receipt', 'Standard', standardBlocks('Guest / Client')),
@@ -1155,6 +1281,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-accommodation-receipt-thermal', 'accommodation-receipt', 'Thermal / POS Slip (80mm)', thermalReceiptBlocks('Guest / Client'), { fontFamily: 'mono', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm' }),
     template('builtin-accommodation-receipt-thank-you', 'accommodation-receipt', 'Thank You', thankYouReceiptBlocks('Guest / Client'), { showWatermark: true, watermarkText: 'PAID', primaryColor: '#0A7D34' }),
     template('builtin-accommodation-receipt-corporate', 'accommodation-receipt', 'Corporate (for expense reports)', corporateReceiptBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
+    template('builtin-accommodation-receipt-bank-details', 'accommodation-receipt', 'Bank details', withBankDetails(standardBlocks('Guest / Client'))),
   ],
   // Events & Conferences — Conference/Catering leg.
   'event-proforma': [
@@ -1175,6 +1302,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-event-proforma-corporate-rfq', 'event-proforma', 'Corporate RFQ Response', corporateRfqBlocks('Client', [
       { label: 'Prepared By' }, { label: 'Client Acceptance' },
     ]), { fontFamily: 'serif', borderWidth: 'thick' }),
+    template('builtin-event-proforma-bank-details', 'event-proforma', 'Bank details', withBankDetails(standardBlocks('Client'))),
   ],
   'event-invoice': [
     template('builtin-event-invoice-standard', 'event-invoice', 'Standard', standardBlocks('Guest / Client')),
@@ -1187,6 +1315,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-event-invoice-modern-banner', 'event-invoice', 'Modern Banner', modernBannerBlocks('Guest / Client')),
     template('builtin-event-invoice-statement', 'event-invoice', 'Statement (corporate account)', statementBlocks('Guest / Client')),
     template('builtin-event-invoice-tax-invoice', 'event-invoice', 'Tax Invoice (GRA compliance)', taxInvoiceBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
+    template('builtin-event-invoice-bank-details', 'event-invoice', 'Bank details', withBankDetails(standardBlocks('Guest / Client'))),
   ],
   'event-receipt': [
     template('builtin-event-receipt-standard', 'event-receipt', 'Standard', standardBlocks('Guest / Client')),
@@ -1196,6 +1325,14 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-event-receipt-thermal', 'event-receipt', 'Thermal / POS Slip (80mm)', thermalReceiptBlocks('Guest / Client'), { fontFamily: 'mono', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm' }),
     template('builtin-event-receipt-thank-you', 'event-receipt', 'Thank You', thankYouReceiptBlocks('Guest / Client'), { showWatermark: true, watermarkText: 'PAID', primaryColor: '#0A7D34' }),
     template('builtin-event-receipt-corporate', 'event-receipt', 'Corporate (for expense reports)', corporateReceiptBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
+    template('builtin-event-receipt-bank-details', 'event-receipt', 'Bank details', withBankDetails(standardBlocks('Guest / Client'))),
+  ],
+  'event-contract': [
+    template('builtin-event-contract-classic', 'event-contract', 'Classic', classicContractBlocks(), { fontFamily: 'serif' }),
+    template('builtin-event-contract-letterhead', 'event-contract', 'Letterhead', letterheadContractBlocks(), { fontFamily: 'serif' }),
+    template('builtin-event-contract-boxed', 'event-contract', 'Boxed', boxedContractBlocks(), { fontFamily: 'serif', borderWidth: 'thick', corners: 'square' }),
+    template('builtin-event-contract-banner', 'event-contract', 'Banner', bannerContractBlocks()),
+    template('builtin-event-contract-bottom', 'event-contract', 'Parties at the bottom', bottomContractBlocks(), { fontFamily: 'serif' }),
   ],
   'payment-voucher': [
     template('builtin-payment-voucher-standard', 'payment-voucher', 'Standard', paymentVoucherStandardBlocks()),

@@ -5,6 +5,7 @@ import { DEFAULT_SECURITY_POLICY } from '@/app/lib/settings/securityPolicy';
 import { ensureDefaultRolesForTenant } from '@/app/lib/settings/roleRepository';
 import { findUserForLogin } from '@/app/lib/auth/loginLookup';
 import { nextPaidUntil, parseMonthlyFee, paymentDue, readBill, readExpenses, readPayments, todayISO } from '@/app/lib/platform/billing';
+import { frontDeskOnly, normalizePaidModules, readPaidModules, type PaidModules } from '@/app/lib/platform/hotelModules';
 
 import { OPERATOR_ROLE, PLATFORM_SUBDOMAIN } from './operatorRole';
 export { OPERATOR_ROLE, PLATFORM_SUBDOMAIN, isPlatformOperator } from './operatorRole';
@@ -105,6 +106,7 @@ function presentHotel(row: { id: string; name: string; subdomain: string; status
     paidUntil: bill.paidUntil,
     paymentDue: paymentDue(bill.paidUntil),
     payments: readPayments(row.metadata),
+    modules: readPaidModules(row.metadata),
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -126,10 +128,11 @@ export async function openHotel(input: {
   adminName: string;
   adminEmail: string;
   password: string;
+  modules?: unknown;
 }) {
   const subdomain = hotelSubdomain(input.subdomain);
   if (!subdomain) {
-    return { error: 'Use a short web address: letters, numbers, and hyphens.' };
+    return { error: 'Tenant ID uses letters, numbers, and hyphens.' };
   }
   const name = input.name.trim();
   const adminName = input.adminName.trim();
@@ -144,7 +147,7 @@ export async function openHotel(input: {
   if (monthlyFee == null) return { error: 'Enter a monthly fee in cedis.' };
 
   const taken = await prisma.tenant.findUnique({ where: { subdomain }, select: { id: true } });
-  if (taken) return { error: 'That web address is already used.' };
+  if (taken) return { error: 'That Tenant ID is already used.' };
 
   const paidUntil = nextPaidUntil(null);
   const hotel = await prisma.tenant.create({
@@ -164,6 +167,7 @@ export async function openHotel(input: {
         payments: [{ paidOn: todayISO(), amount: monthlyFee, paidUntil }],
         region: 'ghana',
         industry: 'hospitality',
+        modules: input.modules == null ? frontDeskOnly() : normalizePaidModules(input.modules),
       },
     },
   });
@@ -207,6 +211,20 @@ export async function setHotelStatus(id: string, status: 'active' | 'suspended')
     where: { id },
     data: { status },
     select: { id: true, name: true, subdomain: true, status: true, metadata: true, createdAt: true },
+  });
+  return { hotel: presentHotel(updated) };
+}
+
+export async function setHotelModules(id: string, raw: unknown) {
+  const hotel = await prisma.tenant.findUnique({ where: { id } });
+  if (!hotel || hotel.subdomain === PLATFORM_SUBDOMAIN) return { error: 'Hotel not found.' as const };
+  const modules: PaidModules = normalizePaidModules(raw);
+  const meta = hotel.metadata && typeof hotel.metadata === 'object' && !Array.isArray(hotel.metadata)
+    ? (hotel.metadata as Record<string, unknown>)
+    : {};
+  const updated = await prisma.tenant.update({
+    where: { id },
+    data: { metadata: { ...meta, modules } },
   });
   return { hotel: presentHotel(updated) };
 }

@@ -29,9 +29,9 @@ function inferTaxType(rule: TaxRule): TaxConfig['type'] {
   return 'Other';
 }
 
-/** Fallback when a rule has no explicit `isRecoverable` yet (legacy seeds / unedited rules). */
+/** Tourism stays outside input tax. NHIL and GETFund became claimable on 1 Jan 2026 (Act 1151). */
 function isNonCreditableLevy(type: TaxConfig['type']): boolean {
-  return type === 'NHIL' || type === 'GETFund' || type === 'Tourism';
+  return type === 'Tourism' || type === 'COVID19';
 }
 
 function defaultIsRecoverable(rule: TaxRule, type: TaxConfig['type']): boolean {

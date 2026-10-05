@@ -90,6 +90,48 @@ export async function fetchJournalEntries(): Promise<JournalEntry[] | null> {
   }
 }
 
+export type AccountingBootstrap = {
+  journalEntries: JournalEntry[] | null;
+  invoices: Invoice[] | null;
+  payments: Payment[] | null;
+  chartOfAccounts: ChartOfAccounts[] | null;
+  bankAccounts: BankAccount[] | null;
+  costCenters: CostCenter[] | null;
+  revenueCenters: RevenueCenter[] | null;
+  businessPartners: BusinessPartner[] | null;
+  bankTransactions: BankTransaction[] | null;
+  auditTrail: AuditTrail[] | null;
+};
+
+/** One request for everything Accounting needs when it first opens. */
+export async function fetchAccountingBootstrap(): Promise<AccountingBootstrap | null> {
+  const t = getClientTenantSubdomain();
+  if (typeof window === 'undefined' || !t) return null;
+  try {
+    const res = await fetch('/api/accounting/bootstrap', {
+      headers: { 'x-tenant-subdomain': t },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const list = <T,>(value: unknown): T[] | null => (Array.isArray(value) ? value as T[] : null);
+    return {
+      journalEntries: list<JournalEntry>(data.journalEntries),
+      invoices: list<Invoice>(data.invoices),
+      payments: list<Payment>(data.payments),
+      chartOfAccounts: list<ChartOfAccounts>(data.chartOfAccounts),
+      bankAccounts: list<BankAccount>(data.bankAccounts),
+      costCenters: list<CostCenter>(data.costCenters),
+      revenueCenters: list<RevenueCenter>(data.revenueCenters),
+      businessPartners: list<BusinessPartner>(data.businessPartners),
+      bankTransactions: list<BankTransaction>(data.bankTransactions),
+      auditTrail: list<AuditTrail>(data.auditTrail),
+    };
+  } catch (e) {
+    console.warn('Accounting: bootstrap hydration failed', e);
+    return null;
+  }
+}
+
 export async function fetchAccountingAuditTrail(): Promise<AuditTrail[] | null> {
   const t = getClientTenantSubdomain();
   if (typeof window === 'undefined' || !t) return null;
@@ -199,6 +241,18 @@ export function persistPaymentPatch(
     if (!res.ok) throw new Error('PATCH payment failed');
     const data = await res.json().catch(() => null);
     return data?.payment ?? null;
+  });
+}
+
+export function persistPaymentDelete(id: string) {
+  const t = getClientTenantSubdomain();
+  if (!t) return;
+  enqueue(async () => {
+    const res = await fetch(`/api/accounting/payments/${id}`, {
+      method: 'DELETE',
+      headers: headers(t),
+    });
+    if (!res.ok && res.status !== 404) throw new Error('DELETE payment failed');
   });
 }
 

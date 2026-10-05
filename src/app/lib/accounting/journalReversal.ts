@@ -23,6 +23,16 @@ export function hasReversalForEntry(journalEntries: JournalEntry[], originalEntr
 
 export const JOURNAL_REVERSAL_SOURCE = 'journal_reversal';
 
+/** The posted opposite entry created when a document was voided. */
+export function findVoidReversal(journalEntries: JournalEntry[], originalEntryId: string): JournalEntry | undefined {
+  return journalEntries.find(
+    (entry) =>
+      entry.status === 'Posted' &&
+      entry.sourceTransactionId === originalEntryId &&
+      (entry.sourceModule === AR_AP_REVERSAL_SOURCE || entry.sourceModule === JOURNAL_REVERSAL_SOURCE),
+  );
+}
+
 export function findJournalReversal(journalEntries: JournalEntry[], originalEntryId: string): JournalEntry | undefined {
   return journalEntries.find(
     (entry) =>

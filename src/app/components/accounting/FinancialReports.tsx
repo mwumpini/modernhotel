@@ -1007,19 +1007,18 @@ export default function FinancialReportsPage() {
     openPrintPreview(generateReportHTML('STATEMENT OF CHANGES IN EQUITY', periodLabel, content));
   }, [socie, periodLabel]);
 
-  const handlePostPeriodClose = useCallback(() => {
+  const handlePostPeriodClose = useCallback(async () => {
     setCloseMessage(null);
     if (!closeAsOfDate) {
       setCloseMessage('Choose a closing date.');
       return;
     }
-    if (
-      !window.confirm(
-        `Post profit/loss close to retained earnings (GL ${RETAINED_EARNINGS_GL}) as at ${closeAsOfDate}? This creates a posted journal entry, and locks every date on or before ${closeAsOfDate} against new postings.`
-      )
-    ) {
-      return;
-    }
+    const { confirmChoice } = await import('../DangerConfirm');
+    if (!(await confirmChoice(
+      `Close the books as at ${closeAsOfDate}?`,
+      `This posts profit or loss to retained earnings (GL ${RETAINED_EARNINGS_GL}) and locks every date on or before ${closeAsOfDate} against new postings.`,
+      'Post close',
+    ))) return;
     setCloseBusy(true);
     try {
       const result = buildProfitLossCloseEntry(journalEntries, rollupCoa, closeAsOfDate);

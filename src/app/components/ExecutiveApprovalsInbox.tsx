@@ -4,6 +4,8 @@ import React from 'react';
 import { useSession } from 'next-auth/react';
 import { Card, CardHeader, CardBody, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Button, Chip, Spinner } from '@heroui/react';
 import { useAccountingStore } from '../lib/accounting/store';
+import { fetchPayments } from '../lib/accounting/helpers/api';
+import type { Payment } from '../lib/accounting/models';
 import { useSettingsStore } from '../lib/settings/store';
 import { useLeaveAttendanceStore } from '../lib/hr/leaveAttendanceStore';
 import { useEmployeeStore } from '../lib/hr/employeeStore';
@@ -48,8 +50,8 @@ function SectionCardHeader({
 }
 
 /**
- * Director/GM approval inbox — journal entries, payments, requisitions,
- * overtime, and (when Settings requires it) payroll months awaiting sign-off.
+ * Director/GM approval inbox. Payments and requisitions load first. Journal
+ * entries, overtime, and payroll follow so they do not hold those two up.
  * Gated in Navigation.tsx so only someone holding at least one approve
  * permission reaches this screen; each section re-checks its own permission.
  */
@@ -85,10 +87,18 @@ export default function ExecutiveApprovalsInbox() {
   const { data: session } = useSession();
   const approverName = (session?.user as any)?.name || (session?.user as any)?.email || 'Director';
 
-  // Each section shows as soon as its own data is in, rather than the whole screen waiting on the slowest source.
-  const [ready, setReady] = React.useState({ accounting: false, requisitions: false, overtime: false, payroll: false });
+  // Payments and requisitions are marked ready on their own. The other lists
+  // start only after those two, so they are not competing for the first load.
+  const [ready, setReady] = React.useState({
+    payments: false,
+    accounting: false,
+    requisitions: false,
+    overtime: false,
+    payroll: false,
+  });
   const markReady = (key: keyof typeof ready) => setReady((r) => ({ ...r, [key]: true }));
   const [requisitions, setRequisitions] = React.useState<PendingRequisition[]>([]);
+  const [earlyPayments, setEarlyPayments] = React.useState<Payment[] | null>(null);
   const [actingOn, setActingOn] = React.useState<string | null>(null);
 
   const loadRequisitions = React.useCallback(async () => {
@@ -107,17 +117,47 @@ export default function ExecutiveApprovalsInbox() {
   }, []);
 
   React.useEffect(() => {
-    const done = (key: keyof typeof ready) => () => markReady(key);
-    initializeAccounting().finally(done('accounting'));
-    loadRequisitions().finally(done('requisitions'));
-    const employeesLoaded = hydrateEmployees();
-    Promise.all([hydrateAttendance(), employeesLoaded]).finally(done('overtime'));
-    Promise.all([hydratePayroll(), employeesLoaded]).finally(done('payroll'));
+    let cancelled = false;
+    const done = (key: keyof typeof ready) => () => {
+      if (!cancelled) markReady(key);
+    };
+    (async () => {
+      const first: Promise<void>[] = [];
+      if (canApprovePayments) {
+        first.push(
+          fetchPayments()
+            .then((rows) => {
+              if (!cancelled && rows) setEarlyPayments(rows);
+            })
+            .finally(done('payments')),
+        );
+      } else {
+        done('payments')();
+      }
+      if (canApproveRequisitions) {
+        first.push(loadRequisitions().finally(done('requisitions')));
+      } else {
+        done('requisitions')();
+      }
+      await Promise.all(first);
+      if (cancelled) return;
+      // Journals need the full book. Overtime and payroll need the staff file.
+      // Neither starts until payments and requisitions have been asked for.
+      initializeAccounting().finally(done('accounting'));
+      const employeesLoaded = hydrateEmployees();
+      Promise.all([hydrateAttendance(), employeesLoaded]).finally(done('overtime'));
+      Promise.all([hydratePayroll(), employeesLoaded]).finally(done('payroll'));
+    })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const pendingJournalEntries = journalEntries.filter(e => e.status === 'Pending Approval');
-  const pendingPayments = payments.filter(p => p.status === 'Pending Approval');
+  const pendingPayments = (ready.accounting ? payments : earlyPayments ?? []).filter(
+    (p) => p.status === 'Pending Approval',
+  );
   const pendingOvertime = attendances.filter(
     a => (a.overtimeHours || 0) > 0 && !a.approvedAt && requireOvertimeApproval && (a.overtimeHours || 0) >= overtimeThreshold
   );
@@ -126,7 +166,11 @@ export default function ExecutiveApprovalsInbox() {
     ? payrollPeriods.filter((p) => p.status === 'processing' || p.status === 'draft')
       .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
     : [];
-  const partnerName = (id: string) => businessPartners.find(bp => bp.id === id)?.name || id;
+  const partnerName = (payment: Payment) =>
+    businessPartners.find((bp) => bp.id === payment.businessPartnerId)?.name ||
+    payment.customerName ||
+    payment.description ||
+    payment.businessPartnerId;
   const employeeName = (id: string) => {
     const e = employees.find(emp => emp.id === id);
     return e ? `${e.firstName} ${e.lastName}` : id;
@@ -146,6 +190,8 @@ export default function ExecutiveApprovalsInbox() {
   const approvePayment = async (id: string) => {
     setActingOn(id);
     try {
+      // The list can show before the rest of the books are in. Posting needs them.
+      await initializeAccounting();
       await postPayment(id);
     } finally {
       setActingOn(null);
@@ -234,8 +280,15 @@ export default function ExecutiveApprovalsInbox() {
     }
   };
 
+  const priorityReady =
+    (!canApprovePayments || ready.payments) && (!canApproveRequisitions || ready.requisitions);
+  const restReady = ready.accounting && ready.overtime && ready.payroll;
   const totalPending =
-    pendingJournalEntries.length + pendingPayments.length + requisitions.length + pendingOvertime.length + pendingPayroll.length;
+    (ready.payments ? pendingPayments.length : 0) +
+    (ready.requisitions ? requisitions.length : 0) +
+    (ready.accounting ? pendingJournalEntries.length : 0) +
+    (ready.overtime ? pendingOvertime.length : 0) +
+    (ready.payroll ? pendingPayroll.length : 0);
 
   const approveBtnClass = 'min-h-11 shrink-0 sm:min-h-9';
 
@@ -245,8 +298,10 @@ export default function ExecutiveApprovalsInbox() {
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-ghana-black">✅ Approvals</h1>
           <p className="mt-1 text-sm text-gray-600">
-            {!Object.values(ready).every(Boolean)
-              ? 'Checking what is waiting on your sign-off…'
+            {!priorityReady
+              ? 'Checking payments and requisitions…'
+              : totalPending === 0 && !restReady
+              ? 'No payments or requisitions are waiting. Still checking the other lists.'
               : totalPending === 0
               ? 'Nothing is waiting on your sign-off right now.'
               : `${totalPending} item${totalPending === 1 ? '' : 's'} waiting on director sign-off.`}
@@ -254,59 +309,15 @@ export default function ExecutiveApprovalsInbox() {
         </div>
       </div>
 
-      {canApproveJournalEntries && (
-        <Card className="border-0 shadow-lg">
-          <SectionCardHeader
-            title="Journal Entries"
-            chipLabel={ready.accounting ? `${pendingJournalEntries.length} pending` : 'checking…'}
-            chipColor={pendingJournalEntries.length ? 'warning' : 'default'}
-          />
-          <CardBody>
-            {!ready.accounting ? (
-              <div className="flex items-center gap-2 text-sm text-gray-500"><Spinner size="sm" /> Checking…</div>
-            ) : pendingJournalEntries.length === 0 ? (
-              <p className="text-sm text-gray-500">No journal entries pending approval.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table removeWrapper aria-label="Pending journal entries" className="min-w-[36rem]">
-                  <TableHeader>
-                    <TableColumn>ENTRY #</TableColumn>
-                    <TableColumn>DATE</TableColumn>
-                    <TableColumn>DESCRIPTION</TableColumn>
-                    <TableColumn className="text-right">AMOUNT</TableColumn>
-                    <TableColumn> </TableColumn>
-                  </TableHeader>
-                  <TableBody>
-                    {pendingJournalEntries.map(e => (
-                      <TableRow key={e.id}>
-                        <TableCell>{e.entryNumber}</TableCell>
-                        <TableCell>{new Date(e.date).toLocaleDateString()}</TableCell>
-                        <TableCell>{e.description}</TableCell>
-                        <TableCell className="text-right">{formatAccountingCurrency(e.totalDebit, e.currency)}</TableCell>
-                        <TableCell>
-                          <Button size="sm" color="success" variant="flat" className={approveBtnClass} isLoading={actingOn === e.id} onPress={() => approveJournalEntry(e.id)}>
-                            Approve &amp; Post
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardBody>
-        </Card>
-      )}
-
       {canApprovePayments && (
         <Card className="border-0 shadow-lg">
           <SectionCardHeader
             title="Payments"
-            chipLabel={ready.accounting ? `${pendingPayments.length} pending` : 'checking…'}
+            chipLabel={ready.payments ? `${pendingPayments.length} pending` : 'checking…'}
             chipColor={pendingPayments.length ? 'warning' : 'default'}
           />
           <CardBody>
-            {!ready.accounting ? (
+            {!ready.payments ? (
               <div className="flex items-center gap-2 text-sm text-gray-500"><Spinner size="sm" /> Checking…</div>
             ) : pendingPayments.length === 0 ? (
               <p className="text-sm text-gray-500">No payments pending approval.</p>
@@ -325,7 +336,7 @@ export default function ExecutiveApprovalsInbox() {
                       <TableRow key={p.id}>
                         <TableCell>{p.paymentNumber}</TableCell>
                         <TableCell>{new Date(p.date).toLocaleDateString()}</TableCell>
-                        <TableCell>{partnerName(p.businessPartnerId)}</TableCell>
+                        <TableCell>{partnerName(p)}</TableCell>
                         <TableCell className="text-right">{formatAccountingCurrency(p.amount, p.currency)}</TableCell>
                         <TableCell>
                           <Button size="sm" color="success" variant="flat" className={approveBtnClass} isLoading={actingOn === p.id} onPress={() => approvePayment(p.id)}>
@@ -374,6 +385,50 @@ export default function ExecutiveApprovalsInbox() {
                         <TableCell>
                           <Button size="sm" color="success" variant="flat" className={approveBtnClass} isLoading={actingOn === r.id} onPress={() => approveRequisition(r)}>
                             Approve
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardBody>
+        </Card>
+      )}
+
+      {canApproveJournalEntries && (
+        <Card className="border-0 shadow-lg">
+          <SectionCardHeader
+            title="Journal Entries"
+            chipLabel={ready.accounting ? `${pendingJournalEntries.length} pending` : 'checking…'}
+            chipColor={pendingJournalEntries.length ? 'warning' : 'default'}
+          />
+          <CardBody>
+            {!ready.accounting ? (
+              <div className="flex items-center gap-2 text-sm text-gray-500"><Spinner size="sm" /> Checking…</div>
+            ) : pendingJournalEntries.length === 0 ? (
+              <p className="text-sm text-gray-500">No journal entries pending approval.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table removeWrapper aria-label="Pending journal entries" className="min-w-[36rem]">
+                  <TableHeader>
+                    <TableColumn>ENTRY #</TableColumn>
+                    <TableColumn>DATE</TableColumn>
+                    <TableColumn>DESCRIPTION</TableColumn>
+                    <TableColumn className="text-right">AMOUNT</TableColumn>
+                    <TableColumn> </TableColumn>
+                  </TableHeader>
+                  <TableBody>
+                    {pendingJournalEntries.map(e => (
+                      <TableRow key={e.id}>
+                        <TableCell>{e.entryNumber}</TableCell>
+                        <TableCell>{new Date(e.date).toLocaleDateString()}</TableCell>
+                        <TableCell>{e.description}</TableCell>
+                        <TableCell className="text-right">{formatAccountingCurrency(e.totalDebit, e.currency)}</TableCell>
+                        <TableCell>
+                          <Button size="sm" color="success" variant="flat" className={approveBtnClass} isLoading={actingOn === e.id} onPress={() => approveJournalEntry(e.id)}>
+                            Approve &amp; Post
                           </Button>
                         </TableCell>
                       </TableRow>

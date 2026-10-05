@@ -3,9 +3,9 @@
 type StoreLike = any;
 import { useSettingsStore } from '../../settings/store';
 import { useAccountingStore } from '../../accounting/store';
-import { postGuestFolioCheckoutToLedger } from '../../accounting/simpleFlow';
+import { postGuestFolioCheckoutToLedger, postGuestFolioChargeVoidToLedger } from '../../accounting/simpleFlow';
 import { folioChargeGlCode, getFolioDisplayTotals } from './folio';
-import { chargeNet } from '../folioLedger';
+import { chargeGross, chargeNet } from '../folioLedger';
 import { isCorporateGuest } from './guests';
 import { creditTermDays } from '../operationalPolicies';
 
@@ -157,6 +157,7 @@ export function generateAccountingInvoiceForReservation(self: StoreLike, reserva
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         sourceModule: 'front_office_checkout',
+        folioPaymentId: p.id,
       } as any);
     });
   } catch {}
@@ -301,7 +302,225 @@ export function postFolioReceiptAfterInvoice(self: StoreLike, reservationId: str
     createdAt: now,
     updatedAt: now,
     sourceModule: 'front_office',
+    folioPaymentId: payment.id,
   } as any);
+}
+
+/** Void in Front Office also voids the Accounting receipt and puts the amount back on the invoice. */
+export async function voidFolioReceiptInAccounting(
+  self: StoreLike,
+  reservationId: string,
+  payment: { id: string; amount?: number; ref?: string },
+) {
+  const store = useAccountingStore.getState();
+  if (store.payments.length === 0) await store.initializeAccounting();
+  else await store.refreshLedgerFromServer();
+
+  const accounting = useAccountingStore.getState();
+  const reservation = self.reservations.find((r: any) => r.id === reservationId);
+  if (!reservation) return;
+  const refs = [reservation.resId, reservation.id].filter(Boolean).map((value: unknown) => String(value));
+  const invoice = accounting.invoices.find((inv) =>
+    inv.type === 'Sales' &&
+    inv.status !== 'Void' &&
+    (inv as { sourceModule?: string }).sourceModule === 'front_office_checkout' &&
+    refs.includes(String(inv.reference || '')),
+  );
+  const amount = Number(payment.amount);
+  const linkedId = invoice ? `A-PAY-${invoice.id}-${payment.id}` : '';
+  const receipts = accounting.payments.filter(
+    (p) => p.type === 'Receipt' && p.status !== 'Void',
+  );
+  const match =
+    receipts.find((p) => (p as { folioPaymentId?: string }).folioPaymentId === payment.id) ||
+    receipts.find((p) => p.id === linkedId) ||
+    receipts.find((p) =>
+      !!invoice &&
+      p.invoiceId === invoice.id &&
+      (p.sourceModule === 'front_office' || p.sourceModule === 'front_office_checkout') &&
+      Math.abs(Number(p.amount) - amount) < 0.02 &&
+      (!payment.ref || !p.reference || p.reference === payment.ref),
+    );
+  if (!match) {
+    console.warn('[FO Invoice] No accounting receipt matched this void', reservationId, payment.id);
+    return;
+  }
+  await accounting.voidPayment(match.id);
+}
+
+/** Put a voided folio receipt back in Accounting. The checkout invoice must already be live. */
+export async function unvoidFolioReceiptInAccounting(
+  self: StoreLike,
+  reservationId: string,
+  payment: { id: string; amount?: number; ref?: string },
+) {
+  const store = useAccountingStore.getState();
+  if (store.payments.length === 0) await store.initializeAccounting();
+  const accounting = useAccountingStore.getState();
+  const reservation = self.reservations.find((r: any) => r.id === reservationId);
+  if (!reservation) return;
+  const refs = [reservation.resId, reservation.id].filter(Boolean).map((value: unknown) => String(value));
+  const invoice = accounting.invoices.find((inv) =>
+    inv.type === 'Sales' &&
+    (inv as { sourceModule?: string }).sourceModule === 'front_office_checkout' &&
+    refs.includes(String(inv.reference || '')),
+  );
+  const linkedId = invoice ? `A-PAY-${invoice.id}-${payment.id}` : '';
+  const match = accounting.payments.find(
+    (item) => item.status === 'Void' && (
+      (item as { folioPaymentId?: string }).folioPaymentId === payment.id || item.id === linkedId
+    ),
+  );
+  if (!match) return;
+  await accounting.unvoidPayment(match.id);
+}
+
+/** Delete removes the folio line and the Accounting receipt, including one already marked Void. */
+export async function deleteFolioReceiptFromAccounting(
+  self: StoreLike,
+  reservationId: string,
+  payment: { id: string; amount?: number; ref?: string },
+) {
+  const store = useAccountingStore.getState();
+  if (store.payments.length === 0) await store.initializeAccounting();
+  else await store.refreshLedgerFromServer();
+
+  const accounting = useAccountingStore.getState();
+  const reservation = self.reservations.find((r: any) => r.id === reservationId);
+  if (!reservation) return;
+  const refs = [reservation.resId, reservation.id].filter(Boolean).map((value: unknown) => String(value));
+  const invoice = accounting.invoices.find((inv) =>
+    inv.type === 'Sales' &&
+    inv.status !== 'Void' &&
+    (inv as { sourceModule?: string }).sourceModule === 'front_office_checkout' &&
+    refs.includes(String(inv.reference || '')),
+  );
+  const amount = Number(payment.amount);
+  const linkedId = invoice ? `A-PAY-${invoice.id}-${payment.id}` : '';
+  const receipts = accounting.payments.filter((p) => p.type === 'Receipt');
+  const score = (p: { status?: string }) => (p.status === 'Void' ? 1 : 0);
+  const ranked = (rows: typeof receipts) => [...rows].sort((a, b) => score(a) - score(b));
+  const match =
+    ranked(receipts.filter((p) => (p as { folioPaymentId?: string }).folioPaymentId === payment.id))[0] ||
+    ranked(receipts.filter((p) => p.id === linkedId))[0] ||
+    ranked(receipts.filter((p) =>
+      !!invoice &&
+      p.invoiceId === invoice.id &&
+      (p.sourceModule === 'front_office' || p.sourceModule === 'front_office_checkout') &&
+      Math.abs(Number(p.amount) - amount) < 0.02 &&
+      (!payment.ref || !p.reference || p.reference === payment.ref),
+    ))[0];
+  if (!match) return;
+  if (match.status !== 'Void') {
+    await accounting.voidPayment(match.id);
+    if (useAccountingStore.getState().error) return;
+  }
+  useAccountingStore.getState().purgePayment(match.id);
+}
+
+/**
+ * A stay that is already checked out has a sales invoice. Voiding a folio charge
+ * lowers that invoice, what the guest owes, and the books by the same amount.
+ * A stay that is still in house has no invoice yet — checkout posts the net folio.
+ */
+export async function voidFolioChargeInAccounting(
+  self: StoreLike,
+  reservationId: string,
+  charge: { id: string; description?: string; category?: string; glAccountCode?: string; amount?: number; tax?: number; serviceCharge?: number; discountAmount?: number },
+) {
+  const net = chargeNet(charge);
+  const tax = Math.max(0, Number(charge.tax || 0));
+  const gross = Math.round(chargeGross(charge) * 100) / 100;
+  if (!(gross > 0.004)) return;
+
+  const store = useAccountingStore.getState();
+  if (store.invoices.length === 0 && store.journalEntries.length === 0) {
+    await store.initializeAccounting();
+  }
+  const accounting = useAccountingStore.getState();
+  const reservation = self.reservations.find((r: any) => r.id === reservationId);
+  if (!reservation) return;
+  const refs = [reservation.resId, reservation.id].filter(Boolean).map(String);
+  const invoice = accounting.invoices.find(
+    (inv: any) =>
+      inv.type === 'Sales' &&
+      inv.status !== 'Void' &&
+      inv.sourceModule === 'front_office_checkout' &&
+      refs.includes(String(inv.reference || '')),
+  );
+  if (!invoice) return;
+
+  const reduceGross = Math.min(gross, Number(invoice.total) || 0);
+  if (reduceGross < 0.01) return;
+  const nextTotal = Math.max(0, Math.round((Number(invoice.total) - reduceGross) * 100) / 100);
+  const taxCut = Math.min(tax, Number(invoice.taxAmount) || 0, reduceGross);
+  const nextTax = Math.max(0, Math.round((Number(invoice.taxAmount || 0) - taxCut) * 100) / 100);
+  const nextSub = Math.max(0, Math.round((nextTotal - nextTax) * 100) / 100);
+  const paid = Number(invoice.paidAmount || 0);
+  const status = invoice.status === 'Draft' || invoice.status === 'Void'
+    ? invoice.status
+    : paid + 0.009 >= nextTotal
+      ? 'Paid'
+      : 'Posted';
+
+  accounting.updateInvoice(invoice.id, {
+    subtotal: nextSub,
+    taxAmount: nextTax,
+    total: nextTotal,
+    status,
+    updatedAt: new Date().toISOString(),
+  });
+
+  const netCut = Math.max(0, Math.round((reduceGross - taxCut) * 100) / 100);
+  postGuestFolioChargeVoidToLedger({
+    chargeId: charge.id,
+    invoiceNumber: invoice.invoiceNumber || invoice.id,
+    description: charge.description || 'Folio charge',
+    glAccountCode: folioChargeGlCode(charge),
+    net: netCut || Math.max(0, net),
+    tax: taxCut,
+    gross: reduceGross,
+  });
+}
+
+/** Put a voided folio charge back on the checkout invoice and reverse the void journal. */
+export async function unvoidFolioChargeInAccounting(
+  self: StoreLike,
+  reservationId: string,
+  charge: { id: string; description?: string; category?: string; glAccountCode?: string; amount?: number; tax?: number; serviceCharge?: number; discountAmount?: number },
+) {
+  const gross = Math.round(chargeGross(charge) * 100) / 100;
+  if (!(gross > 0.004)) return;
+  const store = useAccountingStore.getState();
+  if (store.invoices.length === 0 && store.journalEntries.length === 0) await store.initializeAccounting();
+  const accounting = useAccountingStore.getState();
+  const reservation = self.reservations.find((r: any) => r.id === reservationId);
+  if (!reservation) return;
+  const refs = [reservation.resId, reservation.id].filter(Boolean).map(String);
+  const invoice = accounting.invoices.find(
+    (inv: any) =>
+      inv.type === 'Sales' &&
+      inv.status !== 'Void' &&
+      inv.sourceModule === 'front_office_checkout' &&
+      refs.includes(String(inv.reference || '')),
+  );
+  const voidJournalId = `JE-FO-VOID-${charge.id}`;
+  if (accounting.journalEntries.some((entry) => entry.id === voidJournalId && entry.status === 'Posted')) {
+    await accounting.voidJournalEntry(voidJournalId);
+  }
+  if (!invoice) return;
+  const tax = Math.max(0, Number(charge.tax || 0));
+  const nextTotal = Math.round((Number(invoice.total) + gross) * 100) / 100;
+  const nextTax = Math.round((Number(invoice.taxAmount || 0) + tax) * 100) / 100;
+  const nextSub = Math.max(0, Math.round((nextTotal - nextTax) * 100) / 100);
+  const paid = Number(invoice.paidAmount || 0);
+  accounting.updateInvoice(invoice.id, {
+    subtotal: nextSub,
+    taxAmount: nextTax,
+    total: nextTotal,
+    status: paid + 0.009 >= nextTotal ? 'Paid' : 'Posted',
+    updatedAt: new Date().toISOString(),
+  });
 }
 
 /** Sweep every reservation stuck in 'gl_pending' and retry its GL post. Returns counts for logging/UI. */

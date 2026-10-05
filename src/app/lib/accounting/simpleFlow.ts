@@ -493,3 +493,99 @@ export function postNoShowPenaltyToLedger(params: {
 
   return { salesJournalEntryId: salesJeId };
 }
+
+/** Reverse one guest-folio charge against an invoice that was already posted at checkout. */
+export function postGuestFolioChargeVoidToLedger(params: {
+  chargeId: string;
+  invoiceNumber: string;
+  description: string;
+  glAccountCode: string;
+  net: number;
+  tax: number;
+  gross: number;
+}): void {
+  const store = useAccountingStore.getState();
+  const salesJeId = `JE-FO-VOID-${params.chargeId}`;
+  if (store.journalEntries.some((je) => je.id === salesJeId)) return;
+
+  const gross = +Math.max(0, params.gross).toFixed(2);
+  if (gross < 0.01) return;
+  const tax = +Math.max(0, params.tax).toFixed(2);
+  let revenueDebit = +Math.max(0, params.net).toFixed(2);
+
+  const taxParts: Array<{ code: string; name: string; amount: number }> = [];
+  if (tax > 0) {
+    const { lines: taxLines } = computeSalesTax(revenueDebit || gross, tax);
+    taxLines.forEach((line) => {
+      if (line.amount > 0) taxParts.push({ code: line.glAccountCode, name: line.name, amount: +line.amount.toFixed(2) });
+    });
+  }
+  const taxDebit = +taxParts.reduce((sum, part) => sum + part.amount, 0).toFixed(2);
+  if (Math.abs(revenueDebit + taxDebit - gross) >= 0.01) {
+    revenueDebit = +Math.max(0, gross - taxDebit).toFixed(2);
+  }
+
+  const jl = (suffix: string) => `JL-${salesJeId}-${suffix}`;
+  const lines: Array<{
+    id: string;
+    journalEntryId: string;
+    accountCode: string;
+    description: string;
+    debit: number;
+    credit: number;
+    currency: string;
+  }> = [];
+  if (revenueDebit > 0) {
+    lines.push({
+      id: jl('rev'),
+      journalEntryId: salesJeId,
+      accountCode: params.glAccountCode || GL_ACCOUNTS.ROOM_REVENUE,
+      description: `Reverse — ${params.description}`,
+      debit: revenueDebit,
+      credit: 0,
+      currency: 'GHS',
+    });
+  }
+  taxParts.forEach((part, index) => {
+    lines.push({
+      id: jl(`tax-${index}`),
+      journalEntryId: salesJeId,
+      accountCode: part.code,
+      description: `Reverse ${part.name}`,
+      debit: part.amount,
+      credit: 0,
+      currency: 'GHS',
+    });
+  });
+  lines.push({
+    id: jl('ar'),
+    journalEntryId: salesJeId,
+    accountCode: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+    description: `Amount due reduced — ${params.invoiceNumber}`,
+    debit: 0,
+    credit: gross,
+    currency: 'GHS',
+  });
+
+  const ts = nowIso();
+  const entry = {
+    id: salesJeId,
+    entryNumber: `JE-FOVOID-${String(params.chargeId).slice(-6)}`,
+    date: ts,
+    reference: params.invoiceNumber,
+    description: `Void folio charge — ${params.description}`,
+    totalDebit: gross,
+    totalCredit: gross,
+    currency: 'GHS',
+    status: 'Posted' as const,
+    postedBy: 'Front Office',
+    postedAt: ts,
+    createdAt: ts,
+    updatedAt: ts,
+    sourceModule: 'front_office',
+    sourceTransactionId: `FOVOID-${params.chargeId}`,
+    lines,
+  };
+  store.addJournalEntry(entry as never);
+  applyJournalEntryToGlBalances(entry as never, store);
+}

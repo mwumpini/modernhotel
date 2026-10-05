@@ -44,8 +44,47 @@ function migrateLegacyGhanaRates(items: JsonObject[]): JsonObject[] {
       return {
         ...t,
         rate: 15,
-        description: 'VAT 15% on (subtotal + NHIL + GETFund) — Act 1151, Jan 2026',
+        calculationBase: 'subtotal',
+        stacking: 'additive',
+        isRecoverable: true,
+        description: 'VAT 15% of the same taxable value as NHIL and GETFund. Not calculated on top of those levies (Act 1151).',
       };
+    }
+    // Act 1151 charges VAT, NHIL and GETFund on one taxable value. The old
+    // rule still compounded VAT on top of the levies and marked the levies
+    // as not claimable.
+    if (t.id === 'gh-vat' && (t.calculationBase === 'subtotal_plus_applied' || t.stacking === 'compound')) {
+      changed = true;
+      return {
+        ...t,
+        calculationBase: 'subtotal',
+        stacking: 'additive',
+        isRecoverable: true,
+        description: 'VAT 15% of the same taxable value as NHIL and GETFund. Not calculated on top of those levies (Act 1151).',
+      };
+    }
+    if ((t.id === 'gh-nhil' || t.id === 'gh-getfund') && t.isRecoverable !== true) {
+      changed = true;
+      return { ...t, isRecoverable: true };
+    }
+    if (t.id === 'gh-tourism' && t.isRecoverable !== false) {
+      changed = true;
+      return { ...t, isRecoverable: false };
+    }
+    if (t.id === 'gh-wht-rent' && Number(t.rate) === 8) {
+      changed = true;
+      return {
+        ...t,
+        name: 'Withholding Tax (Rent — commercial)',
+        rate: 15,
+        description: 'Resident WHT on rent of non-residential business premises — 15%. Final tax. Residential rent is the separate 8% rule.',
+      };
+    }
+    if (String(t.name || '').includes('VAT Flat Rate') || String(t.name || '').includes('VFRS')) {
+      if (t.enabled !== false) {
+        changed = true;
+        return { ...t, enabled: false, description: 'Abolished by Act 1151 (1 Jan 2026). Use the standard 15% VAT.' };
+      }
     }
     if (t.name === 'Withholding Tax (Services)' && Number(t.rate) === 5) {
       changed = true;

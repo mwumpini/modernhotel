@@ -213,6 +213,8 @@ export interface Invoice {
   currency: string;
   exchangeRate?: number;
   status: 'Draft' | 'Posted' | 'Paid' | 'Void';
+  /** Status to restore if this invoice is unvoided. */
+  statusBeforeVoid?: 'Draft' | 'Posted' | 'Paid';
   paidAmount: number;
   paidDate?: string;
   journalEntryId?: string;
@@ -315,6 +317,8 @@ export interface Payment {
   bankAccountId?: string;
   checkNumber?: string;
   status: 'Draft' | 'Posted' | 'Void' | 'Pending Approval';
+  /** Status to restore if this payment is unvoided. */
+  statusBeforeVoid?: 'Draft' | 'Posted' | 'Pending Approval';
   journalEntryId?: string;
   /** Originating module (manual_ar_ap, restaurant, integration_extended_*, etc.) */
   sourceModule?: string;
@@ -530,10 +534,9 @@ export interface AuditTrail {
 
 // Ghana-Specific Tax Codes
 /** Default rates + **leaf** GL codes (must match `GHANA_CHART_OF_ACCOUNTS` tax payables). */
-// Ghana hospitality levy stack (effective rates per GRA / Tourism Act):
-//   NHIL 2.5% + GETFund 2.5% + Tourism 1.0% applied on tax-exclusive base (NON-creditable)
-//   VAT 20% applied on (exclusive + pre-VAT levies) — total effective burden ≈ 26%
-// NHIL, GETFund and Tourism are not creditable on purchases (no input tax relief).
+// Ghana hospitality levy stack (Act 1151, from 1 Jan 2026):
+//   VAT 15% + NHIL 2.5% + GETFund 2.5% each on the tax-exclusive base (20% together).
+//   NHIL and GETFund are claimable input tax. Tourism 1% is separate and not claimable.
 export const GHANA_TAX_CODES = {
   VAT:         { code: 'VAT',         name: 'Value Added Tax',                rate: 15.0, glCode: '2110' },
   NHIL:        { code: 'NHIL',        name: 'National Health Insurance Levy', rate: 2.5,  glCode: '2120' },

@@ -22,7 +22,7 @@ import {
   ModalFooter,
 } from '@heroui/react';
 import { useAccountingStore } from '../../lib/accounting/store';
-import { confirmDelete as askDelete, confirmVoid as askVoid } from '../DangerConfirm';
+import { confirmDelete as askDelete, confirmUnvoid as askUnvoid, confirmVoid as askVoid } from '../DangerConfirm';
 import { accountingAmountsLabel } from '../../lib/accounting/tenantAccountingConfig';
 import { downloadCSV, generatePdfHtml, openPrintPreview } from '../../lib/accounting/helpers/exportHelpers';
 import type { ChartOfAccounts, JournalEntry, JournalEntryLine } from '../../lib/accounting/models';
@@ -165,6 +165,7 @@ export default function JournalRegister() {
   const updateJournalEntry = useAccountingStore((s) => s.updateJournalEntry);
   const deleteJournalEntry = useAccountingStore((s) => s.deleteJournalEntry);
   const voidJournalEntry = useAccountingStore((s) => s.voidJournalEntry);
+  const unvoidJournalEntry = useAccountingStore((s) => s.unvoidJournalEntry);
   const { period: kpiPeriod, todayISO: kpiToday, bounds: kpiBounds } = useAccountingDeskPeriod();
   const [query, setQuery] = useState('');
   const [fromDate, setFromDate] = useState('');
@@ -542,6 +543,33 @@ export default function JournalRegister() {
     await confirmVoid();
   };
 
+  const requestUnvoid = async (entry: JournalEntry) => {
+    setActionError(null);
+    setReversePrompt(false);
+    setVoidPrompt(false);
+    if (!canManageHere(entry.sourceModule)) {
+      const where = sourceInfo(entry.sourceModule).where;
+      setActionError(where
+        ? `Posted from ${where}. Unvoid it on that screen.`
+        : 'This entry was posted from another screen. Change it there.');
+      return;
+    }
+    if (entry.status !== 'Void') {
+      setActionError('Only a void entry can be restored.');
+      return;
+    }
+    const ok = await askUnvoid(entry.entryNumber, 'The entry counts again. The void is reversed so the books match.');
+    if (!ok) return;
+    await unvoidJournalEntry(entry.id);
+    const err = useAccountingStore.getState().error;
+    if (err) {
+      setActionError(err);
+      return;
+    }
+    setViewEntry(null);
+    setNotice('Entry restored. It counts in the books again.');
+  };
+
   const requestEdit = (entry: JournalEntry) => {
     setActionError(null);
     setVoidPrompt(false);
@@ -768,7 +796,9 @@ export default function JournalRegister() {
                   <div className="flex justify-end gap-2 flex-wrap">
                     <Button variant="flat" onPress={onClose}>Close</Button>
                     <Button color="primary" variant="flat" onPress={() => requestEdit(liveViewEntry)}>Edit</Button>
-                    {voidPrompt && manageable && liveViewEntry.status === 'Posted' && !reversal ? (
+                    {liveViewEntry.status === 'Void' && manageable ? (
+                      <Button color="warning" variant="flat" onPress={() => requestUnvoid(liveViewEntry)}>Unvoid</Button>
+                    ) : voidPrompt && manageable && liveViewEntry.status === 'Posted' && !reversal ? (
                       <Button color="danger" onPress={confirmVoid}>Confirm void</Button>
                     ) : (
                       <Button color="danger" variant="flat" onPress={() => requestVoid(liveViewEntry)}>Void</Button>

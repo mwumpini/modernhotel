@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useCallback } from 'react';
 import HeadingInfo from '../HeadingInfo';
-import { confirmDelete, confirmVoid } from '../DangerConfirm';
+import { confirmDelete, confirmUnvoid, confirmVoid } from '../DangerConfirm';
 import {
   Card, CardBody, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
@@ -65,10 +65,12 @@ export default function AccountsPayablePage() {
     updateInvoice,
     deleteInvoice,
     voidInvoice,
+    unvoidInvoice,
     addPayment,
     postPayment,
     deletePayment,
     voidPayment,
+    unvoidPayment,
     updatePayment,
     recordSupplierWHTPayment,
 
@@ -721,6 +723,22 @@ export default function AccountsPayablePage() {
     closeView();
   };
 
+  const handleUnvoidBill = async (invoice: any) => {
+    if (!canVoidAp) {
+      window.alert("You don't have permission to unvoid bills.");
+      return;
+    }
+    if (invoice.status !== 'Void') return;
+    if (!(await confirmUnvoid(invoice.invoiceNumber || 'this bill', 'The bill counts again. The void entry is reversed so the books match.'))) return;
+    await unvoidInvoice(invoice.id);
+    const err = useAccountingStore.getState().error;
+    if (err) {
+      window.alert(err);
+      return;
+    }
+    closeView();
+  };
+
   const handleDeleteBill = async (invoice: any) => {
     if (!canDeleteAp) {
       window.alert("You don't have permission to delete bills.");
@@ -764,6 +782,22 @@ export default function AccountsPayablePage() {
     if (payment.status === 'Void') return;
     if (!(await confirmVoid(payment.paymentNumber || 'this payment', 'This reverses GL and reopens the bill balance. The payment stays on file as Void.'))) return;
     await voidPayment(payment.id);
+    const err = useAccountingStore.getState().error;
+    if (err) {
+      window.alert(err);
+      return;
+    }
+    closeView();
+  };
+
+  const handleUnvoidPayment = async (payment: any) => {
+    if (!canVoidAp) {
+      window.alert("You don't have permission to unvoid payments.");
+      return;
+    }
+    if (payment.status !== 'Void') return;
+    if (!(await confirmUnvoid(payment.paymentNumber || 'this payment', 'The payment counts again. Unvoid the bill first if that bill is still void.'))) return;
+    await unvoidPayment(payment.id);
     const err = useAccountingStore.getState().error;
     if (err) {
       window.alert(err);
@@ -3356,6 +3390,11 @@ export default function AccountsPayablePage() {
                     )}
                     {viewItem.status !== 'Void' && (
                       <Button color="danger" variant="light" size="sm" onPress={() => handleDeleteBill(viewItem)}>
+                    {viewItem.status === 'Void' && (
+                      <Button color="warning" variant="flat" size="sm" onPress={() => handleUnvoidBill(viewItem)}>
+                        Unvoid
+                      </Button>
+                    )}
                         Delete
                       </Button>
                     )}
@@ -3432,6 +3471,11 @@ export default function AccountsPayablePage() {
                   )}
                   {viewItem.status !== 'Void' && (
                     <Button color="danger" variant="light" size="sm" onPress={() => handleDeletePayment(viewItem)}>
+                  {viewItem.status === 'Void' && (
+                    <Button color="warning" variant="flat" size="sm" onPress={() => handleUnvoidPayment(viewItem)}>
+                      Unvoid
+                    </Button>
+                  )}
                       Delete
                     </Button>
                   )}

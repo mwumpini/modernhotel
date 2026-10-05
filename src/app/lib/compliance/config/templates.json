@@ -2,8 +2,7 @@
   "countryDefaults": {
     "GH": [
       "ghana_sales_standard",
-      "ghana_purchases_standard",
-      "ghana_purchases_flat"
+      "ghana_withholding"
     ],
     "US": [
       "us_sales_generic",
@@ -53,7 +52,7 @@
           "appliesTo": [
             "ALL"
           ],
-          "description": "National Health Insurance Levy",
+          "description": "National Health Insurance Levy — 2.5% of the taxable value. Claimable on purchases (Act 1151).",
           "enabled": true,
           "priority": 10,
           "calculationBase": "subtotal",
@@ -64,7 +63,7 @@
           "domain": "sales",
           "operation": "external",
           "effect": "add",
-          "isRecoverable": false
+          "isRecoverable": true
         },
         {
           "name": "GETFund Levy",
@@ -73,7 +72,7 @@
           "appliesTo": [
             "ALL"
           ],
-          "description": "Ghana Education Trust Fund Levy",
+          "description": "Ghana Education Trust Fund Levy — 2.5% of the same taxable value. Claimable on purchases (Act 1151).",
           "enabled": true,
           "priority": 11,
           "calculationBase": "subtotal",
@@ -84,7 +83,7 @@
           "domain": "sales",
           "operation": "external",
           "effect": "add",
-          "isRecoverable": false
+          "isRecoverable": true
         },
         {
           "name": "VAT (Standard Rate)",
@@ -93,12 +92,12 @@
           "appliesTo": [
             "ALL"
           ],
-          "description": "VAT 15% on (subtotal + NHIL + GETFund) — Act 1151, Jan 2026",
+          "description": "VAT 15% of the same taxable value as NHIL and GETFund (Act 1151).",
           "enabled": true,
           "priority": 20,
-          "calculationBase": "subtotal_plus_applied",
+          "calculationBase": "subtotal",
           "method": "rate",
-          "stacking": "compound",
+          "stacking": "additive",
           "rounding": "nearest",
           "roundTo": 0.01,
           "domain": "sales",
@@ -113,7 +112,8 @@
           "appliesTo": [
             "ROOM",
             "HOTEL",
-            "FOOD"
+            "FOOD",
+            "EVENT"
           ],
           "description": "Tourism Development Levy (L.I. 2185)",
           "enabled": true,
@@ -145,7 +145,7 @@
           "appliesTo": [
             "ALL"
           ],
-          "description": "National Health Insurance Levy on purchases",
+          "description": "Input NHIL 2.5% of the supplier's taxable value. Claimable (Act 1151).",
           "enabled": true,
           "priority": 10,
           "calculationBase": "subtotal",
@@ -156,7 +156,7 @@
           "domain": "purchases",
           "operation": "internal",
           "effect": "add",
-          "isRecoverable": false
+          "isRecoverable": true
         },
         {
           "name": "GETFund Levy",
@@ -165,7 +165,7 @@
           "appliesTo": [
             "ALL"
           ],
-          "description": "Ghana Education Trust Fund Levy on purchases",
+          "description": "Input GETFund 2.5% of the same taxable value. Claimable (Act 1151).",
           "enabled": true,
           "priority": 11,
           "calculationBase": "subtotal",
@@ -176,7 +176,7 @@
           "domain": "purchases",
           "operation": "internal",
           "effect": "add",
-          "isRecoverable": false
+          "isRecoverable": true
         },
         {
           "name": "VAT (Standard Rate)",
@@ -185,39 +185,9 @@
           "appliesTo": [
             "ALL"
           ],
-          "description": "Input VAT 15% on (subtotal + NHIL + GETFund) — Act 1151, Jan 2026",
+          "description": "Input VAT 15% of the same taxable value as NHIL and GETFund (Act 1151).",
           "enabled": true,
           "priority": 20,
-          "calculationBase": "subtotal_plus_applied",
-          "method": "rate",
-          "stacking": "compound",
-          "rounding": "nearest",
-          "roundTo": 0.01,
-          "domain": "purchases",
-          "operation": "internal",
-          "effect": "add",
-          "isRecoverable": true
-        }
-      ]
-    },
-    "ghana_purchases_flat": {
-      "meta": {
-        "title": "Purchases Flat Rate",
-        "domain": "purchases",
-        "operation": "internal",
-        "effect": "add"
-      },
-      "rules": [
-        {
-          "name": "VAT Flat Rate (VFRS)",
-          "rate": 3,
-          "glCode": "2110",
-          "appliesTo": [
-            "ALL"
-          ],
-          "description": "VAT Flat Rate Scheme — 3% on purchases from a VFRS-registered supplier",
-          "enabled": true,
-          "priority": 10,
           "calculationBase": "subtotal",
           "method": "rate",
           "stacking": "additive",
@@ -227,6 +197,106 @@
           "operation": "internal",
           "effect": "add",
           "isRecoverable": true
+        }
+      ]
+    },
+    "ghana_withholding": {
+      "meta": {
+        "title": "Withholding (resident)",
+        "domain": "purchases",
+        "operation": "internal",
+        "effect": "subtract"
+      },
+      "rules": [
+        {
+          "name": "Withholding Tax (Services)",
+          "rate": 7.5,
+          "glCode": "2160",
+          "appliesTo": ["SERVICE"],
+          "description": "Resident WHT on services where the contract exceeds GHS 2,000 a year.",
+          "enabled": true,
+          "priority": 5,
+          "calculationBase": "subtotal",
+          "method": "rate",
+          "stacking": "additive",
+          "rounding": "nearest",
+          "roundTo": 0.01,
+          "domain": "purchases",
+          "operation": "internal",
+          "effect": "subtract",
+          "isRecoverable": false
+        },
+        {
+          "name": "Withholding Tax (Goods)",
+          "rate": 3,
+          "glCode": "2160",
+          "appliesTo": ["GOODS"],
+          "description": "Resident WHT on goods where the contract exceeds GHS 2,000 a year.",
+          "enabled": true,
+          "priority": 5,
+          "calculationBase": "subtotal",
+          "method": "rate",
+          "stacking": "additive",
+          "rounding": "nearest",
+          "roundTo": 0.01,
+          "domain": "purchases",
+          "operation": "internal",
+          "effect": "subtract",
+          "isRecoverable": false
+        },
+        {
+          "name": "Withholding Tax (Works)",
+          "rate": 5,
+          "glCode": "2160",
+          "appliesTo": ["WORKS"],
+          "description": "Resident WHT on works where the contract exceeds GHS 2,000 a year.",
+          "enabled": true,
+          "priority": 5,
+          "calculationBase": "subtotal",
+          "method": "rate",
+          "stacking": "additive",
+          "rounding": "nearest",
+          "roundTo": 0.01,
+          "domain": "purchases",
+          "operation": "internal",
+          "effect": "subtract",
+          "isRecoverable": false
+        },
+        {
+          "name": "Withholding Tax (Rent — commercial)",
+          "rate": 15,
+          "glCode": "2160",
+          "appliesTo": ["RENT"],
+          "description": "Resident WHT on rent of non-residential business premises. Final tax.",
+          "enabled": true,
+          "priority": 5,
+          "calculationBase": "subtotal",
+          "method": "rate",
+          "stacking": "additive",
+          "rounding": "nearest",
+          "roundTo": 0.01,
+          "domain": "purchases",
+          "operation": "internal",
+          "effect": "subtract",
+          "isRecoverable": false
+        },
+        {
+          "name": "Withholding Tax (Rent — residential)",
+          "rate": 8,
+          "glCode": "2160",
+          "appliesTo": ["RENT_RESIDENTIAL"],
+          "description": "Resident WHT on rent of residential property. Final tax.",
+          "enabled": true,
+          "priority": 5,
+          "calculationBase": "subtotal",
+          "method": "rate",
+          "stacking": "additive",
+          "rounding": "nearest",
+          "roundTo": 0.01,
+          "domain": "purchases",
+          "operation": "internal",
+          "effect": "subtract",
+          "isRecoverable": false
         }
       ]
     },

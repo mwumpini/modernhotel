@@ -1,6 +1,16 @@
 'use client';
+// Screens for this department live in ./events/. Open the file that matches the tab.
+// EventManagementTab — event master, invoices, receipts, folios
+// VenueManagementTab / VenueModal — venue list and the venue dialog
+// GuestRatesPanel — guest rates
+// EventEditorModal — the event form (dates, rooms, schedule, tax)
+// EventFunctionSheetModal — service dialog and function sheet
+// EventClientModals, EventFolioModal, EventInvoiceModal, EventReceiptModal — billing dialogs
+import { EventsScreenProvider } from './events/eventsScreenContext';
+import { EventManagementTab } from './events/EventManagementTab';
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import { 
   Card, 
   CardBody, 
@@ -62,10 +72,12 @@ import { openPrintPreview, openHtmlPrintWindow } from '../lib/print/engine';
 import type { PrintType } from '../lib/print/templates';
 import { paymentMethodLabel } from '../lib/accounting/receiptPrint';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
-import { listBuiltInTemplates } from '../lib/print/blockDefaults';
+import { buildContractModel, buildContractPrintData, contractTermsFromBlocks, downloadContractDocx } from '../lib/events/contractDocument';
+import { getBuiltInTemplate, listBuiltInTemplates } from '../lib/print/blockDefaults';
 import { useSettingsStore } from '../lib/settings/store';
 import { useAccountingStore } from '../lib/accounting/store';
-import { captureRevenue, capturePayment, recognizeDeferredRevenue, captureConferenceProforma, markConferenceProformaConverted, retireOrphanConferenceInvoices } from '../lib/accounting/integration';
+import { adjustConferenceChargeInAccounting, unvoidConferenceReceiptInAccounting, voidConferenceReceiptInAccounting } from '../lib/accounting/folioVoidSync';
+import { captureRevenue, capturePayment, recognizeDeferredRevenue, reverseRecognizedRevenue, captureConferenceProforma, markConferenceProformaConverted, retireOrphanConferenceInvoices } from '../lib/accounting/integration';
 import { announcementStore, DepartmentKey } from '../lib/analytics/announcementStore';
 import { computeQuoteTax, exclusiveFromGross } from '../lib/tax/engine';
 import EventsModuleFilters, {
@@ -75,9 +87,48 @@ import EventsModuleFilters, {
   type EventsDateFilterMode,
 } from './EventsModuleFilters';
 import { useEmployeeStore } from '../lib/hr/employeeStore';
-import DepartmentStaffTab from './hr/DepartmentStaffTab';
 import ModuleExpandButton from './ModuleExpandButton';
-import EventsReportsAnalysis from './EventsReportsAnalysis';
+
+// The event list is the screen that opens. Venues, rates, reports, staff, and
+// the dialogs stay out of that first load and come in when they are opened.
+const VenueManagementTab = dynamic(() =>
+  import('./events/VenueManagementTab').then((m) => ({ default: m.VenueManagementTab })),
+);
+const VenueModal = dynamic(() =>
+  import('./events/VenueManagementTab').then((m) => ({ default: m.VenueModal })),
+);
+const GuestRatesPanel = dynamic(() =>
+  import('./events/GuestRatesPanel').then((m) => ({ default: m.GuestRatesPanel })),
+);
+const EventsReportsAnalysis = dynamic(() => import('./EventsReportsAnalysis'));
+const DepartmentStaffTab = dynamic(() => import('./hr/DepartmentStaffTab'));
+const EventEditorModal = dynamic(() =>
+  import('./events/EventEditorModal').then((m) => ({ default: m.EventEditorModal })),
+);
+const EventFunctionSheetModal = dynamic(() =>
+  import('./events/EventFunctionSheetModal').then((m) => ({ default: m.EventFunctionSheetModal })),
+);
+const EventClientModals = dynamic(() =>
+  import('./events/EventClientModals').then((m) => ({ default: m.EventClientModals })),
+);
+const EventFolioModal = dynamic(() =>
+  import('./events/EventFolioModal').then((m) => ({ default: m.EventFolioModal })),
+);
+const EventFolioCreateModal = dynamic(() =>
+  import('./events/EventFolioModal').then((m) => ({ default: m.EventFolioCreateModal })),
+);
+const EventInvoiceModal = dynamic(() =>
+  import('./events/EventInvoiceModal').then((m) => ({ default: m.EventInvoiceModal })),
+);
+const EventProformaPickerModal = dynamic(() =>
+  import('./events/EventInvoiceModal').then((m) => ({ default: m.EventProformaPickerModal })),
+);
+const EventReceiptModal = dynamic(() =>
+  import('./events/EventReceiptModal').then((m) => ({ default: m.EventReceiptModal })),
+);
+const EventDocCautionModal = dynamic(() =>
+  import('./events/EventReceiptModal').then((m) => ({ default: m.EventDocCautionModal })),
+);
 import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 import { deskTableCardBodyClassName, deskTableCardClassName } from './dashboard/deskTableUi';
 import {
@@ -87,1191 +138,112 @@ import {
   sortIdsByDate,
 } from '../lib/events/documentNumbers';
 
-type ManagementMainTabKey =
-  | 'events'
-  | 'active'
-  | 'completed'
-  | 'invoices'
-  | 'receipts'
-  | 'quotes'
-  | 'folios';
-
-const UNASSIGNED_STAFF = 'Unassigned';
-
-const BEO_LAYOUTS = [
-  'Theatre Style',
-  'Banquet Style',
-  'Classroom Style',
-  'U-Shape',
-  'Boardroom',
-  'Hollow Square',
-  'Cocktail',
-  'Cabaret',
-  'Reception',
-];
-const BEO_ACCESS = [
-  'Main entrance',
-  'Side entrance',
-  'Service entrance',
-  'Elevator',
-  'Ground floor only',
-  'Restricted access',
-  'Loading bay',
-  'Guest drop-off',
-];
-const BEO_PARKING = ['Available for guests', 'Reserved parking', 'Valet', 'Street parking', 'None'];
-const BEO_LIGHTING = ['Standard', 'Dimmed', 'Stage', 'Natural', 'Spotlight'];
-const BEO_INTERNET = ['High-speed WiFi', 'Shared WiFi', 'Dedicated line', 'Wired', 'None'];
-const BEO_SERVICE_STYLES = ['Buffet', 'Plated Service', 'Family style', 'Stations', 'Cocktail'];
-const BEO_MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner', 'Full day', 'Tea only'];
-const BEO_DEPT_FALLBACK = [
-  'Events & Conferences',
-  'Operations',
-  'Catering',
-  'Housekeeping',
-  'Security',
-  'Front Office',
-  'Kitchen',
-  'Technical',
-  'Finance',
-];
-
-function withCurrentOption(options: string[], current?: string) {
-  const value = String(current || '').trim();
-  if (!value) return options;
-  if (options.some((option) => option.toLowerCase() === value.toLowerCase())) return options;
-  return [value, ...options];
-}
-
-function BeoPick({
-  label,
-  value,
-  options,
-  onChange,
-  className,
-  placeholder,
-}: {
-  label?: string;
-  value: string;
-  options: string[];
-  onChange: (value: string) => void;
-  className?: string;
-  placeholder?: string;
-}) {
-  const items = withCurrentOption(options, value).map((item) => ({ key: item, label: item }));
-  const selected = items.some((item) => item.key === value) ? value : null;
-  return (
-    <Autocomplete
-      className={className}
-      size="sm"
-      label={label}
-      placeholder={placeholder}
-      selectedKey={selected}
-      inputValue={value || ''}
-      allowsCustomValue
-      items={items}
-      onSelectionChange={(key) => {
-        if (key != null) onChange(String(key));
-      }}
-      onInputChange={onChange}
-    >
-      {(item) => (
-        <AutocompleteItem key={item.key} textValue={item.label}>
-          {item.label}
-        </AutocompleteItem>
-      )}
-    </Autocomplete>
-  );
-}
-
-const RECEIPT_METHOD_OPTIONS = ['Bank Transfer', 'Cash', 'Card', 'Mobile Money', 'Cheque'] as const;
-
-function resolveFromOptions(value: string | undefined, options: string[], fallback: string): string {
-  const trimmed = String(value || '').trim();
-  if (!trimmed || trimmed === UNASSIGNED_STAFF) return fallback;
-  const exact = options.find((option) => option.toLowerCase() === trimmed.toLowerCase());
-  if (exact) return exact;
-  const prefixes = options.filter((option) => option.toLowerCase().startsWith(trimmed.toLowerCase()));
-  if (prefixes.length === 1) return prefixes[0];
-  if (trimmed.length <= 2) {
-    if (fallback && fallback !== UNASSIGNED_STAFF && fallback.toLowerCase().startsWith(trimmed.toLowerCase())) {
-      return fallback;
-    }
-    return fallback;
-  }
-  return trimmed;
-}
-
-function resolveReceiptMethod(value?: string): (typeof RECEIPT_METHOD_OPTIONS)[number] {
-  const resolved = resolveFromOptions(value, [...RECEIPT_METHOD_OPTIONS], 'Cash');
-  return (RECEIPT_METHOD_OPTIONS as readonly string[]).includes(resolved)
-    ? (resolved as (typeof RECEIPT_METHOD_OPTIONS)[number])
-    : 'Cash';
-}
-
-function getEventCoordinator(event: any, staffNames: string[] = [], preferred = ''): string {
-  const value = (event?.eventCoordinator || '').trim();
-  if (!staffNames.length) {
-    return value && value !== UNASSIGNED_STAFF ? value : UNASSIGNED_STAFF;
-  }
-  return resolveFromOptions(value, staffNames, preferred || UNASSIGNED_STAFF);
-}
-
-function pickStoredEventCoordinator(
-  employees: { firstName?: string; lastName?: string; status?: string; departmentId?: string }[],
-  departments: { id?: string; name?: string }[],
-) {
-  const active = employees.filter((employee) => employee.status === 'active');
-  if (!active.length) return '';
-  const hinted = /event|conference|banquet/i;
-  const hintedDeptIds = new Set(
-    departments.filter((dept) => hinted.test(String(dept.name || ''))).map((dept) => String(dept.id || ''))
-  );
-  const preferred = active.find((employee) => hintedDeptIds.has(String(employee.departmentId || '')));
-  const pick = preferred || active[0];
-  return `${pick.firstName || ''} ${pick.lastName || ''}`.trim();
-}
-
-function getEventClientContactName(event: any): string {
-  const person = (event?.contactPerson || '').trim();
-  const org = (event?.organization || '').trim();
-  if (person && person !== org) return person;
-  return person || '—';
-}
-
-function formatEventTableDate(value?: string) {
-  if (!value) return '';
-  const parsed = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-}
-
-function formatEventTableRange(start?: string, end?: string) {
-  const from = formatEventTableDate(start);
-  const to = formatEventTableDate(end);
-  if (!from && !to) return '—';
-  if (!to || from === to) return from || to;
-  return `${from} – ${to}`;
-}
-
-function eventStayType(event: any): 'Residential' | 'Non-residential' {
-  if (event?.residential === true || event?.isResidential === true) return 'Residential';
-  if (event?.residential === false || event?.isResidential === false) return 'Non-residential';
-  const type = String(event?.eventType || event?.type || '').toLowerCase();
-  if (type.includes('non-residential') || type.includes('non_residential') || type.includes('nonresidential')) {
-    return 'Non-residential';
-  }
-  if (type.includes('residential')) return 'Residential';
-  return 'Non-residential';
-}
-
-function parseEventDate(value?: string): Date | null {
-  if (!value) return null;
-  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (match) {
-    const parsed = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
-}
-
-function eventStartValue(event: any): string {
-  return event?.arrivalDate || event?.startDate || '';
-}
-
-function eventEndValue(event: any): string {
-  return event?.departureDate || event?.endDate || eventStartValue(event);
-}
-
-function isUnassignedVenueLabel(value?: string) {
-  return !value || /^unassigned(\s+venue)?$/i.test(String(value).trim());
-}
-
-function findVenueInCatalog(
-  venues: Array<{ id: string; name: string }>,
-  key?: string,
-  name?: string
-) {
-  const id = String(key || '').trim();
-  if (id && !isUnassignedVenueLabel(id)) {
-    const byId = venues.find((venue) => venue.id === id);
-    if (byId) return byId;
-  }
-  const label = String(name || '').trim();
-  if (label && !isUnassignedVenueLabel(label)) {
-    const byName = venues.find((venue) => venue.name.toLowerCase() === label.toLowerCase());
-    if (byName) return byName;
-  }
-  return null;
-}
-
-function eventVenueKey(event: any): string {
-  const key = event?.venueKey || event?.venue || event?.hallId || '';
-  if (key && !isUnassignedVenueLabel(key)) return key;
-  const name = event?.venueName || event?.hallName || '';
-  if (name && !isUnassignedVenueLabel(name)) return name;
-  return 'unassigned';
-}
-
-function eventVenueLabel(event: any, venues: Array<{ id: string; name: string }> = []): string {
-  const found = findVenueInCatalog(venues, eventVenueKey(event), event?.venueName || event?.hallName);
-  if (found) return found.name;
-  const stored = String(event?.venueName || event?.hallName || '').trim();
-  return stored && !isUnassignedVenueLabel(stored) ? stored : '—';
-}
-
-function eventUsesVenue(event: any, venue: { id: string; name: string }) {
-  const key = eventVenueKey(event);
-  if (key && key === venue.id) return true;
-  const stored = String(event?.venueName || event?.hallName || '').trim().toLowerCase();
-  return Boolean(stored && stored === venue.name.toLowerCase());
-}
-
-function eventHasBeo(event: any): boolean {
-  return Boolean(
-    event?.lastBeoUpdatedAt ||
-    event?.customCatering ||
-    event?.customRoomSetup ||
-    event?.customRoomDetails ||
-    (Array.isArray(event?.customServiceSchedule) && event.customServiceSchedule.length) ||
-    event?.linkedBEO
-  );
-}
-
-function eventRoomCount(event: any): number | null {
-  const explicit = Number(event?.rooms ?? event?.numberOfRooms ?? event?.roomCount);
-  if (!Number.isNaN(explicit) && explicit > 0) return explicit;
-  const schedule = Array.isArray(event?.dailySchedule) ? event.dailySchedule : [];
-  const fromSchedule = schedule.reduce((max: number, day: any) => Math.max(max, Number(day?.rooms || 0)), 0);
-  if (fromSchedule > 0) return fromSchedule;
-  if (eventStayType(event) === 'Residential') {
-    const pax = Number(event?.pax || event?.expectedPax || 0);
-    return pax > 0 ? pax : null;
-  }
-  return null;
-}
-
-function departmentScheduleLines(event: any, match: RegExp): string[] {
-  const schedule = Array.isArray(event?.customServiceSchedule) ? event.customServiceSchedule : [];
-  return schedule
-    .filter((item: any) => match.test(String(item.department || item.responsible || '')))
-    .map((item: any) => [item.time, item.activity || item.notes].filter(Boolean).join(' ').trim())
-    .filter(Boolean);
-}
-
-function functionFbDuties(event: any): string {
-  const parts: string[] = [];
-  const catering = event?.customCatering;
-  if (catering) {
-    if (catering.mealType) parts.push(String(catering.mealType));
-    if (catering.lunch) parts.push('Lunch');
-    if (catering.dinner) parts.push('Dinner');
-    const tea = Number(catering.teaBreaks || 0);
-    if (tea > 0) parts.push(`${tea} tea break${tea === 1 ? '' : 's'}`);
-    const snacks = Array.isArray(catering.snacks) ? catering.snacks.filter(Boolean) : [];
-    if (snacks.length) parts.push(snacks.join(', '));
-    const drinks = Array.isArray(catering.beverages) ? catering.beverages.filter(Boolean) : [];
-    if (drinks.length) parts.push(drinks.join(', '));
-  }
-  const schedule = Array.isArray(event?.dailySchedule) ? event.dailySchedule : [];
-  if (!parts.length && schedule.length) {
-    if (schedule.some((day: any) => Number(day?.lunchPax || 0) > 0)) parts.push('Lunch');
-    if (schedule.some((day: any) => Number(day?.dinnerPax || 0) > 0)) parts.push('Dinner');
-  }
-  parts.push(...departmentScheduleLines(event, /cater|f&b|food|beverage|restaurant|kitchen/i));
-  if (parts.length) return Array.from(new Set(parts)).join(', ');
-  return eventHasBeo(event) ? 'See BEO' : 'Complete BEO';
-}
-
-function functionHkDuties(event: any): string {
-  const parts: string[] = [];
-  const rooms = eventRoomCount(event);
-  if (eventStayType(event) === 'Residential') {
-    parts.push(rooms ? `Prepare ${rooms} rooms` : 'Prepare rooms — see BEO');
-  }
-  const setup = event?.customRoomSetup;
-  if (setup?.layout) parts.push(setup.layout);
-  if (setup?.tables) parts.push(`${setup.tables} tables`);
-  const notes = event?.customRoomDetails?.setupNotes;
-  if (notes) parts.push(String(notes));
-  parts.push(...departmentScheduleLines(event, /housekeep|room|front desk|frontdesk|reception/i));
-  if (parts.length) return Array.from(new Set(parts)).join(', ');
-  return eventHasBeo(event) ? 'See BEO' : 'Complete BEO';
-}
-
-
-function formatScheduleStatus(status?: string): string {
-  switch (status) {
-    case 'quote':
-      return 'Quote';
-    case 'confirmed':
-      return 'Confirmed';
-    case 'in-progress':
-      return 'In Progress';
-    case 'completed':
-      return 'Completed';
-    case 'invoiced':
-      return 'Invoiced';
-    case 'billed':
-      return 'Billed';
-    case 'cancelled':
-      return 'Cancelled';
-    default:
-      return status || '—';
-  }
-}
-
-type VenueStatus = 'available' | 'booked' | 'setup' | 'maintenance' | 'inactive';
-
-interface VenueDetails {
-  id: string;
-  name: string;
-  capacity: number;
-  type: string;
-  location: string;
-  features: string[];
-  basePrice: number;
-  currency: string;
-  status: VenueStatus;
-}
-
-interface VenueFormState {
-  name: string;
-  type: string;
-  capacity: string;
-  basePrice: string;
-  location: string;
-  status: VenueStatus;
-  featuresInput: string;
-  currency: string;
-}
-
-const supplementalVenueSeeds: VenueDetails[] = [
-  {
-    id: 'venue-001',
-    name: 'Accra Conference Hall',
-    type: 'conference',
-    capacity: 200,
-    basePrice: 6000,
-    currency: 'GH₵',
-    status: 'available',
-    features: ['Projector', 'Sound System', 'WiFi', 'Catering Kitchen'],
-    location: 'Main Building, 1st Floor'
-  },
-  {
-    id: 'venue-002',
-    name: 'Kumasi Meeting Room',
-    type: 'meeting',
-    capacity: 50,
-    basePrice: 2000,
-    currency: 'GH₵',
-    status: 'booked',
-    features: ['Projector', 'Whiteboard', 'Coffee Service'],
-    location: 'East Wing, Ground Floor'
-  },
-  {
-    id: 'venue-003',
-    name: 'Ghana Banquet Hall',
-    type: 'banquet',
-    capacity: 300,
-    basePrice: 8000,
-    currency: 'GH₵',
-    status: 'setup',
-    features: ['Dance Floor', 'Bar', 'Kitchen', 'Parking'],
-    location: 'Garden Area, Separate Building'
-  },
-  {
-    id: 'venue-004',
-    name: 'Accra Auditorium',
-    type: 'auditorium',
-    capacity: 500,
-    basePrice: 12000,
-    currency: 'GH₵',
-    status: 'maintenance',
-    features: ['Stage', 'Lighting', 'Sound System', 'VIP Seating'],
-    location: 'Main Building, 2nd Floor'
-  }
-];
-
-const baseVenueSeeds: VenueDetails[] = [
-  {
-    id: 'oforwaa-hall',
-    name: 'Oforwaa Hall',
-    capacity: 200,
-    type: 'conference',
-    location: 'Main Building, Ground Floor',
-    features: ['Projector', 'Sound System', 'WiFi', 'Air Conditioning', 'Flexible Layout'],
-    basePrice: 800,
-    currency: 'GH₵',
-    status: 'available'
-  },
-  {
-    id: 'dankwah-hall',
-    name: 'Dankwah Hall',
-    capacity: 150,
-    type: 'conference',
-    location: 'Main Building, First Floor',
-    features: ['Projector', 'Sound System', 'WiFi', 'Air Conditioning', 'Fixed Theater Layout'],
-    basePrice: 600,
-    currency: 'GH₵',
-    status: 'available'
-  },
-  {
-    id: 'aqua-blue-room',
-    name: 'Aqua Blue Room',
-    capacity: 80,
-    type: 'meeting',
-    location: 'East Wing, Second Floor',
-    features: ['Projector', 'WiFi', 'Air Conditioning', 'U-Shape Layout'],
-    basePrice: 400,
-    currency: 'GH₵',
-    status: 'available'
-  },
-  {
-    id: 'gold-coast-hall',
-    name: 'Gold Coast Hall',
-    capacity: 300,
-    type: 'banquet',
-    location: 'West Wing, Ground Floor',
-    features: ['Stage', 'Sound System', 'WiFi', 'Air Conditioning', 'Banquet Layout'],
-    basePrice: 1200,
-    currency: 'GH₵',
-    status: 'available'
-  }
-];
-
-const initialVenueCatalog: VenueDetails[] = [...baseVenueSeeds, ...supplementalVenueSeeds];
-
-const createEmptyVenueForm = (): VenueFormState => ({
-  name: '',
-  type: 'conference',
-  capacity: '',
-  basePrice: '',
-  location: '',
-  status: 'available',
-  featuresInput: '',
-  currency: 'GH₵'
-});
-
-const slugify = (value: string) =>
-  value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'venue';
-
-// Info Icon Component with Tooltip
-const InfoIcon = ({ description }: { description: string }) => {
-  const [showTooltip, setShowTooltip] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  const handleMouseEnter = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    timeoutRef.current = setTimeout(() => {
-      setShowTooltip(true);
-    }, 2000); // 2 second delay
-  };
-
-  const handleMouseLeave = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    setShowTooltip(false);
-  };
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
-  return (
-    <Tooltip
-      content={description}
-      isOpen={showTooltip}
-      onOpenChange={setShowTooltip}
-      placement="top"
-      showArrow
-      color="primary"
-      delay={0}
-    >
-      <div
-        className="inline-flex items-center justify-center w-4 h-4 mr-2 text-xs text-blue-500 bg-blue-100 rounded-full cursor-help hover:bg-blue-200 transition-colors"
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        title={description}
-      >
-        ℹ
-      </div>
-    </Tooltip>
-  );
-};
-
-type ReportFilterConfig = {
-  dateRange?: boolean;
-  venue?: boolean;
-};
-
-interface ReportDefinition {
-  key: string;
-  label: string;
-  description: string;
-  metrics: string[];
-  filters: ReportFilterConfig;
-}
-
-interface ReportCategory {
-  key: string;
-  label: string;
-  icon: string;
-  description: string;
-  reports: ReportDefinition[];
-}
-
-interface ReportInsight {
-  label: string;
-  value: string;
-  helper?: string;
-}
-
-interface ReportQuickLink {
-  label: string;
-  icon: string;
-  action: () => void;
-}
-
-interface ReportTableColumn {
-  key: string;
-  label: string;
-}
-
-interface ReportTableData {
-  columns: ReportTableColumn[];
-  rows: Record<string, string>[];
-  emptyMessage?: string;
-}
-
-interface ReportFiltersState {
-  fromDate: string;
-  toDate: string;
-  venue: string;
-}
-
-const getDefaultReportRange = () => {
-  const today = new Date();
-  const to = today.toISOString().split('T')[0];
-  const from = new Date(today);
-  from.setDate(from.getDate() - 30);
-  return { from: from.toISOString().split('T')[0], to };
-};
-
-const buildInitialReportFilters = (): ReportFiltersState => {
-  const range = getDefaultReportRange();
-  return {
-    fromDate: range.from,
-    toDate: range.to,
-    venue: '',
-  };
-};
-
-const filterEventsForReport = (events: any[], filters: ReportFiltersState) => {
-  const venueTerm = filters.venue.trim().toLowerCase();
-  return events.filter((event) => {
-    const date = event.arrivalDate || event.startDate || '';
-    if (filters.fromDate && date && date < filters.fromDate) return false;
-    if (filters.toDate && date && date > filters.toDate) return false;
-    if (venueTerm) {
-      const venue = (event.venueName || event.venue || '').toLowerCase();
-      if (!venue.includes(venueTerm)) return false;
-    }
-    return true;
-  });
-};
-
-const matchesReportDate = (dateValue: string | undefined | null, filters: ReportFiltersState) => {
-  if (!dateValue) return true;
-  if (filters.fromDate && dateValue < filters.fromDate) return false;
-  if (filters.toDate && dateValue > filters.toDate) return false;
-  return true;
-};
-
-interface RateApplicableDates {
-  startDate: string;
-  endDate: string;
-  isAllYear: boolean;
-}
-
-type RateEffectiveStatus = 'all-year' | 'effective' | 'upcoming' | 'expired' | 'incomplete';
-
-const getRateEffectiveStatus = (
-  dates: RateApplicableDates,
-  referenceDate = new Date().toISOString().slice(0, 10)
-): RateEffectiveStatus => {
-  if (dates.isAllYear) return 'all-year';
-  if (!dates.startDate || !dates.endDate) return 'incomplete';
-  if (referenceDate < dates.startDate) return 'upcoming';
-  if (referenceDate > dates.endDate) return 'expired';
-  return 'effective';
-};
-
-const rateOverlapsDateRange = (
-  dates: RateApplicableDates,
-  rangeFrom: string,
-  rangeTo: string
-) => {
-  if (dates.isAllYear) return true;
-  if (!dates.startDate || !dates.endDate) return false;
-  const from = rangeFrom || rangeTo;
-  const to = rangeTo || rangeFrom;
-  if (!from && !to) return true;
-  return dates.startDate <= to && dates.endDate >= from;
-};
-
-const rateEffectiveForEventDates = (
-  dates: RateApplicableDates,
-  eventStart: string,
-  eventEnd: string
-) => {
-  const from = eventStart || eventEnd;
-  const to = eventEnd || eventStart;
-  if (!from && !to) {
-    // Before event dates are set, only timeless / all-year rates should auto-apply
-    return dates.isAllYear;
-  }
-  return rateOverlapsDateRange(dates, from, to);
-};
-
-const formatRateTableDate = (value?: string) => {
-  if (!value) return '';
-  const parsed = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-};
-
-const getRateEffectivePeriodLabel = (dates: RateApplicableDates) => {
-  if (dates.isAllYear) return 'All year';
-  if (dates.startDate && dates.endDate) {
-    const from = formatRateTableDate(dates.startDate);
-    const to = formatRateTableDate(dates.endDate);
-    if (from && to) return `${from} – ${to}`;
-  }
-  if (dates.startDate) return `From ${formatRateTableDate(dates.startDate)}`;
-  if (dates.endDate) return `Until ${formatRateTableDate(dates.endDate)}`;
-  return 'Dates not set';
-};
-
-const pickBestRateForType = (rates: any[]) => {
-  if (!rates.length) return null;
-  return [...rates].sort((a, b) => {
-    if (a.clientSpecific && !b.clientSpecific) return -1;
-    if (!a.clientSpecific && b.clientSpecific) return 1;
-    const aAllYear = a.applicableDates?.isAllYear;
-    const bAllYear = b.applicableDates?.isAllYear;
-    if (aAllYear && !bAllYear) return 1;
-    if (!aAllYear && bAllYear) return -1;
-    if (!aAllYear && !bAllYear) {
-      const spanA =
-        new Date(a.applicableDates.endDate).getTime() - new Date(a.applicableDates.startDate).getTime();
-      const spanB =
-        new Date(b.applicableDates.endDate).getTime() - new Date(b.applicableDates.startDate).getTime();
-      return spanA - spanB;
-    }
-    return 0;
-  })[0];
-};
-
-const resolveGuestRatesForEvent = (
-  conferenceRates: any[],
-  orgName: string,
-  eventStart: string,
-  eventEnd: string
-) => {
-  const orgNameLower = orgName.toLowerCase().trim();
-  if (!orgNameLower) {
-    return { bestRatesByType: {} as Record<string, any>, applicableCount: 0 };
-  }
-
-  const clientSpecificRates = conferenceRates.filter((rate) => {
-    if (!rate.isActive || !rate.clientSpecific) return false;
-    const rateClientNameLower = (rate.clientName || '').toLowerCase().trim();
-    return (
-      rateClientNameLower &&
-      (rateClientNameLower.includes(orgNameLower) || orgNameLower.includes(rateClientNameLower))
-    );
-  });
-
-  const generalRates = conferenceRates.filter((rate) => rate.isActive && !rate.clientSpecific);
-  const ratesToUse = clientSpecificRates.length > 0 ? clientSpecificRates : generalRates;
-  const applicableRates = ratesToUse.filter((rate) =>
-    rateEffectiveForEventDates(rate.applicableDates, eventStart, eventEnd || eventStart)
-  );
-
-  const bestRatesByType = ['accommodation', 'conference', 'lunch', 'dinner'].reduce<Record<string, any>>(
-    (acc, type) => {
-      const best = pickBestRateForType(applicableRates.filter((rate) => rate.type === type));
-      if (best) acc[type] = best;
-      return acc;
-    },
-    {}
-  );
-
-  return { bestRatesByType, applicableCount: applicableRates.length };
-};
-
-type PrintScheduleRates = {
-  residential?: boolean;
-  roomRate?: number;
-  conferenceRate?: number;
-  lunchRate?: number;
-  dinnerRate?: number;
-};
-
-const buildPrintLineItemsFromSchedule = (
-  schedule: any[],
-  rates: PrintScheduleRates,
-  eventDates?: { arrivalDate?: string; startDate?: string; departureDate?: string; endDate?: string }
-) => {
-  const items: Array<{ description: string; qty?: number; unit?: string; unitPrice?: number; amount: number; date?: string }> = [];
-
-  if (!schedule.length) return items;
-
-  schedule.forEach((day: any, idx: number) => {
-    const dayLabel = `Day ${idx + 1}`;
-    const date =
-      day.date ||
-      eventDates?.arrivalDate ||
-      eventDates?.startDate ||
-      eventDates?.departureDate ||
-      eventDates?.endDate ||
-      '';
-
-    if (rates.residential && day.rooms && day.rooms > 0) {
-      const roomRate = rates.roomRate || 0;
-      items.push({
-        description: `${dayLabel} • Accommodation`,
-        qty: day.rooms,
-        unit: 'rooms',
-        unitPrice: roomRate,
-        amount: day.rooms * roomRate,
-        date,
-      });
-    }
-
-    if (day.conferencePax && day.conferencePax > 0) {
-      const confRate = rates.conferenceRate || 0;
-      items.push({
-        description: `${dayLabel} • Conference`,
-        qty: day.conferencePax,
-        unit: 'pax',
-        unitPrice: confRate,
-        amount: day.conferencePax * confRate,
-        date,
-      });
-    }
-
-    if (day.lunchPax && day.lunchPax > 0) {
-      const lunchRate = rates.lunchRate || 0;
-      items.push({
-        description: `${dayLabel} • Lunch`,
-        qty: day.lunchPax,
-        unit: 'pax',
-        unitPrice: lunchRate,
-        amount: day.lunchPax * lunchRate,
-        date,
-      });
-    }
-
-    if (day.dinnerPax && day.dinnerPax > 0) {
-      const dinnerRate = rates.dinnerRate || 0;
-      items.push({
-        description: `${dayLabel} • Dinner`,
-        qty: day.dinnerPax,
-        unit: 'pax',
-        unitPrice: dinnerRate,
-        amount: day.dinnerPax * dinnerRate,
-        date,
-      });
-    }
-
-    if (day.extraLines && Array.isArray(day.extraLines)) {
-      day.extraLines.forEach((extra: any) => {
-        if (extra.qty && extra.unitPrice) {
-          items.push({
-            description: `${dayLabel} • ${extra.name || 'Extra Service'}`,
-            qty: extra.qty,
-            unit: 'pcs',
-            unitPrice: extra.unitPrice,
-            amount: extra.qty * extra.unitPrice,
-            date,
-          });
-        }
-      });
-    }
-  });
-
-  return items;
-};
-
-/**
- * Maps the live daily-schedule state (Phase 3: Daily Schedule & Headcounts,
- * "Rate by package" off / Particulars mode) into the generic day-by-day matrix
- * PrintData contract — dates as columns, particulars (incl. custom rows) as rows.
- * Real hotels format quotes/proformas exactly this way (dates across the top,
- * categories down the side) — flattening into a per-day item list loses that shape.
- */
-const buildMatrixTableFromSchedule = (
-  schedule: Array<{ date: string; rooms: number; dinnerPax: number; lunchPax: number; conferencePax: number; extras?: Record<string, number> }>,
-  particularLabels: { rooms: string; dinnerPax: string; lunchPax: string; conferencePax: string },
-  rates: { roomRate: number; dinnerRate: number; lunchRate: number; conferenceRate: number },
-  hiddenParticulars: Record<string, boolean>,
-  customParticulars: Array<{ id: string; label: string; rate: number }>
-): { columns: Array<{ key: string; label: string; sublabel?: string }>; rows: Array<{ label: string; rate?: number; cells: Record<string, number>; totalCount: number; subtotal: number }> } | undefined => {
-  if (!schedule.length) return undefined;
-
-  const columns = schedule.map((day, idx) => ({
-    key: day.date || `day-${idx}`,
-    label: day.date ? new Date(day.date).toLocaleDateString('en-GB', { weekday: 'short' }) : `Day ${idx + 1}`,
-    sublabel: day.date ? new Date(day.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : undefined,
-  }));
-
-  const rateOf: Record<string, number> = { rooms: rates.roomRate, dinnerPax: rates.dinnerRate, lunchPax: rates.lunchRate, conferencePax: rates.conferenceRate };
-  const standardKeys = (['rooms', 'dinnerPax', 'lunchPax', 'conferencePax'] as const).filter(k => !hiddenParticulars[k]);
-
-  const rows = standardKeys.map((key) => {
-    const cells: Record<string, number> = {};
-    let totalCount = 0;
-    schedule.forEach((day, idx) => {
-      const v = (day as any)[key] || 0;
-      if (v > 0) cells[columns[idx].key] = v;
-      totalCount += v;
-    });
-    const rate = rateOf[key] || 0;
-    return { label: particularLabels[key], rate, cells, totalCount, subtotal: totalCount * rate };
-  }).filter(r => r.totalCount > 0);
-
-  customParticulars.forEach((p) => {
-    const cells: Record<string, number> = {};
-    let totalCount = 0;
-    schedule.forEach((day, idx) => {
-      const v = day.extras?.[p.id] || 0;
-      if (v > 0) cells[columns[idx].key] = v;
-      totalCount += v;
-    });
-    if (totalCount > 0) rows.push({ label: p.label, rate: p.rate, cells, totalCount, subtotal: totalCount * (p.rate || 0) });
-  });
-
-  if (!rows.length) return undefined;
-  return { columns, rows };
-};
-
-/**
- * The mirror image of buildMatrixTableFromSchedule — same particulars (rows)
- * and rates, but as dates-as-ROWS entries grouped under each particular
- * instead of a dates-as-columns pivot. Feeds the "Daily Schedule (dates as
- * rows)" built-in template (schedule-table block) the same way the matrix
- * builder feeds "Daily Schedule (dates as columns)".
- */
-const buildScheduleTableFromSchedule = (
-  schedule: Array<{ date: string; rooms: number; dinnerPax: number; lunchPax: number; conferencePax: number; extras?: Record<string, number> }>,
-  particularLabels: { rooms: string; dinnerPax: string; lunchPax: string; conferencePax: string },
-  rates: { roomRate: number; dinnerRate: number; lunchRate: number; conferenceRate: number },
-  hiddenParticulars: Record<string, boolean>,
-  customParticulars: Array<{ id: string; label: string; rate: number }>
-): { groups: Array<{ description: string; entries: Array<{ day: string; date?: string; qty?: number; unitPrice?: number; total: number }> }> } | undefined => {
-  if (!schedule.length) return undefined;
-
-  const dayLabel = (day: { date: string }, idx: number) =>
-    day.date ? new Date(day.date).toLocaleDateString('en-GB', { weekday: 'short' }) : `Day ${idx + 1}`;
-
-  const rateOf: Record<string, number> = { rooms: rates.roomRate, dinnerPax: rates.dinnerRate, lunchPax: rates.lunchRate, conferencePax: rates.conferenceRate };
-  const standardKeys = (['rooms', 'dinnerPax', 'lunchPax', 'conferencePax'] as const).filter(k => !hiddenParticulars[k]);
-
-  const groups = standardKeys.map((key) => {
-    const rate = rateOf[key] || 0;
-    const entries = schedule
-      .map((day, idx) => ({ day, idx, v: (day as any)[key] || 0 }))
-      .filter(({ v }) => v > 0)
-      .map(({ day, idx, v }) => ({ day: dayLabel(day, idx), date: day.date, qty: v, unitPrice: rate, total: v * rate }));
-    return { description: particularLabels[key], entries };
-  }).filter(g => g.entries.length > 0);
-
-  customParticulars.forEach((p) => {
-    const entries = schedule
-      .map((day, idx) => ({ day, idx, v: day.extras?.[p.id] || 0 }))
-      .filter(({ v }) => v > 0)
-      .map(({ day, idx, v }) => ({ day: dayLabel(day, idx), date: day.date, qty: v, unitPrice: p.rate || 0, total: v * (p.rate || 0) }));
-    if (entries.length) groups.push({ description: p.label, entries });
-  });
-
-  if (!groups.length) return undefined;
-  return { groups };
-};
-
-/**
- * Accommodation and Conference & Events each get their own document types
- * (see print/templates.ts) rather than sharing 'invoice'/'proforma'/'receipt'
- * with a data filter — so editing one in Settings → Document Templates never
- * changes the other.
- */
-const EVENT_DOC_TYPE: Record<'accommodation' | 'events', Record<'proforma' | 'invoice' | 'receipt', PrintType>> = {
-  accommodation: { proforma: 'accommodation-proforma', invoice: 'accommodation-invoice', receipt: 'accommodation-receipt' },
-  events: { proforma: 'event-proforma', invoice: 'event-invoice', receipt: 'event-receipt' },
-};
-
-/**
- * A booking is a bulk "Accommodation" document only when it has zero
- * conference/catering component — the moment any conference hall or catering
- * usage is present, the whole booking (accommodation included) is one "Event"
- * document. Accommodation alone never makes this true.
- */
-const scheduleHasEventComponent = (
-  schedule: Array<{ conferencePax?: number; lunchPax?: number; dinnerPax?: number; extras?: Record<string, number> }>,
-  customParticulars: Array<{ id: string }> = []
-): boolean =>
-  schedule.some((d) => (d.conferencePax || 0) > 0 || (d.lunchPax || 0) > 0 || (d.dinnerPax || 0) > 0) ||
-  customParticulars.some((p) => schedule.some((d) => (d.extras?.[p.id] || 0) > 0));
-
-/** Same predicate for the QuoteBudgetSnapshot shape (already-saved events without a live daily schedule). */
-const budgetHasEventComponent = (budget: { conference?: number; lunch?: number; dinner?: number; extras?: number }): boolean =>
-  (budget.conference || 0) + (budget.lunch || 0) + (budget.dinner || 0) + (budget.extras || 0) > 0;
-
-const RATE_EFFECTIVE_STATUS_META: Record<
+import {
+  ManagementMainTabKey,
+  UNASSIGNED_STAFF,
+  BEO_LAYOUTS,
+  BEO_ACCESS,
+  BEO_PARKING,
+  BEO_LIGHTING,
+  BEO_INTERNET,
+  BEO_SERVICE_STYLES,
+  BEO_MEAL_TYPES,
+  BEO_DEPT_FALLBACK,
+  withCurrentOption,
+  BeoPick,
+  RECEIPT_METHOD_OPTIONS,
+  resolveFromOptions,
+  resolveReceiptMethod,
+  getEventCoordinator,
+  pickStoredEventCoordinator,
+  getEventClientContactName,
+  formatEventTableDate,
+  formatEventTableRange,
+  eventStayType,
+  parseEventDate,
+  eventStartValue,
+  eventEndValue,
+  isUnassignedVenueLabel,
+  findVenueInCatalog,
+  eventVenueKey,
+  eventVenueLabel,
+  eventUsesVenue,
+  eventHasBeo,
+  eventRoomCount,
+  departmentScheduleLines,
+  functionFbDuties,
+  functionHkDuties,
+  formatScheduleStatus,
+  VenueStatus,
+  VenueDetails,
+  VenueFormState,
+  supplementalVenueSeeds,
+  baseVenueSeeds,
+  initialVenueCatalog,
+  createEmptyVenueForm,
+  slugify,
+  InfoIcon,
+  ReportFilterConfig,
+  ReportDefinition,
+  ReportCategory,
+  ReportInsight,
+  ReportQuickLink,
+  ReportTableColumn,
+  ReportTableData,
+  ReportFiltersState,
+  getDefaultReportRange,
+  buildInitialReportFilters,
+  filterEventsForReport,
+  matchesReportDate,
+  RateApplicableDates,
   RateEffectiveStatus,
-  { label: string; color: 'success' | 'warning' | 'danger' | 'default' | 'primary' }
-> = {
-  'all-year': { label: 'Always effective', color: 'primary' },
-  effective: { label: 'Effective now', color: 'success' },
-  upcoming: { label: 'Upcoming', color: 'warning' },
-  expired: { label: 'Expired', color: 'danger' },
-  incomplete: { label: 'Needs dates', color: 'danger' },
-};
-
-const GUEST_RATES_STORAGE_KEY_PREFIX = 'events.conferenceRates';
-const EVENTS_DOCS_STORAGE_KEY_PREFIX = 'events.billingDocs';
-// Tenant is resolved client-side on a shared origin, so negotiated rates must be
-// namespaced per tenant — a flat key would leak one tenant's rates into another's view.
-const guestRatesStorageKey = () => `${GUEST_RATES_STORAGE_KEY_PREFIX}.${getClientTenantSubdomain()}`;
-const eventsDocsStorageKey = () => `${EVENTS_DOCS_STORAGE_KEY_PREFIX}.${getClientTenantSubdomain()}`;
-
-const HARDCODED_EVENT_IDS = new Set([
-  'evt-001',
-  'evt-002',
-  'evt-003',
-  'evt-004',
-  'evt-005',
-  'evt-006',
-  'evt-007',
-  'evt-008',
-  'evt-009',
-  'evt-010',
-  'evt-011',
-  'evt-active-001',
-  'evt-active-002',
-  'evt-active-003',
-  'evt-completed-001',
-  'evt-completed-002',
-  'evt-completed-003',
-]);
-
-const HARDCODED_BILLING_IDS = new Set([
-  'INV-EC-2025-001',
-  'INV-EC-2025-002',
-  'RCPT-2025-030',
-  'RCPT-2025-044',
-  'FOL-EC-001',
-  'FOL-EC-002',
-]);
-
-function isHardcodedDemoEventId(id?: string) {
-  return Boolean(id && HARDCODED_EVENT_IDS.has(id));
-}
-
-function isHardcodedBillingDoc(doc?: { id?: string; eventId?: string }) {
-  if (!doc) return false;
-  return HARDCODED_BILLING_IDS.has(String(doc.id || '')) || isHardcodedDemoEventId(doc.eventId);
-}
-
-function dayKeyFromValue(value: any): string {
-  if (!value) return '';
-  const raw = typeof value === 'string' ? value : (value instanceof Date ? value.toISOString() : String(value));
-  return raw.slice(0, 10);
-}
-
-function mapApiBookingToEvent(row: any) {
-  const details = row?.details && typeof row.details === 'object' ? row.details : {};
-  const start = dayKeyFromValue(row?.startDate);
-  const end = dayKeyFromValue(row?.endDate) || start;
-  const startMs = start ? new Date(`${start}T00:00:00`).getTime() : NaN;
-  const endMs = end ? new Date(`${end}T00:00:00`).getTime() : NaN;
-  const duration = (!Number.isNaN(startMs) && !Number.isNaN(endMs))
-    ? Math.max(1, Math.round((endMs - startMs) / (1000 * 60 * 60 * 24)) + 1)
-    : 1;
-  const residential = Boolean(details.residential);
-  const quoteBudgetSnapshot = details.quoteBudgetSnapshot;
-  return {
-    id: row.id,
-    organization: row.organizer || details.organization || '',
-    eventName: row.title || row.eventName || 'Unnamed Event',
-    eventType: residential ? 'residential-conference' : (row.type || 'conference'),
-    venue: row.hallId || details.venueKey || details.venue || '',
-    venueName: row.hallName || details.venueName || '',
-    venueKey: row.hallId || details.venueKey || details.venue || '',
-    arrivalDate: start,
-    departureDate: end,
-    startDate: start,
-    endDate: end,
-    duration,
-    pax: Number(row.attendees || 0),
-    expectedPax: Number(row.attendees || 0),
-    residential,
-    revenue: Number(row.totalCost || quoteBudgetSnapshot?.total || 0),
-    contactPerson: row.contactPerson || '',
-    contactPhone: row.contactPhone || '',
-    contactEmail: row.contactEmail || '',
-    linkedBooking: row.id,
-    linkedBEO: details.linkedBEO || null,
-    quoteBudgetSnapshot,
-    budgetTotal: Number(quoteBudgetSnapshot?.total || row.totalCost || 0),
-    dailySchedule: Array.isArray(details.dailySchedule) ? details.dailySchedule : [],
-    particularLabels: details.particularLabels,
-    ratesByParticulars: details.ratesByParticulars,
-    combinedPackage: details.combinedPackage,
-    conferenceRate: details.conferenceRate,
-    lunchRate: details.lunchRate,
-    dinnerRate: details.dinnerRate,
-    roomRate: details.roomRate,
-    defaultDayRate: details.defaultDayRate,
-    completionStatus: details.completionStatus,
-    checkedIn: Boolean(details.checkedIn),
-    eventCoordinator: details.eventCoordinator || row.eventCoordinator || '',
-    nextAction: details.nextAction || '',
-    followUpDate: details.followUpDate || '',
-    quoteNumber: details.quoteNumber || row.quoteNumber || '',
-    status: details.completionStatus === 'completed'
-      ? 'completed'
-      : (row.status || 'quote'),
-    details,
-  };
-}
-
-const DEFAULT_CONFERENCE_RATES = [
-  {
-    id: 'rate-001',
-    name: 'Standard Accommodation Rate',
-    type: 'accommodation',
-    baseRate: 200,
-    unit: 'per_room',
-    customLabel: 'Accommodation',
-    applicableDates: { startDate: '2026-01-01', endDate: '2026-12-31', isAllYear: false },
-    clientSpecific: false,
-    clientId: '',
-    clientName: '',
-    isActive: true,
-    notes: 'Standard room rate for all guests',
-    createdAt: '2026-01-01',
-    updatedAt: '2026-01-01',
-  },
-  {
-    id: 'rate-002',
-    name: 'Conference Hall Rate',
-    type: 'conference',
-    baseRate: 300,
-    unit: 'per_person',
-    customLabel: 'Conference',
-    applicableDates: { startDate: '2026-01-01', endDate: '2026-12-31', isAllYear: false },
-    clientSpecific: false,
-    clientId: '',
-    clientName: '',
-    isActive: true,
-    notes: 'Standard conference rate per person per day',
-    createdAt: '2026-01-01',
-    updatedAt: '2026-01-01',
-  },
-  {
-    id: 'rate-003',
-    name: 'Lunch Rate',
-    type: 'lunch',
-    baseRate: 50,
-    unit: 'per_person',
-    customLabel: 'Lunch',
-    applicableDates: { startDate: '2026-01-01', endDate: '2026-12-31', isAllYear: false },
-    clientSpecific: false,
-    clientId: '',
-    clientName: '',
-    isActive: true,
-    notes: 'Standard lunch rate per person',
-    createdAt: '2026-01-01',
-    updatedAt: '2026-01-01',
-  },
-  {
-    id: 'rate-004',
-    name: 'Dinner Rate',
-    type: 'dinner',
-    baseRate: 80,
-    unit: 'per_person',
-    customLabel: 'Dinner',
-    applicableDates: { startDate: '2026-01-01', endDate: '2026-12-31', isAllYear: false },
-    clientSpecific: false,
-    clientId: '',
-    clientName: '',
-    isActive: true,
-    notes: 'Standard dinner rate per person',
-    createdAt: '2026-01-01',
-    updatedAt: '2026-01-01',
-  },
-  {
-    id: 'rate-005',
-    name: 'T-TEL Accommodation & Breakfast Rate',
-    type: 'accommodation',
-    baseRate: 180,
-    unit: 'per_room',
-    customLabel: 'Accommodation & Breakfast',
-    applicableDates: { startDate: '2026-01-01', endDate: '2026-09-30', isAllYear: false },
-    clientSpecific: true,
-    clientId: '',
-    clientName: 'T-TEL',
-    isActive: true,
-    notes: 'Corporate rate for T-TEL through Q3 2026',
-    createdAt: '2026-01-01',
-    updatedAt: '2026-01-01',
-  },
-  {
-    id: 'rate-006',
-    name: 'Agrivest Co Conference with 2 Snacks Rate',
-    type: 'conference',
-    baseRate: 250,
-    unit: 'per_person',
-    customLabel: 'Conference with 2 Snacks',
-    applicableDates: { startDate: '2026-03-01', endDate: '2026-12-31', isAllYear: false },
-    clientSpecific: true,
-    clientId: '',
-    clientName: 'Agrivest Co',
-    isActive: true,
-    notes: 'Negotiated rate for Agrivest Co conferences',
-    createdAt: '2026-01-01',
-    updatedAt: '2026-01-01',
-  },
-];
-
-const loadStoredConferenceRates = () => {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = localStorage.getItem(guestRatesStorageKey());
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-};
-
-const EVENTS_REPORT_CATALOG: ReportCategory[] = [];
+  getRateEffectiveStatus,
+  rateOverlapsDateRange,
+  rateEffectiveForEventDates,
+  formatRateTableDate,
+  getRateEffectivePeriodLabel,
+  pickBestRateForType,
+  resolveGuestRatesForEvent,
+  PrintScheduleRates,
+  buildPrintLineItemsFromSchedule,
+  buildMatrixTableFromSchedule,
+  buildScheduleTableFromSchedule,
+  EVENT_DOC_TYPE,
+  scheduleHasEventComponent,
+  budgetHasEventComponent,
+  RATE_EFFECTIVE_STATUS_META,
+  GUEST_RATES_STORAGE_KEY_PREFIX,
+  EVENTS_DOCS_STORAGE_KEY_PREFIX,
+  guestRatesStorageKey,
+  eventsDocsStorageKey,
+  HARDCODED_EVENT_IDS,
+  HARDCODED_BILLING_IDS,
+  isHardcodedDemoEventId,
+  isHardcodedBillingDoc,
+  dayKeyFromValue,
+  mapApiBookingToEvent,
+  DEFAULT_CONFERENCE_RATES,
+  loadStoredConferenceRates,
+  EVENTS_REPORT_CATALOG,
+} from './events/eventShared';
+import type {
+  SimpleEventStatus,
+  EventInvoiceStatus,
+  ReceiptMethod,
+  EventInvoice,
+  InvoiceFormSnapshot,
+  EventReceipt,
+  EventFolioEntry,
+  EventFolio,
+  QuoteListItem,
+  SortDirection,
+  TableSortState,
+  QuoteBudgetSnapshot,
+  QuoteServiceLine,
+  QuoteDay,
+  Package,
+  AddOn,
+} from './events/eventTypes';
 
 export default function EventsConferencesMainDashboard({
   fullPage = false,
@@ -1286,9 +258,8 @@ export default function EventsConferencesMainDashboard({
   onWorkspaceClose?: () => void;
 } = {}) {
   const router = useRouter();
-  const { costCenters, revenueCenters, initializeAccounting } = useAccountingStore();
+  const initializeAccounting = useAccountingStore((s) => s.initializeAccounting);
   const accountingInvoices = useAccountingStore((s) => s.invoices);
-  const accountingPayments = useAccountingStore((s) => s.payments);
   const employees = useEmployeeStore((s) => s.employees);
   const hrDepartments = useEmployeeStore((s) => s.departments);
   const hydrateEmployees = useEmployeeStore((s) => s.hydrateFromApi);
@@ -1335,12 +306,6 @@ export default function EventsConferencesMainDashboard({
     () => Array.from(new Set([...beoDepartmentOptions, ...eventStaffOptions.map((option) => option.label)])),
     [beoDepartmentOptions, eventStaffOptions]
   );
-  useEffect(() => {
-    hydrateEmployees();
-  }, [hydrateEmployees]);
-  useEffect(() => {
-    initializeAccounting().catch(() => {});
-  }, [initializeAccounting]);
   const [selectedTab, setSelectedTab] = useState('confirmed');
   const [venueSearchTerm, setVenueSearchTerm] = useState('');
   const [venueStatusFilter, setVenueStatusFilter] = useState('all');
@@ -1357,6 +322,10 @@ export default function EventsConferencesMainDashboard({
   const [isPackageModalOpen, setIsPackageModalOpen] = useState(false);
   const [isTaxModalOpen, setIsTaxModalOpen] = useState(false);
   const [isBEOModalOpen, setIsBEOModalOpen] = useState(false);
+  useEffect(() => {
+    if (!isEventModalOpen && !isBEOModalOpen) return;
+    hydrateEmployees();
+  }, [hydrateEmployees, isEventModalOpen, isBEOModalOpen]);
   const [beoWorkspaceTab, setBeoWorkspaceTab] = useState('overview');
   const [editingEvent, setEditingEvent] = useState<any>(null);
   const [isCreatingEvent, setIsCreatingEvent] = useState<boolean>(false);
@@ -1476,7 +445,7 @@ export default function EventsConferencesMainDashboard({
       reportKey,
     });
   }, []);
-  type SimpleEventStatus = 'quote' | 'confirmed' | 'invoiced' | 'cancelled';
+  
   const [eventStatus, setEventStatus] = useState<SimpleEventStatus>('quote');
   const [eventCoordinator, setEventCoordinator] = useState<string>(UNASSIGNED_STAFF);
   const [nextAction, setNextAction] = useState<string>('');
@@ -1495,9 +464,8 @@ export default function EventsConferencesMainDashboard({
   };
 
   const PRE_EVENT_STATUS_OPTIONS: Array<{ key: SimpleEventStatus; label: string; icon?: string }> = [
-    { key: 'quote', label: 'Quote', icon: '📄' },
-    { key: 'confirmed', label: 'Confirmed', icon: '✅' },
-    { key: 'cancelled', label: 'Cancelled', icon: '❌' }
+    { key: 'quote', label: 'Quote' },
+    { key: 'confirmed', label: 'Confirmed' },
   ];
   const bookingStatusMap: Record<SimpleEventStatus, EventBooking['status']> = {
     quote: 'pending',
@@ -1527,111 +495,15 @@ export default function EventsConferencesMainDashboard({
     return 'quote';
   };
 
-  const selectedStatusMeta = useMemo(
-    () => PRE_EVENT_STATUS_OPTIONS.find(option => option.key === eventStatus) || null,
-    [eventStatus]
-  );
 
-  const renderStatusLabel = (
-    title: string,
-    meta: { label: string; icon?: string; key?: SimpleEventStatus } | null = selectedStatusMeta
-  ) => (
-    <div className="flex items-center justify-between gap-2 w-full">
-      <span>{title}</span>
-      {meta && (
-        <span className="flex items-center gap-1 text-xs text-gray-500">
-          <span className="hidden sm:inline">Selected:</span>
-          <Chip
-            size="sm"
-            variant="flat"
-            color={meta.key ? eventStatusColorMap[meta.key] : eventStatusColorMap[eventStatus]}
-          >
-            {meta.icon ? `${meta.icon} ` : ''}
-            {meta.label}
-          </Chip>
-        </span>
-      )}
-    </div>
-  );
+  
 
-  type EventInvoiceStatus = 'Draft' | 'Issued' | 'Partial' | 'Paid' | 'Overdue';
-  type ReceiptMethod = 'Cash' | 'Card' | 'Bank Transfer' | 'Mobile Money' | 'Cheque';
+  
 
-  interface EventInvoice {
-    id: string;
-    eventId: string;
-    eventName: string;
-    clientName: string;
-    issueDate: string;
-    dueDate: string;
-    subtotal: number;
-    tax: number;
-    total: number;
-    balance: number;
-    status: EventInvoiceStatus;
-    reference?: string;
-    notes?: string;
-    formSnapshot?: InvoiceFormSnapshot;
-  }
+  
+  
 
-  interface InvoiceFormSnapshot {
-    eventId: string;
-    eventName: string;
-    clientName: string;
-    startDate: string;
-    endDate: string;
-    dailySchedule: any[];
-    particularLabels: any;
-    discountEnabled: boolean;
-    discountType: 'percent' | 'amount';
-    discountValue: number;
-    subtotal: number;
-    tax: number;
-    total: number;
-    balance: number;
-    issueDate: string;
-    dueDate: string;
-    status: EventInvoiceStatus;
-  }
-
-  interface EventReceipt {
-    id: string;
-    eventId: string;
-    eventName: string;
-    invoiceId?: string;
-    clientName: string;
-    date: string;
-    amount: number;
-    method: ReceiptMethod;
-    reference?: string;
-    checkNumber?: string;
-    recordedBy: string;
-    notes?: string;
-    status?: 'Posted' | 'Void';
-  }
-  interface EventFolioEntry {
-    id: string;
-    date: string;
-    description: string;
-    debit: number;
-    credit: number;
-    balance: number;
-    reference?: string;
-    costCenter?: string; // Cost center code for charges (debits)
-    revenueCenter?: string; // Revenue center code for payments (credits)
-  }
-
-  interface EventFolio {
-    id: string;
-    eventId: string;
-    eventName: string;
-    clientName: string;
-    status: 'Open' | 'Closed' | 'Void';
-    openingBalance: number;
-    entries: EventFolioEntry[];
-    createdAt: string;
-    updatedAt: string;
-  }
+  
 
   const normalizeFolioEntries = (folio: EventFolio): EventFolio => {
     const seenRefs = new Set<string>();
@@ -1652,32 +524,13 @@ export default function EventsConferencesMainDashboard({
     return { ...folio, entries };
   };
 
-  interface QuoteListItem {
-    id: string;
-    eventId?: string;
-    quoteNumber: string;
-    clientName: string;
-    eventName: string;
-    checkIn: string;
-    checkOut: string;
-    pax: number;
-    issuedOn: string;
-    total: number;
-    status: string;
-    statusLabel: string;
-    reference: string;
-    venueName: string;
-    rawEvent: any;
-  }
+  
 
 
 
-  type SortDirection = 'asc' | 'desc';
+  
 
-  interface TableSortState {
-    column: string;
-    direction: SortDirection;
-  }
+  
 
   const getNextSortState = (prev: TableSortState, column: string): TableSortState => {
     if (!prev || prev.column !== column) {
@@ -1747,14 +600,7 @@ export default function EventsConferencesMainDashboard({
     return 1;
   };
 
-  interface QuoteBudgetSnapshot {
-    accommodation: number;
-    conference: number;
-    dinner: number;
-    lunch: number;
-    extras: number;
-    total: number;
-  }
+  
 
   const [eventInvoices, setEventInvoices] = useState<EventInvoice[]>([]);
 
@@ -1864,39 +710,27 @@ export default function EventsConferencesMainDashboard({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      await initializeAccounting().catch(() => {});
       const rows = await fetchEventBookings().catch(() => []);
       if (cancelled) return;
-      if (!Array.isArray(rows) || !rows.length) {
-        setEventsHydrated(true);
-        return;
-      }
-      let liveIds: string[] = [];
-      let quotes: any[] = [];
-      setCustomEvents((prev) => {
-        const map = new Map(prev.map((ev) => [ev.id, ev]));
-        rows.forEach((row) => {
-          const ui = mapApiBookingToEvent(row);
-          if (!ui.id || isHardcodedDemoEventId(ui.id)) return;
-          const existing = map.get(ui.id);
-          map.set(ui.id, existing ? { ...ui, ...existing } : ui);
+      if (Array.isArray(rows) && rows.length) {
+        setCustomEvents((prev) => {
+          const map = new Map(prev.map((ev) => [ev.id, ev]));
+          rows.forEach((row) => {
+            const ui = mapApiBookingToEvent(row);
+            if (!ui.id || isHardcodedDemoEventId(ui.id)) return;
+            const existing = map.get(ui.id);
+            map.set(ui.id, existing ? { ...ui, ...existing } : ui);
+          });
+          return Array.from(map.values());
         });
-        const next = Array.from(map.values());
-        liveIds = next.map((event) => String(event.id)).filter(Boolean);
-        quotes = next.filter((event) => (event.status === 'quote' || event.quoteNumber) && Number(event.budgetTotal || event.revenue || 0) > 0);
-        return next;
-      });
+      }
       if (cancelled) return;
       setEventsHydrated(true);
-      if (liveIds.length) {
-        await retireOrphanConferenceInvoices(liveIds).catch(() => {});
-      }
-      quotes.forEach((event) => syncEventQuoteToAccounting(event));
     })();
     return () => {
       cancelled = true;
     };
-  }, [initializeAccounting]);
+  }, []);
 
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [invoiceModalMode, setInvoiceModalMode] = useState<'create' | 'edit'>('create');
@@ -1914,7 +748,7 @@ export default function EventsConferencesMainDashboard({
   const [isFolioModalOpen, setIsFolioModalOpen] = useState(false);
   const [activeFolio, setActiveFolio] = useState<any>(null);
   const [docCautionPrompt, setDocCautionPrompt] = useState<null | {
-    kind: 'void-folio' | 'delete-folio' | 'void-receipt' | 'delete-receipt';
+    kind: 'void-folio' | 'unvoid-folio' | 'delete-folio' | 'void-receipt' | 'unvoid-receipt' | 'delete-receipt';
     title: string;
     message: string;
     confirmLabel: string;
@@ -1949,7 +783,7 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
   const [folioCreateError, setFolioCreateError] = useState<string>('');
   const [folioEntrySearch, setFolioEntrySearch] = useState('');
   const [folioSortKey, setFolioSortKey] = useState<FolioAccountCol>('date');
-  const [folioSortDir, setFolioSortDir] = useState<'asc' | 'desc'>('asc');
+  const [folioSortDir, setFolioSortDir] = useState<'asc' | 'desc'>('desc');
   const [folioPage, setFolioPage] = useState(1);
   const folioAccountCols = useFolioAccountColumns();
   const [folioComposerOpen, setFolioComposerOpen] = useState(false);
@@ -1993,34 +827,29 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
   const [isClientViewModalOpen, setIsClientViewModalOpen] = useState(false);
   const [isContractModalOpen, setIsContractModalOpen] = useState(false);
   const [isClientEditModalOpen, setIsClientEditModalOpen] = useState(false);
-  const DeptNotices = require('./DeptNotices').default;
   const DeptMessenger = require('./DeptMessenger').default;
-  const RecentActivities = require('./RecentActivities').default;
   const complianceCountry = useComplianceStore(state => state.country);
   const complianceTaxRules = useComplianceStore(state => state.taxRules);
   const setComplianceCountry = useComplianceStore(state => state.setCountry);
   const complianceCalculateTax = useCalculateTax();
   
-  // Track when event modal opens to refresh tax rules
+  // Tax schedules are only needed inside the event form. Loading them on open
+  // was three extra requests plus an accounting sync before the list appeared.
   const [taxRulesLoaded, setTaxRulesLoaded] = React.useState(false);
-  
-  // Load tax rules from Tax Management - refresh when modal opens
+
   React.useEffect(() => {
+    if (!isEventModalOpen || taxRulesLoaded) return;
     const loadTaxRules = async () => {
       try {
         const country = complianceCountry || 'GH';
-        console.log('[Events] Loading tax rules for country:', country);
         await setComplianceCountry(country);
         setTaxRulesLoaded(true);
       } catch (error) {
         console.error('[Events] Failed to load tax rules:', error);
       }
     };
-    // Load on mount and when event modal opens
-    if (!taxRulesLoaded || isEventModalOpen) {
-      loadTaxRules();
-    }
-  }, [isEventModalOpen]);
+    loadTaxRules();
+  }, [isEventModalOpen, taxRulesLoaded, complianceCountry, setComplianceCountry]);
   
   // Function to manually refresh tax rules
   const refreshTaxRules = React.useCallback(async () => {
@@ -2034,8 +863,8 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
   }, [complianceCountry, setComplianceCountry]);
   // Quote builder state
   const [quoteTaxExempt, setQuoteTaxExempt] = useState<boolean>(false);
-  type QuoteServiceLine = { id: string; name: string; category: string; qty: number; unitPrice: number; taxGroup: string };
-  type QuoteDay = { id: string; label: string; date: string; services: QuoteServiceLine[] };
+  
+  
   const [quoteDays, setQuoteDays] = useState<QuoteDay[]>([]);
   const [activePrintTab, setActivePrintTab] = useState<'quote' | 'invoice' | 'receipt' | 'xls'>('quote');
   const [selectedProformaTemplate, setSelectedProformaTemplate] = useState<string>('');
@@ -2299,17 +1128,43 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
     const total = Number(totals?.total ?? event.budgetTotal ?? event.revenue ?? event.totalCost ?? 0);
     if (!(total > 0)) return;
     const subtotal = Number(totals?.subtotal ?? event.subtotal ?? total);
-    captureConferenceProforma({
-      eventId: String(event.id),
-      customerId: event.clientId || event.orgClientId,
-      customerName: getEventClientName(event) || 'Conference Client',
-      description: `Conference proforma: ${getEventDisplayName(event)}`,
-      subtotal,
-      taxAmount: Number(totals?.tax ?? 0),
-      total,
-      quoteNumber: event.quoteNumber,
-    });
+    void initializeAccounting()
+      .catch(() => {})
+      .then(() => {
+        const proformaId = `INV-CONFERENCE-PRO-${event.id}`;
+        if (useAccountingStore.getState().invoices.some((invoice) => invoice.id === proformaId)) return;
+        captureConferenceProforma({
+          eventId: String(event.id),
+          customerId: event.clientId || event.orgClientId,
+          customerName: getEventClientName(event) || 'Conference Client',
+          description: `Conference proforma: ${getEventDisplayName(event)}`,
+          subtotal,
+          taxAmount: Number(totals?.tax ?? 0),
+          total,
+          quoteNumber: event.quoteNumber,
+        });
+      });
   };
+
+  useEffect(() => {
+    if (managementMainTab === 'events') return;
+    let cancelled = false;
+    (async () => {
+      await initializeAccounting().catch(() => {});
+      if (cancelled) return;
+      const liveIds = customEvents.map((event) => String(event.id || '')).filter(Boolean);
+      if (liveIds.length) await retireOrphanConferenceInvoices(liveIds).catch(() => {});
+      if (cancelled) return;
+      customEvents.forEach((event) => {
+        if ((event.status === 'quote' || event.quoteNumber) && Number(event.budgetTotal || event.revenue || 0) > 0) {
+          syncEventQuoteToAccounting(event);
+        }
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [managementMainTab, customEvents, initializeAccounting]);
   
   // Helper: refresh the active folio from the latest eventFolios state
   const refreshActiveFolioByEvent = (eventId: string) => {
@@ -2324,14 +1179,24 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
     if (!folio || !folio.entries || folio.entries.length === 0) {
       return { debits: 0, credits: 0 };
     }
-    return folio.entries.reduce(
-      (acc, entry) => {
-        acc.debits += entry.debit || 0;
-        acc.credits += entry.credit || 0;
-        return acc;
-      },
-      { debits: 0, credits: 0 }
-    );
+    let charges = 0;
+    let payments = 0;
+    for (const entry of folio.entries) {
+      const reversal = /^\s*(REVERSAL|VOID)\b/i.test(entry.description || '');
+      const debit = Number(entry.debit || 0);
+      const credit = Number(entry.credit || 0);
+      if (reversal) {
+        charges -= credit;
+        payments -= debit;
+      } else {
+        charges += debit;
+        payments += credit;
+      }
+    }
+    return {
+      debits: Math.round(charges * 100) / 100,
+      credits: Math.round(payments * 100) / 100,
+    };
   };
   const deriveInvoiceStatus = (current: EventInvoiceStatus | undefined, balance: number, total: number): EventInvoiceStatus => {
     if (balance <= 0) return 'Paid';
@@ -2572,142 +1437,6 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
       isResidential
     };
   };
-  const getContractHtml = (client: any, eventInfo?: any) => {
-    if (!client) return '';
-    const eventSection = eventInfo ? `
-      <div class="section">
-        <h2>Event Overview</h2>
-        <p><strong>Event Name:</strong> ${eventInfo.eventName || 'TBD'}</p>
-        <p><strong>Organization:</strong> ${eventInfo.organization || client.organization}</p>
-        <p><strong>Dates:</strong> ${eventInfo.startDate || 'TBD'} to ${eventInfo.endDate || 'TBD'}</p>
-        <p><strong>Expected Pax:</strong> ${eventInfo.expectedPax || 'TBD'}</p>
-        ${eventInfo.venueName ? `<p><strong>Venue:</strong> ${eventInfo.venueName} (${eventInfo.venueCapacity || 'N/A'} capacity)</p>` : ''}
-        <p><strong>Residential:</strong> ${eventInfo.isResidential ? 'Yes' : 'No'}</p>
-      </div>
-    ` : '';
-
-    return `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Event Services Contract - ${client.organization}</title>
-          <style>
-            body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; color: #1f2937; }
-            .header { text-align: center; border-bottom: 2px solid #111827; padding-bottom: 20px; margin-bottom: 30px; }
-            .section { margin-bottom: 24px; }
-            .rates-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 20px 0; }
-            .rate-card { border: 1px solid #d1d5db; padding: 15px; text-align: center; background: #f9fafb; border-radius: 8px; }
-            .signature-section { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-top: 40px; }
-            .signature-box { border-top: 2px solid #111827; padding-top: 15px; }
-            @media print { body { margin: 20px; } }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <h1 style="font-size: 28px; margin-bottom: 10px;">EVENT SERVICES CONTRACT</h1>
-            <p style="font-size: 18px;">Between Ghana Hotel & Conference Center and ${client.organization}</p>
-            <p style="font-size: 14px; color: #6b7280;">Contract Period: ${client.contractStart} to ${client.contractEnd}</p>
-          </div>
-
-          <div class="section">
-            <h2>Client Details</h2>
-            <p><strong>Name:</strong> ${client.name}</p>
-            <p><strong>Position:</strong> ${client.position}</p>
-            <p><strong>Organization:</strong> ${client.organization}</p>
-            <p><strong>Contact:</strong> ${client.contact}</p>
-            <p><strong>Email:</strong> ${client.email}</p>
-            <p><strong>WhatsApp:</strong> ${client.whatsapp ? 'Available' : 'Not Available'}</p>
-          </div>
-
-          ${eventSection}
-
-          <div class="section">
-            <h2>Negotiated Rates & Services</h2>
-            <div class="rates-grid">
-              <div class="rate-card">
-                <h3>Accommodation</h3>
-                <p style="font-size: 24px; font-weight: bold; color: #4f46e5;">₵${client.rates.accommodation}</p>
-                <p style="font-size: 12px; color:#6b7280;">per night</p>
-              </div>
-              <div class="rate-card">
-                <h3>Conference Services</h3>
-                <p style="font-size: 24px; font-weight: bold; color: #4f46e5;">₵${client.rates.conference}</p>
-                <p style="font-size: 12px; color:#6b7280;">per person</p>
-              </div>
-              <div class="rate-card">
-                <h3>Catering</h3>
-                <p style="font-size: 24px; font-weight: bold; color: #4f46e5;">₵${client.rates.catering}</p>
-                <p style="font-size: 12px; color:#6b7280;">per person</p>
-              </div>
-            </div>
-          </div>
-
-          ${client.specialTerms ? `
-            <div class="section" style="background:#fef3c7; padding:16px; border-radius:8px;">
-              <h2>Special Terms & Conditions</h2>
-              <p>${client.specialTerms}</p>
-            </div>
-          ` : ''}
-
-          <div class="section">
-            <h2>Standard Contract Terms</h2>
-            <ul>
-              <li><strong>Payment Terms:</strong> 50% deposit required upon booking, balance due 7 days before event</li>
-              <li><strong>Cancellation Policy:</strong> 30 days notice required for full refund, 14 days for 50% refund</li>
-              <li><strong>Force Majeure:</strong> Events beyond our control may result in rescheduling or refund</li>
-              <li><strong>Liability:</strong> Ghana Hotel & Conference Center liability limited to contract value</li>
-              <li><strong>Governing Law:</strong> This contract is governed by the laws of Ghana</li>
-            </ul>
-          </div>
-
-          <div class="signature-section">
-            <div class="signature-box">
-              <h3>Client Signature</h3>
-              <p>Name: ____________________________</p>
-              <p>Date: ____________________________</p>
-              <p>Signature: _______________________</p>
-            </div>
-            <div class="signature-box">
-              <h3>Hotel Representative</h3>
-              <p>Name: ____________________________</p>
-              <p>Date: ____________________________</p>
-              <p>Signature: _______________________</p>
-            </div>
-          </div>
-
-          <p style="margin-top:40px; font-size:12px; color:#9ca3af;">Generated on ${new Date().toLocaleDateString()}</p>
-        </body>
-      </html>
-    `;
-  };
-  const openContractPrintableWindow = (client: any, eventInfo: any, action: 'download' | 'print') => {
-    if (!client) return;
-    if (typeof window === 'undefined') return;
-    const html = getContractHtml(client, eventInfo);
-    const win = window.open('', '_blank');
-    if (!win) {
-      alert(`Please allow pop-ups to ${action === 'download' ? 'download' : 'print'} the contract.`);
-      return;
-    }
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    setTimeout(() => {
-      try {
-        win.print();
-      } catch (err) {
-        console.error('Contract print failed', err);
-      }
-      if (action === 'download') {
-        try {
-          win.close();
-        } catch (err) {
-          console.error('Unable to close contract window', err);
-        }
-      }
-    }, 300);
-  };
 
   // Organization autocomplete state for Event Modal (Phase 1)
   const [orgSearch, setOrgSearch] = useState('');
@@ -2917,8 +1646,8 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     }
   }, [orgName, conferenceRates, startDate, endDate, isViewMode, roomRate, conferenceRate, lunchRate, dinnerRate]);
   // Phase 4 - Packages & Add-Ons
-  type Package = { id: string; name: string; description: string; rateType: 'per_person_per_day'|'flat_per_day'|'flat_total'; price: number };
-  type AddOn = { id: string; name: string; price: number; billing: 'per_day'|'flat_total'|'per_person_per_day' };
+  
+  
   const packages: Package[] = [
     { id: 'pkg-gold', name: 'Gold Conference Package', description: 'Full conference with premium services', rateType: 'per_person_per_day', price: 250 },
     { id: 'pkg-silver', name: 'Silver Conference Package', description: 'Standard conference package', rateType: 'per_person_per_day', price: 180 },
@@ -3307,11 +2036,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       setOrgName(eventToLoad?.organization || '');
       setOrgContactPhone(eventToLoad?.contactPhone || eventToLoad?.contact || '');
       setOrgClientEmail(eventToLoad?.contactEmail || eventToLoad?.clientEmail || '');
-      setClientContactName(
-        eventToLoad?.contactPerson && eventToLoad.contactPerson !== eventToLoad?.organization
-          ? eventToLoad.contactPerson
-          : eventToLoad?.contactPerson || ''
-      );
+      setClientContactName((eventToLoad?.contactPerson || '').trim());
       setIsResidential(Boolean(eventToLoad?.residential ?? eventToLoad?.isResidential));
       setOrgClientId(eventToLoad?.clientId || '');
       setOrgSearch(eventToLoad?.organization || '');
@@ -4570,11 +3295,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     setOrgName(event?.organization || '');
     setOrgContactPhone(event?.contactPhone || event?.contact || '');
     setOrgClientEmail(event?.contactEmail || event?.clientEmail || '');
-    setClientContactName(
-      event?.contactPerson && event.contactPerson !== event?.organization
-        ? event.contactPerson
-        : event?.contactPerson || ''
-    );
+    setClientContactName((event?.contactPerson || '').trim());
     setIsResidential(Boolean(event?.residential ?? event?.isResidential));
     setOrgClientId(event?.clientId || '');
     setOrgSearch(event?.organization || '');
@@ -5406,12 +4127,17 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
   };
 
   const handleOpenContractFromEvent = () => {
-    if (!validateEventForm()) return;
+    if (!validateEventForm()) {
+      window.setTimeout(() => {
+        document.querySelector('[data-invalid="true"]')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }, 0);
+      return;
+    }
     const today = new Date().toISOString().split('T')[0];
     const contractClient = {
       id: editingEvent?.id ? `event-client-${editingEvent.id}` : `event-client-${Date.now()}`,
-      name: orgName,
-      position: 'Event Contact',
+      name: clientContactName.trim() || orgName,
+      position: '',
       organization: orgName,
       contact: orgContactPhone,
       email: orgClientEmail,
@@ -5424,14 +4150,12 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         conference: ratesByParticulars ? (conferenceRate || 0) : (defaultDayRate || conferenceRate || 0),
         catering: ratesByParticulars ? (lunchRate || dinnerRate || 0) : (lunchRate || dinnerRate || 0)
       },
-      specialTerms: `Contract generated from event "${eventName || 'New Event'}".`
+      specialTerms: ''
     };
     setSelectedClient(contractClient);
     setSelectedContractEventInfo(getCurrentEventSnapshot());
     trackEvent('Events.EventCreated', { action: 'contract_modal_opened', organization: orgName });
     setIsContractModalOpen(true);
-    setIsEventModalOpen(false);
-    setIsAdjustMode(false);
   };
   const handleExportEventXls = () => {
     const baseQuote = buildQuoteForExport();
@@ -5781,6 +4505,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
   };
 
   const handleDownloadReceiptPdf = (receipt: EventReceipt, templateOverride?: string) => {
+    if (receipt.status === 'Void') return;
     const { type, data } = buildEventReceiptPrintData(receipt);
     if (!openPrintPreview(type, templateOverride || resolveEventTemplateKey(type), data as any)) return;
     trackEvent('Events.EventCreated', { action: 'receipt_pdf_downloaded', receiptId: receipt.id, eventId: receipt.eventId, method: receipt.method });
@@ -7752,7 +6477,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
   const folioPageRows = sortedFolioEntries.slice((folioSafePage - 1) * FOLIO_PAGE_SIZE, folioSafePage * FOLIO_PAGE_SIZE);
   const sortFolioAccount = (key: FolioAccountCol) => {
     setFolioPage(1);
-    setFolioSortDir((dir) => (folioSortKey === key ? (dir === 'asc' ? 'desc' : 'asc') : 'asc'));
+    setFolioSortDir((dir) => (folioSortKey === key ? (dir === 'asc' ? 'desc' : 'asc') : (key === 'date' ? 'desc' : 'asc')));
     setFolioSortKey(key);
   };
 
@@ -8064,6 +6789,16 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     });
   };
 
+  const unvoidActiveFolio = () => {
+    if (!activeFolio || activeFolio.status !== 'Void') return;
+    setDocCautionPrompt({
+      kind: 'unvoid-folio',
+      title: 'Unvoid this folio?',
+      message: `${formatFolioNumber(activeFolio.id)} counts again. Charges and payments on it are open.`,
+      confirmLabel: 'Unvoid folio',
+    });
+  };
+
   const deleteActiveFolio = () => {
     if (!activeFolio) return;
     setDocCautionPrompt({
@@ -8124,6 +6859,19 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     });
   };
 
+  const unvoidActiveReceipt = () => {
+    if (receiptModalMode !== 'edit' || !receiptForm.id) return;
+    const existing = eventReceipts.find((rcpt) => rcpt.id === receiptForm.id);
+    if (!existing || existing.status !== 'Void') return;
+    const label = getConferenceReceiptNumber(existing.id, existing.eventId) || existing.id;
+    setDocCautionPrompt({
+      kind: 'unvoid-receipt',
+      title: 'Unvoid this receipt?',
+      message: `${label} counts again. The payment goes back on the invoice and folio. Unvoid the invoice first if that bill is still void.`,
+      confirmLabel: 'Unvoid receipt',
+    });
+  };
+
   const deleteActiveReceipt = () => {
     if (receiptModalMode !== 'edit' || !receiptForm.id) return;
     const existing = eventReceipts.find((rcpt) => rcpt.id === receiptForm.id);
@@ -8156,6 +6904,16 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       return;
     }
 
+    if (kind === 'unvoid-folio') {
+      if (!activeFolio || activeFolio.status !== 'Void') return;
+      const updatedAt = new Date().toISOString();
+      const restored = withFolioStatus({ ...activeFolio, status: 'Open', updatedAt });
+      setEventFolios((prev) => prev.map((folio) => (folio.id === activeFolio.id ? restored : folio)));
+      setActiveFolio(restored);
+      trackEvent('Events.EventCreated', { action: 'folio_unvoided', folioId: activeFolio.id });
+      return;
+    }
+
     if (kind === 'delete-folio') {
       if (!activeFolio) return;
       setEventFolios((prev) => prev.filter((folio) => folio.id !== activeFolio.id));
@@ -8171,7 +6929,49 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       setEventReceipts((prev) =>
         prev.map((rcpt) => (rcpt.id === existing.id ? { ...rcpt, status: 'Void' } : rcpt))
       );
+      void voidConferenceReceiptInAccounting(existing.id).catch((error) =>
+        console.error('[Events] Could not void the receipt in Accounting', error),
+      );
       trackEvent('Events.EventCreated', { action: 'receipt_voided', receiptId: existing.id, eventId: existing.eventId });
+      closeReceiptWorkspace();
+      return;
+    }
+
+    if (kind === 'unvoid-receipt') {
+      const existing = eventReceipts.find((rcpt) => rcpt.id === receiptForm.id);
+      if (!existing || existing.status !== 'Void') return;
+      const amount = Number(existing.amount || 0);
+      if (existing.invoiceId && amount > 0) {
+        setEventInvoices((prev) =>
+          prev.map((inv) => {
+            if (inv.id !== existing.invoiceId) return inv;
+            const nextBalance = Math.max(0, Number(inv.balance || 0) - amount);
+            return { ...inv, balance: nextBalance, status: deriveInvoiceStatus(inv.status, nextBalance, inv.total) };
+          }),
+        );
+      }
+      setEventFolios((prev) =>
+        prev.map((folio) => {
+          if (folio.eventId !== existing.eventId) return folio;
+          if ((folio.entries || []).some((entry) => entry.reference === existing.id)) return folio;
+          const last = getFolioCurrentBalance(folio);
+          const entry = {
+            id: genId('FLE'),
+            date: existing.date || new Date().toISOString().split('T')[0],
+            description: existing.method ? `Payment · ${existing.method}` : 'Payment',
+            debit: 0,
+            credit: amount,
+            balance: last - amount,
+            reference: existing.id,
+          };
+          return withFolioStatus({ ...folio, entries: [...(folio.entries || []), entry], updatedAt: new Date().toISOString() });
+        }),
+      );
+      setEventReceipts((prev) => prev.map((rcpt) => (rcpt.id === existing.id ? { ...rcpt, status: 'Posted' } : rcpt)));
+      void unvoidConferenceReceiptInAccounting(existing.id).catch((error) =>
+        console.error('[Events] Could not unvoid the receipt in Accounting', error),
+      );
+      trackEvent('Events.EventCreated', { action: 'receipt_unvoided', receiptId: existing.id, eventId: existing.eventId });
       closeReceiptWorkspace();
       return;
     }
@@ -8727,7 +7527,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
   };
 
   // Import invoice to folio (manual import from UI)
-  const importInvoiceToFolio = (folio: EventFolio) => {
+  const importInvoiceToFolio = async (folio: EventFolio) => {
     const event = allEvents.find(e => e.id === folio.eventId);
     if (!event) {
       alert('❌ Error: Event not found for this folio.');
@@ -8747,7 +7547,12 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
     try {
       if (invoiceExists) {
-        const confirmed = confirm(`📝 Invoice ${invoice.id} already exists in this folio.\n\nUpdate with current values (₵${formatCurrency(invoice.total)})?`);
+        const { confirmChoice } = await import('./DangerConfirm');
+        const confirmed = await confirmChoice(
+          `Update invoice ${invoice.id}?`,
+          `This folio already has that invoice. Update it to ${formatCurrency(invoice.total)}.`,
+          'Update',
+        );
         if (!confirmed) return;
 
         // Update existing entry
@@ -8917,17 +7722,114 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     alert(`Debit note ${newEntry.reference} of ${formatCurrency(amount)} created successfully.`);
   };
 
+  const folioLineCopy = (entry: EventFolioEntry, action: 'void' | 'delete') => {
+    const reversal = /^\s*(REVERSAL|VOID)\b/i.test(entry.description || '');
+    const name = entry.description?.trim() || 'this line';
+    const charge = reversal ? (entry.credit || 0) > 0 : (entry.debit || 0) > 0;
+    if (reversal && !charge) {
+      const message = action === 'delete'
+        ? 'This reversal is removed, so the payment counts again. Payments go up and amount due goes down. The receipt in Accounting stays void — record the payment again there if the guest still paid.'
+        : 'Voiding this reversal puts the payment back. Payments go up and amount due goes down. The receipt in Accounting counts again if its invoice is still live.';
+      return { what: name, message };
+    }
+    if (reversal) {
+      const message = action === 'delete'
+        ? 'This reversal is removed, so the charge counts again. Charges and amount due go back up, and Accounting is increased to match. This cannot be undone.'
+        : 'Voiding this reversal puts the charge back. Charges and amount due go back up, and Accounting is increased to match.';
+      return { what: name, message };
+    }
+    if (action === 'void') {
+      return {
+        what: name,
+        message: charge
+          ? 'Charges and amount due go down by this amount. The line stays on the folio so you can see it was voided. Accounting is reduced by the same amount.'
+          : 'Payments go down and amount due goes up by this amount. The line stays on the folio as voided. The receipt in Accounting is reversed.',
+      };
+    }
+    return {
+      what: name,
+      message: charge
+        ? 'This charge is removed. Charges and amount due go down by the same amount, and Accounting is reduced to match. This cannot be undone.'
+        : 'This payment is removed. Payments go down and amount due goes up by the same amount, and the receipt in Accounting is reversed. This cannot be undone.',
+    };
+  };
+
+  const applyEventInvoiceDelta = (eventId: string, reference: string | undefined, delta: number) => {
+    const targetId = reference?.replace(/^REV-/, '');
+    setEventInvoices((prev) => {
+      const hits = prev.filter((inv) => (targetId ? inv.id === targetId : inv.eventId === eventId));
+      const pick = targetId ? hits : hits.slice(-1);
+      const ids = new Set(pick.map((inv) => inv.id));
+      if (!ids.size) return prev;
+      return prev.map((inv) => {
+        if (!ids.has(inv.id)) return inv;
+        const nextTotal = Math.max(0, Math.round((Number(inv.total) + delta) * 100) / 100);
+        const nextBalance = Math.round((Number(inv.balance ?? inv.total) + delta) * 100) / 100;
+        return {
+          ...inv,
+          total: nextTotal,
+          subtotal: Math.max(0, Math.round((Number(inv.subtotal ?? inv.total) + delta) * 100) / 100),
+          balance: nextBalance,
+          status: deriveInvoiceStatus(inv.status, nextBalance, nextTotal),
+        };
+      });
+    });
+  };
+
+  const syncFolioLineToAccounting = (folio: EventFolio, entry: EventFolioEntry, label: string) => {
+    void initializeAccounting()
+      .catch(() => {})
+      .then(() => {
+    const reversal = /^\s*(REVERSAL|VOID)\b/i.test(entry.description || '');
+    const magnitude = (entry.debit || 0) > 0 ? entry.debit : entry.credit || 0;
+    const chargeEffect = ((entry.debit || 0) > 0 && !reversal) || ((entry.credit || 0) > 0 && reversal);
+    if (chargeEffect) {
+      const delta = (entry.debit || 0) > 0 ? -magnitude : magnitude;
+      adjustConferenceChargeInAccounting(folio.eventId, entry.reference, delta, label);
+      applyEventInvoiceDelta(folio.eventId, entry.reference, delta);
+      return;
+    }
+    if (reversal && (entry.debit || 0) > 0) {
+      const receiptId = String(entry.reference || '').replace(/^REV-/, '');
+      void unvoidConferenceReceiptInAccounting(receiptId).catch((error) =>
+        console.error('[Folio] Could not unvoid the receipt in Accounting', error),
+      );
+      setEventReceipts((prev) => prev.map((item) => (item.id === receiptId && item.status === 'Void' ? { ...item, status: 'Posted' } : item)));
+      return;
+    }
+    if (reversal || !(entry.credit > 0)) return;
+    const receiptId = entry.reference;
+    void voidConferenceReceiptInAccounting(receiptId).catch((error) =>
+      console.error('[Folio] Could not reverse the receipt in Accounting', error),
+    );
+    const receipt = eventReceipts.find((item) => item.id === receiptId);
+    if (!receipt || receipt.status === 'Void') return;
+    if (receipt.invoiceId && magnitude > 0) {
+      setEventInvoices((prev) =>
+        prev.map((inv) => {
+          if (inv.id !== receipt.invoiceId) return inv;
+          const restored = Math.min(Number(inv.total || 0), Number(inv.balance || 0) + magnitude);
+          return { ...inv, balance: restored, status: deriveInvoiceStatus(inv.status, restored, inv.total) };
+        }),
+      );
+    }
+    setEventReceipts((prev) => prev.map((item) => (item.id === receipt.id ? { ...item, status: 'Void' } : item)));
+      });
+  };
+
   // Delete folio entry
   const deleteFolioEntry = async (folio: EventFolio, entryId: string) => {
+    const entry = folio.entries.find((e) => e.id === entryId);
+    if (!entry) return;
     const { confirmDelete } = await import('./DangerConfirm');
-    if (!(await confirmDelete('this folio entry', 'It will be permanently removed and later balances will be recalculated. This cannot be undone.'))) {
+    const copy = folioLineCopy(entry, 'delete');
+    if (!(await confirmDelete(copy.what, copy.message))) {
       return;
     }
     
     const entryIndex = folio.entries.findIndex(e => e.id === entryId);
     if (entryIndex === -1) return;
-    
-    const entry = folio.entries[entryIndex];
+
     const previousBalance = entryIndex > 0 
       ? folio.entries[entryIndex - 1].balance 
       : folio.openingBalance;
@@ -8959,6 +7861,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         : prev
     );
     
+    syncFolioLineToAccounting(folio, entry, `Removed folio line — ${entry.description || entry.id}`);
     console.log('[Folio] Deleted entry:', entryId, entry.description);
     trackEvent('Events.EventCreated', { action: 'folio_entry_deleted', folioId: folio.id, entryId: entryId });
   };
@@ -8966,7 +7869,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
   // Reverse folio entry (create opposite entry)
   const reverseFolioEntry = async (folio: EventFolio, entry: EventFolioEntry) => {
     const { confirmVoid } = await import('./DangerConfirm');
-    if (!(await confirmVoid(entry.description || 'this folio line', 'An opposite entry is posted so the line stays on file and the books stay even.'))) {
+    const copy = folioLineCopy(entry, 'void');
+    if (!(await confirmVoid(copy.what, copy.message))) {
       return;
     }
     
@@ -9019,6 +7923,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       }
     }
     
+    syncFolioLineToAccounting(folio, entry, `Void folio line — ${entry.description || entry.id}`);
     console.log('[Folio] Created reversal entry:', entry.id, formatCurrency(reversalAmount));
     trackEvent('Events.EventCreated', { action: 'folio_entry_reversed', folioId: folio.id, entryId: entry.id });
   };
@@ -10990,6 +9895,22 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     return allEvents.filter(event => event.organization === organization);
   };
 
+  const cancelMissedEvent = async (event: any): Promise<boolean> => {
+    if (!event?.id) return false;
+    const { confirmChoice } = await import('./DangerConfirm');
+    const ok = await confirmChoice(
+      'Cancel this booking?',
+      'The booking is marked Cancelled and shows under Cancelled on Event Master. A deposit or invoice already posted stays until you void or credit it.',
+      'Cancel booking',
+    );
+    if (!ok) return false;
+    const updated = { ...event, status: 'cancelled' };
+    setCustomEvents((prev) => prev.map((item) => (item.id === event.id ? { ...item, status: 'cancelled' } : item)));
+    persistEventBookingPatch(updated, { status: 'cancelled' });
+    trackEvent('Events.EventStatusUpdated', { eventId: event.id, newStatus: 'cancelled', action: 'no_show_cancelled' });
+    return true;
+  };
+
   // Update event status
   const updateEventStatus = (eventId: string, newStatus: string) => {
     const event = allEvents.find(e => e.id === eventId);
@@ -11006,16 +9927,19 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
   };
 
   // Mark event as completed
-  const markEventAsCompleted = (event: any): boolean => {
+  const markEventAsCompleted = async (event: any): Promise<boolean> => {
     const today = new Date().toISOString().split('T')[0];
     const eventEndDate = event.departureDate || event.endDate || today;
     const isEndingEarly = eventEndDate > today;
-    
-    const confirmMessage = isEndingEarly 
-      ? `End this event/conference now? The event was scheduled to end on ${new Date(eventEndDate).toLocaleDateString()}, but you're ending it early on ${new Date(today).toLocaleDateString()}. This will finalize the event and move it to Completed Events.`
-      : `End this event/conference? This will finalize the event, mark it as completed, and move it to the Completed Events tab for financial tracking.`;
-    
-    if (confirm(confirmMessage)) {
+
+    const { confirmChoice } = await import('./DangerConfirm');
+    if (await confirmChoice(
+      isEndingEarly ? 'End this event now?' : 'End this event?',
+      isEndingEarly
+        ? `It was scheduled to end on ${new Date(eventEndDate).toLocaleDateString()}. Ending it today moves it to completed events.`
+        : 'This finalizes the event and moves it to completed events.',
+      'End event',
+    )) {
       // Update the event with completion status and set end date to today if ending early
       const updatedEvent = {
         ...event,
@@ -11025,6 +9949,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         ...(isEndingEarly ? {
           departureDate: today,
           endDate: today,
+          scheduledDepartureDate: event.departureDate || event.endDate,
+          scheduledEndDate: event.endDate || event.departureDate,
           // Recalculate duration based on actual dates
           duration: Math.max(1, Math.ceil((new Date(today).getTime() - new Date(event.arrivalDate || event.startDate || today).getTime()) / (1000 * 60 * 60 * 24)) + 1)
         } : {})
@@ -11034,7 +9960,13 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       setCustomEvents(prev => prev.map(ev =>
         ev.id === event.id ? updatedEvent : ev
       ));
-      persistEventBookingPatch(updatedEvent, { completionStatus: 'completed' });
+      persistEventBookingPatch(updatedEvent, {
+        completionStatus: 'completed',
+        ...(isEndingEarly ? {
+          scheduledDepartureDate: event.departureDate || event.endDate,
+          scheduledEndDate: event.endDate || event.departureDate,
+        } : {}),
+      });
 
       // The event is actually delivered now — reclassify whatever confirm-time
       // revenue was held as Deferred Revenue into real, recognized revenue.
@@ -11102,6 +10034,49 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     return false;
   };
 
+  const reopenEndedEvent = async (event: any): Promise<boolean> => {
+    if (event.completionStatus !== 'completed') return false;
+    const { confirmChoice } = await import('./DangerConfirm');
+    const putBack = await confirmChoice(
+      'Put this event back?',
+      'It leaves the completed list. Any money End counted as earned goes back to not yet earned.',
+      'Reopen',
+    );
+    if (!putBack) return false;
+
+    await initializeAccounting().catch(() => {});
+    try {
+      reverseRecognizedRevenue('conference', event.id);
+    } catch (error) {
+      console.warn('[Events] Could not reverse the earned revenue', error);
+    }
+
+    const scheduledDeparture = event.scheduledDepartureDate || '';
+    const scheduledEnd = event.scheduledEndDate || scheduledDeparture;
+    const restoreDates = Boolean(scheduledDeparture || scheduledEnd);
+    const arrival = event.arrivalDate || event.startDate || scheduledDeparture;
+    const departure = scheduledEnd || scheduledDeparture;
+    const restoredDuration = restoreDates
+      ? Math.max(1, Math.ceil((new Date(departure).getTime() - new Date(arrival).getTime()) / (1000 * 60 * 60 * 24)) + 1)
+      : event.duration;
+    const updatedEvent = {
+      ...event,
+      completionStatus: undefined,
+      status: event.status === 'completed' ? 'confirmed' : event.status,
+      scheduledDepartureDate: undefined,
+      scheduledEndDate: undefined,
+      ...(restoreDates ? { departureDate: departure, endDate: departure, duration: restoredDuration } : {}),
+    };
+    setCustomEvents((prev) => prev.map((item) => (item.id === event.id ? updatedEvent : item)));
+    persistEventBookingPatch(updatedEvent, {
+      completionStatus: '',
+      scheduledDepartureDate: '',
+      scheduledEndDate: '',
+    });
+    trackEvent('Events.EventStatusUpdated', { eventId: event.id, action: 'event_reopened' });
+    return true;
+  };
+
   // Bulk group check-in — for a confirmed, accommodation-only booking (no
   // conference/catering component; see scheduleHasEventComponent) there's no
   // per-guest reservation to check in one at a time, and no individual room/
@@ -11109,14 +10084,19 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
   // Menish/Noda-style day-by-day headcounts). This just marks the group
   // in-house as one action, mirroring markEventAsCompleted's side-field
   // pattern rather than overloading the business `status` union.
-  const checkInEventGroup = (event: any): boolean => {
+  const checkInEventGroup = async (event: any): Promise<boolean> => {
     if (event.checkedIn) return false;
     // Matches the same fallback order the Active Events table itself displays
     // (event.pax || event.expectedPax || 0) — keeps the confirm dialog, the
     // stored headcount, and the KPI contribution all reading the same number.
     const pax = event.pax || event.expectedPax || event.attendees || 0;
-    const confirmMessage = `Check in this group${pax ? ` (${pax} pax)` : ''}? This marks the whole booking as in-house — it does not create individual guest or room records.`;
-    if (!confirm(confirmMessage)) return false;
+    const { confirmChoice } = await import('./DangerConfirm');
+    const groupOk = await confirmChoice(
+      `Check in this group${pax ? ` (${pax} pax)` : ''}?`,
+      'This marks the whole booking as in-house. It does not create individual guest or room records.',
+      'Check in',
+    );
+    if (!groupOk) return false;
 
     const updatedEvent = { ...event, checkedIn: true, checkedInAt: new Date().toISOString() };
     setCustomEvents(prev => prev.map(ev => (ev.id === event.id ? updatedEvent : ev)));
@@ -11689,3475 +10669,10 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
   };
 
   // Conference Rate Management Component
-  const ConferenceRateManagement = ({
-    onFilteredCountChange,
-  }: {
-    onFilteredCountChange?: (count: number) => void;
-  }) => {
-    const [rateSearchTerm, setRateSearchTerm] = useState('');
-    const [rateTypeFilter, setRateTypeFilter] = useState<string>('all');
-    const [rateGuestFilter, setRateGuestFilter] = useState<string>('all');
-    const [rateGuestSearch, setRateGuestSearch] = useState('');
-    const [rateEffectiveFilter, setRateEffectiveFilter] = useState<'all' | RateEffectiveStatus>('all');
-    const [rateDateFilterMode, setRateDateFilterMode] = useState<EventsDateFilterMode>('thisMonth');
-    const [rateDateFilterSingle, setRateDateFilterSingle] = useState('');
-    const [rateDateFilterFrom, setRateDateFilterFrom] = useState('');
-    const [rateDateFilterTo, setRateDateFilterTo] = useState('');
-    const [ratePage, setRatePage] = useState(1);
-    const [rateSort, setRateSort] = useState<TableSortState>({ column: 'status', direction: 'asc' });
-    const [isRateModalOpen, setIsRateModalOpen] = useState(false);
-    const [editingRate, setEditingRate] = useState<any>(null);
-    const [rateForm, setRateForm] = useState<any>({
-      name: '',
-      selectedTypes: [] as string[], // Multiple types can be selected
-      rates: {
-        accommodation: { rate: 0, unit: 'per_room', label: 'Accommodation' },
-        conference: { rate: 0, unit: 'per_person', label: 'Conference' },
-        lunch: { rate: 0, unit: 'per_person', label: 'Lunch' },
-        dinner: { rate: 0, unit: 'per_person', label: 'Dinner' },
-        other: { rate: 0, unit: 'per_person', label: 'Other' }
-      },
-      applicableDates: {
-        startDate: `${new Date().getFullYear()}-01-01`,
-        endDate: `${new Date().getFullYear()}-12-31`,
-        isAllYear: false,
-      },
-      clientSpecific: false,
-      clientId: '',
-      clientName: '',
-      isActive: true,
-      notes: ''
-    });
-    const [rateErrors, setRateErrors] = useState<Record<string, string>>({});
-    const rowsPerPage = 10;
-
-    // Use shared conferenceRates state from parent component
-    // conferenceRates and setConferenceRates are now in parent scope
-
-    const filteredRates = useMemo(() => {
-      let filtered = conferenceRates;
-      const today = new Date().toISOString().slice(0, 10);
-      const dateBounds = getEventsDateRangeBounds(
-        rateDateFilterMode,
-        rateDateFilterSingle,
-        rateDateFilterFrom,
-        rateDateFilterTo
-      );
-
-      if (rateSearchTerm) {
-        const term = rateSearchTerm.toLowerCase();
-        filtered = filtered.filter(rate =>
-          rate.name.toLowerCase().includes(term) ||
-          rate.type.toLowerCase().includes(term) ||
-          (rate.clientName && rate.clientName.toLowerCase().includes(term)) ||
-          rate.notes.toLowerCase().includes(term) ||
-          getRateEffectivePeriodLabel(rate.applicableDates).toLowerCase().includes(term)
-        );
-      }
-
-      if (rateTypeFilter !== 'all') {
-        filtered = filtered.filter(rate => rate.type === rateTypeFilter);
-      }
-
-      if (rateGuestFilter !== 'all') {
-        if (rateGuestFilter === 'general') {
-          filtered = filtered.filter(rate => !rate.clientSpecific);
-        } else {
-          const selectedGuest = (frontOfficeGuests || []).find((guest: any) => guest.id === rateGuestFilter);
-          const selectedOrg = (
-            selectedGuest?.employerCompany ||
-            selectedGuest?.name ||
-            `${selectedGuest?.firstName || ''} ${selectedGuest?.lastName || ''}`
-          )
-            ?.toLowerCase()
-            .trim();
-          filtered = filtered.filter((rate) => {
-            if (rate.clientId === rateGuestFilter) return true;
-            if (!selectedOrg) return false;
-            const rateClient = (rate.clientName || '').toLowerCase().trim();
-            return (
-              rateClient &&
-              (rateClient.includes(selectedOrg) || selectedOrg.includes(rateClient))
-            );
-          });
-        }
-      }
-
-      if (rateEffectiveFilter !== 'all') {
-        filtered = filtered.filter(
-          (rate) => getRateEffectiveStatus(rate.applicableDates, today) === rateEffectiveFilter
-        );
-      }
-
-      if (dateBounds) {
-        filtered = filtered.filter((rate) =>
-          rateOverlapsDateRange(rate.applicableDates, dateBounds.from, dateBounds.to)
-        );
-      }
-
-      return filtered;
-    }, [
-      conferenceRates,
-      rateSearchTerm,
-      rateTypeFilter,
-      rateGuestFilter,
-      rateEffectiveFilter,
-      rateDateFilterMode,
-      rateDateFilterSingle,
-      rateDateFilterFrom,
-      rateDateFilterTo,
-      frontOfficeGuests,
-    ]);
-
-    useEffect(() => {
-      onFilteredCountChange?.(filteredRates.length);
-    }, [filteredRates.length, onFilteredCountChange]);
-
-    const sortedRates = useMemo(() => {
-      const today = new Date().toISOString().slice(0, 10);
-      const statusOrder: Record<string, number> = {
-        effective: 0,
-        'all-year': 1,
-        upcoming: 2,
-        incomplete: 3,
-        expired: 4,
-        inactive: 5,
-      };
-      return sortRows(filteredRates, rateSort, {
-        name: (rate: any) => rate.name || '',
-        type: (rate: any) => rate.customLabel || rate.type || '',
-        amount: (rate: any) => Number(rate.baseRate || 0),
-        period: (rate: any) =>
-          rate.applicableDates?.isAllYear ? '0000-01-01' : rate.applicableDates?.startDate || '',
-        client: (rate: any) => (rate.clientSpecific ? rate.clientName || '' : 'All clients'),
-        status: (rate: any) =>
-          statusOrder[rate.isActive === false ? 'inactive' : getRateEffectiveStatus(rate.applicableDates, today)] ?? 9,
-      });
-    }, [filteredRates, rateSort]);
-
-    const paginatedRates = useMemo(() => {
-      const start = (ratePage - 1) * rowsPerPage;
-      return sortedRates.slice(start, start + rowsPerPage);
-    }, [sortedRates, ratePage, rowsPerPage]);
-
-    const ratePages = useMemo(() => {
-      return Math.ceil(filteredRates.length / rowsPerPage);
-    }, [filteredRates, rowsPerPage]);
-
-    useEffect(() => {
-      setRatePage(1);
-    }, [rateSearchTerm, rateTypeFilter, rateGuestFilter, rateEffectiveFilter, rateDateFilterMode, rateDateFilterSingle, rateDateFilterFrom, rateDateFilterTo]);
-
-    const openRateModal = (mode: 'create' | 'edit', rate?: any) => {
-      if (mode === 'edit' && rate) {
-        setEditingRate(rate);
-        // For editing, show single rate (backward compatible)
-        const selectedTypes = [rate.type];
-        const rates = {
-          accommodation: { rate: 0, unit: 'per_room', label: 'Accommodation' },
-          conference: { rate: 0, unit: 'per_person', label: 'Conference' },
-          lunch: { rate: 0, unit: 'per_person', label: 'Lunch' },
-          dinner: { rate: 0, unit: 'per_person', label: 'Dinner' },
-          other: { rate: 0, unit: 'per_person', label: 'Other' }
-        };
-        // Extract label from rate - use customLabel if available, otherwise extract from name
-        const defaultLabels: Record<string, string> = {
-          accommodation: 'Accommodation',
-          conference: 'Conference',
-          lunch: 'Lunch',
-          dinner: 'Dinner',
-          other: 'Other'
-        };
-        let rateLabel = defaultLabels[rate.type];
-        if (rate.customLabel) {
-          rateLabel = rate.customLabel;
-        } else if (rate.name) {
-          // Try to extract label from name (remove client name prefix and "Rate" suffix)
-          const nameWithoutRate = rate.name.replace(/Rate$/i, '').trim();
-          const clientPrefix = rate.clientName ? `${rate.clientName} - ` : '';
-          if (nameWithoutRate.startsWith(clientPrefix)) {
-            rateLabel = nameWithoutRate.substring(clientPrefix.length).trim();
-          } else {
-            rateLabel = nameWithoutRate;
-          }
-          // If extracted label is just the default, keep default
-          if (rateLabel === defaultLabels[rate.type] || rateLabel === rate.type) {
-            rateLabel = defaultLabels[rate.type];
-          }
-        }
-        rates[rate.type as keyof typeof rates] = { 
-          rate: rate.baseRate, 
-          unit: rate.unit, 
-          label: rateLabel 
-        };
-        
-        setRateForm({
-          name: rate.name,
-          selectedTypes,
-          rates,
-          applicableDates: rate.applicableDates,
-          clientSpecific: rate.clientSpecific,
-          clientId: rate.clientId || '',
-          clientName: rate.clientName || '',
-          isActive: rate.isActive,
-          notes: rate.notes || ''
-        });
-      } else {
-        setEditingRate(null);
-        setRateForm({
-          name: '',
-          selectedTypes: [],
-          rates: {
-            accommodation: { rate: 0, unit: 'per_room', label: 'Accommodation' },
-            conference: { rate: 0, unit: 'per_person', label: 'Conference' },
-            lunch: { rate: 0, unit: 'per_person', label: 'Lunch' },
-            dinner: { rate: 0, unit: 'per_person', label: 'Dinner' },
-            other: { rate: 0, unit: 'per_person', label: 'Other' }
-          },
-          applicableDates: {
-            startDate: `${new Date().getFullYear()}-01-01`,
-            endDate: `${new Date().getFullYear()}-12-31`,
-            isAllYear: false,
-          },
-          clientSpecific: false,
-          clientId: '',
-          clientName: '',
-          isActive: true,
-          notes: ''
-        });
-      }
-      setRateErrors({});
-      setIsRateModalOpen(true);
-    };
-
-    const validateRateForm = () => {
-      const errors: Record<string, string> = {};
-      if (rateForm.selectedTypes.length === 0) {
-        errors.selectedTypes = 'Please select at least one rate type';
-      }
-      if (rateForm.clientSpecific && !rateForm.clientName && !rateForm.clientId) {
-        errors.clientId = 'Guest/Company must be selected or entered for client-specific rates';
-      }
-      if (!rateForm.applicableDates.isAllYear) {
-        if (!rateForm.applicableDates.startDate) errors.startDate = 'Effective from date is required';
-        if (!rateForm.applicableDates.endDate) errors.endDate = 'Effective to date is required';
-        if (rateForm.applicableDates.startDate && rateForm.applicableDates.endDate && 
-            new Date(rateForm.applicableDates.startDate) > new Date(rateForm.applicableDates.endDate)) {
-          errors.endDate = 'End date must be after start date';
-        }
-      }
-      // Validate that each selected type has a rate > 0
-      rateForm.selectedTypes.forEach((type: string) => {
-        const rateValue = rateForm.rates[type as keyof typeof rateForm.rates]?.rate || 0;
-        if (!rateValue || rateValue <= 0) {
-          errors[`rate_${type}`] = `${type.charAt(0).toUpperCase() + type.slice(1)} rate must be greater than 0`;
-        }
-      });
-      setRateErrors(errors);
-      return Object.keys(errors).length === 0;
-    };
-
-    const handleSaveRate = () => {
-      if (!validateRateForm()) return;
-
-      // If client-specific, ensure clientName is set
-      const finalClientName = rateForm.clientSpecific 
-        ? (rateForm.clientName || (rateForm.clientId ? availableClients.find(c => c.id === rateForm.clientId)?.name : ''))
-        : '';
-
-      const baseTimestamp = editingRate ? editingRate.id : Date.now();
-
-      if (editingRate) {
-        // Editing mode: update single rate
-        const firstType = rateForm.selectedTypes[0];
-        const firstTypeRate = rateForm.rates[firstType as keyof typeof rateForm.rates];
-        const customLabel = firstTypeRate?.label || firstType;
-        const rateData = {
-          id: editingRate.id,
-          name: rateForm.name.trim() || `${finalClientName ? `${finalClientName} - ` : ''}${customLabel} Rate`,
-          type: firstType,
-          baseRate: parseFloat(firstTypeRate?.rate || 0),
-          unit: firstTypeRate?.unit || 'per_person',
-          customLabel: customLabel, // Store custom label
-          applicableDates: rateForm.applicableDates,
-          clientSpecific: rateForm.clientSpecific,
-          clientId: rateForm.clientId || '',
-          clientName: finalClientName,
-          isActive: rateForm.isActive,
-          notes: rateForm.notes.trim(),
-          createdAt: editingRate.createdAt,
-          updatedAt: new Date().toISOString().split('T')[0]
-        };
-        setConferenceRates(prev => prev.map(r => r.id === editingRate.id ? rateData : r));
-        trackEvent('Analytics.ActionClicked', { action: 'ConferenceRateUpdated', rateId: rateData.id });
-      } else {
-        // Create mode: create multiple rates if multiple types selected
-        const typeLabels: Record<string, string> = {
-          accommodation: 'Accommodation',
-          conference: 'Conference',
-          lunch: 'Lunch',
-          dinner: 'Dinner',
-          other: 'Other'
-        };
-        const newRates = rateForm.selectedTypes.map((type: string, index: number) => {
-          const typeRate = rateForm.rates[type as keyof typeof rateForm.rates];
-          const customLabel = typeRate?.label || typeLabels[type];
-          return {
-            id: `rate-${baseTimestamp}-${index}`,
-            name: rateForm.name.trim() || `${finalClientName ? `${finalClientName} - ` : ''}${customLabel} Rate`,
-            type: type,
-            baseRate: parseFloat(typeRate?.rate || 0),
-            unit: typeRate?.unit || (type === 'accommodation' ? 'per_room' : 'per_person'),
-            customLabel: customLabel, // Store custom label
-            applicableDates: rateForm.applicableDates,
-            clientSpecific: rateForm.clientSpecific,
-            clientId: rateForm.clientId || '',
-            clientName: finalClientName,
-            isActive: rateForm.isActive,
-            notes: rateForm.notes.trim(),
-            createdAt: new Date().toISOString().split('T')[0],
-            updatedAt: new Date().toISOString().split('T')[0]
-          };
-        });
-        setConferenceRates(prev => [...newRates, ...prev]);
-        newRates.forEach((rate: any) => {
-          trackEvent('Analytics.ActionClicked', { action: 'ConferenceRateCreated', rateId: rate.id });
-        });
-      }
-
-      setIsRateModalOpen(false);
-      setEditingRate(null);
-    };
-
-    const handleDeleteRate = async (rateId: string) => {
-      const { confirmDelete } = await import('./DangerConfirm');
-      if (await confirmDelete('this rate', 'The rate will be permanently removed.')) {
-        setConferenceRates(prev => prev.filter(r => r.id !== rateId));
-        trackEvent('Analytics.ActionClicked', { action: 'ConferenceRateDeleted', rateId });
-      }
-    };
-
-    const getRateTypeLabel = (rate: any) => {
-      // If rate is a string (backward compatibility), treat it as type
-      if (typeof rate === 'string') {
-        const labels: Record<string, string> = {
-          accommodation: '🏨 Accommodation',
-          conference: '📅 Conference',
-          lunch: '🍽️ Lunch',
-          dinner: '🍴 Dinner',
-          other: '📋 Other'
-        };
-        return labels[rate] || rate;
-      }
-      
-      // Use customLabel if available, otherwise use default label
-      if (rate.customLabel && rate.customLabel !== rate.type) {
-        const icons: Record<string, string> = {
-          accommodation: '🏨',
-          conference: '📅',
-          lunch: '🍽️',
-          dinner: '🍴',
-          other: '📋'
-        };
-        return `${icons[rate.type] || ''} ${rate.customLabel}`;
-      }
-      
-      const labels: Record<string, string> = {
-        accommodation: '🏨 Accommodation',
-        conference: '📅 Conference',
-        lunch: '🍽️ Lunch',
-        dinner: '🍴 Dinner',
-        other: '📋 Other'
-      };
-      return labels[rate.type] || rate.type;
-    };
-
-    const getUnitLabel = (unit: string) => {
-      const labels: Record<string, string> = {
-        per_person: 'Per person',
-        per_room: 'Per room',
-        per_event: 'Per event',
-        per_day: 'Per day'
-      };
-      return labels[unit] || unit;
-    };
-
-    const getRateTypePlain = (rate: any) => {
-      if (rate?.customLabel && rate.customLabel !== rate.type) return rate.customLabel;
-      const labels: Record<string, string> = {
-        accommodation: 'Accommodation',
-        conference: 'Conference',
-        lunch: 'Lunch',
-        dinner: 'Dinner',
-        other: 'Other',
-      };
-      return labels[rate?.type] || rate?.type || 'Other';
-    };
-
-    const getRateTypeColor = (type: string): 'primary' | 'secondary' | 'warning' | 'success' | 'default' => {
-      if (type === 'accommodation') return 'primary';
-      if (type === 'conference') return 'secondary';
-      if (type === 'lunch') return 'warning';
-      if (type === 'dinner') return 'success';
-      return 'default';
-    };
-
-    const handleRateSort = (column: string) => {
-      setRateSort((prev) => getNextSortState(prev, column));
-    };
-
-    const renderRateSortHeader = (label: string, columnKey: string) => (
-      <button
-        type="button"
-        className="font-semibold text-ghana-black"
-        onClick={() => handleRateSort(columnKey)}
-      >
-        {label}{rateSort.column === columnKey ? (rateSort.direction === 'asc' ? ' ↑' : ' ↓') : ''}
-      </button>
-    );
-
-    const rateTableClassNames = {
-      ...worksheetTableClassNames,
-      base: 'max-w-full overflow-x-auto',
-      table: 'w-full min-w-max',
-    };
-
-    // Get available clients for client-specific rates (same logic as events form)
-    const availableClients = useMemo(() => {
-      const guests = frontOfficeGuests || [];
-      const clientMap = new Map();
-      
-      guests.forEach((g: any) => {
-        const org = g.employerCompany || (g.name || `${g.firstName || ''} ${g.lastName || ''}`.trim());
-        if (org && !clientMap.has(org)) {
-          clientMap.set(org, {
-            id: g.id,
-            name: org,
-            guest: g
-          });
-        }
-      });
-      
-      return Array.from(clientMap.values());
-    }, [frontOfficeGuests]);
-
-    // Get unique guest/company list for filter dropdown
-    const availableGuestsForFilter = useMemo(() => {
-      const guests = frontOfficeGuests || [];
-      const guestMap = new Map();
-      
-      // Add "General Rates" option
-      guestMap.set('general', { id: 'general', name: 'General Rates (All Clients)' });
-      
-      guests.forEach((g: any) => {
-        const org = g.employerCompany || (g.name || `${g.firstName || ''} ${g.lastName || ''}`.trim());
-        if (org && !guestMap.has(org)) {
-          guestMap.set(org, {
-            id: g.id,
-            name: org
-          });
-        }
-      });
-      
-      return Array.from(guestMap.values());
-    }, [frontOfficeGuests]);
-
-    return (
-      <div className="space-y-2 mt-2">
-        <div>
-          <h3 className="text-lg font-semibold text-ghana-black">Guest Rates</h3>
-          <p className="text-sm text-gray-500">
-            Rates apply only when the event dates fall within the rate&apos;s effective period.
-          </p>
-        </div>
-
-        {/* Filters */}
-        <EventsModuleFilters
-          searchTerm={rateSearchTerm}
-          onSearchChange={setRateSearchTerm}
-          searchPlaceholder="Search rates by name, type, client, or effective period..."
-          statusFilter={rateTypeFilter}
-          onStatusChange={setRateTypeFilter}
-          statusPlaceholder="Filter by type"
-          statusOptions={[
-            { key: 'all', label: 'All Types' },
-            { key: 'accommodation', label: '🏨 Accommodation' },
-            { key: 'conference', label: '📅 Conference' },
-            { key: 'lunch', label: '🍽️ Lunch' },
-            { key: 'dinner', label: '🍴 Dinner' },
-            { key: 'other', label: '📋 Other' },
-          ]}
-          showDateFilter
-          dateFilterMode={rateDateFilterMode}
-          onDateFilterModeChange={setRateDateFilterMode}
-          dateFilterSingle={rateDateFilterSingle}
-          onDateFilterSingleChange={setRateDateFilterSingle}
-          dateFilterFrom={rateDateFilterFrom}
-          onDateFilterFromChange={setRateDateFilterFrom}
-          dateFilterTo={rateDateFilterTo}
-          onDateFilterToChange={setRateDateFilterTo}
-          singleRow
-          extraFilters={
-            <>
-              <Select
-                size="sm"
-                aria-label="Effective status"
-                placeholder="Effective status"
-                className="min-w-[min(100%,9rem)] flex-1 basis-[9rem] max-w-full sm:max-w-[12rem]"
-                selectedKeys={[rateEffectiveFilter]}
-                onSelectionChange={(keys) => {
-                  const value = Array.from(keys)[0] as typeof rateEffectiveFilter | undefined;
-                  setRateEffectiveFilter(value || 'all');
-                }}
-              >
-                <SelectItem key="all">All statuses</SelectItem>
-                <SelectItem key="effective">Effective now</SelectItem>
-                <SelectItem key="all-year">Always effective</SelectItem>
-                <SelectItem key="upcoming">Upcoming</SelectItem>
-                <SelectItem key="expired">Expired</SelectItem>
-                <SelectItem key="incomplete">Needs dates</SelectItem>
-              </Select>
-              <Autocomplete
-              size="sm"
-              aria-label="Guest or company"
-              placeholder="Guest or company"
-              selectedKey={rateGuestFilter !== 'all' ? rateGuestFilter : null}
-              onSelectionChange={(key) => {
-                setRateGuestFilter((key as string) || 'all');
-              }}
-              inputValue={rateGuestSearch}
-              onInputChange={(value) => {
-                setRateGuestSearch(value);
-                if (!value) {
-                  setRateGuestFilter('all');
-                }
-              }}
-              className="min-w-[min(100%,11rem)] flex-1 basis-[11rem] max-w-full sm:max-w-[14rem]"
-              allowsCustomValue
-            >
-              {(() => {
-                const q = (rateGuestSearch || '').trim();
-                const guests = frontOfficeGuests || [];
-                const results = q.length >= 2
-                  ? guests.filter((g: any) => {
-                      if (g.isActive === false) return false;
-                      const org = (g.employerCompany || '').toLowerCase();
-                      const name = (g.name || `${g.firstName || ''} ${g.lastName || ''}`).toLowerCase();
-                      const phone = (g.companyPhone || g.phone || '').toLowerCase();
-                      return org.includes(q.toLowerCase()) || name.includes(q.toLowerCase()) || phone.includes(q.toLowerCase());
-                    }).slice(0, 20)
-                  : [];
-
-                const filterOptions = [];
-
-                if (q.length < 2) {
-                  filterOptions.push(
-                    <AutocompleteItem key="all" textValue="All Rates">
-                      All Rates
-                    </AutocompleteItem>
-                  );
-                  filterOptions.push(
-                    <AutocompleteItem key="general" textValue="General Rates Only">
-                      General Rates Only
-                    </AutocompleteItem>
-                  );
-                }
-
-                results.forEach((guest: any) => {
-                  const label = guest.employerCompany || guest.name || `${guest.firstName || ''} ${guest.lastName || ''}`.trim();
-                  filterOptions.push(
-                    <AutocompleteItem key={guest.id} textValue={label}>
-                      {label}
-                    </AutocompleteItem>
-                  );
-                });
-
-                return filterOptions;
-              })()}
-            </Autocomplete>
-            </>
-          }
-        />
-
-        <Card className={deskTableCardClassName}>
-          <CardBody className={deskTableCardBodyClassName}>
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-base font-semibold text-slate-800">Rates</h3>
-              <Button size="sm" color="primary" variant="solid" onPress={() => openRateModal('create')}>
-                New rate
-              </Button>
-            </div>
-            <Table
-              aria-label="Guest rates"
-              removeWrapper
-              classNames={rateTableClassNames}
-            >
-              <TableHeader>
-                <TableColumn key="client">
-                  {renderRateSortHeader('Client', 'client')}
-                </TableColumn>
-                <TableColumn key="name">
-                  {renderRateSortHeader('Rate', 'name')}
-                </TableColumn>
-                <TableColumn key="type">
-                  {renderRateSortHeader('Type', 'type')}
-                </TableColumn>
-                <TableColumn key="amount" align="end">
-                  {renderRateSortHeader('Amount', 'amount')}
-                </TableColumn>
-                <TableColumn key="period">
-                  {renderRateSortHeader('Period', 'period')}
-                </TableColumn>
-                <TableColumn key="status">
-                  {renderRateSortHeader('Status', 'status')}
-                </TableColumn>
-                <TableColumn key="actions" align="end"> </TableColumn>
-              </TableHeader>
-              <TableBody emptyContent="No rates match the current filters.">
-                {paginatedRates.map((rate: any) => {
-                    const effectiveStatus = getRateEffectiveStatus(rate.applicableDates);
-                    const effectiveMeta = RATE_EFFECTIVE_STATUS_META[effectiveStatus];
-                    const statusLabel = rate.isActive === false ? 'Inactive' : (
-                      effectiveStatus === 'all-year' ? 'Always' :
-                      effectiveStatus === 'effective' ? 'Effective' :
-                      effectiveMeta.label
-                    );
-                    const statusColor = rate.isActive === false ? 'default' : effectiveMeta.color;
-                    return (
-                    <TableRow
-                      key={rate.id}
-                      className="cursor-pointer hover:bg-gray-50"
-                      onClick={() => openRateModal('edit', rate)}
-                    >
-                      <TableCell>
-                        <span className={`whitespace-nowrap ${rate.clientSpecific ? 'text-slate-700' : 'text-slate-400'}`}>
-                          {rate.clientSpecific ? (rate.clientName || '—') : 'All clients'}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <div className="min-w-[160px] max-w-[280px]" title={rate.notes || undefined}>
-                          <p className="font-medium text-slate-900 leading-5">{rate.name}</p>
-                          {rate.notes ? (
-                            <p className="text-xs text-slate-500 mt-0.5 truncate">{rate.notes}</p>
-                          ) : null}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Chip size="sm" variant="flat" color={getRateTypeColor(rate.type)}>
-                          {getRateTypePlain(rate)}
-                        </Chip>
-                      </TableCell>
-                      <TableCell>
-                        <div className="text-right">
-                          <p className="whitespace-nowrap tabular-nums font-medium text-slate-900">
-                            {formatCurrency(rate.baseRate)}
-                          </p>
-                          <p className="text-xs text-slate-500">{getUnitLabel(rate.unit)}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <span className="whitespace-nowrap text-slate-700">
-                          {getRateEffectivePeriodLabel(rate.applicableDates)}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <Chip size="sm" variant="flat" color={statusColor}>
-                          {statusLabel}
-                        </Chip>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex justify-end" onClick={(clickEvent) => clickEvent.stopPropagation()}>
-                          <Button size="sm" variant="light" color="danger" onPress={() => handleDeleteRate(rate.id)}>
-                            Delete
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                    );
-                  })}
-              </TableBody>
-            </Table>
-            <div className="flex justify-end mt-3">
-                <Pagination
-                  total={Math.max(1, ratePages)}
-                  page={ratePage}
-                  onChange={setRatePage}
-                  showControls
-                  size="sm"
-                />
-              </div>
-          </CardBody>
-        </Card>
-
-        {/* Rate Modal */}
-        <Modal
-          isOpen={isRateModalOpen}
-          onClose={() => {
-            setIsRateModalOpen(false);
-            setEditingRate(null);
-            setRateErrors({});
-          }}
-          size="2xl"
-          scrollBehavior="inside"
-        >
-          <ModalContent>
-            <ModalHeader>
-              <h3 className="text-lg font-semibold">
-                {editingRate ? 'Edit Rate' : 'Create New Rate'}
-              </h3>
-            </ModalHeader>
-            <ModalBody>
-              <div className="space-y-4">
-                {/* Rate Name (Optional - will auto-generate if not provided) */}
-                <Input
-                  label="Rate Name (Optional)"
-                  placeholder="e.g., Agrivest Co Rates (leave blank to auto-generate)"
-                  value={rateForm.name}
-                  onValueChange={(value) => setRateForm({ ...rateForm, name: value })}
-                  description="If left blank, names will be auto-generated based on client and rate type"
-                />
-
-                {/* Rate Types - Multiple Selection */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Select Rate Types *</label>
-                  <div className="grid grid-cols-2 gap-3 p-3 border rounded-lg">
-                    {[
-                      { key: 'accommodation', label: '🏨 Accommodation', defaultUnit: 'per_room' },
-                      { key: 'conference', label: '📅 Conference', defaultUnit: 'per_person' },
-                      { key: 'lunch', label: '🍽️ Lunch', defaultUnit: 'per_person' },
-                      { key: 'dinner', label: '🍴 Dinner', defaultUnit: 'per_person' },
-                      { key: 'other', label: '📋 Other', defaultUnit: 'per_person' }
-                    ].map((type) => (
-                      <div key={type.key} className="space-y-2">
-                        <Switch
-                          isSelected={rateForm.selectedTypes.includes(type.key)}
-                          onValueChange={(checked) => {
-                            const newTypes = checked
-                              ? [...rateForm.selectedTypes, type.key]
-                              : rateForm.selectedTypes.filter((t: string) => t !== type.key);
-                            setRateForm({ ...rateForm, selectedTypes: newTypes });
-                          }}
-                        >
-                          <span className="text-sm">{type.label}</span>
-                        </Switch>
-                        {rateForm.selectedTypes.includes(type.key) && (
-                          <div className="ml-6 space-y-2">
-                            <Input
-                              size="sm"
-                              label="Custom Label *"
-                              placeholder={(() => {
-                                const placeholders: Record<string, string> = {
-                                  accommodation: 'e.g., Accommodation & Breakfast, Standard Accommodation, Deluxe Room',
-                                  conference: 'e.g., Conference with 1 Snack, Conference with 2 Snacks, Full Conference Package',
-                                  lunch: 'e.g., Lunch, Buffet Lunch, Set Lunch Menu',
-                                  dinner: 'e.g., Dinner, Buffet Dinner, Set Dinner Menu',
-                                  other: 'e.g., Tea Break, Coffee Break, Snacks'
-                                };
-                                return placeholders[type.key] || `e.g., ${type.label.replace(/^[^\s]+\s/, '')}`;
-                              })()}
-                              value={rateForm.rates[type.key as keyof typeof rateForm.rates]?.label || ''}
-                              onValueChange={(value) => {
-                                const defaultLabels: Record<string, string> = {
-                                  accommodation: 'Accommodation',
-                                  conference: 'Conference',
-                                  lunch: 'Lunch',
-                                  dinner: 'Dinner',
-                                  other: 'Other'
-                                };
-                                setRateForm({
-                                  ...rateForm,
-                                  rates: {
-                                    ...rateForm.rates,
-                                    [type.key]: {
-                                      ...rateForm.rates[type.key as keyof typeof rateForm.rates],
-                                      label: value.trim() || defaultLabels[type.key] || type.label.replace(/^[^\s]+\s/, '')
-                                    }
-                                  }
-                                });
-                              }}
-                              description="Customize how this rate will be labeled. Leave blank to use default label."
-                            />
-                            <Input
-                              size="sm"
-                              type="number"
-                              label="Rate (₵)"
-                              placeholder="0.00"
-                              value={rateForm.rates[type.key as keyof typeof rateForm.rates]?.rate?.toString() || '0'}
-                              onValueChange={(value) => {
-                                setRateForm({
-                                  ...rateForm,
-                                  rates: {
-                                    ...rateForm.rates,
-                                    [type.key]: {
-                                      ...rateForm.rates[type.key as keyof typeof rateForm.rates],
-                                      rate: parseFloat(value) || 0
-                                    }
-                                  }
-                                });
-                              }}
-                              isInvalid={!!rateErrors[`rate_${type.key}`]}
-                              errorMessage={rateErrors[`rate_${type.key}`]}
-                              startContent={<span className="text-xs text-gray-400">₵</span>}
-                            />
-                            <Select
-                              size="sm"
-                              label="Unit"
-                              selectedKeys={[rateForm.rates[type.key as keyof typeof rateForm.rates]?.unit || type.defaultUnit]}
-                              onSelectionChange={(keys) => {
-                                const unit = Array.from(keys)[0] as string;
-                                setRateForm({
-                                  ...rateForm,
-                                  rates: {
-                                    ...rateForm.rates,
-                                    [type.key]: {
-                                      ...rateForm.rates[type.key as keyof typeof rateForm.rates],
-                                      unit: unit
-                                    }
-                                  }
-                                });
-                              }}
-                            >
-                              <SelectItem key="per_person">Per Person</SelectItem>
-                              <SelectItem key="per_room">Per Room</SelectItem>
-                              <SelectItem key="per_event">Per Event</SelectItem>
-                              <SelectItem key="per_day">Per Day</SelectItem>
-                            </Select>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  {rateErrors.selectedTypes && (
-                    <p className="text-sm text-danger">{rateErrors.selectedTypes}</p>
-                  )}
-                </div>
-
-                {/* Effective Period */}
-                <div className="space-y-2 rounded-xl border border-gray-200 bg-gray-50/70 p-4">
-                  <div>
-                    <p className="text-sm font-semibold text-ghana-black">Effective Period</p>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      The rate only auto-applies to events whose dates overlap this period.
-                    </p>
-                  </div>
-                  <Switch
-                    isSelected={rateForm.applicableDates.isAllYear}
-                    onValueChange={(checked) => {
-                      const year = new Date().getFullYear();
-                      setRateForm({
-                        ...rateForm,
-                        applicableDates: {
-                          ...rateForm.applicableDates,
-                          isAllYear: checked,
-                          startDate: checked ? '' : rateForm.applicableDates.startDate || `${year}-01-01`,
-                          endDate: checked ? '' : rateForm.applicableDates.endDate || `${year}-12-31`,
-                        },
-                      });
-                    }}
-                  >
-                    <span className="font-medium">Always effective (all year)</span>
-                  </Switch>
-                  {!rateForm.applicableDates.isAllYear && (
-                    <div className="grid grid-cols-2 gap-4">
-                      <Input
-                        label="Effective from"
-                        type="date"
-                        value={rateForm.applicableDates.startDate}
-                        onValueChange={(value) => {
-                          setRateForm({
-                            ...rateForm,
-                            applicableDates: { ...rateForm.applicableDates, startDate: value },
-                          });
-                        }}
-                        isRequired
-                        isInvalid={!!rateErrors.startDate}
-                        errorMessage={rateErrors.startDate}
-                      />
-                      <Input
-                        label="Effective to"
-                        type="date"
-                        value={rateForm.applicableDates.endDate}
-                        onValueChange={(value) => {
-                          setRateForm({
-                            ...rateForm,
-                            applicableDates: { ...rateForm.applicableDates, endDate: value },
-                          });
-                        }}
-                        isRequired
-                        isInvalid={!!rateErrors.endDate}
-                        errorMessage={rateErrors.endDate}
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {/* Client-Specific Rate */}
-                <div className="space-y-2">
-                  <Switch
-                    isSelected={rateForm.clientSpecific}
-                    onValueChange={(checked) => {
-                      setRateForm({
-                        ...rateForm,
-                        clientSpecific: checked,
-                        clientId: checked ? rateForm.clientId : '',
-                        clientName: checked ? rateForm.clientName : ''
-                      });
-                    }}
-                  >
-                    <span className="font-medium">Client-Specific Rate</span>
-                  </Switch>
-                  {rateForm.clientSpecific && (
-                    <Autocomplete
-                      label="Select Guest/Company"
-                      placeholder="Type at least 2 characters to search..."
-                      selectedKey={rateForm.clientId || null}
-                      onSelectionChange={(key) => {
-                        if (key && typeof key === 'string') {
-                          if (key.startsWith('custom:')) {
-                            const customName = key.replace('custom:', '');
-                            setRateForm({
-                              ...rateForm,
-                              clientId: '',
-                              clientName: customName
-                            });
-                          } else {
-                            const g = frontOfficeGuests.find((c: any) => c.id === key);
-                            if (g) {
-                              const org = g.employerCompany || (g.name || `${g.firstName || ''} ${g.lastName || ''}`.trim());
-                              setRateForm({
-                                ...rateForm,
-                                clientId: g.id,
-                                clientName: org
-                              });
-                            }
-                          }
-                        }
-                      }}
-                      inputValue={rateForm.clientName}
-                      onInputChange={(value) => {
-                        setRateForm({ ...rateForm, clientName: value, clientId: '' });
-                      }}
-                      isInvalid={!!rateErrors.clientId}
-                      errorMessage={rateErrors.clientId}
-                      className="ml-6"
-                      allowsCustomValue
-                    >
-                      {(() => {
-                        const q = (rateForm.clientName || '').trim();
-                        const guests = frontOfficeGuests || [];
-                        const results = q.length >= 2
-                          ? guests.filter((g: any) => {
-                              if (g.isActive === false) return false;
-                              const org = (g.employerCompany || '').toLowerCase();
-                              const name = (g.name || `${g.firstName || ''} ${g.lastName || ''}`).toLowerCase();
-                              const phone = (g.companyPhone || g.phone || '').toLowerCase();
-                              return org.includes(q.toLowerCase()) || name.includes(q.toLowerCase()) || phone.includes(q.toLowerCase());
-                            }).slice(0, 20)
-                          : [];
-                        return q.length >= 2 ? (
-                          <>
-                            <AutocompleteItem key={`custom:${q}`} textValue={q}>
-                              <div className="flex justify-between items-center w-full">
-                                <span className="font-medium">Use "{q}"</span>
-                                <span className="text-xs text-gray-500">Click to confirm</span>
-                              </div>
-                            </AutocompleteItem>
-                            {results.map((g: any) => {
-                              const org = g.employerCompany || (g.name || `${g.firstName || ''} ${g.lastName || ''}`.trim());
-                              const person = g.name || `${g.firstName || ''} ${g.lastName || ''}`.trim();
-                              return (
-                                <AutocompleteItem key={g.id} textValue={`${org} ${person}`}>
-                                  <div className="flex flex-col">
-                                    <span className="font-medium">{org}</span>
-                                    <span className="text-xs text-gray-600">{person} • {(g.companyPhone || g.phone || '')}</span>
-                                  </div>
-                                </AutocompleteItem>
-                              );
-                            })}
-                          </>
-                        ) : null;
-                      })()}
-                    </Autocomplete>
-                  )}
-                </div>
-
-                {/* Active Status */}
-                <Switch
-                  isSelected={rateForm.isActive}
-                  onValueChange={(checked) => setRateForm({ ...rateForm, isActive: checked })}
-                >
-                  <span className="font-medium">Active</span>
-                </Switch>
-
-                {/* Notes */}
-                <Textarea
-                  label="Notes"
-                  placeholder="Additional notes about this rate..."
-                  value={rateForm.notes}
-                  onValueChange={(value) => setRateForm({ ...rateForm, notes: value })}
-                  minRows={3}
-                />
-              </div>
-            </ModalBody>
-            <ModalFooter>
-              <Button
-                variant="flat"
-                onPress={() => {
-                  setIsRateModalOpen(false);
-                  setEditingRate(null);
-                  setRateErrors({});
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                color="primary"
-                onPress={handleSaveRate}
-              >
-                {editingRate 
-                  ? 'Update Rate' 
-                  : rateForm.selectedTypes.length > 1 
-                    ? `Create ${rateForm.selectedTypes.length} Rates` 
-                    : 'Create Rate'}
-              </Button>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
-      </div>
-    );
-  };
+  
 
   // Event Management Component
-  const EventManagementTab = () => {
-    const getManagementTabDefaultDateFilter = (_tab: ManagementMainTabKey): EventsDateFilterMode => {
-      return 'thisMonth';
-    };
-
-    const [managementSearchTerm, setManagementSearchTerm] = useState('');
-    const [managementDateFilterMode, setManagementDateFilterMode] = useState<EventsDateFilterMode>(() =>
-      getManagementTabDefaultDateFilter(managementMainTab)
-    );
-    const [managementDateFilterSingle, setManagementDateFilterSingle] = useState('');
-    const [managementDateFilterFrom, setManagementDateFilterFrom] = useState('');
-    const [managementDateFilterTo, setManagementDateFilterTo] = useState('');
-    const [managementViewMode, setManagementViewMode] = useState<'table' | 'calendar' | 'gantt' | 'function'>('table');
-    const [managementInvoiceSearch, setManagementInvoiceSearch] = useState('');
-    const [managementReceiptSearch, setManagementReceiptSearch] = useState('');
-    const [managementQuoteSearch, setManagementQuoteSearch] = useState('');
-    const [managementFolioSearch, setManagementFolioSearch] = useState('');
-    const [eventMasterSort, setEventMasterSort] = useState<TableSortState>({ column: 'eventName', direction: 'asc' });
-    const [activeEventsSort, setActiveEventsSort] = useState<TableSortState>({ column: 'eventName', direction: 'asc' });
-    const [completedEventsSort, setCompletedEventsSort] = useState<TableSortState>({ column: 'eventName', direction: 'asc' });
-    const [invoiceSort, setInvoiceSort] = useState<TableSortState>({ column: 'issueDate', direction: 'desc' });
-    const [receiptSort, setReceiptSort] = useState<TableSortState>({ column: 'date', direction: 'desc' });
-    const [quoteSort, setQuoteSort] = useState<TableSortState>({ column: 'issuedOn', direction: 'desc' });
-    const [folioSort, setFolioSort] = useState<TableSortState>({ column: 'updatedAt', direction: 'desc' });
-    const renderSortableHeader = (
-      label: string,
-      columnKey: string,
-      sortState: TableSortState,
-      onSort: (column: string) => void
-    ) => (
-      <button
-        type="button"
-        className="font-semibold text-ghana-black"
-        onClick={() => onSort(columnKey)}
-      >
-        {label}{sortState.column === columnKey ? (sortState.direction === 'asc' ? ' ↑' : ' ↓') : ''}
-      </button>
-    );
-    const handleEventMasterSort = (column: string) => {
-      setEventMasterPage(1);
-      setEventMasterSort(prev => getNextSortState(prev, column));
-    };
-    const handleActiveEventsSort = (column: string) => {
-      setActiveEventsSort(prev => getNextSortState(prev, column));
-    };
-    const handleCompletedEventsSort = (column: string) => {
-      setCompletedEventsSort(prev => getNextSortState(prev, column));
-    };
-    const handleInvoiceSort = (column: string) => {
-      setInvoiceSort(prev => getNextSortState(prev, column));
-    };
-    const handleReceiptSort = (column: string) => {
-      setReceiptSort(prev => getNextSortState(prev, column));
-    };
-    const handleQuoteSort = (column: string) => {
-      setQuoteSort(prev => getNextSortState(prev, column));
-    };
-    const handleFolioSort = (column: string) => {
-      setFolioSort(prev => getNextSortState(prev, column));
-    };
-    
-    // Pagination state
-    const [eventMasterPage, setEventMasterPage] = useState(1);
-    const [activeEventsPage, setActiveEventsPage] = useState(1);
-    const [completedEventsPage, setCompletedEventsPage] = useState(1);
-    const [invoicesPage, setInvoicesPage] = useState(1);
-    const [receiptsPage, setReceiptsPage] = useState(1);
-    const [quotesPage, setQuotesPage] = useState(1);
-    const [foliosPage, setFoliosPage] = useState(1);
-    const rowsPerPage = 10;
-
-    // Gantt chart state
-    const [managementGanttReferenceDate, setManagementGanttReferenceDate] = useState<Date>(() => new Date());
-    const [managementSelectedGanttVenue, setManagementSelectedGanttVenue] = useState<string>('all');
-    const [hoveredGanttEventId, setHoveredGanttEventId] = useState<string | null>(null);
-
-    const managedEvents = reportingEvents;
-
-    const applyManagementEventFilters = useCallback(
-      (events: any[]) => {
-        let filtered = events;
-
-        if (managementSearchTerm.trim()) {
-          const term = managementSearchTerm.trim().toLowerCase();
-          filtered = filtered.filter(
-            (event: any) =>
-              (event.eventName || '').toLowerCase().includes(term) ||
-              (event.organization || '').toLowerCase().includes(term) ||
-              (event.venueName || event.venue || '').toLowerCase().includes(term) ||
-              (event.contactPerson || '').toLowerCase().includes(term) ||
-              resolveEventCoordinator(event).toLowerCase().includes(term)
-          );
-        }
-
-        if (managementStatusFilter !== 'all') {
-          filtered = filtered.filter((event: any) => eventDeskBucket(event) === managementStatusFilter);
-        }
-
-        if (managementDateFilterMode !== 'all') {
-          filtered = filtered.filter((event: any) =>
-            matchesEventsDateFilter(
-              eventPrimaryDate(event),
-              managementDateFilterMode,
-              managementDateFilterSingle,
-              managementDateFilterFrom,
-              managementDateFilterTo
-            )
-          );
-        }
-
-        return filtered;
-      },
-      [
-        managementSearchTerm,
-        managementStatusFilter,
-        managementDateFilterMode,
-        managementDateFilterSingle,
-        managementDateFilterFrom,
-        managementDateFilterTo,
-      ]
-    );
-
-    const managementFilterSearch = useMemo(() => {
-      switch (managementMainTab) {
-        case 'invoices':
-          return managementInvoiceSearch;
-        case 'receipts':
-          return managementReceiptSearch;
-        case 'quotes':
-          return managementQuoteSearch;
-        case 'folios':
-          return managementFolioSearch;
-        default:
-          return managementSearchTerm;
-      }
-    }, [
-      managementMainTab,
-      managementSearchTerm,
-      managementInvoiceSearch,
-      managementReceiptSearch,
-      managementQuoteSearch,
-      managementFolioSearch,
-    ]);
-
-    const setManagementFilterSearch = useCallback(
-      (value: string) => {
-        switch (managementMainTab) {
-          case 'invoices':
-            setManagementInvoiceSearch(value);
-            break;
-          case 'receipts':
-            setManagementReceiptSearch(value);
-            break;
-          case 'quotes':
-            setManagementQuoteSearch(value);
-            break;
-          case 'folios':
-            setManagementFolioSearch(value);
-            break;
-          default:
-            setManagementSearchTerm(value);
-            break;
-        }
-      },
-      [managementMainTab]
-    );
-
-    const managementFilterPlaceholder = useMemo(() => {
-      switch (managementMainTab) {
-        case 'invoices':
-          return 'Search invoices, events, or clients...';
-        case 'receipts':
-          return 'Search receipts, events, or clients...';
-        case 'quotes':
-          return 'Search quotes, events, or clients...';
-        case 'folios':
-          return 'Search folios, events, or clients...';
-        default:
-          return 'Search events...';
-      }
-    }, [managementMainTab]);
-
-    const eventDeskBucket = (event: any): 'quote' | 'active' | 'completed' | 'cancelled' => {
-      const normalized = normalizeStatus(event?.eventStatus || event?.status);
-      if (normalized === 'cancelled') return 'cancelled';
-      if (normalized === 'invoiced') return 'completed';
-      if (normalized === 'confirmed') return 'active';
-      return 'quote';
-    };
-
-    const managementStatusOptions = useMemo(
-      () => [
-        { key: 'all', label: 'All' },
-        { key: 'quote', label: 'Quote' },
-        { key: 'active', label: 'Active' },
-        { key: 'completed', label: 'Completed' },
-        { key: 'cancelled', label: 'Cancelled' },
-      ],
-      []
-    );
-
-    const showManagementStatusFilter = managementMainTab === 'events';
-
-    useEffect(() => {
-      if (
-        managementSelectedGanttVenue !== 'all' &&
-        managementSelectedGanttVenue !== 'unassigned' &&
-        !modernVenues.some(venue => venue.id === managementSelectedGanttVenue)
-      ) {
-        setManagementSelectedGanttVenue('all');
-      }
-    }, [managementSelectedGanttVenue, modernVenues]);
-
-    const filteredManagedEvents = useMemo(
-      () => applyManagementEventFilters(managedEvents),
-      [managedEvents, applyManagementEventFilters]
-    );
-
-    const managementEventsByDay = useMemo(() => {
-      const map = new Map<string, any[]>();
-      filteredManagedEvents.forEach((event: any) => {
-        const start = parseEventDate(eventStartValue(event));
-        const end = parseEventDate(eventEndValue(event)) || start;
-        if (!start || !end) return;
-        const last = end < start ? start : end;
-        const cursor = new Date(start);
-        while (cursor <= last) {
-          const key = formatDateKey(cursor);
-          const existing = map.get(key);
-          if (existing) existing.push(event);
-          else map.set(key, [event]);
-          cursor.setDate(cursor.getDate() + 1);
-        }
-      });
-      return map;
-    }, [filteredManagedEvents]);
-
-    const managementDayEvents = useMemo(
-      () => managementEventsByDay.get(formatDateKey(eventCalendarDate)) || [],
-      [managementEventsByDay, eventCalendarDate]
-    );
-
-    const managementCalendarMonthEventCount = useMemo(() => {
-      const month = eventCalendarDate.getMonth();
-      const year = eventCalendarDate.getFullYear();
-      const seen = new Set<string>();
-      managementEventsByDay.forEach((events, key) => {
-        const day = parseEventDate(key);
-        if (!day || day.getMonth() !== month || day.getFullYear() !== year) return;
-        events.forEach((event: any) => {
-          if (event?.id) seen.add(event.id);
-        });
-      });
-      return seen.size;
-    }, [managementEventsByDay, eventCalendarDate]);
-
-    const managementCalendarWeekEventCount = useMemo(() => {
-      const seen = new Set<string>();
-      calendarWeekDays.forEach((day) => {
-        (managementEventsByDay.get(formatDateKey(day)) || []).forEach((event: any) => {
-          if (event?.id) seen.add(event.id);
-        });
-      });
-      return seen.size;
-    }, [calendarWeekDays, managementEventsByDay]);
-
-    const eventStatusBuckets = useMemo(
-      () =>
-        managedEvents.reduce(
-          (acc: Record<SimpleEventStatus | 'total', number>, event: any) => {
-            const normalized = normalizeStatus(event.status || event.eventStatus);
-            acc.total += 1;
-            acc[normalized] = (acc[normalized] || 0) + 1;
-            return acc;
-          },
-          { total: 0, quote: 0, confirmed: 0, invoiced: 0, cancelled: 0 }
-        ),
-      [managedEvents]
-    );
-
-    const pipelineAmounts = useMemo(
-      () =>
-        managedEvents.reduce(
-          (acc, event: any) => {
-            const normalized = normalizeStatus(event.status || event.eventStatus);
-            const value = Number(event.revenue || event.budgetTotal || 0) || 0;
-            acc.total += value;
-            if (normalized === 'quote') acc.quote += value;
-            if (normalized === 'confirmed') acc.confirmed += value;
-            if (normalized === 'invoiced') acc.invoiced += value;
-            return acc;
-          },
-          { total: 0, quote: 0, confirmed: 0, invoiced: 0 }
-        ),
-      [managedEvents]
-    );
-
-
-    // When a new invoice is created, jump to the Invoices tab in Event Management
-    useEffect(() => {
-      if (!lastCreatedInvoiceId) return;
-
-      try {
-        // Switch the inner management tabs to Invoices
-        setManagementMainTab('invoices');
-        setManagementInvoiceSearch('');
-        setInvoicesPage(1);
-      } catch (error) {
-        console.error('Error switching to Invoices tab after invoice creation:', error);
-      } finally {
-        // Clear the hint so this only runs once per invoice creation
-        setLastCreatedInvoiceId(null);
-      }
-    }, [lastCreatedInvoiceId]);
-
-    // Gantt chart computed values (after managedEvents is defined)
-    const managementGanttTimelineStart = useMemo(() => getStartOfMonth(managementGanttReferenceDate), [managementGanttReferenceDate]);
-    const managementGanttTimelineEnd = useMemo(() => getEndOfMonth(managementGanttReferenceDate), [managementGanttReferenceDate]);
-    const managementGanttTimelineTitle = useMemo(() => {
-      return managementGanttReferenceDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-    }, [managementGanttReferenceDate]);
-    const managementGanttTimelineRangeLabel = `${formatDateKey(managementGanttTimelineStart)} → ${formatDateKey(managementGanttTimelineEnd)}`;
-    const managementTimelineDayCount = Math.max(1, Math.round((toStartOfDay(managementGanttTimelineEnd).getTime() - toStartOfDay(managementGanttTimelineStart).getTime()) / DAY_IN_MS) + 1);
-    const managementTimelineDays = useMemo(() => Array.from({ length: managementTimelineDayCount }, (_, index) => addDays(managementGanttTimelineStart, index)), [managementGanttTimelineStart, managementTimelineDayCount]);
-    const managementGanttMonthInputValue = `${managementGanttReferenceDate.getFullYear()}-${padNumber(managementGanttReferenceDate.getMonth() + 1)}`;
-
-    const managementGanttVenues = useMemo(() => {
-      const venueMap = new Map<string, string>();
-      filteredManagedEvents.forEach((event: any) => {
-        const venueId = eventVenueKey(event);
-        const venueName =
-          event.venueName ||
-          modernVenues.find(venue => venue.id === venueId)?.name ||
-          (venueId === 'unassigned' ? 'Unassigned' : venueId);
-        venueMap.set(venueId, venueName);
-      });
-      return Array.from(venueMap.entries()).map(([id, name]) => ({ id, name }));
-    }, [filteredManagedEvents, modernVenues]);
-
-    const managementGanttVenuesToRender = useMemo(() => {
-      if (managementSelectedGanttVenue === 'all') {
-        return managementGanttVenues;
-      }
-      return managementGanttVenues.filter(venue => venue.id === managementSelectedGanttVenue);
-    }, [managementGanttVenues, managementSelectedGanttVenue]);
-
-    // Get events for a specific venue (using managedEvents)
-    const getManagedEventsForVenue = (venueId: string, rangeStart?: Date, rangeEnd?: Date) => {
-      const filtered = filteredManagedEvents.filter((event: any) => {
-        const eventVenueId = eventVenueKey(event);
-        const matchesVenue =
-          venueId === 'all'
-            ? true
-            : venueId === 'unassigned'
-              ? eventVenueId === 'unassigned'
-              : eventVenueId === venueId;
-        if (!matchesVenue) return false;
-
-        if (rangeStart && rangeEnd) {
-          const eventStart = parseEventDate(eventStartValue(event));
-          const eventEnd = parseEventDate(eventEndValue(event)) || eventStart;
-          if (!eventStart || !eventEnd) return false;
-          return eventEnd >= rangeStart && eventStart <= rangeEnd;
-        }
-
-        return true;
-      });
-
-      return filtered.sort((a: any, b: any) => {
-        const aTime = parseEventDate(eventStartValue(a))?.getTime() || 0;
-        const bTime = parseEventDate(eventStartValue(b))?.getTime() || 0;
-        return aTime - bTime;
-      });
-    };
-
-    const managementGanttDailyPax = useMemo(() => {
-      const events = getManagedEventsForVenue(
-        managementSelectedGanttVenue,
-        managementGanttTimelineStart,
-        managementGanttTimelineEnd
-      );
-      return managementTimelineDays.map((day) => {
-        const dayStart = toStartOfDay(day);
-        return events.reduce((sum: number, event: any) => {
-          const start = parseEventDate(eventStartValue(event));
-          const end = parseEventDate(eventEndValue(event)) || start;
-          if (!start || !end) return sum;
-          if (dayStart < start || dayStart > end) return sum;
-          return sum + (Number(event.pax || event.expectedPax || 0) || 0);
-        }, 0);
-      });
-    }, [
-      managementSelectedGanttVenue,
-      managementGanttTimelineStart,
-      managementGanttTimelineEnd,
-      managementTimelineDays,
-      filteredManagedEvents,
-    ]);
-
-    // Gantt navigation handlers
-    const handleManagementGanttNavigate = (direction: number) => {
-      const newDate = addMonths(managementGanttReferenceDate, direction);
-      setManagementGanttReferenceDate(getStartOfMonth(newDate));
-    };
-
-    const handleManagementGanttMonthInput = (value: string) => {
-      if (!value) return;
-      const [year, month] = value.split('-').map(Number);
-      if (!Number.isNaN(year) && !Number.isNaN(month)) {
-        const newDate = new Date(year, month - 1, 1);
-        setManagementGanttReferenceDate(newDate);
-      }
-    };
-
-    const getConfirmedStatusColor = (status: string) => {
-      // Support both lifecycle statuses and simplified business statuses
-      switch (status) {
-        case 'quote':
-          return 'warning';
-        case 'confirmed':
-          return 'success';
-        case 'in-progress':
-          return 'warning';
-        case 'completed':
-          return 'success';
-        case 'invoiced':
-        case 'billed':
-          return 'primary';
-        case 'cancelled':
-          return 'danger';
-        default:
-          return 'default';
-      }
-    };
-
-    const getConfirmedStatusLabel = (status: string) => {
-      switch (status) {
-        case 'quote':
-          return 'Quote';
-        case 'confirmed':
-          return 'Confirmed';
-        case 'in-progress':
-          return 'In Progress';
-        case 'completed':
-          return 'Completed';
-        case 'invoiced':
-          return 'Invoiced';
-        case 'billed':
-          return 'Billed';
-        case 'cancelled':
-          return 'Cancelled';
-        default:
-          return status;
-      }
-    };
-
-    // Determine event status context for financial documents
-    const getEventStatusContext = () => {
-      if (managementMainTab === 'active') return 'active';
-      if (managementMainTab === 'completed') return 'completed';
-      // Invoices, receipts and folios follow the event as soon as it is booked.
-      if (
-        managementMainTab === 'invoices' ||
-        managementMainTab === 'receipts' ||
-        managementMainTab === 'folios'
-      ) {
-        return 'all';
-      }
-      return 'active';
-    };
-
-    const getFilteredEventIds = useMemo(() => {
-      const statusContext = getEventStatusContext();
-      let eventsToUse = managedEvents;
-
-      if (statusContext === 'active') {
-        eventsToUse = managedEvents.filter((e: any) => e.eventStatus === 'confirmed' || e.eventStatus === 'in-progress');
-      } else if (statusContext === 'completed') {
-        eventsToUse = managedEvents.filter((e: any) => e.eventStatus === 'completed' || e.eventStatus === 'billed');
-      }
-
-      return eventsToUse.map((e: any) => e.id);
-    }, [managedEvents, managementMainTab]);
-
-    const managementFilteredInvoices = useMemo(() => {
-      let filtered = eventInvoices.filter(inv => getFilteredEventIds.includes(inv.eventId));
-      const q = managementInvoiceSearch.trim().toLowerCase();
-      if (q) {
-        filtered = filtered.filter(inv =>
-          [inv.id, inv.eventName, inv.clientName, inv.status, inv.reference]
-            .filter(Boolean)
-            .some(field => String(field).toLowerCase().includes(q))
-        );
-      }
-      if (managementDateFilterMode !== 'all') {
-        filtered = filtered.filter(inv =>
-          matchesEventsDateFilter(
-            inv.issueDate,
-            managementDateFilterMode,
-            managementDateFilterSingle,
-            managementDateFilterFrom,
-            managementDateFilterTo
-          )
-        );
-      }
-      return filtered;
-    }, [
-      eventInvoices,
-      getFilteredEventIds,
-      managementInvoiceSearch,
-      managementDateFilterMode,
-      managementDateFilterSingle,
-      managementDateFilterFrom,
-      managementDateFilterTo,
-    ]);
-
-    const managementFilteredReceipts = useMemo(() => {
-      let filtered = eventReceipts.filter(rcpt => getFilteredEventIds.includes(rcpt.eventId));
-      const q = managementReceiptSearch.trim().toLowerCase();
-      if (q) {
-        filtered = filtered.filter(rcpt =>
-          [rcpt.id, rcpt.eventName, rcpt.clientName, rcpt.method, rcpt.reference]
-            .filter(Boolean)
-            .some(field => String(field).toLowerCase().includes(q))
-        );
-      }
-      if (managementDateFilterMode !== 'all') {
-        filtered = filtered.filter(rcpt =>
-          matchesEventsDateFilter(
-            rcpt.date,
-            managementDateFilterMode,
-            managementDateFilterSingle,
-            managementDateFilterFrom,
-            managementDateFilterTo
-          )
-        );
-      }
-      return filtered;
-    }, [
-      eventReceipts,
-      getFilteredEventIds,
-      managementReceiptSearch,
-      managementDateFilterMode,
-      managementDateFilterSingle,
-      managementDateFilterFrom,
-      managementDateFilterTo,
-    ]);
-    const managementFilteredQuotes = useMemo<QuoteListItem[]>(() => {
-      const quotes: QuoteListItem[] = managedEvents.map((event: any) => {
-        const checkIn = event.arrivalDate || event.startDate || event.createdAt || '';
-        const checkOut = event.departureDate || event.endDate || checkIn;
-        const pax = Number(event.expectedPax || event.pax || event.attendees || 0);
-        const issuedOn = event.createdAt || event.updatedAt || checkIn;
-        const status = event.status || 'quote';
-
-        return {
-          id: event.id,
-          eventId: event.id,
-          quoteNumber: formatQuoteNumber(event.id, event.quoteNumber || formatEventId(event.id)),
-          clientName: event.organization || event.clientName || 'Unknown Client',
-          eventName: event.eventName || 'Unnamed Event',
-          checkIn,
-          checkOut,
-          pax,
-          issuedOn,
-          total: event.budgetTotal || 0,
-          status,
-          statusLabel: getConfirmedStatusLabel(status),
-          reference: event.quoteReference || event.reference || '',
-          venueName: event.venueName || eventVenueLabel(event, modernVenues),
-          rawEvent: event
-        };
-      });
-
-      const term = managementQuoteSearch.trim().toLowerCase();
-      let filtered = quotes;
-      if (term) {
-        filtered = filtered.filter(q =>
-          q.quoteNumber.toLowerCase().includes(term) ||
-          q.eventName.toLowerCase().includes(term) ||
-          q.clientName.toLowerCase().includes(term)
-        );
-      }
-      if (managementDateFilterMode !== 'all') {
-        filtered = filtered.filter(q =>
-          matchesEventsDateFilter(
-            q.issuedOn || q.checkIn,
-            managementDateFilterMode,
-            managementDateFilterSingle,
-            managementDateFilterFrom,
-            managementDateFilterTo
-          )
-        );
-      }
-      return filtered;
-    }, [
-      managedEvents,
-      managementQuoteSearch,
-      managementDateFilterMode,
-      managementDateFilterSingle,
-      managementDateFilterFrom,
-      managementDateFilterTo,
-    ]);
-
-    const managementFilteredFolios = useMemo(() => {
-      let filtered = eventFolios.filter(folio => getFilteredEventIds.includes(folio.eventId));
-      const q = managementFolioSearch.trim().toLowerCase();
-      if (q) {
-        filtered = filtered.filter(folio =>
-          [folio.id, folio.eventName, folio.clientName, folio.status]
-            .filter(Boolean)
-            .some(field => String(field).toLowerCase().includes(q))
-        );
-      }
-      if (managementDateFilterMode !== 'all') {
-        filtered = filtered.filter(folio =>
-          matchesEventsDateFilter(
-            folio.updatedAt,
-            managementDateFilterMode,
-            managementDateFilterSingle,
-            managementDateFilterFrom,
-            managementDateFilterTo
-          )
-        );
-      }
-      return filtered;
-    }, [
-      eventFolios,
-      getFilteredEventIds,
-      managementFolioSearch,
-      managementDateFilterMode,
-      managementDateFilterSingle,
-      managementDateFilterFrom,
-      managementDateFilterTo,
-    ]);
-
-    const managementTabCounts = useMemo(() => {
-      const base = applyManagementEventFilters(managedEvents);
-      const countableEventIds = new Set(managedEvents.map((e: any) => e.id));
-
-      const countFinancialDocs = <T extends { eventId: string }>(
-        docs: T[],
-        search: string,
-        getSearchFields: (doc: T) => (string | undefined | null)[],
-        getDateValue: (doc: T) => string | undefined | null
-      ) => {
-        let filtered = docs.filter((doc) => countableEventIds.has(doc.eventId));
-        const q = search.trim().toLowerCase();
-        if (q) {
-          filtered = filtered.filter((doc) =>
-            getSearchFields(doc)
-              .filter(Boolean)
-              .some((field) => String(field).toLowerCase().includes(q))
-          );
-        }
-        if (managementDateFilterMode !== 'all') {
-          filtered = filtered.filter((doc) =>
-            matchesEventsDateFilter(
-              getDateValue(doc),
-              managementDateFilterMode,
-              managementDateFilterSingle,
-              managementDateFilterFrom,
-              managementDateFilterTo
-            )
-          );
-        }
-        return filtered.length;
-      };
-
-      return {
-        events: base.length,
-        active: base.filter(
-          (e: any) => e.eventStatus === 'confirmed' || e.eventStatus === 'in-progress'
-        ).length,
-        completed: base.filter(
-          (e: any) => e.eventStatus === 'completed' || e.eventStatus === 'billed'
-        ).length,
-        invoices: countFinancialDocs(
-          eventInvoices,
-          managementInvoiceSearch,
-          (inv) => [inv.id, inv.eventName, inv.clientName, inv.status, inv.reference],
-          (inv) => inv.issueDate
-        ),
-        receipts: countFinancialDocs(
-          eventReceipts,
-          managementReceiptSearch,
-          (rcpt) => [rcpt.id, rcpt.eventName, rcpt.clientName, rcpt.method, rcpt.reference],
-          (rcpt) => rcpt.date
-        ),
-        quotes: managementFilteredQuotes.length,
-        folios: countFinancialDocs(
-          eventFolios,
-          managementFolioSearch,
-          (folio) => [folio.id, folio.eventName, folio.clientName, folio.status],
-          (folio) => folio.updatedAt
-        ),
-      };
-    }, [
-      managedEvents,
-      applyManagementEventFilters,
-      eventInvoices,
-      eventReceipts,
-      eventFolios,
-      managementInvoiceSearch,
-      managementReceiptSearch,
-      managementFolioSearch,
-      managementFilteredQuotes.length,
-      managementDateFilterMode,
-      managementDateFilterSingle,
-      managementDateFilterFrom,
-      managementDateFilterTo,
-    ]);
-
-    const managementTabOptions = useMemo(
-      () =>
-        [
-          { key: 'events' as const, label: `📊 Event Master (${managementTabCounts.events})` },
-          { key: 'invoices' as const, label: `🧾 Invoices (${managementTabCounts.invoices})` },
-          { key: 'receipts' as const, label: `💳 Receipts (${managementTabCounts.receipts})` },
-          { key: 'folios' as const, label: `📂 Folios (${managementTabCounts.folios})` },
-        ],
-      [managementTabCounts]
-    );
-
-    const eventMasterSortAccessors = useMemo(() => ({
-      eventId: (row: any) => row.id || '',
-      eventName: (row: any) => row.eventName || '',
-      stayType: (row: any) => eventStayType(row),
-      venueName: (row: any) => row.venueName || '',
-      startDate: (row: any) => parseDateValue(row.arrivalDate || row.startDate),
-      endDate: (row: any) => parseDateValue(row.departureDate || row.endDate),
-      duration: (row: any) => computeEventDurationDays(row),
-      pax: (row: any) => Number(row.pax || row.expectedPax || 0),
-      status: (row: any) => row.eventStatus || row.status || '',
-      coordinator: (row: any) => resolveEventCoordinator(row),
-      clientContact: (row: any) => getEventClientContactName(row),
-      amount: (row: any) => eventChargeAmount(row),
-      outstanding: (row: any) => eventAmountDue(row)
-    }), [resolveEventCoordinator, eventFolios, eventInvoices]);
-
-    const managementTableClassNames = {
-      ...worksheetTableClassNames,
-      base: 'max-w-full overflow-x-auto',
-      table: 'w-full min-w-max',
-      th: `${worksheetTableClassNames.th} relative`,
-    };
-
-    const activeEventsSortAccessors = useMemo(() => ({
-      eventId: (row: any) => row.id || '',
-      eventName: (row: any) => row.eventName || '',
-      stayType: (row: any) => eventStayType(row),
-      organization: (row: any) => row.organization || '',
-      startDate: (row: any) => parseDateValue(row.arrivalDate || row.startDate),
-      endDate: (row: any) => parseDateValue(row.departureDate || row.endDate),
-      dates: (row: any) => parseDateValue(row.arrivalDate || row.startDate),
-      venueName: (row: any) => row.venueName || '',
-      duration: (row: any) => computeEventDurationDays(row),
-      pax: (row: any) => Number(row.pax || row.expectedPax || 0),
-      budget: (row: any) => Number(row.budgetTotal || 0),
-      status: (row: any) => row.eventStatus || row.status || ''
-    }), []);
-
-    const completedEventsSortAccessors = useMemo(() => ({
-      eventId: (row: any) => row.id || '',
-      eventName: (row: any) => row.eventName || '',
-      stayType: (row: any) => eventStayType(row),
-      organization: (row: any) => row.organization || '',
-      startDate: (row: any) => parseDateValue(row.arrivalDate || row.startDate),
-      endDate: (row: any) => parseDateValue(row.departureDate || row.endDate),
-      dates: (row: any) => parseDateValue(row.arrivalDate || row.startDate),
-      venueName: (row: any) => row.venueName || '',
-      duration: (row: any) => computeEventDurationDays(row),
-      pax: (row: any) => Number(row.pax || row.expectedPax || 0),
-      budget: (row: any) => Number(row.budgetTotal || row.quoteTotal || 0),
-      actual: (row: any) => (row.invoiceTotal !== undefined ? Number(row.invoiceTotal) : (row.actualTotal !== undefined ? Number(row.actualTotal) : null)),
-      variance: (row: any) => (row.variance !== undefined ? Number(row.variance) : null),
-      status: (row: any) => row.eventStatus || row.status || ''
-    }), []);
-
-    const invoiceSortAccessors = useMemo(() => ({
-      invoiceId: (row: EventInvoice) => row.id,
-      eventName: (row: EventInvoice) => row.eventName || '',
-      issueDate: (row: EventInvoice) => parseDateValue(row.issueDate),
-      dueDate: (row: EventInvoice) => parseDateValue(row.dueDate),
-      total: (row: EventInvoice) => Number(row.total || 0),
-      balance: (row: EventInvoice) => Number(row.balance || 0),
-      status: (row: EventInvoice) => row.status || ''
-    }), []);
-
-    const receiptSortAccessors = useMemo(() => ({
-      receiptId: (row: EventReceipt) => row.id,
-      eventName: (row: EventReceipt) => row.eventName || '',
-      date: (row: EventReceipt) => parseDateValue(row.date),
-      amount: (row: EventReceipt) => Number(row.amount || 0),
-      method: (row: EventReceipt) => row.method || '',
-      reference: (row: EventReceipt) => row.reference || '',
-      invoiceId: (row: EventReceipt) => row.invoiceId || ''
-    }), []);
-
-    const quoteSortAccessors = useMemo(() => ({
-      quoteNumber: (row: QuoteListItem) => row.quoteNumber || '',
-      clientName: (row: QuoteListItem) => row.clientName || '',
-      eventName: (row: QuoteListItem) => row.eventName || '',
-      venueName: (row: QuoteListItem) => row.venueName || '',
-      checkIn: (row: QuoteListItem) => parseDateValue(row.checkIn),
-      checkOut: (row: QuoteListItem) => parseDateValue(row.checkOut),
-      pax: (row: QuoteListItem) => Number(row.pax || 0),
-      issuedOn: (row: QuoteListItem) => parseDateValue(row.issuedOn),
-      amount: (row: QuoteListItem) => Number(row.total || 0)
-    }), []);
-
-    const folioSortAccessors = useMemo(() => ({
-      folioId: (row: EventFolio) => row.id,
-      createdAt: (row: EventFolio) => parseDateValue(row.createdAt),
-      eventName: (row: EventFolio) => row.eventName || '',
-      clientName: (row: EventFolio) => row.clientName || '',
-      status: (row: EventFolio) => row.status || '',
-      charges: (row: EventFolio) => {
-        return row.entries.reduce((sum, entry) => sum + (entry.debit || 0), 0);
-      },
-      payments: (row: EventFolio) => {
-        return row.entries.reduce((sum, entry) => sum + (entry.credit || 0), 0);
-      },
-      balance: (row: EventFolio) => {
-        const charges = row.entries.reduce((sum, entry) => sum + (entry.debit || 0), 0);
-        const payments = row.entries.reduce((sum, entry) => sum + (entry.credit || 0), 0);
-        return charges - payments;
-      },
-      updatedAt: (row: EventFolio) => parseDateValue(row.updatedAt)
-    }), []);
-
-    const eventMasterTableRows = useMemo(() => {
-      return sortRows(filteredManagedEvents, eventMasterSort, eventMasterSortAccessors);
-    }, [filteredManagedEvents, eventMasterSort, eventMasterSortAccessors]);
-
-    const eventMasterPages = Math.max(1, Math.ceil(eventMasterTableRows.filter((event: any) => event?.id).length / rowsPerPage));
-    const pagedEventMasterRows = eventMasterTableRows
-      .filter((event: any) => event?.id)
-      .slice((eventMasterPage - 1) * rowsPerPage, eventMasterPage * rowsPerPage);
-
-    const activeEventsList = useMemo(() => {
-      return filteredManagedEvents.filter((e: any) => e.eventStatus === 'confirmed' || e.eventStatus === 'in-progress');
-    }, [filteredManagedEvents]);
-
-    const sortedActiveEvents = useMemo(() => {
-      return sortRows(activeEventsList, activeEventsSort, activeEventsSortAccessors);
-    }, [activeEventsList, activeEventsSort, activeEventsSortAccessors]);
-
-    const paginatedActiveEvents = useMemo(() => {
-      const start = (activeEventsPage - 1) * rowsPerPage;
-      return sortedActiveEvents.slice(start, start + rowsPerPage);
-    }, [sortedActiveEvents, activeEventsPage, rowsPerPage]);
-
-    const activeEventsPages = useMemo(() => {
-      return Math.ceil(activeEventsList.length / rowsPerPage);
-    }, [activeEventsList, rowsPerPage]);
-
-    const completedEventsList = useMemo(() => {
-      return filteredManagedEvents.filter((e: any) => e.eventStatus === 'completed' || e.eventStatus === 'billed');
-    }, [filteredManagedEvents]);
-
-    const sortedCompletedEvents = useMemo(() => {
-      return sortRows(completedEventsList, completedEventsSort, completedEventsSortAccessors);
-    }, [completedEventsList, completedEventsSort, completedEventsSortAccessors]);
-
-    const paginatedCompletedEvents = useMemo(() => {
-      const start = (completedEventsPage - 1) * rowsPerPage;
-      return sortedCompletedEvents.slice(start, start + rowsPerPage);
-    }, [sortedCompletedEvents, completedEventsPage, rowsPerPage]);
-
-    const completedEventsPages = useMemo(() => {
-      return Math.ceil(completedEventsList.length / rowsPerPage);
-    }, [completedEventsList, rowsPerPage]);
-
-    const sortedInvoices = useMemo(() => {
-      return sortRows(managementFilteredInvoices, invoiceSort, invoiceSortAccessors);
-    }, [managementFilteredInvoices, invoiceSort, invoiceSortAccessors]);
-
-    // Paginated data for Invoices
-    const paginatedInvoices = useMemo(() => {
-      const start = (invoicesPage - 1) * rowsPerPage;
-      return sortedInvoices.slice(start, start + rowsPerPage);
-    }, [sortedInvoices, invoicesPage, rowsPerPage]);
-
-    const invoicesPages = useMemo(() => {
-      return Math.ceil(managementFilteredInvoices.length / rowsPerPage);
-    }, [managementFilteredInvoices, rowsPerPage]);
-
-    const sortedReceipts = useMemo(() => {
-      return sortRows(managementFilteredReceipts, receiptSort, receiptSortAccessors);
-    }, [managementFilteredReceipts, receiptSort, receiptSortAccessors]);
-
-    // Paginated data for Receipts
-    const paginatedReceipts = useMemo(() => {
-      const start = (receiptsPage - 1) * rowsPerPage;
-      return sortedReceipts.slice(start, start + rowsPerPage);
-    }, [sortedReceipts, receiptsPage, rowsPerPage]);
-
-    const receiptsPages = useMemo(() => {
-      return Math.ceil(managementFilteredReceipts.length / rowsPerPage);
-    }, [managementFilteredReceipts, rowsPerPage]);
-
-    const sortedQuotes = useMemo(() => {
-      return sortRows(managementFilteredQuotes, quoteSort, quoteSortAccessors);
-    }, [managementFilteredQuotes, quoteSort, quoteSortAccessors]);
-
-    const paginatedQuotes = useMemo(() => {
-      const start = (quotesPage - 1) * rowsPerPage;
-      return sortedQuotes.slice(start, start + rowsPerPage);
-    }, [sortedQuotes, quotesPage, rowsPerPage]);
-
-    const quotesPages = useMemo(() => {
-      return Math.ceil(managementFilteredQuotes.length / rowsPerPage);
-    }, [managementFilteredQuotes, rowsPerPage]);
-
-    const sortedFolios = useMemo(() => {
-      return sortRows(managementFilteredFolios, folioSort, folioSortAccessors);
-    }, [managementFilteredFolios, folioSort, folioSortAccessors]);
-
-    // Paginated data for Folios
-    const paginatedFolios = useMemo(() => {
-      const start = (foliosPage - 1) * rowsPerPage;
-      return sortedFolios.slice(start, start + rowsPerPage);
-    }, [sortedFolios, foliosPage, rowsPerPage]);
-
-    const foliosPages = useMemo(() => {
-      return Math.ceil(managementFilteredFolios.length / rowsPerPage);
-    }, [managementFilteredFolios, rowsPerPage]);
-
-    // Reset page when filters change
-    useEffect(() => {
-      setEventMasterPage(1);
-      setActiveEventsPage(1);
-      setCompletedEventsPage(1);
-    }, [managementSearchTerm, managementStatusFilter, managementDateFilterMode, managementDateFilterSingle, managementDateFilterFrom, managementDateFilterTo]);
-
-    useEffect(() => {
-      setManagementDateFilterMode(getManagementTabDefaultDateFilter(managementMainTab));
-      setManagementDateFilterSingle('');
-      setManagementDateFilterFrom('');
-      setManagementDateFilterTo('');
-    }, [managementMainTab]);
-
-    useEffect(() => {
-      setInvoicesPage(1);
-    }, [managementInvoiceSearch, managementMainTab]);
-
-    useEffect(() => {
-      setReceiptsPage(1);
-    }, [managementReceiptSearch, managementMainTab]);
-
-    useEffect(() => {
-      setQuotesPage(1);
-    }, [managementQuoteSearch, managementMainTab]);
-
-    useEffect(() => {
-      setFoliosPage(1);
-    }, [managementFolioSearch, managementMainTab]);
-
-    const handleMarkEventAsCompleted = (event: any) => {
-      const wasCompleted = markEventAsCompleted(event);
-      if (!wasCompleted) return;
-      setManagementMainTab('events');
-      setManagementStatusFilter('completed');
-      setEventMasterPage(1);
-    };
-
-    // Function to open or create folio for an event
-    const handleOpenEventFolio = (event: any) => {
-      try {
-        if (!event || !event.id) {
-          console.error('Invalid event provided to handleOpenEventFolio');
-          return;
-        }
-        
-        // Check if folio already exists for this event
-        const existingFolio = eventFolios.find(f => f.eventId === event.id);
-        
-        if (existingFolio) {
-          const invoice = eventInvoices?.find((inv: any) => inv.eventId === event.id);
-          const opening = buildOpeningFolioEntries(event, invoice);
-          const provisional = (existingFolio.entries || []).find((entry: EventFolioEntry) => entry.reference === EVENT_CHARGE_REF);
-          const desiredCharge = opening.find((entry) => entry.reference === EVENT_CHARGE_REF);
-          const hasInvoiceEntry = (existingFolio.entries || []).some((entry: EventFolioEntry) =>
-            entry.reference === invoice?.id || entry.description === 'Invoice'
-          );
-          const needsCharge = !hasInvoiceEntry && !provisional && opening.length > 0;
-          const staleCharge = !hasInvoiceEntry && provisional && desiredCharge && Number(provisional.debit) !== Number(desiredCharge.debit);
-          if (needsCharge || staleCharge) {
-            const kept = staleCharge
-              ? (existingFolio.entries || []).filter((entry: EventFolioEntry) => entry.reference !== EVENT_CHARGE_REF && entry.reference !== `DEP-${event.id}`)
-              : (existingFolio.entries || []);
-            let balance = existingFolio.openingBalance || 0;
-            const entries = [...kept, ...opening].map((entry: EventFolioEntry) => {
-              balance = balance + Number(entry.debit || 0) - Number(entry.credit || 0);
-              return { ...entry, balance };
-            });
-            const chargedFolio = {
-              ...existingFolio,
-              entries,
-              updatedAt: new Date().toISOString(),
-            };
-            setEventFolios(prev => prev.map((folio) => folio.id === existingFolio.id ? chargedFolio : folio));
-            openFolioDetails(chargedFolio);
-          } else {
-            openFolioDetails(existingFolio);
-          }
-        } else {
-          // Create new folio and open it
-          const invoice = eventInvoices?.find((inv: any) => inv.eventId === event.id);
-          const entries = buildOpeningFolioEntries(event, invoice);
-          
-          const newFolio: EventFolio = {
-            id: genId('FOL'),
-            eventId: event.id,
-            eventName: event.eventName || 'Unnamed Event',
-            clientName: event.organization || 'Unknown Client',
-            status: 'Open',
-            openingBalance: 0,
-            createdAt: new Date().toISOString().split('T')[0],
-            updatedAt: new Date().toISOString().split('T')[0],
-            entries: entries
-          };
-          
-          // Add the new folio to the list
-          setEventFolios(prev => [...prev, newFolio]);
-          
-          // Open the newly created folio
-          openFolioDetails(newFolio);
-          
-          trackEvent('Events.EventCreated', { action: 'folio_created', eventId: event.id, folioId: newFolio.id });
-        }
-      } catch (error) {
-        console.error('Error opening/creating folio:', error);
-        alert('Failed to open folio. Please try again.');
-      }
-    };
-
-    // Open invoice edit from the invoices table using the full invoice detail edit form
-    const openInvoiceFromTable = (invoice: EventInvoice) => {
-      // Use the same full form as "Create/Edit Invoice" from folio
-      openInvoiceDetailEdit(invoice);
-    };
-
-    // Wrapper functions for function view exports using filteredManagedEvents
-    const exportManagementFunctionSchedulePDF = () => {
-      try {
-        printFunctionScheduleFromEvents(
-          filteredManagedEvents,
-          managementGanttTimelineTitle || 'Filtered Events',
-          'function_schedule_pdf_exported'
-        );
-      } catch (error) {
-        console.error('Error exporting function schedule PDF:', error);
-        alert('Failed to export function schedule. Please try again.');
-      }
-    };
-
-    const downloadManagementFunctionScheduleCSV = () => {
-      try {
-        trackEvent('Events.EventCreated', { action: 'function_schedule_csv_downloaded', eventCount: filteredManagedEvents.length });
-        
-        const headers = ['Item', 'Arrival Date', 'Departure Date', 'Organization', 'Event Name', 'Programme Type', 'No. of Pax', 'No. of Rooms', 'Room Nights', 'Conference Days', 'Event Venue', 'Food & Beverage', 'Housekeeping/Front Desk', 'Status'];
-        const rows = filteredManagedEvents.map((event: any, index: number) => {
-          const rooms = eventRoomCount(event);
-          const days = computeEventDurationDays(event);
-          return [
-            index + 1,
-            eventStartValue(event),
-            eventEndValue(event),
-            event.organization || '',
-            event.eventName || '',
-            getProgrammeType(event),
-            event.pax || event.expectedPax || 0,
-            rooms ?? '',
-            rooms ? rooms * days : '',
-            days,
-            event.venueName || event.venue || 'Unassigned',
-            functionFbDuties(event),
-            functionHkDuties(event),
-            getConfirmedStatusLabel(event.eventStatus || event.status)
-          ];
-        });
-        
-        const csvContent = [headers, ...rows].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `function-schedule-${new Date().toISOString().split('T')[0]}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      } catch (error) {
-        console.error('Error downloading function schedule CSV:', error);
-        alert('Failed to download function schedule. Please try again.');
-      }
-    };
-
-    const printDepartmentFunctionBriefing = () => {
-      const events = filteredManagedEvents;
-      const departmentRows = (title: string, duty: (event: any) => string) =>
-        events
-          .map((event: any) => `
-            <tr>
-              <td>${event.eventName || '—'}</td>
-              <td>${event.organization || '—'}</td>
-              <td>${eventStartValue(event) || '—'} – ${eventEndValue(event) || '—'}</td>
-              <td>${event.venueName || event.venue || '—'}</td>
-              <td>${event.pax || event.expectedPax || 0}</td>
-              <td>${duty(event)}</td>
-            </tr>`)
-          .join('');
-
-      const html = `<!DOCTYPE html>
-        <html>
-          <head>
-            <meta charset="utf-8" />
-            <title>Function Schedule — Department Briefing</title>
-            <style>
-              body { font-family: Arial, sans-serif; margin: 24px; color: #111827; }
-              h1 { font-size: 22px; margin-bottom: 4px; }
-              h2 { font-size: 16px; margin: 24px 0 8px; }
-              p { color: #6b7280; font-size: 13px; }
-              table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
-              th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; font-size: 12px; }
-              th { background: #f9fafb; }
-            </style>
-          </head>
-          <body>
-            <h1>Function Schedule — Department Briefing</h1>
-            <p>Post or circulate this sheet. Duties come from the BEO on Event Master.</p>
-            <h2>Food &amp; Beverage</h2>
-            <table>
-              <thead><tr><th>Event</th><th>Organization</th><th>Dates</th><th>Venue</th><th>Pax</th><th>Duty</th></tr></thead>
-              <tbody>${departmentRows('Food & Beverage', functionFbDuties) || '<tr><td colspan="6">No events.</td></tr>'}</tbody>
-            </table>
-            <h2>Housekeeping / Front Desk</h2>
-            <table>
-              <thead><tr><th>Event</th><th>Organization</th><th>Dates</th><th>Venue</th><th>Pax</th><th>Duty</th></tr></thead>
-              <tbody>${departmentRows('Housekeeping', functionHkDuties) || '<tr><td colspan="6">No events.</td></tr>'}</tbody>
-            </table>
-            <h2>Reservations</h2>
-            <table>
-              <thead><tr><th>Event</th><th>Organization</th><th>Dates</th><th>Venue</th><th>Pax</th><th>Status</th></tr></thead>
-              <tbody>${departmentRows('Reservations', (event) => getConfirmedStatusLabel(event.eventStatus || event.status)) || '<tr><td colspan="6">No events.</td></tr>'}</tbody>
-            </table>
-          </body>
-        </html>`;
-
-      trackEvent('Events.EventCreated', { action: 'function_schedule_shared_to_departments', eventCount: events.length });
-      if (!openHtmlPrintWindow(html)) {
-        alert('Please allow pop-ups to print the department briefing.');
-      }
-    };
-
-    const renderCalendarEventChip = (event: any) => {
-      const stayType = eventStayType(event);
-      return (
-        <button
-          key={event.id}
-          type="button"
-          className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-left transition-colors hover:bg-slate-50"
-          onClick={() => openEventForView(event)}
-        >
-          <p className="truncate text-xs font-medium text-slate-900">{event.eventName || 'Unnamed Event'}</p>
-          <p className="truncate text-[11px] text-slate-500">
-            {event.venueName || 'No venue'} · {stayType === 'Residential' ? 'Res' : 'Non-res'}
-          </p>
-        </button>
-      );
-    };
-
-    const ganttBarTone = (event: any) => {
-      const status = event.eventStatus || event.status || 'confirmed';
-      switch (status) {
-        case 'in-progress':
-          return 'bg-amber-500 border-amber-600';
-        case 'completed':
-          return 'bg-slate-500 border-slate-600';
-        case 'billed':
-        case 'invoiced':
-          return 'bg-blue-500 border-blue-600';
-        case 'cancelled':
-          return 'bg-rose-400 border-rose-500';
-        case 'quote':
-          return 'bg-orange-400 border-orange-500';
-        default:
-          return 'bg-emerald-500 border-emerald-600';
-      }
-    };
-
-    return (
-      <div className="space-y-2 mt-2">
-        <h3 className="text-lg font-semibold text-ghana-black">Event Management</h3>
-
-        <div
-          role="tablist"
-          aria-label="Event management views"
-          className="flex w-full overflow-x-auto flex-nowrap gap-1 p-1 border border-gray-200 rounded-lg bg-gray-50 scrollbar-thin"
-        >
-          {managementTabOptions.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              role="tab"
-              aria-selected={managementMainTab === tab.key}
-              onClick={() => setManagementMainTab(tab.key)}
-              className={`whitespace-nowrap flex-shrink-0 px-3 min-h-9 rounded-md text-sm transition-colors ${
-                managementMainTab === tab.key
-                  ? 'bg-white text-ghana-black font-semibold shadow-sm'
-                  : 'text-gray-600 hover:text-ghana-black hover:bg-white/60'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        <EventsModuleFilters
-          searchTerm={managementFilterSearch}
-          onSearchChange={setManagementFilterSearch}
-          searchPlaceholder={managementFilterPlaceholder}
-          statusFilter={showManagementStatusFilter ? managementStatusFilter : undefined}
-          onStatusChange={showManagementStatusFilter ? setManagementStatusFilter : undefined}
-          statusOptions={showManagementStatusFilter ? managementStatusOptions : undefined}
-          dateFilterMode={managementDateFilterMode}
-          onDateFilterModeChange={setManagementDateFilterMode}
-          dateFilterSingle={managementDateFilterSingle}
-          onDateFilterSingleChange={setManagementDateFilterSingle}
-          dateFilterFrom={managementDateFilterFrom}
-          onDateFilterFromChange={setManagementDateFilterFrom}
-          dateFilterTo={managementDateFilterTo}
-          onDateFilterToChange={setManagementDateFilterTo}
-        />
-
-        <Tabs
-          selectedKey={managementMainTab}
-          onSelectionChange={(key) => {
-            const newTab = key as ManagementMainTabKey;
-            setManagementMainTab(newTab);
-          }}
-          classNames={{
-            base: 'w-full',
-            tabList: 'hidden',
-            panel: 'pt-0',
-          }}
-        >
-          <Tab key="events" title={`📊 Event Master (${managementTabCounts.events})`}>
-            <Card className={`mt-2 ${deskTableCardClassName}`}>
-              <CardBody className={deskTableCardBodyClassName}>
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="text-base font-semibold text-slate-800">Event Master</h3>
-                  <div className="flex flex-wrap items-center justify-end gap-2">
-                    <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-                      {([
-                        ['table', 'Table'],
-                        ['calendar', 'Calendar'],
-                        ['gantt', 'Gantt'],
-                        ['function', 'Function'],
-                      ] as const).map(([key, label]) => (
-                        <Button
-                          key={key}
-                          size="sm"
-                          variant={managementViewMode === key ? 'solid' : 'light'}
-                          color={managementViewMode === key ? 'primary' : 'default'}
-                          className="min-w-[4.5rem]"
-                          onPress={() => setManagementViewMode(key)}
-                        >
-                          {label}
-                        </Button>
-                      ))}
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="bordered"
-                      onPress={() => {
-                        if (managementViewMode === 'function') {
-                          exportManagementFunctionSchedulePDF();
-                        } else {
-                          exportEventsForView(managementViewMode as 'table' | 'calendar' | 'gantt', 'pdf');
-                        }
-                      }}
-                    >
-                      PDF
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="bordered"
-                      onPress={() => {
-                        if (managementViewMode === 'function') {
-                          downloadManagementFunctionScheduleCSV();
-                        } else {
-                          exportEventsForView(managementViewMode as 'table' | 'calendar' | 'gantt', 'csv');
-                        }
-                      }}
-                    >
-                      Excel
-                    </Button>
-                    <Button color="primary" variant="solid" size="sm" onPress={openNewEventModal}>
-                      New event
-                    </Button>
-                  </div>
-                </div>
-                {managementViewMode === 'table' && (
-                <>
-                <Table
-                  aria-label="Events management table"
-                  removeWrapper
-                  classNames={managementTableClassNames}
-                >
-                  <TableHeader>
-                    <TableColumn key="eventId">
-                      {renderSortableHeader('Event ID', 'eventId', eventMasterSort, handleEventMasterSort)}
-                    </TableColumn>
-                    <TableColumn key="eventName">
-                      {renderSortableHeader('Event', 'eventName', eventMasterSort, handleEventMasterSort)}
-                    </TableColumn>
-                    <TableColumn key="stayType">
-                      {renderSortableHeader('Type', 'stayType', eventMasterSort, handleEventMasterSort)}
-                    </TableColumn>
-                    <TableColumn key="venueName">
-                      {renderSortableHeader('Venue', 'venueName', eventMasterSort, handleEventMasterSort)}
-                    </TableColumn>
-                    <TableColumn key="startDate">
-                      {renderSortableHeader('Start', 'startDate', eventMasterSort, handleEventMasterSort)}
-                    </TableColumn>
-                    <TableColumn key="endDate">
-                      {renderSortableHeader('End', 'endDate', eventMasterSort, handleEventMasterSort)}
-                    </TableColumn>
-                    <TableColumn key="duration">
-                      {renderSortableHeader('Days', 'duration', eventMasterSort, handleEventMasterSort)}
-                    </TableColumn>
-                    <TableColumn key="pax">
-                      {renderSortableHeader('Pax', 'pax', eventMasterSort, handleEventMasterSort)}
-                    </TableColumn>
-                    <TableColumn key="status">
-                      {renderSortableHeader('Status', 'status', eventMasterSort, handleEventMasterSort)}
-                    </TableColumn>
-                    <TableColumn key="coordinator">
-                      {renderSortableHeader('Coordinator', 'coordinator', eventMasterSort, handleEventMasterSort)}
-                    </TableColumn>
-                    <TableColumn key="clientContact">
-                      {renderSortableHeader('Client', 'clientContact', eventMasterSort, handleEventMasterSort)}
-                    </TableColumn>
-                    <TableColumn key="amount" align="end">
-                      {renderSortableHeader('Amount', 'amount', eventMasterSort, handleEventMasterSort)}
-                    </TableColumn>
-                    <TableColumn key="outstanding" align="end">
-                      {renderSortableHeader('Outstanding', 'outstanding', eventMasterSort, handleEventMasterSort)}
-                    </TableColumn>
-                    <TableColumn key="actions" align="end"> </TableColumn>
-                  </TableHeader>
-                  <TableBody emptyContent="No events in this view.">
-                    {pagedEventMasterRows.map((event: any) => {
-                          const durationDays = computeEventDurationDays(event);
-                          const amount = eventChargeAmount(event);
-                          const outstanding = eventAmountDue(event);
-                          const coordinator = resolveEventCoordinator(event);
-                          const bucket = eventDeskBucket(event);
-                          const existingInvoice = eventInvoices.find((inv) => inv.eventId === event.id);
-                          return (
-                        <TableRow
-                          key={event.id}
-                          className="cursor-pointer hover:bg-gray-50"
-                          onClick={() => handleOpenEventFolio(event)}
-                        >
-                          <TableCell>
-                            <span className="whitespace-nowrap font-mono text-xs text-gray-600">
-                              {formatEventId(event.id)}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <div className="max-w-[16rem]">
-                              <p className="truncate font-semibold text-ghana-black" title={event.eventName || 'Unnamed Event'}>{event.eventName || 'Unnamed Event'}</p>
-                              <p className="text-xs text-slate-500 mt-0.5">{event.organization || '—'}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <span className="whitespace-nowrap text-slate-700">{eventStayType(event)}</span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="whitespace-nowrap text-slate-700">{event.venueName || '—'}</span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="whitespace-nowrap">
-                              {formatEventTableDate(event.arrivalDate || event.startDate) || '—'}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="whitespace-nowrap">
-                              {formatEventTableDate(event.departureDate || event.endDate) || '—'}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="tabular-nums text-slate-600">{durationDays}</span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="tabular-nums text-slate-600">{event.pax || event.expectedPax || 0}</span>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex flex-col gap-1 items-start">
-                              <Chip size="sm" variant="flat" color={getConfirmedStatusColor(event.eventStatus || event.status || 'confirmed') as any}>
-                                {getConfirmedStatusLabel(event.eventStatus || event.status || 'confirmed')}
-                              </Chip>
-                              {event.eventStatus === 'in-progress' && eventEndsToday(event) && (
-                                <span className="text-[11px] text-amber-700">Ends today</span>
-                              )}
-                              {bucket === 'active' && event.checkedIn && (
-                                <span className="text-[11px] text-emerald-700">In house</span>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <span className={`whitespace-nowrap text-sm ${coordinator === UNASSIGNED_STAFF ? 'text-amber-600' : 'text-slate-700'}`}>
-                              {coordinator}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="whitespace-nowrap" title={event.contactPhone || undefined}>
-                              {getEventClientContactName(event)}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="whitespace-nowrap tabular-nums font-medium text-slate-900">
-                              {formatCurrency(amount)}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="whitespace-nowrap tabular-nums font-medium text-slate-900">
-                              {formatCurrency(outstanding)}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            {(() => {
-                              const openInvoice = () => {
-                                if (bucket === 'quote' && existingInvoice) {
-                                  openInvoiceDetailEdit(existingInvoice);
-                                  return;
-                                }
-                                if (existingInvoice) openEventInvoiceForm(event, existingInvoice);
-                                else openEventInvoiceForm(event);
-                              };
-                              const openPay = () => {
-                                openReceiptModal('create', undefined, {
-                                  ...event,
-                                  invoiceId: existingInvoice?.id,
-                                  balance: existingInvoice?.balance ?? event.balance ?? 0,
-                                });
-                              };
-                              const openBeo = () => {
-                                setSelectedEventForBEO(event);
-                                generateBEO(event);
-                                generateFunctionSheet(event);
-                                setIsBEOModalOpen(true);
-                              };
-                              const canCheckIn =
-                                bucket === 'active' &&
-                                (event.eventStatus === 'confirmed' || event.status === 'confirmed') &&
-                                !event.checkedIn &&
-                                !scheduleHasEventComponent(event.dailySchedule || [], event.customParticulars || []);
-                              const canComplete =
-                                bucket === 'active' &&
-                                event.eventStatus !== 'completed' &&
-                                event.eventStatus !== 'billed';
-                              const inProgress = event.eventStatus === 'in-progress';
-                              const rowActions: { key: string; label: string; run: () => void }[] = [];
-                              if (bucket === 'quote') {
-                                rowActions.push(
-                                  { key: 'invoice', label: existingInvoice ? 'Invoice' : 'To invoice', run: openInvoice },
-                                  { key: 'edit', label: 'Edit', run: () => openEventForEdit(event, true) },
-                                  { key: 'print', label: 'Print', run: () => handleDownloadQuotePdf(event) },
-                                );
-                              } else if (bucket === 'active') {
-                                if (canCheckIn) rowActions.push({ key: 'checkin', label: 'Check in', run: () => checkInEventGroup(event) });
-                                if (canComplete && !inProgress) rowActions.push({ key: 'complete', label: 'Complete', run: () => handleMarkEventAsCompleted(event) });
-                                rowActions.push({ key: 'beo', label: 'BEO', run: openBeo });
-                              } else if (bucket === 'completed') {
-                                rowActions.push(
-                                  { key: 'pay', label: 'Pay', run: openPay },
-                                  { key: 'beo', label: 'BEO', run: openBeo },
-                                );
-                              } else {
-                                rowActions.push({ key: 'beo', label: 'BEO', run: openBeo });
-                              }
-                              const featured = inProgress ? undefined : rowActions.find((action) => action.key !== 'beo');
-                              const beoAction = rowActions.find((action) => action.key === 'beo');
-                              const moreActions = (inProgress ? rowActions : rowActions.filter((action) => action !== featured)).filter((action) => action.key !== 'beo');
-                              if (!featured && !inProgress && !beoAction) return null;
-                              return (
-                                <div className="flex justify-end items-center gap-1" onClick={(clickEvent) => clickEvent.stopPropagation()}>
-                                  {featured && (
-                                    <Button size="sm" variant="flat" color="primary" onPress={featured.run}>
-                                      {featured.label}
-                                    </Button>
-                                  )}
-                                  {inProgress && (
-                                    <Button size="sm" variant="flat" color="warning" onPress={() => handleMarkEventAsCompleted(event)}>
-                                      End
-                                    </Button>
-                                  )}
-                                  {beoAction && (
-                                    <Button size="sm" variant="flat" onPress={beoAction.run}>
-                                      BEO
-                                    </Button>
-                                  )}
-                                  {moreActions.length > 0 && (
-                                    <Dropdown placement="bottom-end">
-                                      <DropdownTrigger>
-                                        <Button size="sm" variant="light" aria-label="More actions">
-                                          More
-                                        </Button>
-                                      </DropdownTrigger>
-                                      <DropdownMenu aria-label="Event actions">
-                                        {moreActions.map((action) => (
-                                          <DropdownItem key={action.key} onPress={action.run}>
-                                            {action.label}
-                                          </DropdownItem>
-                                        ))}
-                                      </DropdownMenu>
-                                    </Dropdown>
-                                  )}
-                                </div>
-                              );
-                            })()}
-                          </TableCell>
-                        </TableRow>
-                          );
-                        })}
-                  </TableBody>
-                </Table>
-                <div className="flex justify-end mt-3">
-                  <Pagination
-                    page={eventMasterPage}
-                    total={eventMasterPages}
-                    onChange={setEventMasterPage}
-                    showControls
-                    size="sm"
-                  />
-                </div>
-                </>
-                )}
-                {managementViewMode === 'calendar' && (
-                  <div className="space-y-4">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                      <div>
-                        <h5 className="text-base font-semibold text-slate-800">{calendarHeaderTitle}</h5>
-                        <p className="text-xs text-slate-500">
-                          {eventCalendarView === 'day'
-                            ? `${managementDayEvents.length} event${managementDayEvents.length === 1 ? '' : 's'} on this day`
-                            : eventCalendarView === 'week'
-                              ? `${managementCalendarWeekEventCount} event${managementCalendarWeekEventCount === 1 ? '' : 's'} this week`
-                              : `${managementCalendarMonthEventCount} event${managementCalendarMonthEventCount === 1 ? '' : 's'} in this month`}
-                          {eventCalendarView === 'month' && filteredManagedEvents.length !== managementCalendarMonthEventCount
-                            ? ` · ${filteredManagedEvents.length} match the current filters`
-                            : ''}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        <Button size="sm" variant="light" onPress={() => handleCalendarNavigate(-1)}>‹</Button>
-                        <Button size="sm" variant="bordered" onPress={handleCalendarToday}>Today</Button>
-                        <Button size="sm" variant="light" onPress={() => handleCalendarNavigate(1)}>›</Button>
-                        <Input
-                          size="sm"
-                          type={eventCalendarView === 'month' ? 'month' : 'date'}
-                          aria-label={eventCalendarView === 'month' ? 'Month' : 'Date'}
-                          value={eventCalendarView === 'month' ? calendarMonthInputValue : calendarDateInputValue}
-                          onChange={(e) => handleCalendarDateInput(e.target.value)}
-                          className="w-[150px]"
-                        />
-                        <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-                          {(['month', 'week', 'day'] as const).map((view) => (
-                            <Button
-                              key={view}
-                              size="sm"
-                              variant={eventCalendarView === view ? 'solid' : 'light'}
-                              color={eventCalendarView === view ? 'primary' : 'default'}
-                              className="min-w-[4.25rem] capitalize"
-                              onPress={() => handleCalendarViewChange(view)}
-                            >
-                              {view}
-                            </Button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                    {eventCalendarView === 'month' && (
-                      <div className="grid grid-cols-7 gap-1.5">
-                        {calendarDayNames.map(day => (
-                          <div key={`header-${day}`} className="px-1 py-1 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                            {day}
-                          </div>
-                        ))}
-                        {calendarGridDays.map(dayInfo => {
-                          const cellEvents = managementEventsByDay.get(dayInfo.key) || [];
-                          const isToday = dayInfo.key === todayKey;
-                          return (
-                            <div
-                              key={dayInfo.key}
-                              className={`min-h-[108px] rounded-lg border p-2 ${
-                                dayInfo.isCurrentMonth ? 'bg-white border-slate-200' : 'bg-slate-50 border-slate-100'
-                              } ${isToday ? 'border-primary-400 ring-1 ring-primary-300' : ''}`}
-                            >
-                              <div className="mb-1.5 flex items-center justify-between">
-                                <span className={`text-xs font-semibold ${
-                                  isToday ? 'text-primary-600' : dayInfo.isCurrentMonth ? 'text-slate-700' : 'text-slate-400'
-                                }`}>
-                                  {dayInfo.date.getDate()}
-                                </span>
-                                {cellEvents.length > 0 && (
-                                  <span className="text-[10px] tabular-nums text-slate-400">{cellEvents.length}</span>
-                                )}
-                              </div>
-                              <div className="space-y-1">
-                                {cellEvents.slice(0, 3).map(renderCalendarEventChip)}
-                                {cellEvents.length > 3 && (
-                                  <p className="text-[11px] text-slate-500">+{cellEvents.length - 3} more</p>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {eventCalendarView === 'week' && (
-                      <div className="grid grid-cols-1 gap-2 lg:grid-cols-7">
-                        {calendarWeekDays.map(day => {
-                          const key = formatDateKey(day);
-                          const eventsForDay = managementEventsByDay.get(key) || [];
-                          const isToday = key === todayKey;
-                          return (
-                            <div
-                              key={key}
-                              className={`min-h-[160px] rounded-lg border p-2 ${
-                                isToday ? 'border-primary-400 bg-primary-50/40' : 'border-slate-200 bg-white'
-                              }`}
-                            >
-                              <div className="mb-2 flex items-center justify-between">
-                                <span className={`text-xs font-semibold ${isToday ? 'text-primary-700' : 'text-slate-700'}`}>
-                                  {day.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })}
-                                </span>
-                                {eventsForDay.length > 0 && (
-                                  <span className="text-[10px] tabular-nums text-slate-400">{eventsForDay.length}</span>
-                                )}
-                              </div>
-                              <div className="space-y-1">
-                                {eventsForDay.length === 0 ? (
-                                  <p className="text-[11px] text-slate-400">No events</p>
-                                ) : (
-                                  eventsForDay.map(renderCalendarEventChip)
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {eventCalendarView === 'day' && (
-                      <Table
-                        aria-label="Events for selected day"
-                        removeWrapper
-                        classNames={managementTableClassNames}
-                      >
-                        <TableHeader>
-                          <TableColumn>Event ID</TableColumn>
-                          <TableColumn>Event</TableColumn>
-                          <TableColumn>Type</TableColumn>
-                          <TableColumn>Venue</TableColumn>
-                          <TableColumn>Start</TableColumn>
-                          <TableColumn>End</TableColumn>
-                          <TableColumn>Pax</TableColumn>
-                          <TableColumn>Status</TableColumn>
-                          <TableColumn align="end"> </TableColumn>
-                        </TableHeader>
-                        <TableBody emptyContent="No events on this day.">
-                          {managementDayEvents.map((event: any) => (
-                            <TableRow key={event.id}>
-                              <TableCell>
-                                <span className="whitespace-nowrap font-mono text-xs text-slate-500">{formatEventId(event.id)}</span>
-                              </TableCell>
-                              <TableCell>
-                                <div className="min-w-[160px] max-w-[260px]">
-                                  <p className="font-medium text-slate-900 leading-5">{event.eventName || 'Unnamed Event'}</p>
-                                  <p className="text-xs text-slate-500 mt-0.5">{event.organization || '—'}</p>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <span className="whitespace-nowrap">{eventStayType(event)}</span>
-                              </TableCell>
-                              <TableCell>
-                                <span className="whitespace-nowrap">{event.venueName || '—'}</span>
-                              </TableCell>
-                              <TableCell>
-                                <span className="whitespace-nowrap">{formatEventTableDate(eventStartValue(event)) || '—'}</span>
-                              </TableCell>
-                              <TableCell>
-                                <span className="whitespace-nowrap">{formatEventTableDate(eventEndValue(event)) || '—'}</span>
-                              </TableCell>
-                              <TableCell>
-                                <span className="tabular-nums">{event.pax || event.expectedPax || 0}</span>
-                              </TableCell>
-                              <TableCell>
-                                <Chip size="sm" variant="flat" color={getConfirmedStatusColor(event.eventStatus || event.status || 'confirmed') as any}>
-                                  {getConfirmedStatusLabel(event.eventStatus || event.status || 'confirmed')}
-                                </Chip>
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex justify-end">
-                                  <Button size="sm" variant="light" onPress={() => openEventForView(event)}>
-                                    View
-                                  </Button>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    )}
-                  </div>
-                )}
-                {managementViewMode === 'gantt' && (
-                  <div className="space-y-4">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                      <div>
-                        <h5 className="text-base font-semibold text-slate-800">{managementGanttTimelineTitle}</h5>
-                        <p className="text-xs text-slate-500">
-                          {managementGanttTimelineRangeLabel} · daily pax totals at the bottom
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        <Button size="sm" variant="light" onPress={() => handleManagementGanttNavigate(-1)}>‹</Button>
-                        <Button
-                          size="sm"
-                          variant="bordered"
-                          onPress={() => setManagementGanttReferenceDate(getStartOfMonth(new Date()))}
-                        >
-                          Today
-                        </Button>
-                        <Button size="sm" variant="light" onPress={() => handleManagementGanttNavigate(1)}>›</Button>
-                        <Input
-                          size="sm"
-                          type="month"
-                          aria-label="Timeline month"
-                          value={managementGanttMonthInputValue}
-                          onChange={(e) => handleManagementGanttMonthInput(e.target.value)}
-                          className="w-[150px]"
-                        />
-                        <Select
-                          size="sm"
-                          aria-label="Venue"
-                          selectedKeys={[managementSelectedGanttVenue]}
-                          onSelectionChange={(keys) => setManagementSelectedGanttVenue(Array.from(keys)[0] as string)}
-                          className="w-48"
-                          items={[{ id: 'all', name: 'All venues' }, ...managementGanttVenues]}
-                        >
-                          {/* @ts-ignore - NextUI Select typing struggles with dynamic items */}
-                          {(venue: { id: string; name: string }) => (
-                            <SelectItem key={venue.id} textValue={venue.name}>
-                              {venue.name}
-                            </SelectItem>
-                          )}
-                        </Select>
-                      </div>
-                    </div>
-
-                    {managementGanttVenuesToRender.length === 0 ? (
-                      <div className="rounded-lg border border-dashed border-slate-200 py-10 text-center text-sm text-slate-500">
-                        No venues in the current Event Master filters.
-                      </div>
-                    ) : (
-                      <div className="overflow-x-auto rounded-lg border border-slate-200">
-                        <div className="min-w-[760px]">
-                          <div className="flex border-b border-slate-200 bg-slate-50">
-                            <div className="w-40 shrink-0 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                              Venue
-                            </div>
-                            <div className="relative flex-1">
-                              <div className="flex">
-                                {managementTimelineDays.map((day) => {
-                                  const isToday = formatDateKey(day) === todayKey;
-                                  return (
-                                    <div
-                                      key={`gantt-head-${formatDateKey(day)}`}
-                                      className={`flex-1 py-1.5 text-center ${isToday ? 'text-primary-600' : 'text-slate-400'}`}
-                                    >
-                                      <div className="text-[10px] uppercase">{day.toLocaleDateString(undefined, { weekday: 'narrow' })}</div>
-                                      <div className={`text-[11px] tabular-nums ${isToday ? 'font-semibold' : ''}`}>{day.getDate()}</div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          </div>
-                          {managementGanttVenuesToRender.map((venue) => {
-                            const eventsForVenueTimeline = getManagedEventsForVenue(
-                              venue.id,
-                              managementGanttTimelineStart,
-                              managementGanttTimelineEnd
-                            );
-                            const positionedEvents: Array<{
-                              event: any;
-                              leftPercent: number;
-                              widthPercent: number;
-                              overlapIndex: number;
-                            }> = [];
-                            const levelEndMap = new Map<number, Date>();
-
-                            eventsForVenueTimeline.forEach((event: any) => {
-                              const rawStart = parseEventDate(eventStartValue(event));
-                              const rawEnd = parseEventDate(eventEndValue(event)) || rawStart;
-                              if (!rawStart || !rawEnd) return;
-                              const clampedStart = clampDateToRange(rawStart, managementGanttTimelineStart, managementGanttTimelineEnd);
-                              const clampedEnd = clampDateToRange(rawEnd, managementGanttTimelineStart, managementGanttTimelineEnd);
-                              const offsetDays = Math.max(0, Math.round((clampedStart.getTime() - managementGanttTimelineStart.getTime()) / DAY_IN_MS));
-                              const spanDays = Math.max(1, Math.round((clampedEnd.getTime() - clampedStart.getTime()) / DAY_IN_MS) + 1);
-                              const leftPercent = (offsetDays / managementTimelineDayCount) * 100;
-                              const widthPercent = Math.min(100, (spanDays / managementTimelineDayCount) * 100);
-
-                              for (const [level, endDate] of Array.from(levelEndMap.entries())) {
-                                if (endDate.getTime() < clampedStart.getTime()) {
-                                  levelEndMap.delete(level);
-                                }
-                              }
-
-                              let overlapIndex = 0;
-                              while (levelEndMap.has(overlapIndex)) {
-                                overlapIndex += 1;
-                              }
-                              levelEndMap.set(overlapIndex, clampedEnd);
-
-                              positionedEvents.push({ event, leftPercent, widthPercent, overlapIndex });
-                            });
-
-                            const laneCount = Math.max(1, positionedEvents.reduce((max, row) => Math.max(max, row.overlapIndex + 1), 0));
-                            const trackHeight = 16 + laneCount * 30;
-                            const today = toStartOfDay(new Date());
-                            const todayInRange = today >= managementGanttTimelineStart && today <= managementGanttTimelineEnd;
-                            const todayLeft = todayInRange
-                              ? (Math.round((today.getTime() - managementGanttTimelineStart.getTime()) / DAY_IN_MS) / managementTimelineDayCount) * 100
-                              : null;
-
-                            return (
-                              <div key={venue.id} className="flex border-b border-slate-100 last:border-b-0">
-                                <div className="w-40 shrink-0 px-3 py-3">
-                                  <p className="text-sm font-medium text-slate-800">{venue.name}</p>
-                                  <p className="text-xs text-slate-500">
-                                    {eventsForVenueTimeline.length} event{eventsForVenueTimeline.length === 1 ? '' : 's'}
-                                  </p>
-                                </div>
-                                <div className="relative flex-1 bg-white" style={{ height: trackHeight }}>
-                                  <div className="pointer-events-none absolute inset-0 flex">
-                                    {managementTimelineDays.map((day) => (
-                                      <div
-                                        key={`gantt-grid-${venue.id}-${formatDateKey(day)}`}
-                                        className={`flex-1 border-l border-slate-100 first:border-l-0 ${
-                                          formatDateKey(day) === todayKey ? 'bg-primary-50/50' : ''
-                                        }`}
-                                      />
-                                    ))}
-                                  </div>
-                                  {todayLeft !== null && (
-                                    <div
-                                      className="pointer-events-none absolute top-0 bottom-0 z-20 w-px bg-primary-500"
-                                      style={{ left: `${todayLeft}%` }}
-                                    />
-                                  )}
-                                  {positionedEvents.length === 0 && (
-                                    <div className="absolute inset-0 flex items-center px-3 text-xs text-slate-400">
-                                      No events in this month
-                                    </div>
-                                  )}
-                                  {positionedEvents.map(({ event, leftPercent, widthPercent, overlapIndex }) => (
-                                    <Tooltip
-                                      key={event.id}
-                                      content={
-                                        <div className="max-w-xs space-y-0.5 p-1 text-slate-700">
-                                          <p className="text-xs font-mono text-slate-400">{formatEventId(event.id)}</p>
-                                          <p className="text-sm font-semibold text-slate-900">{event.eventName || 'Unnamed Event'}</p>
-                                          <p className="text-xs text-slate-500">{event.organization || '—'}</p>
-                                          <p className="text-xs text-slate-500">
-                                            {formatEventTableDate(eventStartValue(event)) || '—'} – {formatEventTableDate(eventEndValue(event)) || '—'}
-                                          </p>
-                                          <p className="text-xs text-slate-500">
-                                            {eventStayType(event)} · {event.pax || event.expectedPax || 0} pax
-                                          </p>
-                                        </div>
-                                      }
-                                    >
-                                      <button
-                                        type="button"
-                                        className={`absolute h-6 overflow-hidden rounded border px-2 text-left text-white ${ganttBarTone(event)}`}
-                                        style={{
-                                          left: `calc(${leftPercent}% + 1px)`,
-                                          width: `calc(${widthPercent}% - 2px)`,
-                                          top: 8 + overlapIndex * 30,
-                                          minWidth: 8,
-                                        }}
-                                        onClick={() => openEventForView(event)}
-                                        onMouseEnter={() => setHoveredGanttEventId(event.id)}
-                                        onMouseLeave={() => setHoveredGanttEventId(null)}
-                                      >
-                                        <span className="block truncate text-[11px] font-medium leading-6">
-                                          {event.pax || event.expectedPax || 0} · {event.eventName || event.organization || formatEventId(event.id)}
-                                        </span>
-                                      </button>
-                                    </Tooltip>
-                                  ))}
-                                </div>
-                              </div>
-                            );
-                          })}
-                          <div className="flex border-t border-slate-200 bg-slate-50">
-                            <div className="w-40 shrink-0 px-3 py-2">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Total pax</p>
-                              <p className="text-[11px] text-slate-400">
-                                {managementGanttDailyPax.reduce((sum, value) => sum + value, 0).toLocaleString()} this month
-                              </p>
-                            </div>
-                            <div className="flex flex-1">
-                              {managementGanttDailyPax.map((total, index) => {
-                                const day = managementTimelineDays[index];
-                                const isToday = day ? formatDateKey(day) === todayKey : false;
-                                return (
-                                  <div
-                                    key={`gantt-total-${index}`}
-                                    className={`flex-1 py-2 text-center tabular-nums ${
-                                      isToday ? 'bg-primary-50 font-semibold text-primary-700' : 'text-slate-700'
-                                    }`}
-                                  >
-                                    <span className="text-xs">{total > 0 ? total.toLocaleString() : '—'}</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-                {managementViewMode === 'function' && (
-                  <div>
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
-                      <div>
-                        <h5 className="font-semibold text-lg sm:text-xl">📋 Provisional Function Schedule</h5>
-                        <p className="text-xs text-slate-500">
-                          Department duties from the BEO. Print or send so F&B, housekeeping, and reservations can post their work.
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Button 
-                          size="sm" 
-                          color="primary" 
-                          variant="flat"
-                          className="flex-1 sm:flex-none min-w-[120px]"
-                          onPress={() => exportManagementFunctionSchedulePDF()}
-                        >
-                          🖨️ Print Schedule
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          color="secondary" 
-                          variant="flat"
-                          className="flex-1 sm:flex-none min-w-[120px]"
-                          onPress={() => downloadManagementFunctionScheduleCSV()}
-                        >
-                          📊 Download CSV
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          color="success" 
-                          variant="flat"
-                          className="flex-1 sm:flex-none min-w-[120px]"
-                          onPress={printDepartmentFunctionBriefing}
-                        >
-                          📧 Send to Departments
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          color="warning" 
-                          variant="flat"
-                          className="flex-1 sm:flex-none min-w-[120px]"
-                          onPress={() => window.print()}
-                        >
-                          🖨️ Print Schedule
-                        </Button>
-                      </div>
-                    </div>
-                    
-                    <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                      <div className="flex items-center gap-2">
-                        <span className="text-blue-600">📊</span>
-                        <span className="text-sm text-blue-800">
-                          <strong>Department sheet:</strong> {filteredManagedEvents.length} event{filteredManagedEvents.length === 1 ? '' : 's'} · complete a BEO on Event Master to fill F&B and housekeeping duties
-                        </span>
-                      </div>
-                    </div>
-                    <div className="overflow-x-auto">
-                      <Table aria-label="Function schedule table" removeWrapper classNames={managementTableClassNames}>
-                        <TableHeader>
-                          <TableColumn>ITEM</TableColumn>
-                          <TableColumn>ARRIVAL DATE</TableColumn>
-                          <TableColumn>DEPARTURE DATE</TableColumn>
-                          <TableColumn>ORGANIZATION</TableColumn>
-                          <TableColumn>PROG TYPE</TableColumn>
-                          <TableColumn>NO. OF PAX</TableColumn>
-                          <TableColumn>NO. OF RMS</TableColumn>
-                          <TableColumn>ROOM NIGHTS</TableColumn>
-                          <TableColumn>CONFERENCE DAYS</TableColumn>
-                          <TableColumn>EVENT VENUE</TableColumn>
-                          <TableColumn>FOOD & BEVERAGE</TableColumn>
-                          <TableColumn>HOUSEKEEPING/FRONT DESK</TableColumn>
-                          <TableColumn>RESERVATION STATUS</TableColumn>
-                        </TableHeader>
-                        <TableBody>
-                          {filteredManagedEvents.length > 0 ? (
-                            filteredManagedEvents.map((event, index) => {
-                              const arrivalDate = new Date(event.arrivalDate || event.startDate);
-                              const departureDate = new Date(event.departureDate || event.endDate);
-                              const dayNames = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
-                              const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-                              
-                              const formatDate = (date: Date) => {
-                                if (Number.isNaN(date.getTime())) return '—';
-                                const dayName = dayNames[date.getDay()];
-                                const day = date.getDate();
-                                const month = months[date.getMonth()];
-                                const getDaySuffix = (day: number) => {
-                                  if (day >= 11 && day <= 13) return 'TH';
-                                  switch (day % 10) {
-                                    case 1: return 'ST';
-                                    case 2: return 'ND';
-                                    case 3: return 'RD';
-                                    default: return 'TH';
-                                  }
-                                };
-                                return `${dayName} ${day}${getDaySuffix(day)} ${month}`;
-                              };
-                              
-                              const rooms = eventRoomCount(event);
-                              const days = computeEventDurationDays(event);
-                              
-                              const getStatusBadge = (status: string) => {
-                                const normalized = normalizeStatus(status);
-                                switch (normalized) {
-                                  case 'quote':
-                                    return <Badge color="warning" variant="flat">QUOTE</Badge>;
-                                  case 'confirmed':
-                                    return <Badge color="success" variant="flat">CONFIRMED</Badge>;
-                                  case 'invoiced':
-                                    return <Badge color="primary" variant="flat">INVOICED</Badge>;
-                                  case 'cancelled':
-                                    return <Badge color="danger" variant="flat">CANCELLED</Badge>;
-                                  default:
-                                    return <Badge color="default" variant="flat">{String(normalized || '').toUpperCase()}</Badge>;
-                                }
-                              };
-                              
-                              return (
-                                <TableRow key={event.id} className="hover:bg-gray-50 cursor-pointer">
-                                  <TableCell className="text-center font-medium">{index + 1}</TableCell>
-                                  <TableCell className="text-center">
-                                    <div className="font-medium">{formatDate(arrivalDate)}</div>
-                                  </TableCell>
-                                  <TableCell className="text-center">
-                                    <div className="font-medium">{formatDate(departureDate)}</div>
-                                  </TableCell>
-                                  <TableCell>
-                                    <div>
-                                      <p className="font-medium">{event.organization}</p>
-                                      <p className="text-xs text-gray-600">{event.eventName}</p>
-                                    </div>
-                                  </TableCell>
-                                  <TableCell className="text-center">
-                                    <Badge color="primary" variant="flat" className="text-xs">
-                                      {getProgrammeType(event)}
-                                    </Badge>
-                                  </TableCell>
-                                  <TableCell className="text-center font-medium">{event.pax || event.expectedPax || 0}</TableCell>
-                                  <TableCell className="text-center">
-                                    {rooms ?? 'N/A'}
-                                  </TableCell>
-                                  <TableCell className="text-center">
-                                    {rooms ? rooms * days : 'N/A'}
-                                  </TableCell>
-                                  <TableCell className="text-center font-medium">{days}</TableCell>
-                                  <TableCell>
-                                    <Badge color="secondary" variant="flat">{event.venueName}</Badge>
-                                  </TableCell>
-                                  <TableCell className="max-w-xs">
-                                    <div className="text-xs text-gray-700">
-                                      {functionFbDuties(event)}
-                                    </div>
-                                  </TableCell>
-                                  <TableCell className="max-w-xs">
-                                    <div className="text-xs text-gray-700">
-                                      {functionHkDuties(event)}
-                                    </div>
-                                  </TableCell>
-                                  <TableCell className="text-center">
-                                    {getStatusBadge(event.status)}
-                                  </TableCell>
-                                </TableRow>
-                              );
-                            })
-                          ) : (
-                            <TableRow>
-                              <TableCell colSpan={13} className="text-center py-8">
-                                <div className="text-gray-500">
-                                  <div className="text-2xl mb-2">📅</div>
-                                  <p>No confirmed events found</p>
-                                  <p className="text-sm">Events will appear here when added to the system</p>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </div>
-                )}
-              </CardBody>
-            </Card>
-          </Tab>
-          <Tab key="invoices" title={`🧾 Invoices (${managementTabCounts.invoices})`}>
-            <Card className={`mt-2 ${deskTableCardClassName}`}>
-              <CardBody className={deskTableCardBodyClassName}>
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-base font-semibold text-slate-800">Invoices</h3>
-                  <Button size="sm" color="primary" variant="solid" onPress={openCreateInvoicePicker}>
-                    New invoice
-                  </Button>
-                </div>
-                <Table
-                  aria-label="Event invoices"
-                  removeWrapper
-                  classNames={managementTableClassNames}
-                >
-                    <TableHeader>
-                      <TableColumn key="invoiceId">
-                        {renderSortableHeader('Invoice', 'invoiceId', invoiceSort, handleInvoiceSort)}
-                      </TableColumn>
-                      <TableColumn key="eventName">
-                        {renderSortableHeader('Event', 'eventName', invoiceSort, handleInvoiceSort)}
-                      </TableColumn>
-                      <TableColumn key="issueDate">
-                        {renderSortableHeader('Issued', 'issueDate', invoiceSort, handleInvoiceSort)}
-                      </TableColumn>
-                      <TableColumn key="dueDate">
-                        {renderSortableHeader('Due', 'dueDate', invoiceSort, handleInvoiceSort)}
-                      </TableColumn>
-                      <TableColumn key="total" align="end">
-                        {renderSortableHeader('Total', 'total', invoiceSort, handleInvoiceSort)}
-                      </TableColumn>
-                      <TableColumn key="balance" align="end">
-                        {renderSortableHeader('Balance', 'balance', invoiceSort, handleInvoiceSort)}
-                      </TableColumn>
-                      <TableColumn key="status">
-                        {renderSortableHeader('Status', 'status', invoiceSort, handleInvoiceSort)}
-                      </TableColumn>
-                    </TableHeader>
-                    <TableBody emptyContent="No invoices in this view.">
-                      {paginatedInvoices.map(invoice => (
-                        <TableRow
-                          key={invoice.id}
-                          className="cursor-pointer hover:bg-gray-50"
-                          onClick={() => {
-                            const relatedEvent = managedEvents.find((e: any) => e.id === invoice.eventId) || allEvents.find((e: any) => e.id === invoice.eventId);
-                            if (!relatedEvent) {
-                              alert('Could not find the related event for this invoice. It may have been removed.');
-                              return;
-                            }
-                            handleOpenEventFolio(relatedEvent);
-                          }}
-                        >
-                          <TableCell>
-                            <div className="font-mono text-xs text-slate-700">{getConferenceInvoiceNumber(invoice.id, invoice.eventId) || invoice.id}</div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="min-w-[160px] max-w-[260px]">
-                              <p className="font-medium text-slate-900 leading-5">{invoice.eventName || '—'}</p>
-                              <p className="text-xs text-slate-500 mt-0.5">{invoice.clientName || '—'}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <span className="whitespace-nowrap">{formatDateDisplay(invoice.issueDate)}</span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="whitespace-nowrap">{formatDateDisplay(invoice.dueDate)}</span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="whitespace-nowrap tabular-nums font-medium text-slate-900">{formatCurrency(invoice.total)}</span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="whitespace-nowrap tabular-nums">{formatCurrency(invoice.balance)}</span>
-                          </TableCell>
-                          <TableCell>
-                            <Chip size="sm" variant="flat" color={invoiceStatusMeta[invoice.status].color as any}>
-                              {invoiceStatusMeta[invoice.status].label}
-                            </Chip>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                  <div className="flex justify-end mt-3">
-                      <Pagination
-                        total={Math.max(1, invoicesPages)}
-                        page={invoicesPage}
-                        onChange={setInvoicesPage}
-                        showControls
-                        size="sm"
-                      />
-                    </div>
-              </CardBody>
-            </Card>
-          </Tab>
-          <Tab key="receipts" title={`💳 Receipts (${managementTabCounts.receipts})`}>
-            <Card className={`mt-2 ${deskTableCardClassName}`}>
-              <CardBody className={deskTableCardBodyClassName}>
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-base font-semibold text-slate-800">Receipts</h3>
-                  <Button size="sm" color="primary" variant="solid" onPress={openCreateReceiptPicker}>
-                    Record receipt
-                  </Button>
-                </div>
-                <Table
-                  aria-label="Event receipts"
-                  removeWrapper
-                  classNames={managementTableClassNames}
-                >
-                    <TableHeader>
-                      <TableColumn key="receiptId">
-                        {renderSortableHeader('Receipt', 'receiptId', receiptSort, handleReceiptSort)}
-                      </TableColumn>
-                      <TableColumn key="eventName">
-                        {renderSortableHeader('Event', 'eventName', receiptSort, handleReceiptSort)}
-                      </TableColumn>
-                      <TableColumn key="date">
-                        {renderSortableHeader('Date', 'date', receiptSort, handleReceiptSort)}
-                      </TableColumn>
-                      <TableColumn key="amount" align="end">
-                        {renderSortableHeader('Amount', 'amount', receiptSort, handleReceiptSort)}
-                      </TableColumn>
-                      <TableColumn key="method">
-                        {renderSortableHeader('Method', 'method', receiptSort, handleReceiptSort)}
-                      </TableColumn>
-                      <TableColumn key="reference">
-                        {renderSortableHeader('Reference', 'reference', receiptSort, handleReceiptSort)}
-                      </TableColumn>
-                      <TableColumn key="invoiceId">
-                        {renderSortableHeader('Invoice', 'invoiceId', receiptSort, handleReceiptSort)}
-                      </TableColumn>
-                      <TableColumn key="actions" align="end"> </TableColumn>
-                    </TableHeader>
-                    <TableBody emptyContent="No receipts in this view.">
-                      {paginatedReceipts.map(receipt => (
-                        <TableRow
-                          key={receipt.id}
-                          className="cursor-pointer hover:bg-gray-50"
-                          onClick={() => openReceiptModal('edit', receipt)}
-                        >
-                          <TableCell>
-                            <div className="font-mono text-xs text-slate-700">{getConferenceReceiptNumber(receipt.id, receipt.eventId) || receipt.id}</div>
-                            <div className="text-xs text-slate-400">{receipt.recordedBy || receipt.id}</div>
-                            {receipt.status === 'Void' && (
-                              <Chip size="sm" variant="flat" color="danger" className="mt-1">
-                                Void
-                              </Chip>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <div className="min-w-[160px] max-w-[260px]">
-                              <p className="font-medium text-slate-900 leading-5">{receipt.eventName || '—'}</p>
-                              <p className="text-xs text-slate-500 mt-0.5">{receipt.clientName || '—'}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <span className="whitespace-nowrap">{formatDateDisplay(receipt.date)}</span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="whitespace-nowrap tabular-nums font-medium text-slate-900">{formatCurrency(receipt.amount)}</span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="whitespace-nowrap">{paymentMethodLabel(resolveReceiptMethod(receipt.method))}</span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="whitespace-nowrap text-slate-600">{receipt.reference || '—'}</span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="whitespace-nowrap font-mono text-xs text-slate-500">{getConferenceInvoiceNumber(receipt.invoiceId, receipt.eventId) || receipt.invoiceId || '—'}</span>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex justify-end" onClick={(clickEvent) => clickEvent.stopPropagation()}>
-                              <Button size="sm" variant="light" onPress={() => handleDownloadReceiptPdf(receipt)}>
-                                Print
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                  <div className="flex justify-end mt-3">
-                      <Pagination
-                        total={Math.max(1, receiptsPages)}
-                        page={receiptsPage}
-                        onChange={setReceiptsPage}
-                        showControls
-                        size="sm"
-                      />
-                    </div>
-              </CardBody>
-            </Card>
-          </Tab>
-          <Tab key="folios" title={`📂 Folios (${managementTabCounts.folios})`}>
-            <Card className={`mt-2 ${deskTableCardClassName}`}>
-              <CardBody className={deskTableCardBodyClassName}>
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-base font-semibold text-slate-800">Folios</h3>
-                  <Button size="sm" color="primary" variant="solid" onPress={openCreateFolioPicker}>
-                    New folio
-                  </Button>
-                </div>
-                <Table
-                  aria-label="Event folios"
-                  removeWrapper
-                  classNames={managementTableClassNames}
-                >
-                    <TableHeader>
-                      <TableColumn key="folioId">
-                        {renderSortableHeader('Folio', 'folioId', folioSort, handleFolioSort)}
-                      </TableColumn>
-                      <TableColumn key="createdAt">
-                        {renderSortableHeader('Date', 'createdAt', folioSort, handleFolioSort)}
-                      </TableColumn>
-                      <TableColumn key="eventName">
-                        {renderSortableHeader('Event', 'eventName', folioSort, handleFolioSort)}
-                      </TableColumn>
-                      <TableColumn key="status">
-                        {renderSortableHeader('Status', 'status', folioSort, handleFolioSort)}
-                      </TableColumn>
-                      <TableColumn key="charges" align="end">
-                        {renderSortableHeader('Charges', 'charges', folioSort, handleFolioSort)}
-                      </TableColumn>
-                      <TableColumn key="payments" align="end">
-                        {renderSortableHeader('Payments', 'payments', folioSort, handleFolioSort)}
-                      </TableColumn>
-                      <TableColumn key="balance" align="end">
-                        {renderSortableHeader('Balance', 'balance', folioSort, handleFolioSort)}
-                      </TableColumn>
-                      <TableColumn key="updatedAt">
-                        {renderSortableHeader('Updated', 'updatedAt', folioSort, handleFolioSort)}
-                      </TableColumn>
-                    </TableHeader>
-                    <TableBody emptyContent="No folios in this view.">
-                      {paginatedFolios.map(folio => {
-                        const totals = calculateFolioTotals(folio);
-                        const balance = getFolioCurrentBalance(folio);
-                        return (
-                          <TableRow
-                            key={folio.id}
-                            className="cursor-pointer hover:bg-gray-50"
-                            onClick={() => openFolioDetails(folio)}
-                          >
-                            <TableCell>
-                              <span className="whitespace-nowrap font-medium text-slate-900">{formatFolioNumber(folio.id)}</span>
-                            </TableCell>
-                            <TableCell>
-                              <span className="whitespace-nowrap text-slate-600">{formatDateDisplay(folio.createdAt)}</span>
-                            </TableCell>
-                            <TableCell>
-                              <div className="min-w-[160px] max-w-[260px]">
-                                <p className="font-medium text-slate-900 leading-5">{folio.eventName || '—'}</p>
-                                <p className="text-xs text-slate-500 mt-0.5">{folio.clientName || '—'}</p>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <Chip
-                                size="sm"
-                                variant="flat"
-                                color={
-                                  folio.status === 'Void'
-                                    ? 'danger'
-                                    : getFolioSettledStatus(folio) === 'Open'
-                                      ? 'warning'
-                                      : 'success'
-                                }
-                              >
-                                {folio.status === 'Void'
-                                  ? 'Void'
-                                  : getFolioSettledStatus(folio) === 'Closed'
-                                    ? 'Settled'
-                                    : 'Open'}
-                              </Chip>
-                            </TableCell>
-                            <TableCell>
-                              <span className="whitespace-nowrap tabular-nums">{formatCurrency(totals.debits)}</span>
-                            </TableCell>
-                            <TableCell>
-                              <span className="whitespace-nowrap tabular-nums">{formatCurrency(totals.credits)}</span>
-                            </TableCell>
-                            <TableCell>
-                              <span className="whitespace-nowrap tabular-nums font-medium text-slate-900">{formatCurrency(balance)}</span>
-                            </TableCell>
-                            <TableCell>
-                              <span className="whitespace-nowrap">{formatDateDisplay(folio.updatedAt)}</span>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                  <div className="flex justify-end mt-3">
-                      <Pagination
-                        total={Math.max(1, foliosPages)}
-                        page={foliosPage}
-                        onChange={setFoliosPage}
-                        showControls
-                        size="sm"
-                      />
-                    </div>
-              </CardBody>
-            </Card>
-          </Tab>
-        </Tabs>
-      </div>
-    );
-  };
+  
 
   const getFilteredAndSortedEvents = () => {
     let filteredEvents = allEvents;
@@ -15223,16 +10738,29 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     // Here you would typically open a contract modal or generate PDF
   };
 
-  const handleContractDownload = () => {
-    if (!selectedClient) return;
-    openContractPrintableWindow(selectedClient, selectedContractEventInfo, 'download');
-    trackEvent('Analytics.ActionClicked', { action: 'ContractDownloaded', clientId: selectedClient.id });
+  const contractTemplateBlocks = (templateKey?: string) => {
+    const state = useSettingsStore.getState();
+    const key = templateKey || (state.printing as any)['event-contract'];
+    return (state.getDocBuilderTemplate(key) || getBuiltInTemplate(key))?.blocks;
   };
 
-  const handleContractPrint = () => {
+  const handleContractPrint = (templateKey?: string) => {
     if (!selectedClient) return;
-    openContractPrintableWindow(selectedClient, selectedContractEventInfo, 'print');
+    const hotel = buildOrgProfile(useSettingsStore.getState() as any);
+    openPrintPreview('event-contract', templateKey || '', buildContractPrintData(selectedClient, selectedContractEventInfo, hotel));
     trackEvent('Analytics.ActionClicked', { action: 'ContractPrinted', clientId: selectedClient.id });
+  };
+
+  const handleContractDocx = (templateKey?: string) => {
+    if (!selectedClient) return;
+    const state = useSettingsStore.getState();
+    const hotel = buildOrgProfile(state as any);
+    const terms = contractTermsFromBlocks(contractTemplateBlocks(templateKey), hotel.name);
+    void downloadContractDocx(buildContractModel(selectedClient, selectedContractEventInfo, hotel, terms)).catch((err) => {
+      console.error('Contract Word download failed', err);
+      alert('The Word file could not be created. Try again.');
+    });
+    trackEvent('Analytics.ActionClicked', { action: 'ContractDocxDownloaded', clientId: selectedClient.id });
   };
 
   // Removed local add-client modal; creation now redirects to canonical form
@@ -15243,7 +10771,351 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     trackEvent('Analytics.ActionClicked', { action: 'EventsClientEdited', clientId: selectedClient?.id });
     console.log('Client edited successfully');
   };
+    const eventsScreen = {
+    DAY_IN_MS,
+    EVENT_CHARGE_REF,
+    PRE_EVENT_STATUS_OPTIONS,
+    activeFolio,
+    activeFolioBalance,
+    activeFolioTotals,
+    activePrintTab,
+    addDays,
+    addExtraLineToDay,
+    addMonths,
+    allEvents,
+    balanceDue,
+    beoCoordinatorOptions,
+    beoDepartmentOptions,
+    beoForm,
+    beoResponsibleOptions,
+    beoWorkspaceTab,
+    buildOpeningFolioEntries,
+    calculateFolioTotals,
+    calendarDateInputValue,
+    calendarDayNames,
+    calendarGridDays,
+    calendarHeaderTitle,
+    calendarMonthInputValue,
+    calendarWeekDays,
+    capacityOk,
+    cappedPrepaymentAmount,
+    checkInEventGroup,
+    clampDateToRange,
+    clashCount,
+    clientContactName,
+    closeEventWorkspace,
+    closeFolioModal,
+    closeReceiptWorkspace,
+    closeVenueModal,
+    computeDayAmounts,
+    computeEventDurationDays,
+    conferenceRate,
+    conferenceRates,
+    confirmCreateInvoiceForEvent,
+    confirmDocCaution,
+    conflictingEvents,
+    createCreditNote,
+    createDebitNote,
+    customParticulars,
+    dailySchedule,
+    defaultDayRate,
+    deleteActiveFolio,
+    deleteActiveReceipt,
+    deleteFolioEntry,
+    detailedTaxRows,
+    dinnerRate,
+    discountEnabled,
+    discountType,
+    discountValue,
+    docCautionPrompt,
+    editingEvent,
+    editingEventDocSection,
+    editingService,
+    editingVenue,
+    endDate,
+    eventAmountDue,
+    eventCalendarDate,
+    eventCalendarView,
+    eventChargeAmount,
+    eventCoordinator,
+    eventEndsToday,
+    eventFolios,
+    eventInvoices,
+    eventName,
+    eventReceipts,
+    eventStaffOptions,
+    eventStatus,
+    eventSubmitting,
+    eventTaxExempt,
+    eventTotals,
+    expectedPax,
+    exportEventsForView,
+    exportFunctionSchedulePDF,
+    exportFunctionSheetPDF,
+    filteredFolioEntries,
+    filteredModernVenues,
+    folioAccountCols,
+    folioComposerOpen,
+    folioCreateError,
+    folioCreateForm,
+    folioEntryForm,
+    folioEntrySearch,
+    folioPageCount,
+    folioPageRows,
+    folioSafePage,
+    folioSortDir,
+    folioSortKey,
+    followUpDate,
+    formatCurrency,
+    formatDateDisplay,
+    formatDateKey,
+    formatEventId,
+    formatFolioEntryCopy,
+    formatFolioNumber,
+    formatQuoteNumber,
+    frontOfficeGuests,
+    generateBEO,
+    generateFunctionSheet,
+    getConferenceInvoiceNumber,
+    getConferenceReceiptNumber,
+    getEndOfMonth,
+    getEventClientName,
+    getEventDisplayName,
+    getEventsUsingVenue,
+    getFolioCandidateEvents,
+    getFolioCurrentBalance,
+    getFolioEventLabel,
+    getFolioSettledStatus,
+    getInvoiceReceiptLabel,
+    getInvoiceableProformas,
+    getNextSortState,
+    getProformaPickerLabel,
+    getProgrammeType,
+    getStartOfMonth,
+    getStatusColor,
+    handleAddBeoChecklist,
+    handleAddBeoInstruction,
+    handleAddBeoTimeline,
+    handleAddFolioEntry,
+    handleCalendarDateInput,
+    handleCalendarNavigate,
+    handleCalendarToday,
+    handleCalendarViewChange,
+    handleContractDocx,
+    handleContractPrint,
+    handleCreateFolio,
+    handleDeleteVenue,
+    handleDownloadInvoicePdf,
+    handleDownloadQuotePdf,
+    handleDownloadReceiptPdf,
+    handleEditInvoiceFromFolio,
+    handleEditReceiptFromFolio,
+    handleEventSubmit,
+    handleExportEventXls,
+    handleInvoiceDetailsSave,
+    handleInvoiceSave,
+    handleOpenContractFromEvent,
+    handlePrintEventFolio,
+    handlePrintEventInvoicePdf,
+    handlePrintQuotePdf,
+    handleReceiptSave,
+    handleRemoveBeoChecklist,
+    handleRemoveBeoInstruction,
+    handleRemoveBeoTimeline,
+    handleSaveBeoForm,
+    handleSendFunctionSheetToDepartments,
+    handleServiceSubmit,
+    handleVenueFieldChange,
+    handleVenueSubmit,
+    hasWarnings,
+    hiddenParticulars,
+    invoiceCreateEventId,
+    invoiceErrors,
+    invoiceForm,
+    invoiceModalMode,
+    invoiceStatusMeta,
+    isAdjustMode,
+    isBEOModalOpen,
+    isClientEditModalOpen,
+    isClientViewModalOpen,
+    isContractModalOpen,
+    isCreatingEvent,
+    isCreatingInvoiceFromFolio,
+    isEditingInvoiceDetails,
+    isEventModalOpen,
+    isFolioCreateModalOpen,
+    isFolioModalOpen,
+    isInvoiceEventPickerOpen,
+    isInvoiceModalOpen,
+    isReceiptModalOpen,
+    isResidential,
+    isServiceModalOpen,
+    isVenueModalOpen,
+    isViewMode,
+    lastCreatedInvoiceId,
+    linkedEventInvoice,
+    linkedEventReceipts,
+    listSelectableTemplates,
+    lunchRate,
+    managementMainTab,
+    managementStatusFilter,
+    markEventAsCompleted,
+    reopenEndedEvent,
+    cancelMissedEvent,
+    modernVenues,
+    nextAction,
+    normalizeStatus,
+    openCreateFolioPicker,
+    openCreateInvoicePicker,
+    openCreateReceiptPicker,
+    openEventForEdit,
+    openEventForView,
+    openEventInvoiceForm,
+    openFolioDetails,
+    openInvoiceDetailEdit,
+    openNewEventModal,
+    openReceiptFromInvoice,
+    openReceiptModal,
+    openVenueModal,
+    orgClientEmail,
+    orgClientId,
+    orgContactPhone,
+    orgName,
+    orgSearch,
+    padNumber,
+    parseDateValue,
+    particularLabels,
+    phase1Error,
+    prepaymentDisplay,
+    prepaymentEnabled,
+    prepaymentType,
+    prepaymentValue,
+    printFunctionScheduleFromEvents,
+    processRefund,
+    ratesByParticulars,
+    receiptErrors,
+    receiptForm,
+    receiptInvoiceLocked,
+    receiptInvoiceQuery,
+    receiptMethodLabels,
+    receiptMethods,
+    receiptModalMode,
+    receiptPrintAfterSave,
+    refreshTaxRules,
+    removeExtraLineFromDay,
+    reportingEvents,
+    resolveCoordinatorValue,
+    resolveEventCoordinator,
+    resolveEventTemplateKey,
+    reverseFolioEntry,
+    roomRate,
+    scheduleDataMap,
+    selectedClient,
+    selectedContractEventInfo,
+    selectedInvoiceTemplate,
+    selectedProformaTemplate,
+    selectedReceiptTemplate,
+    setActivePrintTab,
+    setBeoWorkspaceTab,
+    setClientContactName,
+    setConferenceRate,
+    setConferenceRates,
+    setCustomParticulars,
+    setDailySchedule,
+    setDefaultDayRate,
+    setDinnerRate,
+    setDiscountEnabled,
+    setDiscountType,
+    setDiscountValue,
+    setDocCautionPrompt,
+    setEndDate,
+    setEventCoordinator,
+    setEventFolios,
+    setEventName,
+    setEventStatus,
+    setEventTaxExempt,
+    setExpectedPax,
+    setFolioComposerOpen,
+    setFolioCreateError,
+    setFolioCreateForm,
+    setFolioEntryForm,
+    setFolioEntrySearch,
+    setFolioPage,
+    setFollowUpDate,
+    setHiddenParticulars,
+    setInvoiceCreateEventId,
+    setInvoiceForm,
+    setIsBEOModalOpen,
+    setIsClientEditModalOpen,
+    setIsClientViewModalOpen,
+    setIsContractModalOpen,
+    setIsEditingInvoiceDetails,
+    setIsFolioCreateModalOpen,
+    setIsInvoiceEventPickerOpen,
+    setIsInvoiceModalOpen,
+    setIsResidential,
+    setIsServiceModalOpen,
+    setIsViewMode,
+    setLastCreatedInvoiceId,
+    setLunchRate,
+    setManagementMainTab,
+    setManagementStatusFilter,
+    setNextAction,
+    setOrgClientEmail,
+    setOrgClientId,
+    setOrgContactPhone,
+    setOrgName,
+    setOrgSearch,
+    setParticularLabels,
+    setPhase1Error,
+    setPrepaymentEnabled,
+    setPrepaymentType,
+    setPrepaymentValue,
+    setQuoteTaxExempt,
+    setRatesByParticulars,
+    setReceiptErrors,
+    setReceiptForm,
+    setReceiptInvoiceQuery,
+    setReceiptPrintAfterSave,
+    setRoomRate,
+    setSelectedContractEventInfo,
+    setSelectedEventForBEO,
+    setSelectedInvoiceTemplate,
+    setSelectedProformaTemplate,
+    setSelectedReceiptTemplate,
+    setShowDiscountModal,
+    setShowPrepaymentModal,
+    setStartDate,
+    setVenueKey,
+    setVenueSearchTerm,
+    setVenueStatusFilter,
+    showDiscountModal,
+    showPrepaymentModal,
+    showQuotePrintInModal,
+    sortFolioAccount,
+    sortRows,
+    sortedFolioEntries,
+    startDate,
+    toStartOfDay,
+    todayKey,
+    updateBeoChecklistItem,
+    updateBeoFormSection,
+    updateBeoInstruction,
+    updateBeoTimelineItem,
+    updateExtraLineOnDay,
+    updateScheduleData,
+    venueForm,
+    venueKey,
+    venueSearchTerm,
+    venueStatusFilter,
+    voidActiveFolio,
+    unvoidActiveFolio,
+    voidActiveReceipt,
+    unvoidActiveReceipt,
+  };
+
   return (
+    <EventsScreenProvider value={eventsScreen}>
     <>
       {!workspaceOnly && (
       <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
@@ -15272,143 +11144,10 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
               <EventManagementTab />
             </Tab>
             <Tab key="venues" title={`🏢 Venue Management (${filteredModernVenues.length})`}>
-              <div className="space-y-3 mt-2">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold text-ghana-black">Venue Management</h3>
-                  <Button 
-                    color="success" 
-                    variant="solid"
-                    onClick={() => openVenueModal(null)}
-                  >
-                    ➕ New Venue
-                  </Button>
-                </div>
-
-                <EventsModuleFilters
-                  searchTerm={venueSearchTerm}
-                  onSearchChange={setVenueSearchTerm}
-                  searchPlaceholder="Search venues by name, type, or location..."
-                  statusFilter={venueStatusFilter}
-                  onStatusChange={setVenueStatusFilter}
-                  statusOptions={[
-                    { key: 'all', label: 'All Statuses' },
-                    { key: 'available', label: 'Available' },
-                    { key: 'booked', label: 'Booked' },
-                    { key: 'setup', label: 'Setup' },
-                    { key: 'maintenance', label: 'Maintenance' },
-                    { key: 'inactive', label: 'Inactive' },
-                  ]}
-                  showDateFilter={false}
-                />
-
-                {/* Venues Table */}
-                <Card className={deskTableCardClassName}>
-                  <CardHeader className="px-3 pb-0">
-                    <h4 className="font-semibold">All Venues ({filteredModernVenues.length})</h4>
-                  </CardHeader>
-                  <CardBody className={deskTableCardBodyClassName}>
-                    <Table
-                      aria-label="Venues table"
-                      removeWrapper
-                      classNames={{
-                        ...worksheetTableClassNames,
-                        base: 'max-w-full overflow-x-auto',
-                        table: 'w-full min-w-max',
-                      }}
-                    >
-                      <TableHeader>
-                        <TableColumn>Venue</TableColumn>
-                        <TableColumn>Type</TableColumn>
-                        <TableColumn>Capacity</TableColumn>
-                        <TableColumn>Price/Day</TableColumn>
-                        <TableColumn>Status</TableColumn>
-                        <TableColumn>Features</TableColumn>
-                        <TableColumn>Actions</TableColumn>
-                      </TableHeader>
-                      <TableBody>
-                        {filteredModernVenues.map((venue) => (
-                          <TableRow
-                            key={venue.id}
-                            className="cursor-pointer hover:bg-gray-50"
-                            onClick={() => openVenueModal(venue)}
-                          >
-                            <TableCell className="whitespace-normal">
-                              <div className="min-w-[14rem]">
-                                <p className="font-medium leading-5">{venue.name}</p>
-                                <p className="text-sm leading-5 text-gray-600">{venue.location}</p>
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <Chip size="sm" variant="flat" color="primary" className="capitalize">
-                                {venue.type}
-                              </Chip>
-                            </TableCell>
-                            <TableCell>
-                              <Chip size="sm" variant="flat" color="primary">
-                                {venue.capacity} people
-                              </Chip>
-                            </TableCell>
-                            <TableCell>
-                              <span className="font-medium">₵{(venue.basePrice || 0).toLocaleString()}</span>
-                            </TableCell>
-                            <TableCell>
-                              <Badge color={getStatusColor(venue.status) as any} variant="flat">
-                                {venue.status === 'inactive' ? 'Inactive' : venue.status}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex flex-wrap gap-1">
-                                {venue.features.slice(0, 2).map((feature, index) => (
-                                  <Chip key={index} size="sm" variant="flat" color="secondary">
-                                    {feature}
-                                  </Chip>
-                                ))}
-                                {venue.features.length > 2 && (
-                                  <Chip size="sm" variant="flat" color="default">
-                                    +{venue.features.length - 2} more
-                                  </Chip>
-                                )}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex gap-2" onClick={(clickEvent) => clickEvent.stopPropagation()}>
-                                {getEventsUsingVenue(venue).length > 0 ? (
-                                  venue.status === 'inactive' ? (
-                                    <Button size="sm" variant="flat" isDisabled>
-                                      In use
-                                    </Button>
-                                  ) : (
-                                    <Button
-                                      size="sm"
-                                      color="warning"
-                                      variant="flat"
-                                      onClick={() => handleDeleteVenue(venue)}
-                                    >
-                                      Deactivate
-                                    </Button>
-                                  )
-                                ) : (
-                                  <Button
-                                    size="sm"
-                                    color="danger"
-                                    variant="flat"
-                                    onClick={() => handleDeleteVenue(venue)}
-                                  >
-                                    Delete
-                                  </Button>
-                                )}
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </CardBody>
-                </Card>
-              </div>
+              <VenueManagementTab />
             </Tab>
             <Tab key="quoting" title={`💰 Guest Rates (${guestRatesFilteredCount})`}>
-              <ConferenceRateManagement onFilteredCountChange={setGuestRatesFilteredCount} />
+              <GuestRatesPanel onFilteredCountChange={setGuestRatesFilteredCount} />
             </Tab>
             <Tab key="reports" title="📊 Reports & Analysis">
               <div className="mt-2">
@@ -15430,2983 +11169,17 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     </div>
       )}
 
-      <Modal
-        isOpen={isEventModalOpen}
-        onOpenChange={(open) => {
-          if (!open) closeEventWorkspace();
-        }}
-        onClose={closeEventWorkspace}
-        size="5xl"
-        scrollBehavior="inside"
-      >
-        <ModalContent className="mx-auto w-[calc(100vw-1.5rem)] max-w-[1200px] px-4 py-5 sm:px-6 md:w-[94vw] md:px-8 xl:w-[65vw] xl:px-10 xl:py-8">
-          <ModalHeader>
-            <div className="flex items-center gap-2">
-              <span className="text-2xl">🎉</span>
-              <div>
-                <h3 className="text-lg font-semibold">
-                  {isEditingInvoiceDetails
-                    ? (eventInvoices.some((inv) => inv.eventId === editingEvent?.id) ? 'Edit Invoice' : 'Create Invoice')
-                    : isCreatingEvent
-                      ? 'Create New Event'
-                      : isViewMode
-                        ? 'View Event'
-                        : 'Edit Event'
-                  }
-                </h3>
-                <p className="text-sm text-gray-600">
-                  {isEditingInvoiceDetails
-                    ? (eventInvoices.some((inv) => inv.eventId === editingEvent?.id)
-                      ? 'Same event form — confirm pax, dates and rates, then update the invoice.'
-                      : 'Select a proforma, confirm pax, dates and rates, then issue the invoice.')
-                    : 'Event details, client, schedule and rates'
-                  }
-                </p>
-              </div>
-            </div>
-          </ModalHeader>
-          <ModalBody className="py-2">
-            <div className="mb-4 grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
-            {/* Phase 1: Event Details & Client */}
-            <div>
-              <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                Phase 1: Event Details & Client
-                {isEditingInvoiceDetails && <Badge color="primary" variant="flat" className="ml-2 text-xs">Editable</Badge>}
-              </h4>
-              <div className="space-y-3">
-              {isEditingInvoiceDetails && !eventInvoices.some((inv) => inv.eventId === editingEvent?.id) && (
-                <Autocomplete
-                  size="sm"
-                  label="Proforma"
-                  placeholder="Select a quote / proforma"
-                  selectedKey={editingEvent?.id || null}
-                  items={getInvoiceableProformas().map((ev) => ({
-                    key: ev.id,
-                    label: getProformaPickerLabel(ev),
-                  }))}
-                  onSelectionChange={(key) => {
-                    if (key == null || String(key) === editingEvent?.id) return;
-                    const event = allEvents.find((ev) => ev.id === String(key));
-                    if (event) openEventInvoiceForm(event);
-                  }}
-                  description="Choose the quote to convert — the event form below stays the same"
-                >
-                  {(item) => (
-                    <AutocompleteItem key={item.key} textValue={item.label}>
-                      {item.label}
-                    </AutocompleteItem>
-                  )}
-                </Autocomplete>
-              )}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-[0.795fr_1.205fr]">
-                <Input
-                  size="sm"
-                  label="Event ID"
-                  placeholder={isCreatingEvent ? "Auto-generated on save" : formatEventId(editingEvent?.id) || "—"}
-                  value={formatEventId(editingEvent?.id) || (isCreatingEvent ? "" : "—")}
-                  isReadOnly
-                  className="font-semibold"
-                />
-                <Autocomplete
-                  size="sm"
-                  label="Organization"
-                  placeholder="Search client"
-                  selectedKey={orgClientId || undefined}
-                  inputValue={orgName}
-                  isReadOnly={isViewMode}
-                  isDisabled={isViewMode}
-                  onSelectionChange={(key) => {
-                    const id = typeof key === 'string' ? key : (key as any) || '';
-                    if (!id) {
-                      setOrgClientId('');
-                      setOrgName(orgSearch);
-                      return;
-                    }
-                    if (id.startsWith('custom:')) {
-                      const value = id.replace('custom:', '');
-                      setOrgClientId('');
-                      setOrgName(value);
-                      setOrgSearch(value);
-                      return;
-                    }
-                    const g = frontOfficeGuests.find(c => c.id === id);
-                    if (g) {
-                      const org = g.employerCompany || g.name || `${g.firstName || ''} ${g.lastName || ''}`.trim();
-                      const person = g.name || `${g.firstName || ''} ${g.lastName || ''}`.trim();
-                      setOrgClientId(g.id);
-                      setOrgName(org);
-                      setOrgSearch(org);
-                      setClientContactName(person);
-                      setOrgContactPhone(g.companyPhone || g.phone || '');
-                      setOrgClientEmail(g.email || '');
-                    }
-                  }}
-                  onInputChange={(value) => {
-                    setOrgSearch(value);
-                    setOrgName(value);
-                    setOrgClientId('');
-                    if (value.trim()) setPhase1Error((prev) => (prev === 'Organization is required' ? '' : prev));
-                  }}
-                  isInvalid={phase1Error === 'Organization is required'}
-                  errorMessage={phase1Error === 'Organization is required' ? phase1Error : undefined}
-                >
-                  {(() => {
-                    const q = (orgSearch || '').trim();
-                    const guests = frontOfficeGuests || [];
-                    const results = q.length >= 2
-                      ? guests.filter(g => {
-                          if (g.isActive === false) return false;
-                          const org = (g.employerCompany || '').toLowerCase();
-                          const name = (g.name || `${g.firstName || ''} ${g.lastName || ''}`).toLowerCase();
-                          const phone = (g.companyPhone || g.phone || '').toLowerCase();
-                          return org.includes(q.toLowerCase()) || name.includes(q.toLowerCase()) || phone.includes(q.toLowerCase());
-                        }).slice(0, 20)
-                      : [];
-                    return q.length >= 2 ? (
-                      <>
-                        <AutocompleteItem key={`custom:${q}`} textValue={q}>
-                          <div className="flex justify-between items-center w-full">
-                            <span className="font-medium">Use "{q}"</span>
-                            <span className="text-xs text-gray-500">Click to confirm</span>
-                          </div>
-                        </AutocompleteItem>
-                        {results.map(g => {
-                          const org = g.employerCompany || (g.name || `${g.firstName || ''} ${g.lastName || ''}`.trim());
-                          const person = g.name || `${g.firstName || ''} ${g.lastName || ''}`.trim();
-                          return (
-                            <AutocompleteItem key={g.id} textValue={`${org} ${person}`}>
-                              <div className="flex flex-col">
-                                <span className="font-medium">{org}</span>
-                                <span className="text-xs text-gray-600">{person} • {(g.companyPhone || g.phone || '')}</span>
-                              </div>
-                            </AutocompleteItem>
-                          );
-                        })}
-                      </>
-                    ) : null;
-                  })()}
-                </Autocomplete>
-                <Input
-                  size="sm"
-                  className="sm:col-span-2"
-                  label="Event Name"
-                  placeholder="Conference name"
-                  value={eventName}
-                  onChange={(e) => setEventName(e.target.value)}
-                  isReadOnly={isViewMode}
-                />
-                </div>
-
-                <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2">
-                  <Input
-                    size="sm"
-                    label="Client Contact Name"
-                  placeholder="On-site contact person"
-                  value={clientContactName}
-                  onChange={(e) => setClientContactName(e.target.value)}
-                  isReadOnly={isViewMode}
-                />
-                <Input
-                    size="sm"
-                    label="Contact Phone"
-                  placeholder="Phone number"
-                  value={orgContactPhone}
-                  onChange={(e) => setOrgContactPhone(e.target.value)}
-                  isReadOnly={isViewMode}
-                />
-                </div>
-                <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[1.2fr_0.8fr]">
-                  <Input
-                    size="sm"
-                    label="Client Email"
-                    placeholder="Email address"
-                    value={orgClientEmail}
-                    onChange={(e) => {
-                      setOrgClientEmail(e.target.value);
-                      if (!e.target.value || /[^\s@]+@[^\s@]+\.[^\s@]+/.test(e.target.value)) {
-                        setPhase1Error((prev) => (prev === 'Please enter a valid client email' ? '' : prev));
-                      }
-                    }}
-                    isReadOnly={isViewMode}
-                    isInvalid={phase1Error === 'Please enter a valid client email'}
-                    errorMessage={phase1Error === 'Please enter a valid client email' ? phase1Error : undefined}
-                  />
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id="isResidential"
-                      className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-                      checked={isResidential}
-                      onChange={(e) => setIsResidential(e.target.checked)}
-                      disabled={isViewMode}
-                    />
-                    <label htmlFor="isResidential" className="text-sm text-blue-800 font-semibold">
-                      🏨 Residential Events
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <Divider className="my-4 lg:hidden" />
-
-            {/* Phase 2: Event Dates & Venue */}
-            <div>
-              <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                Phase 2: Event Dates & Venue
-                {isEditingInvoiceDetails && <Badge color="primary" variant="flat" className="ml-2 text-xs">Editable</Badge>}
-              </h4>
-              <div className="space-y-3">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Input
-                  size="sm"
-                  label="Start Date"
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  isReadOnly={isViewMode && !isEditingInvoiceDetails}
-                  description={isEditingInvoiceDetails ? "Change to expand/contract schedule" : undefined}
-                />
-                <Input
-                  size="sm"
-                  label="End Date"
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  isReadOnly={isViewMode && !isEditingInvoiceDetails}
-                  description={isEditingInvoiceDetails ? "Change to expand/contract schedule" : undefined}
-                />
-                <Select
-                  size="sm"
-                  className="sm:col-span-2"
-                  label="Venue Selection"
-                  placeholder="Select venue"
-                  selectedKeys={venueKey ? new Set([venueKey]) : new Set()}
-                  onSelectionChange={(keys) => {
-                    const value = Array.from(keys)[0];
-                    if (typeof value === 'string' && value) {
-                      setVenueKey(value);
-                      setPhase1Error((prev) => (prev === 'Select a venue' || prev.startsWith('This venue is inactive') ? '' : prev));
-                    }
-                  }}
-                  isDisabled={isViewMode && !isEditingInvoiceDetails}
-                  isInvalid={phase1Error === 'Select a venue' || phase1Error.startsWith('This venue is inactive')}
-                  errorMessage={
-                    phase1Error === 'Select a venue' || phase1Error.startsWith('This venue is inactive')
-                      ? phase1Error
-                      : undefined
-                  }
-                >
-                  {(modernVenues || [])
-                    .filter((v) => v.status !== 'inactive' || v.id === venueKey)
-                    .map((v) => (
-                    <SelectItem key={v.id}>{`${v.name} (${v.capacity} pax)`}</SelectItem>
-                  ))}
-                </Select>
-                </div>
-
-                <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
-                  <Input
-                    size="sm"
-                    label="Expected Pax"
-                    type="number"
-                    placeholder="Attendees"
-                    value={expectedPax ? String(expectedPax) : ''}
-                    onChange={(e)=> setExpectedPax(parseInt(e.target.value || '0', 10) || 0)}
-                    className="flex-1"
-                    isReadOnly={isViewMode && !isEditingInvoiceDetails}
-                  />
-                  {isCreatingInvoiceFromFolio || isEditingInvoiceDetails ? (
-                    <Select
-                      size="sm"
-                      label={renderStatusLabel('Event Status', { key: 'invoiced', label: 'Invoiced', icon: '🧾' })}
-                      selectedKeys={new Set(['invoiced'])}
-                      isDisabled
-                    >
-                      <SelectItem key="invoiced">🧾 Invoiced</SelectItem>
-                    </Select>
-                  ) : (
-                    <Select
-                      size="sm"
-                      label={renderStatusLabel('Event Status')}
-                      selectedKeys={eventStatus ? new Set([eventStatus]) : new Set()}
-                      onSelectionChange={(keys) => {
-                        const selected = Array.from(keys)[0] as SimpleEventStatus;
-                        if (selected) setEventStatus(selected);
-                      }}
-                      isDisabled={isViewMode}
-                    >
-                      {PRE_EVENT_STATUS_OPTIONS.map(option => (
-                        <SelectItem key={option.key}>
-                          {option.icon ? `${option.icon} ` : ''}
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </Select>
-                  )}
-                  {!isCreatingInvoiceFromFolio && !isEditingInvoiceDetails && eventStatus !== 'invoiced' && (
-                    <div className="flex flex-col gap-2 sm:col-span-2">
-                      <span className="text-sm font-semibold text-gray-600">Availability & Conflicts</span>
-                      <div className="flex items-center gap-16">
-                      <Popover placement="bottom-start">
-                        <PopoverTrigger>
-                          <div
-                            className={`px-3 py-2 rounded-md text-xs whitespace-nowrap border font-semibold ${
-                              !venueKey || !expectedPax
-                                ? 'bg-gray-50 border-gray-200 text-gray-600'
-                                : capacityOk && clashCount === 0
-                                ? 'bg-green-50 border-green-200 text-green-700'
-                                : 'bg-yellow-50 border-yellow-200 text-yellow-700'
-                            } ${clashCount > 0 ? 'cursor-pointer' : ''}`}
-                          >
-                            {!venueKey || !expectedPax
-                              ? 'Select a venue and headcount'
-                              : capacityOk && clashCount === 0
-                              ? 'Availability: OK'
-                              : `Check: ${capacityOk ? 'OK capacity' : 'Capacity exceeded'}${
-                                  clashCount > 0 ? ` • ${clashCount} clash${clashCount > 1 ? 'es' : ''}` : ''
-                                }${hasWarnings ? ' • warnings' : ''}`}
-                          </div>
-                        </PopoverTrigger>
-                        <PopoverContent>
-                          <div className="p-3 text-sm min-w-[320px]">
-                            {clashCount === 0 ? (
-                              <div className="text-gray-700">No conflicting programmes in the selected range.</div>
-                            ) : (
-                              <div>
-                                <div className="font-medium mb-2 text-gray-800">Conflicting programmes</div>
-                                <ul className="space-y-2">
-                                  {conflictingEvents.slice(0, 5).map((ev: any) => (
-                                    <li key={ev.id} className="flex items-start gap-2">
-                                      <span className="mt-1">📅</span>
-                                      <div className="text-gray-700">
-                                        <div className="font-medium">
-                                          {ev.eventName} <span className="text-gray-500">• {ev.organization}</span>
-                                        </div>
-                                        <div className="text-xs text-gray-500">
-                                          {ev.venueName} • {ev.arrivalDate} → {ev.departureDate} • {ev.pax} pax
-                                        </div>
-                                      </div>
-                                    </li>
-                                  ))}
-                                </ul>
-                                {conflictingEvents.length > 5 && (
-                                  <div className="mt-2 text-xs text-gray-500">+ {conflictingEvents.length - 5} more…</div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </PopoverContent>
-                      </Popover>
-                      <div className="shrink-0 rounded-md border border-gray-200 bg-white px-3 py-2 text-xs font-semibold tabular-nums text-gray-800">
-                        {(() => {
-                          const spanCount = computeEventDurationDays({ arrivalDate: startDate, departureDate: endDate });
-                          const unit = isResidential
-                            ? (spanCount === 1 ? 'night' : 'nights')
-                            : (spanCount === 1 ? 'day' : 'days');
-                          return `${spanCount} ${unit}`;
-                        })()}
-                      </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-            </div>
-
-            <Divider className="my-4" />
-
-            {/* Phase 3: Daily Schedule & Headcounts */}
-            <div className="mb-6">
-              <h4 className="font-semibold text-lg mb-3 flex items-center gap-2">
-                📊 Phase 3: Daily Schedule & Headcounts
-                {isEditingInvoiceDetails && <Badge color="primary" variant="flat" className="ml-2 text-xs">✏️ Editable</Badge>}
-              </h4>
-              {isEditingInvoiceDetails && (
-                <div className="text-sm text-blue-600 bg-blue-50 p-3 rounded-md border border-blue-200 mb-4">
-                  💡 Editing invoice details. All changes will update the invoice totals but won't affect the original event quote.
-                </div>
-              )}
-              {/* Rates controls */}
-              <div className="mb-4 flex flex-wrap items-end gap-4">
-                <div className="flex items-center gap-3">
-                  <Switch size="sm" isSelected={!ratesByParticulars} onValueChange={(v)=> setRatesByParticulars(!v)} isDisabled={isViewMode} />
-                  <span className="text-sm">Rate by package</span>
-                </div>
-                {!ratesByParticulars ? (
-                  <>
-                    <Input size="sm" type="number" label="Default Daily Rate (₵/person)" value={String(defaultDayRate)} onChange={(e)=> setDefaultDayRate(parseFloat(e.target.value || '0') || 0)} className="w-56" isReadOnly={isViewMode} />
-                    {!isViewMode && <Button size="sm" variant="flat" onPress={()=> setDailySchedule(prev => prev.map(r => ({ ...r, rate: defaultDayRate || 0 })))}>Apply to All Days</Button>}
-                  </>
-                ) : (
-                  <div className="flex flex-wrap items-end gap-3">
-                    {isResidential && (
-                      <Input size="sm" type="number" label="Room Rate (₵)" value={String(roomRate)} onChange={(e)=> setRoomRate(parseFloat(e.target.value || '0') || 0)} className="w-40" isReadOnly={isViewMode} />
-                    )}
-                    <Input size="sm" type="number" label="Dinner Rate (₵)" value={String(dinnerRate)} onChange={(e)=> setDinnerRate(parseFloat(e.target.value || '0') || 0)} className="w-40" isReadOnly={isViewMode} />
-                    <Input size="sm" type="number" label="Lunch Rate (₵)" value={String(lunchRate)} onChange={(e)=> setLunchRate(parseFloat(e.target.value || '0') || 0)} className="w-40" isReadOnly={isViewMode} />
-                    <Input size="sm" type="number" label="Conference Rate (₵)" value={String(conferenceRate)} onChange={(e)=> setConferenceRate(parseFloat(e.target.value || '0') || 0)} className="w-40" isReadOnly={isViewMode} />
-                    {!isViewMode && <Button size="sm" color="primary" variant="flat" onPress={()=> setCustomParticulars(prev => [...prev, { id: `extra-${Date.now()}`, label: 'Extra Service', rate: 0 }])}>➕ Add Row</Button>}
-                  </div>
-                )}
-              </div>
-              
-              {/* Daily Schedule Table - Using plain HTML table for dynamic columns */}
-              <div className="overflow-x-auto rounded-lg border" style={{ scrollbarWidth: 'thin', scrollbarColor: '#9ca3af #f3f4f6' }}>
-                {dailySchedule.length === 0 ? (
-                  /* Empty state - no dates selected */
-                  <div className="py-12 text-center text-gray-500 bg-gray-50">
-                    <span className="text-5xl">📅</span>
-                    <p className="mt-3 text-lg">Please select Start and End dates to generate daily schedule</p>
-                  </div>
-                ) : !ratesByParticulars ? (
-                  /* Package Mode Table */
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                        {isResidential && (
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{particularLabels.rooms}</th>
-                        )}
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{particularLabels.dinnerPax}</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{particularLabels.lunchPax}</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{particularLabels.conferencePax}</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rate (₵)</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subtotal (₵)</th>
-                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-12">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {dailySchedule.map((row, idx) => {
-                        const c = computeDayAmounts(row);
-                        return (
-                          <tr key={row.date} className="hover:bg-gray-50">
-                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{row.date}</td>
-                            {isResidential && (
-                              <td className="px-4 py-3">
-                                <Input size="sm" type="number" value={String(row.rooms)} onChange={(e) => {
-                                  const v = parseInt(e.target.value || '0', 10) || 0;
-                                  setDailySchedule(prev => prev.map((r, i) => i === idx ? { ...r, rooms: v } : r));
-                                  updateScheduleData(row.date, { rooms: v });
-                                }} isReadOnly={isViewMode} className="w-20" />
-                              </td>
-                            )}
-                            <td className="px-4 py-3">
-                              <Input size="sm" type="number" value={String(row.dinnerPax)} onChange={(e) => {
-                                const v = parseInt(e.target.value || '0', 10) || 0;
-                                setDailySchedule(prev => prev.map((r, i) => i === idx ? { ...r, dinnerPax: v } : r));
-                                updateScheduleData(row.date, { dinnerPax: v });
-                              }} isReadOnly={isViewMode} className="w-20" />
-                            </td>
-                            <td className="px-4 py-3">
-                              <Input size="sm" type="number" value={String(row.lunchPax)} onChange={(e) => {
-                                const v = parseInt(e.target.value || '0', 10) || 0;
-                                setDailySchedule(prev => prev.map((r, i) => i === idx ? { ...r, lunchPax: v } : r));
-                                updateScheduleData(row.date, { lunchPax: v });
-                              }} isReadOnly={isViewMode} className="w-20" />
-                            </td>
-                            <td className="px-4 py-3">
-                              <Input size="sm" type="number" value={String(row.conferencePax)} onChange={(e) => {
-                                const v = parseInt(e.target.value || '0', 10) || 0;
-                                setDailySchedule(prev => prev.map((r, i) => i === idx ? { ...r, conferencePax: v } : r));
-                                updateScheduleData(row.date, { conferencePax: v });
-                              }} isReadOnly={isViewMode} className="w-20" />
-                            </td>
-                            <td className="px-4 py-3">
-                              <Input size="sm" type="number" value={String(row.rate)} onChange={(e) => {
-                                const v = parseFloat(e.target.value || '0') || 0;
-                                setDailySchedule(prev => prev.map((r, i) => i === idx ? { ...r, rate: v } : r));
-                                updateScheduleData(row.date, { rate: v });
-                              }} className="w-24" isReadOnly={isViewMode} />
-                            </td>
-                            <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">₵{c.subtotal.toFixed(2)}</td>
-                            <td className="px-4 py-3 text-center">
-                              {!isViewMode ? (
-                                <div className="space-y-2">
-                                  <Button size="sm" variant="flat" className="px-2" onPress={() => addExtraLineToDay(idx)} aria-label="Add extra">＋</Button>
-                                  {(row.extraLines || []).map((ln, lineIdx) => (
-                                    <div key={`${row.date}-ex-${ln.id}`} className="flex items-center gap-1">
-                                      <Input size="sm" value={ln.name} onChange={(e) => updateExtraLineOnDay(idx, lineIdx, { name: e.target.value })} className="w-24" />
-                                      <Input size="sm" type="number" value={String(ln.qty)} onChange={(e) => updateExtraLineOnDay(idx, lineIdx, { qty: parseInt(e.target.value || '0', 10) || 0 })} className="w-16" />
-                                      <Input size="sm" type="number" value={String(ln.unitPrice)} onChange={(e) => updateExtraLineOnDay(idx, lineIdx, { unitPrice: parseFloat(e.target.value || '0') || 0 })} className="w-20" />
-                                      <span className="text-xs text-gray-500">₵{((Number(ln.qty) || 0) * (Number(ln.unitPrice) || 0)).toFixed(2)}</span>
-                                      <Button size="sm" color="danger" variant="light" className="px-2" onPress={() => removeExtraLineFromDay(idx, lineIdx)} aria-label="Remove">✖</Button>
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="space-y-1">
-                                  {(row.extraLines || []).map((ln, lineIdx) => (
-                                    <div key={`${row.date}-ex-${ln.id}`} className="text-xs text-gray-600">
-                                      {ln.name}: {ln.qty} × ₵{ln.unitPrice} = ₵{((Number(ln.qty) || 0) * (Number(ln.unitPrice) || 0)).toFixed(2)}
-                                    </div>
-                                  ))}
-                                  {(!row.extraLines || row.extraLines.length === 0) && <span className="text-xs text-gray-400">—</span>}
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                ) : (
-                  /* Particulars Mode Table - Dynamic columns based on dates */
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Particular</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rate (₵)</th>
-                        {dailySchedule.map((row) => (
-                          <th key={row.date} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            {new Date(row.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                          </th>
-                        ))}
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subtotal (₵)</th>
-                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-12">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {/* Standard Particulars Rows */}
-                      {(['rooms', 'dinnerPax', 'lunchPax', 'conferencePax'] as const)
-                        .filter(k => !hiddenParticulars[k] && (k !== 'rooms' || isResidential))
-                        .map((key) => {
-                          const label = particularLabels[key];
-                          const rate = key === 'conferencePax' ? conferenceRate : key === 'lunchPax' ? lunchRate : key === 'dinnerPax' ? dinnerRate : roomRate;
-                          const setRate = key === 'conferencePax' ? setConferenceRate : key === 'lunchPax' ? setLunchRate : key === 'dinnerPax' ? setDinnerRate : setRoomRate;
-                          const subtotal = dailySchedule.reduce((s, r) => s + ((r as any)[key] || 0) * (rate || 0), 0);
-                          return (
-                            <tr key={key} className="hover:bg-gray-50">
-                              <td className="px-4 py-3">
-                                <Input size="sm" value={label} onChange={(e) => setParticularLabels(prev => ({ ...prev, [key]: e.target.value }))} className="w-40" isReadOnly={isViewMode} />
-                              </td>
-                              <td className="px-4 py-3">
-                                <Input size="sm" type="number" value={String(rate)} onChange={(e) => setRate(parseFloat(e.target.value || '0') || 0)} className="w-24" isReadOnly={isViewMode} />
-                              </td>
-                              {dailySchedule.map((r, idx) => (
-                                <td key={`${key}-${r.date}`} className="px-4 py-3 text-center">
-                                  <Input size="sm" type="number" value={String((r as any)[key] || 0)} onChange={(e) => {
-                                    const v = parseInt(e.target.value || '0', 10) || 0;
-                                    setDailySchedule(prev => prev.map((x, i) => i === idx ? { ...x, [key]: v } : x));
-                                    updateScheduleData(r.date, { [key]: v } as any);
-                                  }} className="w-20" isReadOnly={isViewMode} />
-                                </td>
-                              ))}
-                              <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">₵{subtotal.toFixed(2)}</td>
-                              <td className="px-4 py-3 text-center">
-                                {!isViewMode && <Button size="sm" color="danger" variant="light" className="px-2" onPress={() => setHiddenParticulars(prev => ({ ...prev, [key]: true }))} aria-label="Remove">✖</Button>}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      {/* Custom Particulars Rows */}
-                      {customParticulars.map((p) => {
-                        const subtotal = dailySchedule.reduce((s, r) => s + (r.extras?.[p.id] || 0) * (p.rate || 0), 0);
-                        return (
-                          <tr key={p.id} className="hover:bg-gray-50">
-                            <td className="px-4 py-3">
-                              <Input size="sm" value={p.label} onChange={(e) => setCustomParticulars(prev => prev.map(x => x.id === p.id ? { ...x, label: e.target.value } : x))} isReadOnly={isViewMode} />
-                            </td>
-                            <td className="px-4 py-3">
-                              <Input size="sm" type="number" value={String(p.rate)} onChange={(e) => setCustomParticulars(prev => prev.map(x => x.id === p.id ? { ...x, rate: parseFloat(e.target.value || '0') || 0 } : x))} className="w-24" isReadOnly={isViewMode} />
-                            </td>
-                            {dailySchedule.map((r, idx) => (
-                              <td key={`extra-${p.id}-${r.date}`} className="px-4 py-3 text-center">
-                                <Input size="sm" type="number" value={String(r.extras?.[p.id] || 0)} onChange={(e) => {
-                                  const v = parseInt(e.target.value || '0', 10) || 0;
-                                  setDailySchedule(prev => prev.map((x, i) => i === idx ? { ...x, extras: { ...(x.extras || {}), [p.id]: v } } : x));
-                                  const currentExtras = scheduleDataMap.get(r.date)?.extras || {};
-                                  updateScheduleData(r.date, { extras: { ...currentExtras, [p.id]: v } });
-                                }} className="w-20" isReadOnly={isViewMode} />
-                              </td>
-                            ))}
-                            <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">₵{subtotal.toFixed(2)}</td>
-                            <td className="px-4 py-3 text-center">
-                              {!isViewMode && (
-                                <Button size="sm" color="danger" variant="light" className="px-2" onPress={() => {
-                                  setCustomParticulars(prev => prev.filter(x => x.id !== p.id));
-                                  setDailySchedule(prev => prev.map(r => { const n = { ...(r.extras || {}) }; delete n[p.id]; return { ...r, extras: n }; }));
-                                }} aria-label="Remove">✖</Button>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            {/* Phase 3 totals removed - moved subtotal to Phase 4 */}
-            </div>
-
-            <Divider />
-
-            {/* Phase 4 removed per requirements */}
-
-            <Divider className="my-8" />
-            {/* Phase 4: Financial Summary (AUTO-CALCULATED) */}
-            <div className="mb-8">
-              <h4 className="font-semibold text-lg mb-4 flex items-center gap-2">
-                💰 Phase 4: Financial Summary (AUTO-CALCULATED)
-              </h4>
-              <div className="flex flex-col md:flex-row gap-6">
-                {/* Left controls: tax exempt only */}
-                <div className="p-6 bg-white rounded-lg border w-full md:w-4/12 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h5 className="font-medium text-ghana-black">Payment & Tax Controls</h5>
-                    <Button size="sm" variant="light" onPress={refreshTaxRules} className="text-xs">
-                      🔄 Sync Taxes
-                    </Button>
-                  </div>
-                  <div className="space-y-3 text-sm">
-                    <div className="flex items-center justify-between">
-                      <span>Prepayment Enabled</span>
-                      <Switch size="sm" isSelected={prepaymentEnabled} onValueChange={setPrepaymentEnabled} />
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span>Tax Exempt</span>
-                      <Switch size="sm" isSelected={eventTaxExempt} onValueChange={(val) => { setEventTaxExempt(val); setQuoteTaxExempt(val); }} />
-                    </div>
-                  </div>
-                </div>
-                {/* Right summary: aligns right on desktop */}
-                <div className="w-full space-y-3 rounded-lg border bg-white p-4 md:ml-auto md:w-7/12">
-                <div className="flex justify-between text-sm">
-                  <span className="font-medium text-ghana-black">Subtotal:</span>
-                  <span className="font-semibold">₵{eventTotals.subtotal.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="font-medium text-ghana-black">Discount:</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-700">
-                      {discountEnabled ? (discountType === 'percent' ? `${discountValue}%` : `₵${discountValue}`) : '—'}
-                    </span>
-                    <Button size="sm" variant="flat" onPress={()=> setShowDiscountModal(true)}>Edit</Button>
-                  </div>
-                </div>
-                <div className="space-y-2 text-sm">
-                  {eventTaxExempt ? (
-                    <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-center">
-                      <span className="text-green-700 font-medium">✓ Tax Exempt</span>
-                      <span className="block text-xs text-green-600 mt-1">All taxes waived for this event</span>
-                    </div>
-                  ) : detailedTaxRows.length > 0 ? (
-                    <>
-                      <div className="grid grid-cols-3 gap-2 font-semibold text-xs uppercase text-gray-500">
-                        <span>Tax</span>
-                        <span className="text-right">Rate</span>
-                        <span className="text-right">Amount</span>
-                      </div>
-                      <div className="space-y-1">
-                        {detailedTaxRows.map((tax, idx) => {
-                          const basisLabel = tax.method === 'fixed'
-                            ? (tax.fixedAmount != null ? `₵${Number(tax.fixedAmount).toFixed(2)}` : 'Fixed')
-                            : (tax.rate != null ? `${tax.rate}%` : (tax.method === 'tiered' ? 'Tiered' : '—'));
-                          const amountDisplay = `₵${Number(tax.amount || 0).toFixed(2)}`;
-                          return (
-                            <div
-                              key={`${tax.name}-${idx}`}
-                              className="grid grid-cols-3 gap-2 items-center text-xs md:text-sm"
-                            >
-                              <span className="font-medium text-ghana-black">{tax.name}</span>
-                              <span className="text-right text-gray-600">{basisLabel}</span>
-                              <span className={`text-right font-medium ${tax.effect === 'subtract' ? 'text-red-600' : 'text-gray-800'}`}>
-                                {amountDisplay}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-sm text-gray-500">
-                      No taxes apply to this event.
-                    </div>
-                  )}
-                </div>
-                <div className="border-t pt-4">
-                  <h5 className="text-lg font-semibold text-ghana-black mb-3">Final Summary</h5>
-                  <div className="space-y-3">
-                    <div className="flex justify-between text-lg">
-                      <span>Grand Total:</span>
-                      <span className="font-bold text-green-600">₵{eventTotals.total.toFixed(2)}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span>Prepayment{prepaymentEnabled ? ` (${prepaymentDisplay})` : ''}:</span>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-blue-600">₵{(prepaymentEnabled ? cappedPrepaymentAmount : 0).toFixed(2)}</span>
-                        <Button size="sm" variant="flat" onPress={()=> setShowPrepaymentModal(true)}>Edit</Button>
-                      </div>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Balance Due:</span>
-                      <span className="font-medium text-orange-600">₵{balanceDue.toFixed(2)}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              </div>
-            </div>
-
-            <Divider className="my-4" />
-            {/* Phase 6: Status & Communication */}
-            {/* Prepayment & Discount Modals */}
-            {showPrepaymentModal && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-                <div className="bg-white rounded-lg p-6 w-full max-w-sm">
-                  <h5 className="font-medium text-ghana-black mb-4">Set Prepayment</h5>
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm">Enable Prepayment</span>
-                      <Switch size="sm" isSelected={prepaymentEnabled} onValueChange={setPrepaymentEnabled} />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <Select label="Type" selectedKeys={[prepaymentType]} onSelectionChange={(keys)=> setPrepaymentType(Array.from(keys)[0] as any)}>
-                        <SelectItem key="percent">Percent</SelectItem>
-                        <SelectItem key="amount">Amount</SelectItem>
-                      </Select>
-                      <Input type="number" label={prepaymentType === 'percent' ? 'Value (%)' : 'Value (₵)'} value={String(prepaymentValue)} onChange={(e)=> setPrepaymentValue(parseFloat(e.target.value || '0') || 0)} />
-                    </div>
-                    <div className="flex justify-end gap-2">
-                      <Button variant="flat" onPress={()=> setShowPrepaymentModal(false)}>Cancel</Button>
-                      <Button color="primary" onPress={()=> setShowPrepaymentModal(false)}>Save</Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-            {showDiscountModal && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-                <div className="bg-white rounded-lg p-6 w-full max-w-sm">
-                  <h5 className="font-medium text-ghana-black mb-4">Set Discount</h5>
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm">Enable Discount</span>
-                      <Switch size="sm" isSelected={discountEnabled} onValueChange={setDiscountEnabled} />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <Select label="Type" selectedKeys={[discountType]} onSelectionChange={(keys)=> setDiscountType(Array.from(keys)[0] as any)}>
-                        <SelectItem key="percent">Percent</SelectItem>
-                        <SelectItem key="amount">Amount</SelectItem>
-                      </Select>
-                      <Input type="number" label={discountType === 'percent' ? 'Value (%)' : 'Value (₵)'} value={String(discountValue)} onChange={(e)=> setDiscountValue(parseFloat(e.target.value || '0') || 0)} />
-                    </div>
-                    <div className="flex justify-end gap-2">
-                      <Button variant="flat" onPress={()=> setShowDiscountModal(false)}>Cancel</Button>
-                      <Button color="primary" onPress={()=> setShowDiscountModal(false)}>Save</Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-            <div className="mb-4">
-              <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold">
-                Phase 6: Status & Communication
-              </h4>
-              <div className="grid grid-cols-2 items-start gap-2 md:grid-cols-[0.8fr_1fr_0.8fr_1.4fr]">
-                {/* Current Status - linked to Phase 2 event status */}
-                {isEditingInvoiceDetails || isCreatingInvoiceFromFolio ? (
-                  <Select
-                    label="Status"
-                    size="sm"
-                    selectedKeys={new Set(['invoiced'])}
-                    isDisabled
-                  >
-                    <SelectItem key="invoiced" textValue="Invoiced">🧾 Invoiced</SelectItem>
-                  </Select>
-                ) : (
-                  <Select
-                    label="Status"
-                    size="sm"
-                    selectedKeys={eventStatus ? new Set([eventStatus]) : new Set()}
-                    onSelectionChange={(keys) => {
-                      const selected = Array.from(keys)[0] as SimpleEventStatus;
-                      if (selected) setEventStatus(selected);
-                    }}
-                    isDisabled={isViewMode}
-                  >
-                    {PRE_EVENT_STATUS_OPTIONS.map(option => (
-                      <SelectItem key={option.key} textValue={option.label}>
-                        {option.icon ? `${option.icon} ` : ''}
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </Select>
-                )}
-                <Select
-                  size="sm"
-                  label="Coordinator"
-                  placeholder="Assign"
-                  selectedKeys={new Set([resolveCoordinatorValue(eventCoordinator)])}
-                  onSelectionChange={(keys) => {
-                    const selected = Array.from(keys)[0] as string;
-                    setEventCoordinator(resolveCoordinatorValue(selected));
-                  }}
-                  isDisabled={isViewMode}
-                >
-                  {beoCoordinatorOptions.map((option) => (
-                    <SelectItem key={option.key} textValue={option.label}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </Select>
-                <Input
-                  size="sm"
-                  label="Follow-up"
-                  type="date"
-                  value={followUpDate}
-                  onValueChange={setFollowUpDate}
-                  isDisabled={isViewMode}
-                />
-                <Input
-                  size="sm"
-                  label="Next action"
-                  placeholder="Send contract"
-                  value={nextAction}
-                  onValueChange={setNextAction}
-                  isDisabled={isViewMode}
-                />
-              </div>
-              
-              <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <Textarea
-                  minRows={5}
-                  label="Special Requirements & Notes"
-                  placeholder="Any special requirements, dietary restrictions, action items, or communication notes..."
-                  defaultValue={editingEvent?.specialRequirements || editingEvent?.communicationNotes || ''}
-                  className="w-full"
-                />
-                <Card className="border border-dashed border-gray-200 bg-white h-full">
-                  <CardHeader className="pb-2 pt-3 px-4">
-                    <p className="text-sm font-semibold text-ghana-black">
-                      {isEditingInvoiceDetails ? 'Print Invoice' : 'Print Documents'}
-                    </p>
-                    <p className="text-xs text-gray-500 font-normal mt-0.5">
-                      Opens the browser print dialog — choose &quot;Save as PDF&quot; to save a file.
-                    </p>
-                  </CardHeader>
-                  <CardBody className="pt-0 px-4 pb-4">
-                    {isEditingInvoiceDetails ? (
-                      <div className="space-y-4">
-                        <p className="text-xs text-gray-500">Layout set in Settings → Document Templates</p>
-                        <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            color="primary"
-                            className="flex-1"
-                            onPress={() => {
-                              const invoice = eventInvoices.find((inv) => inv.eventId === editingEvent?.id);
-                              if (invoice) {
-                                handleDownloadInvoicePdf(invoice);
-                              } else {
-                                alert('Please save the invoice first before printing.');
-                              }
-                            }}
-                          >
-                            🖨️ Print Invoice
-                          </Button>
-                          <Button
-                            size="sm"
-                            color="secondary"
-                            className="flex-1"
-                            onPress={handleExportEventXls}
-                          >
-                            📊 Export XLS
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                    <Tabs
-                      size="sm"
-                      variant="underlined"
-                      selectedKey={activePrintTab}
-                      onSelectionChange={(key) => setActivePrintTab(key as 'quote' | 'invoice' | 'receipt' | 'xls')}
-                    >
-                      {showQuotePrintInModal && editingEvent && (() => {
-                        const proformaType = EVENT_DOC_TYPE[editingEventDocSection].proforma;
-                        const proformaOptions = listSelectableTemplates(proformaType);
-                        const proformaDefault = resolveEventTemplateKey(proformaType) || proformaOptions[0]?.key || '';
-                        return (
-                        <Tab key="quote" title="📄 Proforma">
-                          <div className="space-y-3">
-                            <p className="text-xs text-gray-500">Uses the Accommodation layout for a bulk rooms-only booking, or the Conference &amp; Events layout (with accommodation included) once any conference/catering is added.</p>
-                            <Select
-                              size="sm"
-                              label="Template"
-                              selectedKeys={proformaOptions.some(opt => opt.key === (selectedProformaTemplate || proformaDefault)) ? [selectedProformaTemplate || proformaDefault] : []}
-                              onSelectionChange={(keys) => { const key = Array.from(keys)[0] as string; if (key) setSelectedProformaTemplate(key); }}
-                            >
-                              {proformaOptions.map((opt) => (<SelectItem key={opt.key}>{opt.name}</SelectItem>))}
-                            </Select>
-                            <Button
-                              size="sm"
-                              color="primary"
-                              className="w-full"
-                              onPress={() => handlePrintQuotePdf(selectedProformaTemplate || proformaDefault)}
-                            >
-                              🖨️ Print Proforma
-                            </Button>
-                          </div>
-                        </Tab>
-                        );
-                      })()}
-                      {showQuotePrintInModal && editingEvent && (() => {
-                        const invoiceType = EVENT_DOC_TYPE[editingEventDocSection].invoice;
-                        const invoiceOptions = listSelectableTemplates(invoiceType);
-                        const invoiceDefault = resolveEventTemplateKey(invoiceType) || invoiceOptions[0]?.key || '';
-                        return (
-                        <Tab key="invoice" title="🧾 Invoice">
-                          <div className="space-y-3">
-                            {!linkedEventInvoice && (
-                              <p className="text-xs text-gray-500">No invoice has been formally created for this event yet — this prints straight from the current totals below.</p>
-                            )}
-                            <Select
-                              size="sm"
-                              label="Template"
-                              selectedKeys={invoiceOptions.some(opt => opt.key === (selectedInvoiceTemplate || invoiceDefault)) ? [selectedInvoiceTemplate || invoiceDefault] : []}
-                              onSelectionChange={(keys) => { const key = Array.from(keys)[0] as string; if (key) setSelectedInvoiceTemplate(key); }}
-                            >
-                              {invoiceOptions.map((opt) => (<SelectItem key={opt.key}>{opt.name}</SelectItem>))}
-                            </Select>
-                            <Button
-                              size="sm"
-                              color="primary"
-                              className="w-full"
-                              onPress={() => linkedEventInvoice
-                                ? handleDownloadInvoicePdf(linkedEventInvoice, selectedInvoiceTemplate || invoiceDefault)
-                                : handlePrintEventInvoicePdf(selectedInvoiceTemplate || invoiceDefault)}
-                            >
-                              🖨️ Print Invoice
-                            </Button>
-                          </div>
-                        </Tab>
-                        );
-                      })()}
-                      {showQuotePrintInModal && editingEvent && (() => {
-                        const receiptType = EVENT_DOC_TYPE[editingEventDocSection].receipt;
-                        const receiptOptions = listSelectableTemplates(receiptType);
-                        const receiptDefault = resolveEventTemplateKey(receiptType) || receiptOptions[0]?.key || '';
-                        const outstandingBalance = linkedEventInvoice
-                          ? (linkedEventInvoice.balance || 0)
-                          : Math.max(0, balanceDue - linkedEventReceipts.reduce((s, r) => s + (r.amount || 0), 0));
-                        return (
-                        <Tab key="receipt" title="💰 Receipt">
-                          <div className="space-y-3">
-                            <div className="flex items-center justify-between p-2 rounded-md bg-gray-50 border border-gray-200">
-                              <span className="text-xs text-gray-600">Outstanding Balance</span>
-                              <span className="text-sm font-semibold text-ghana-black">{formatCurrency(outstandingBalance)}</span>
-                            </div>
-                            <Button
-                              size="sm"
-                              color="success"
-                              className="w-full"
-                              onPress={() => {
-                                if (linkedEventInvoice) {
-                                  openReceiptFromInvoice(linkedEventInvoice);
-                                  return;
-                                }
-                                openReceiptModal('create', undefined, {
-                                  ...editingEvent,
-                                  balance: outstandingBalance,
-                                });
-                              }}
-                            >
-                              Record receipt
-                            </Button>
-                            {linkedEventReceipts.length > 0 && (
-                              <div className="space-y-2">
-                                <Select
-                                  size="sm"
-                                  label="Print Template"
-                                  selectedKeys={receiptOptions.some(opt => opt.key === (selectedReceiptTemplate || receiptDefault)) ? [selectedReceiptTemplate || receiptDefault] : []}
-                                  onSelectionChange={(keys) => { const key = Array.from(keys)[0] as string; if (key) setSelectedReceiptTemplate(key); }}
-                                >
-                                  {receiptOptions.map((opt) => (<SelectItem key={opt.key}>{opt.name}</SelectItem>))}
-                                </Select>
-                                <p className="text-xs text-gray-500">Receipts on file</p>
-                                {linkedEventReceipts.map((rcpt) => (
-                                  <div key={rcpt.id} className="flex items-center justify-between gap-2 text-sm">
-                                    <span className="text-gray-600">{rcpt.date} · {formatCurrency(rcpt.amount)} · {paymentMethodLabel(rcpt.method)}</span>
-                                    <Button size="sm" variant="flat" onPress={() => handleDownloadReceiptPdf(rcpt, selectedReceiptTemplate || receiptDefault)}>🖨️ Print</Button>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </Tab>
-                        );
-                      })()}
-                      <Tab key="xls" title="📊 XLS">
-                        <div className="space-y-3">
-                          <p className="text-xs text-gray-600">
-                            Export a spreadsheet summary of the event schedule, services, and financials.
-                          </p>
-                          <Button
-                            size="sm"
-                            color="secondary"
-                            className="w-full"
-                            onPress={handleExportEventXls}
-                          >
-                            Export Event XLS
-                          </Button>
-                        </div>
-                      </Tab>
-                    </Tabs>
-                    )}
-                  </CardBody>
-                </Card>
-              </div>
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            {isViewMode ? (
-              <>
-                <Button
-                  color="default"
-                  variant="flat"
-                  onPress={closeEventWorkspace}
-                >
-                  Close
-                </Button>
-                <Button
-                  color="primary"
-                  onPress={() => {
-                    setIsViewMode(false);
-                  }}
-                >
-                  Edit Event
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  color="danger"
-                  variant="flat"
-                  onPress={closeEventWorkspace}
-                >
-                  Cancel
-                </Button>
-                {!isCreatingEvent && !isEditingInvoiceDetails && editingEvent?.id && (
-                  <Button
-                    color="secondary"
-                    variant="flat"
-                    onPress={handleOpenContractFromEvent}
-                  >
-                    Generate Contract
-                  </Button>
-                )}
-                {!isCreatingEvent && !isEditingInvoiceDetails && editingEvent?.id && !eventInvoices.some((inv) => inv.eventId === editingEvent.id) && (
-                  <Button
-                    color="success"
-                    variant="flat"
-                    onPress={() => {
-                      setIsEditingInvoiceDetails(true);
-                      setEventStatus('invoiced');
-                    }}
-                  >
-                    Create Invoice
-                  </Button>
-                )}
-                <Button
-                  color="primary"
-                  isDisabled={eventSubmitting}
-                  onPress={() => (isEditingInvoiceDetails ? handleInvoiceDetailsSave() : handleEventSubmit())}
-                >
-                  {eventSubmitting
-                    ? (isEditingInvoiceDetails
-                        ? (eventInvoices.some((inv) => inv.eventId === editingEvent?.id) ? 'Saving Invoice...' : 'Creating Invoice...')
-                        : isCreatingEvent
-                          ? 'Creating...'
-                          : isAdjustMode
-                            ? 'Adjusting...'
-                            : 'Updating...')
-                    : (isEditingInvoiceDetails
-                        ? (eventInvoices.some((inv) => inv.eventId === editingEvent?.id) ? 'Save Invoice' : 'Create Invoice')
-                        : isCreatingEvent
-                          ? 'Create Event'
-                          : isAdjustMode
-                            ? 'Adjust'
-                            : 'Update Event')}
-                </Button>
-              </>
-            )}
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
-
-      <Modal isOpen={isVenueModalOpen} onClose={closeVenueModal} size="2xl">
-        <ModalContent>
-          <ModalHeader>
-            {editingVenue?.id ? 'Edit Venue' : 'Create New Venue'}
-          </ModalHeader>
-          <ModalBody>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Input
-                label="Venue Name"
-                placeholder="Enter venue name"
-                value={venueForm.name}
-                onValueChange={(value) => handleVenueFieldChange('name', value)}
-              />
-              <Select
-                label="Venue Type"
-                placeholder="Select venue type"
-                selectedKeys={[venueForm.type]}
-                onSelectionChange={(keys) => {
-                  const value = Array.from(keys)[0] as string | undefined;
-                  if (value) handleVenueFieldChange('type', value);
-                }}
-              >
-                <SelectItem key="conference">Conference Hall</SelectItem>
-                <SelectItem key="meeting">Meeting Room</SelectItem>
-                <SelectItem key="banquet">Banquet Hall</SelectItem>
-                <SelectItem key="auditorium">Auditorium</SelectItem>
-              </Select>
-              <Input
-                label="Capacity"
-                type="number"
-                placeholder="Number of people"
-                value={venueForm.capacity}
-                onValueChange={(value) => handleVenueFieldChange('capacity', value)}
-              />
-              <Input
-                label="Price per Day"
-                type="number"
-                placeholder="Daily rate"
-                value={venueForm.basePrice}
-                onValueChange={(value) => handleVenueFieldChange('basePrice', value)}
-              />
-              <Input
-                label="Location"
-                placeholder="Venue location"
-                value={venueForm.location}
-                onValueChange={(value) => handleVenueFieldChange('location', value)}
-              />
-              <Select
-                label="Status"
-                placeholder="Select status"
-                selectedKeys={[venueForm.status]}
-                onSelectionChange={(keys) => {
-                  const value = Array.from(keys)[0] as VenueStatus | undefined;
-                  if (value) handleVenueFieldChange('status', value);
-                }}
-              >
-                <SelectItem key="available">Available</SelectItem>
-                <SelectItem key="booked">Booked</SelectItem>
-                <SelectItem key="setup">Setup</SelectItem>
-                <SelectItem key="maintenance">Maintenance</SelectItem>
-                <SelectItem key="inactive">Inactive</SelectItem>
-              </Select>
-            </div>
-            <Textarea
-              label="Features"
-              placeholder="Venue features (one per line)"
-              className="mt-4"
-              value={venueForm.featuresInput}
-              onValueChange={(value) => handleVenueFieldChange('featuresInput', value)}
-            />
-          </ModalBody>
-          <ModalFooter>
-            <Button color="danger" variant="flat" onPress={closeVenueModal}>
-              Cancel
-            </Button>
-            <Button color="primary" onPress={handleVenueSubmit}>
-              {editingVenue?.id ? 'Update Venue' : 'Create Venue'}
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-      {/* Service Modal */}
-      <Modal isOpen={isServiceModalOpen} onClose={() => setIsServiceModalOpen(false)} size="2xl">
-        <ModalContent>
-          <ModalHeader>
-            {editingService?.id ? 'Edit Service' : 'Create New Service'}
-          </ModalHeader>
-          <ModalBody>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Input
-                label="Service Name"
-                placeholder="Enter service name"
-                defaultValue={editingService?.name || ''}
-              />
-              <Select label="Category" placeholder="Select category">
-                <SelectItem key="catering">Catering</SelectItem>
-                <SelectItem key="av">Audio Visual</SelectItem>
-                <SelectItem key="decoration">Decoration</SelectItem>
-                <SelectItem key="transport">Transportation</SelectItem>
-              </Select>
-              <Input
-                label="Price"
-                type="number"
-                placeholder="Service price"
-                defaultValue={editingService?.price || ''}
-              />
-              <Input
-                label="Minimum Notice"
-                placeholder="e.g., 24 hours"
-                defaultValue={editingService?.minNotice || ''}
-              />
-              <Select label="Availability" placeholder="Select availability">
-                <SelectItem key="daily">Daily</SelectItem>
-                <SelectItem key="weekdays">Weekdays Only</SelectItem>
-                <SelectItem key="weekends">Weekends Only</SelectItem>
-                <SelectItem key="custom">Custom Schedule</SelectItem>
-              </Select>
-              <div className="flex items-center gap-2">
-                <Switch defaultSelected={editingService?.status === 'active'} />
-                <span>Active Service</span>
-              </div>
-            </div>
-            <Textarea
-              label="Description"
-              placeholder="Service description"
-              className="mt-4"
-              defaultValue={editingService?.description || ''}
-            />
-          </ModalBody>
-          <ModalFooter>
-            <Button color="danger" variant="flat" onPress={() => setIsServiceModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button color="primary" onPress={handleServiceSubmit}>
-              {editingService?.id ? 'Update Service' : 'Create Service'}
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-      <Modal
-        isOpen={isBEOModalOpen}
-        onClose={() => setIsBEOModalOpen(false)}
-        size="5xl"
-        scrollBehavior="inside"
-        classNames={{
-          base: 'max-h-[90vh]',
-          header: 'px-6 py-3 border-b border-slate-200',
-          body: 'px-6 py-4',
-          footer: 'px-6 py-3 border-t border-slate-200',
-        }}
-      >
-        <ModalContent>
-          <ModalHeader className="flex flex-col items-start gap-1.5 pr-8">
-            <h3 className="text-base font-semibold text-ghana-black">Function Sheet</h3>
-            {beoForm ? (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-sm font-medium text-ghana-black">{beoForm.eventInfo.eventName || 'Untitled event'}</span>
-                {beoForm.eventInfo.venueName ? (
-                  <Chip size="sm" color="primary" variant="flat">{beoForm.eventInfo.venueName}</Chip>
-                ) : null}
-                <Chip size="sm" color="success" variant="flat">
-                  {formatEventTableRange(beoForm.eventInfo.arrivalDate, beoForm.eventInfo.departureDate)}
-                </Chip>
-                {beoForm.eventInfo.pax ? (
-                  <Chip size="sm" color="warning" variant="flat">{beoForm.eventInfo.pax} pax</Chip>
-                ) : null}
-              </div>
-            ) : (
-              <p className="text-xs font-normal text-slate-500">Operational order for this event</p>
-            )}
-          </ModalHeader>
-          <ModalBody>
-            {beoForm ? (
-              <form
-                id="beoForm"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handleSaveBeoForm();
-                }}
-              >
-                <Tabs
-                  selectedKey={beoWorkspaceTab}
-                  onSelectionChange={(key) => setBeoWorkspaceTab(String(key))}
-                  variant="underlined"
-                  classNames={{
-                    tabList: 'gap-6 w-full',
-                    cursor: 'w-full bg-primary',
-                    tab: 'h-8 px-0 text-sm',
-                    tabContent: 'group-data-[selected=true]:text-primary',
-                    panel: 'pt-4 min-h-[300px]',
-                  }}
-                >
-                  <Tab key="overview" title="Event">
-                    <div className="space-y-5">
-                      <div>
-                        <p className="mb-2 text-xs font-semibold text-primary">Client</p>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                          <Input size="sm" label="Event" value={beoForm.eventInfo.eventName} onChange={(e) => updateBeoFormSection('eventInfo', 'eventName', e.target.value)} />
-                          <Input size="sm" label="Organization" value={beoForm.eventInfo.organization} onChange={(e) => updateBeoFormSection('eventInfo', 'organization', e.target.value)} />
-                          <Select
-                            size="sm"
-                            label="Coordinator"
-                            placeholder="Assign coordinator"
-                            selectedKeys={[resolveCoordinatorValue(beoForm.eventInfo.eventCoordinator)]}
-                            onSelectionChange={(keys) => {
-                              const selected = resolveCoordinatorValue(Array.from(keys)[0] as string);
-                              updateBeoFormSection('eventInfo', 'eventCoordinator', selected === UNASSIGNED_STAFF ? '' : selected);
-                            }}
-                            items={beoCoordinatorOptions}
-                          >
-                            {(option) => (
-                              <SelectItem key={option.key} textValue={option.label}>
-                                {option.label}
-                              </SelectItem>
-                            )}
-                          </Select>
-                          <Input size="sm" label="Contact" value={beoForm.eventInfo.contactPerson} onChange={(e) => updateBeoFormSection('eventInfo', 'contactPerson', e.target.value)} />
-                          <Input size="sm" label="Phone" value={beoForm.eventInfo.contactPhone} onChange={(e) => updateBeoFormSection('eventInfo', 'contactPhone', e.target.value)} />
-                          <Input size="sm" label="Email" value={beoForm.eventInfo.contactEmail} onChange={(e) => updateBeoFormSection('eventInfo', 'contactEmail', e.target.value)} />
-                        </div>
-                      </div>
-                      <div>
-                        <p className="mb-2 text-xs font-semibold text-primary">Schedule</p>
-                        <div className="grid grid-cols-2 md:grid-cols-12 gap-3">
-                          <Input className="md:col-span-4" size="sm" label="Venue" value={beoForm.eventInfo.venueName} onChange={(e) => updateBeoFormSection('eventInfo', 'venueName', e.target.value)} />
-                          <Input className="md:col-span-2" size="sm" label="Start" type="date" value={beoForm.eventInfo.arrivalDate} onChange={(e) => updateBeoFormSection('eventInfo', 'arrivalDate', e.target.value)} />
-                          <Input className="md:col-span-2" size="sm" label="End" type="date" value={beoForm.eventInfo.departureDate} onChange={(e) => updateBeoFormSection('eventInfo', 'departureDate', e.target.value)} />
-                          <Input className="md:col-span-2" size="sm" label="Days" value={beoForm.eventInfo.duration} onChange={(e) => updateBeoFormSection('eventInfo', 'duration', e.target.value)} />
-                          <Input className="md:col-span-2" size="sm" label="Pax" value={beoForm.eventInfo.pax} onChange={(e) => updateBeoFormSection('eventInfo', 'pax', e.target.value)} />
-                        </div>
-                      </div>
-                      <Textarea size="sm" label="Coordinator notes" minRows={2} value={beoForm.eventInfo.notes} onChange={(e) => updateBeoFormSection('eventInfo', 'notes', e.target.value)} />
-                      <div>
-                        <div className="mb-2 flex items-center justify-between">
-                          <p className="text-xs font-semibold text-primary">Special instructions</p>
-                          <Button size="sm" variant="light" onPress={handleAddBeoInstruction}>Add</Button>
-                        </div>
-                        <div className="space-y-2">
-                          {beoForm.instructions.map((instruction: string, idx: number) => (
-                            <div key={`instruction-${idx}`} className="flex items-center gap-2">
-                              <Input
-                                className="flex-1"
-                                size="sm"
-                                placeholder={`Instruction ${idx + 1}`}
-                                value={instruction}
-                                onChange={(e) => updateBeoInstruction(idx, e.target.value)}
-                              />
-                              <Button size="sm" variant="light" color="danger" onPress={() => handleRemoveBeoInstruction(idx)}>×</Button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </Tab>
-                  <Tab key="setup" title="Setup">
-                    <div className="space-y-5">
-                      <div>
-                        <p className="mb-2 text-xs font-semibold text-primary">Room</p>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                          <BeoPick label="Layout" value={beoForm.room.layout} options={BEO_LAYOUTS} onChange={(value) => updateBeoFormSection('room', 'layout', value)} />
-                          <Input size="sm" label="Tables" value={beoForm.room.tables} onChange={(e) => updateBeoFormSection('room', 'tables', e.target.value)} />
-                          <Input size="sm" label="Chairs" value={beoForm.room.chairs} onChange={(e) => updateBeoFormSection('room', 'chairs', e.target.value)} />
-                          <Input size="sm" label="Capacity" value={beoForm.room.capacity} onChange={(e) => updateBeoFormSection('room', 'capacity', e.target.value)} />
-                          <Input size="sm" label="Registration" value={beoForm.room.registrationTable} onChange={(e) => updateBeoFormSection('room', 'registrationTable', e.target.value)} />
-                          <Input size="sm" label="Display" value={beoForm.room.displayTable} onChange={(e) => updateBeoFormSection('room', 'displayTable', e.target.value)} />
-                          <BeoPick label="Access" value={beoForm.room.access} options={BEO_ACCESS} onChange={(value) => updateBeoFormSection('room', 'access', value)} placeholder="Filter access" />
-                          <BeoPick label="Parking" value={beoForm.room.parking} options={BEO_PARKING} onChange={(value) => updateBeoFormSection('room', 'parking', value)} />
-                        </div>
-                        <Textarea className="mt-3" size="sm" label="Setup notes" minRows={2} value={beoForm.room.setupNotes} onChange={(e) => updateBeoFormSection('room', 'setupNotes', e.target.value)} />
-                      </div>
-                      <div>
-                        <p className="mb-2 text-xs font-semibold text-primary">AV / Technical</p>
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                          <Input size="sm" label="Projector" value={beoForm.technical.projector} onChange={(e) => updateBeoFormSection('technical', 'projector', e.target.value)} />
-                          <Input size="sm" label="Screen" value={beoForm.technical.screen} onChange={(e) => updateBeoFormSection('technical', 'screen', e.target.value)} />
-                          <Input size="sm" label="Sound" value={beoForm.technical.soundSystem} onChange={(e) => updateBeoFormSection('technical', 'soundSystem', e.target.value)} />
-                          <Input size="sm" label="Microphones" value={beoForm.technical.microphones} onChange={(e) => updateBeoFormSection('technical', 'microphones', e.target.value)} />
-                          <Input size="sm" label="Laptop" value={beoForm.technical.laptop} onChange={(e) => updateBeoFormSection('technical', 'laptop', e.target.value)} />
-                          <BeoPick label="Internet" value={beoForm.technical.internet} options={BEO_INTERNET} onChange={(value) => updateBeoFormSection('technical', 'internet', value)} />
-                          <BeoPick label="Lighting" value={beoForm.technical.lighting} options={BEO_LIGHTING} onChange={(value) => updateBeoFormSection('technical', 'lighting', value)} />
-                          <Input size="sm" label="Speed" value={beoForm.technical.internetSpeed} onChange={(e) => updateBeoFormSection('technical', 'internetSpeed', e.target.value)} />
-                          <Input size="sm" label="Power" value={beoForm.technical.powerRequirements} onChange={(e) => updateBeoFormSection('technical', 'powerRequirements', e.target.value)} />
-                        </div>
-                        <Textarea className="mt-3" size="sm" label="Technical notes" minRows={2} value={beoForm.technical.notes} onChange={(e) => updateBeoFormSection('technical', 'notes', e.target.value)} />
-                      </div>
-                    </div>
-                  </Tab>
-                  <Tab key="catering" title="Catering">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      <BeoPick label="Service" value={beoForm.catering.serviceStyle} options={BEO_SERVICE_STYLES} onChange={(value) => updateBeoFormSection('catering', 'serviceStyle', value)} />
-                      <BeoPick label="Meal" value={beoForm.catering.mealType} options={BEO_MEAL_TYPES} onChange={(value) => updateBeoFormSection('catering', 'mealType', value)} />
-                      <Input size="sm" label="Tea breaks" value={beoForm.catering.teaBreaks} onChange={(e) => updateBeoFormSection('catering', 'teaBreaks', e.target.value)} />
-                      <Input size="sm" label="Special diets" value={beoForm.catering.specialDietary} onChange={(e) => updateBeoFormSection('catering', 'specialDietary', e.target.value)} />
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
-                      <Textarea size="sm" label="Dietary notes" minRows={2} value={beoForm.catering.dietaryAccommodations} onChange={(e) => updateBeoFormSection('catering', 'dietaryAccommodations', e.target.value)} />
-                      <Textarea size="sm" label="Allergies" minRows={2} value={beoForm.catering.allergies} onChange={(e) => updateBeoFormSection('catering', 'allergies', e.target.value)} />
-                      <Textarea size="sm" label="Beverages" minRows={2} value={beoForm.catering.beverages} onChange={(e) => updateBeoFormSection('catering', 'beverages', e.target.value)} />
-                      <Textarea size="sm" label="Snacks" minRows={2} value={beoForm.catering.snacks} onChange={(e) => updateBeoFormSection('catering', 'snacks', e.target.value)} />
-                    </div>
-                  </Tab>
-                  <Tab key="timeline" title="Timeline">
-                    <div className="mb-3 flex items-center justify-between">
-                      <p className="text-xs text-slate-500">{beoForm.timeline.length} line{beoForm.timeline.length === 1 ? '' : 's'}</p>
-                      <Button size="sm" variant="flat" onPress={handleAddBeoTimeline}>Add line</Button>
-                    </div>
-                    {beoForm.timeline.length === 0 ? (
-                      <p className="text-sm text-slate-500 py-10 text-center">No timeline lines yet.</p>
-                    ) : (
-                      <div className="space-y-1.5">
-                        <div className="hidden md:grid grid-cols-12 gap-2 px-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
-                          <span className="col-span-2">Time</span>
-                          <span className="col-span-4">Activity</span>
-                          <span className="col-span-3">Responsible</span>
-                          <span className="col-span-2">Duration</span>
-                          <span className="col-span-1" />
-                        </div>
-                        {beoForm.timeline.map((item: any, idx: number) => (
-                          <div key={`timeline-${idx}`} className="grid grid-cols-12 gap-2 items-center">
-                            <Input className="col-span-2" size="sm" aria-label="Time" placeholder="Time" value={item.time} onChange={(e) => updateBeoTimelineItem(idx, 'time', e.target.value)} />
-                            <Input className="col-span-4" size="sm" aria-label="Activity" placeholder="Activity" value={item.activity} onChange={(e) => updateBeoTimelineItem(idx, 'activity', e.target.value)} />
-                            <BeoPick className="col-span-3" value={item.responsible} options={beoResponsibleOptions} onChange={(value) => updateBeoTimelineItem(idx, 'responsible', value)} placeholder="Responsible" />
-                            <Input className="col-span-2" size="sm" aria-label="Duration" placeholder="Duration" value={item.duration} onChange={(e) => updateBeoTimelineItem(idx, 'duration', e.target.value)} />
-                            <Button className="col-span-1 min-w-0" size="sm" variant="light" color="danger" onPress={() => handleRemoveBeoTimeline(idx)}>×</Button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </Tab>
-                  <Tab key="departments" title="Tasks">
-                    <div className="mb-3 flex items-center justify-between">
-                      <p className="text-xs text-slate-500">{beoForm.departmentChecklist.length} task{beoForm.departmentChecklist.length === 1 ? '' : 's'}</p>
-                      <Button size="sm" variant="flat" onPress={handleAddBeoChecklist}>Add task</Button>
-                    </div>
-                    {beoForm.departmentChecklist.length === 0 ? (
-                      <p className="text-sm text-slate-500 py-10 text-center">No department tasks yet.</p>
-                    ) : (
-                      <div className="space-y-1.5">
-                        <div className="hidden md:grid grid-cols-12 gap-2 px-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
-                          <span className="col-span-2">Time</span>
-                          <span className="col-span-3">Activity</span>
-                          <span className="col-span-2">Department</span>
-                          <span className="col-span-2">Status</span>
-                          <span className="col-span-2">Duration</span>
-                          <span className="col-span-1" />
-                        </div>
-                        {beoForm.departmentChecklist.map((task: any, idx: number) => (
-                          <div key={`dept-${idx}`} className="grid grid-cols-12 gap-2 items-center">
-                            <Input className="col-span-2" size="sm" aria-label="Time" placeholder="Time" value={task.time} onChange={(e) => updateBeoChecklistItem(idx, 'time', e.target.value)} />
-                            <Input className="col-span-3" size="sm" aria-label="Activity" placeholder="Activity" value={task.activity} onChange={(e) => updateBeoChecklistItem(idx, 'activity', e.target.value)} />
-                            <BeoPick className="col-span-2" value={task.department} options={beoDepartmentOptions} onChange={(value) => updateBeoChecklistItem(idx, 'department', value)} placeholder="Department" />
-                            <Select
-                              className="col-span-2"
-                              size="sm"
-                              aria-label="Status"
-                              selectedKeys={[task.status || 'Pending']}
-                              onSelectionChange={(keys) => {
-                                const value = Array.from(keys)[0] as string;
-                                if (value) updateBeoChecklistItem(idx, 'status', value);
-                              }}
-                            >
-                              <SelectItem key="Pending" startContent={<span className="h-2 w-2 rounded-full bg-warning" />}>Pending</SelectItem>
-                              <SelectItem key="In Progress" startContent={<span className="h-2 w-2 rounded-full bg-primary" />}>In Progress</SelectItem>
-                              <SelectItem key="Completed" startContent={<span className="h-2 w-2 rounded-full bg-success" />}>Completed</SelectItem>
-                            </Select>
-                            <Input className="col-span-2" size="sm" aria-label="Duration" placeholder="Duration" value={task.duration} onChange={(e) => updateBeoChecklistItem(idx, 'duration', e.target.value)} />
-                            <Button className="col-span-1 min-w-0" size="sm" variant="light" color="danger" onPress={() => handleRemoveBeoChecklist(idx)}>×</Button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </Tab>
-                </Tabs>
-              </form>
-            ) : (
-              <div className="py-12 text-center text-slate-500 text-sm">No event selected.</div>
-            )}
-          </ModalBody>
-          <ModalFooter className="justify-between">
-            <div className="flex flex-wrap gap-1">
-              <Button size="sm" variant="light" onPress={() => exportFunctionSchedulePDF()}>
-                Print schedule
-              </Button>
-              <Button size="sm" variant="light" onPress={() => exportFunctionSheetPDF()}>
-                Function sheet
-              </Button>
-              <Button size="sm" variant="light" onPress={handleSendFunctionSheetToDepartments}>
-                Send to departments
-              </Button>
-            </div>
-            <div className="flex gap-2">
-              <Button size="sm" variant="flat" onPress={() => setIsBEOModalOpen(false)}>
-                Cancel
-              </Button>
-              <Button size="sm" color="primary" onPress={handleSaveBeoForm} isDisabled={!beoForm}>
-                Save
-              </Button>
-            </div>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
-
-      {/* Events Add/Edit Client modal removed; use canonical client form via redirect */}
-      {/* Client View Modal */}
-      <Modal 
-        isOpen={isClientViewModalOpen} 
-        onClose={() => setIsClientViewModalOpen(false)} 
-        size="2xl" 
-        scrollBehavior="inside" 
-        classNames={{
-          base: "max-w-[70vw] max-h-[90vh]",
-          body: "p-6"
-        }}
-      >
-        <ModalContent>
-          <ModalHeader>
-            <div className="flex items-center gap-2">
-              <span className="text-2xl">👁️</span>
-              <div>
-                <h3 className="text-lg font-semibold">
-                  Client Details
-                </h3>
-                <p className="text-sm text-gray-600">Viewing client information and contract details</p>
-              </div>
-            </div>
-          </ModalHeader>
-          <ModalBody>
-            {selectedClient && (
-              <>
-                {/* Client Basic Information */}
-                <div className="mb-8">
-                  <h4 className="font-semibold text-lg mb-4 flex items-center gap-2">
-                    👤 Basic Information
-                  </h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="p-4 bg-gray-50 rounded-lg">
-                      <p className="text-sm text-gray-600">Client Name</p>
-                      <p className="font-medium">{selectedClient.name}</p>
-                    </div>
-                    <div className="p-4 bg-gray-50 rounded-lg">
-                      <p className="text-sm text-gray-600">Position/Title</p>
-                      <p className="font-medium">{selectedClient.position}</p>
-                    </div>
-                    <div className="p-4 bg-gray-50 rounded-lg">
-                      <p className="text-sm text-gray-600">Contact Number</p>
-                      <p className="font-medium">{selectedClient.contact}</p>
-                    </div>
-                    <div className="p-4 bg-gray-50 rounded-lg">
-                      <p className="text-sm text-gray-600">Email Address</p>
-                      <p className="font-medium text-blue-600">{selectedClient.email}</p>
-                    </div>
-                    <div className="p-4 bg-gray-50 rounded-lg">
-                      <p className="text-sm text-gray-600">WhatsApp Available</p>
-                      <p className="font-medium">{selectedClient.whatsapp ? '✅ Yes' : '❌ No'}</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Company Information */}
-                <div className="mb-8">
-                  <h4 className="font-semibold text-lg mb-4 flex items-center gap-2">
-                    🏢 Company & Organization
-                  </h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="p-4 bg-blue-50 rounded-lg">
-                      <p className="text-sm text-blue-600">Company Name</p>
-                      <p className="font-medium text-blue-800">{selectedClient.organization}</p>
-                    </div>
-                    <div className="p-4 bg-blue-50 rounded-lg">
-                      <p className="text-sm text-blue-600">Industry</p>
-                      <p className="font-medium text-blue-800">{selectedClient.industry}</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Contract & Rates */}
-                <div className="mb-8">
-                  <h4 className="font-semibold text-lg mb-4 flex items-center gap-2">
-                    💼 Contract & Rates
-                  </h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="p-4 bg-green-50 rounded-lg">
-                      <p className="text-sm text-green-600">Contract Status</p>
-                      <Badge 
-                        color={selectedClient.contractStatus === 'active' ? 'success' : 
-                               selectedClient.contractStatus === 'expired' ? 'warning' : 
-                               selectedClient.contractStatus === 'pending' ? 'primary' : 'default'}
-                        variant="flat"
-                      >
-                        {selectedClient.contractStatus}
-                      </Badge>
-                    </div>
-                    <div className="p-4 bg-green-50 rounded-lg">
-                      <p className="text-sm text-green-600">Contract Period</p>
-                      <p className="font-medium text-green-800">
-                        {selectedClient.contractStart} to {selectedClient.contractEnd}
-                      </p>
-                    </div>
-                    <div className="p-4 bg-purple-50 rounded-lg">
-                      <p className="text-sm text-purple-600">Accommodation Rate</p>
-                      <p className="font-medium text-purple-800">₵{selectedClient.rates.accommodation}/night</p>
-                    </div>
-                    <div className="p-4 bg-purple-50 rounded-lg">
-                      <p className="text-sm text-purple-600">Conference Rate</p>
-                      <p className="font-medium text-purple-800">₵{selectedClient.rates.conference}/head</p>
-                    </div>
-                    <div className="p-4 bg-purple-50 rounded-lg">
-                      <p className="text-sm text-purple-600">Catering Rate</p>
-                      <p className="font-medium text-purple-800">₵{selectedClient.rates.catering}/head</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Special Terms */}
-                {selectedClient.specialTerms && (
-                  <div className="mb-8">
-                    <h4 className="font-semibold text-lg mb-4 flex items-center gap-2">
-                      ⭐ Special Terms & Conditions
-                    </h4>
-                    <div className="p-4 bg-yellow-50 rounded-lg border border-yellow-200">
-                      <p className="text-yellow-800">{selectedClient.specialTerms}</p>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            <Button color="primary" variant="flat" onPress={() => setIsClientViewModalOpen(false)}>
-              Close
-            </Button>
-            <Button 
-              color="success" 
-              onPress={() => {
-                setIsClientViewModalOpen(false);
-                setIsContractModalOpen(true);
-              }}
-            >
-              📄 Generate Contract
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
-      {/* Client Edit Modal */}
-      <Modal 
-        isOpen={isClientEditModalOpen} 
-        onClose={() => setIsClientEditModalOpen(false)} 
-        size="2xl"
-        scrollBehavior="inside"
-        classNames={{
-          base: "max-w-[70vw] max-h-[90vh]",
-          body: "p-6"
-        }}
-      >
-        <ModalContent>
-          <ModalHeader>
-            <div className="flex items-center gap-2">
-              <span className="text-2xl">📄</span>
-              <div>
-                <h3 className="text-lg font-semibold">
-                  Generate Contract
-                </h3>
-                <p className="text-sm text-gray-600">Professional contract with negotiated rates and terms</p>
-              </div>
-            </div>
-          </ModalHeader>
-          <ModalBody>
-            {selectedClient && (
-              <div className="space-y-8">
-                {/* Contract Header */}
-                <div className="text-center border-b-2 border-gray-200 pb-6">
-                  <h1 className="text-3xl font-bold text-gray-800 mb-2">EVENT SERVICES CONTRACT</h1>
-                  <p className="text-gray-600">Between Ghana Hotel & Conference Center and {selectedClient.organization}</p>
-                  <p className="text-sm text-gray-500 mt-2">Contract Period: {selectedClient.contractStart} to {selectedClient.contractEnd}</p>
-                </div>
-
-                {/* Client Information */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="p-6 bg-blue-50 rounded-lg border border-blue-200">
-                    <h4 className="font-semibold text-blue-800 mb-4">Client Details</h4>
-                    <div className="space-y-2">
-                      <p><strong>Name:</strong> {selectedClient.name}</p>
-                      <p><strong>Position:</strong> {selectedClient.position}</p>
-                      <p><strong>Organization:</strong> {selectedClient.organization}</p>
-                      <p><strong>Contact:</strong> {selectedClient.contact}</p>
-                      <p><strong>Email:</strong> {selectedClient.email}</p>
-                      <p><strong>WhatsApp:</strong> {selectedClient.whatsapp ? 'Available' : 'Not Available'}</p>
-                    </div>
-                  </div>
-                  <div className="p-6 bg-green-50 rounded-lg border border-green-200">
-                    <h4 className="font-semibold text-green-800 mb-4">Contract Information</h4>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <span><strong>Status:</strong></span>
-                        <Badge 
-                          color={selectedClient.contractStatus === 'active' ? 'success' : 
-                                 selectedClient.contractStatus === 'expired' ? 'warning' : 
-                                 selectedClient.contractStatus === 'pending' ? 'primary' : 'default'}
-                          variant="flat"
-                        >
-                          {selectedClient.contractStatus}
-                        </Badge>
-                      </div>
-                      <div><strong>Start Date:</strong> {selectedClient.contractStart}</div>
-                      <div><strong>End Date:</strong> {selectedClient.contractEnd}</div>
-                      <div><strong>Generated:</strong> {new Date().toLocaleDateString()}</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Negotiated Rates */}
-                <div className="p-6 bg-purple-50 rounded-lg border border-purple-200">
-                  <h4 className="font-semibold text-purple-800 mb-4">Negotiated Rates & Services</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="text-center p-4 bg-white rounded-lg">
-                      <h5 className="font-medium text-purple-700 mb-2">Accommodation</h5>
-                      <p className="text-2xl font-bold text-purple-800">₵{selectedClient.rates.accommodation}</p>
-                      <p className="text-sm text-gray-600">per night</p>
-                    </div>
-                    <div className="text-center p-4 bg-white rounded-lg">
-                      <h5 className="font-medium text-purple-700 mb-2">Conference Services</h5>
-                      <p className="text-2xl font-bold text-purple-800">₵{selectedClient.rates.conference}</p>
-                      <p className="text-sm text-gray-600">per person</p>
-                    </div>
-                    <div className="text-center p-4 bg-white rounded-lg">
-                      <h5 className="font-medium text-purple-700 mb-2">Catering</h5>
-                      <p className="text-2xl font-bold text-purple-800">₵{selectedClient.rates.catering}</p>
-                      <p className="text-sm text-gray-600">per person</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Special Terms */}
-                {selectedClient.specialTerms && (
-                  <div className="p-6 bg-yellow-50 rounded-lg border border-yellow-200">
-                    <h4 className="font-semibold text-yellow-800 mb-4">Special Terms & Conditions</h4>
-                    <p className="text-yellow-800">{selectedClient.specialTerms}</p>
-                  </div>
-                )}
-
-                {/* Contract Terms */}
-                <div className="p-6 bg-gray-50 rounded-lg border border-gray-200">
-                  <h4 className="font-semibold text-gray-800 mb-4">Standard Contract Terms</h4>
-                  <div className="space-y-3 text-sm text-gray-700">
-                    <p>• <strong>Payment Terms:</strong> 50% deposit required upon booking, balance due 7 days before event</p>
-                    <p>• <strong>Cancellation Policy:</strong> 30 days notice required for full refund, 14 days for 50% refund</p>
-                    <p>• <strong>Force Majeure:</strong> Events beyond our control may result in rescheduling or refund</p>
-                    <p>• <strong>Liability:</strong> Ghana Hotel & Conference Center liability limited to contract value</p>
-                    <p>• <strong>Governing Law:</strong> This contract is governed by the laws of Ghana</p>
-                  </div>
-                </div>
-
-                {/* Signature Section */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="p-6 bg-white rounded-lg border border-gray-200">
-                    <h4 className="font-semibold text-gray-800 mb-4">Client Signature</h4>
-                    <div className="border-t-2 border-gray-300 pt-4">
-                      <p className="text-sm text-gray-600 mb-2">Client Name: _________________</p>
-                      <p className="text-sm text-gray-600 mb-2">Date: _________________</p>
-                      <p className="text-sm text-gray-600">Signature: _________________</p>
-                    </div>
-                  </div>
-                  <div className="p-6 bg-white rounded-lg border border-gray-200">
-                    <h4 className="font-semibold text-gray-800 mb-4">Hotel Representative</h4>
-                    <div className="border-t-2 border-gray-300 pt-4">
-                      <p className="text-sm text-gray-600 mb-2">Name: _________________</p>
-                      <p className="text-sm text-gray-600 mb-2">Date: _________________</p>
-                      <p className="text-sm text-gray-600">Signature: _________________</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            <Button color="danger" variant="flat" onPress={() => { setIsContractModalOpen(false); setSelectedContractEventInfo(null); }}>
-              Cancel
-            </Button>
-            <Button color="success" onPress={() => handleContractDownload()}>
-              📥 Download PDF
-            </Button>
-            <Button color="primary" onPress={() => handleContractPrint()}>
-              🖨️ Print Contract
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
-      {/* Event Folio Modal */}
-      <Modal
-        isOpen={isFolioModalOpen}
-        onClose={closeFolioModal}
-        size="4xl"
-        scrollBehavior="inside"
-      >
-        <ModalContent className="w-[72.25vw] max-w-[935px]">
-          <ModalHeader className="flex flex-col items-stretch gap-3">
-            {activeFolio ? (
-              <>
-                <div className="flex items-start justify-between gap-4 rounded-lg border-l-4 border-ghana-green bg-green-50 px-3 py-2.5">
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-green-800">Event Folio</p>
-                    <h3 className="text-xl font-semibold text-green-900">{formatFolioNumber(activeFolio.id)}</h3>
-                    <p className="text-sm font-normal text-slate-600">
-                      {activeFolio.eventName}
-                      {activeFolio.clientName ? <> · <span className="font-bold text-slate-900">{activeFolio.clientName}</span></> : null}
-                    </p>
-                  </div>
-                  <Badge
-                    color={
-                      activeFolio.status === 'Void'
-                        ? 'danger'
-                        : activeFolio.status === 'Open'
-                          ? 'success'
-                          : 'default'
-                    }
-                    variant="flat"
-                  >
-                    {activeFolio.status}
-                  </Badge>
-                </div>
-                <div className="grid grid-cols-3 gap-3 text-sm">
-                  <div>
-                    <p className="text-slate-500">Charges</p>
-                    <p className="font-semibold text-slate-900">{formatCurrency(activeFolioTotals.debits)}</p>
-                  </div>
-                  <div>
-                    <p className="text-slate-500">Payments</p>
-                    <p className="font-semibold text-slate-900">{formatCurrency(activeFolioTotals.credits)}</p>
-                  </div>
-                  <div>
-                    <p className="text-slate-500">{activeFolioBalance >= 0 ? 'Amount due' : 'Credit'}</p>
-                    <p className={`font-semibold ${activeFolioBalance > 0.01 ? 'text-red-700' : activeFolioBalance < -0.01 ? 'text-emerald-700' : 'text-slate-900'}`}>
-                      {formatCurrency(Math.abs(activeFolioBalance))}
-                    </p>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <h3 className="text-lg font-semibold">Event Folio</h3>
-            )}
-          </ModalHeader>
-          <ModalBody className="py-4">
-            {activeFolio ? (
-              <div className="space-y-4">
-                {activeFolioBalance < -0.01 && (
-                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                    <span>Credit {formatCurrency(Math.abs(activeFolioBalance))} on this account.</span>
-                    <div className="flex gap-2">
-                      <Button size="sm" color="warning" variant="flat" onPress={() => processRefund(activeFolio)}>
-                        Refund
-                      </Button>
-                      <Button size="sm" variant="flat" onPress={() => createCreditNote(activeFolio)}>
-                        Credit note
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {(() => {
-                  const invoice = eventInvoices.find((inv: EventInvoice) => inv.eventId === activeFolio.eventId);
-                  const event = allEvents.find((ev) => ev.id === activeFolio.eventId);
-                  const folioLocked = activeFolio.status === 'Void';
-                  return (
-                    <div className="flex w-full flex-wrap items-center gap-2">
-                      {event && (
-                        <Button size="sm" variant="flat" onPress={() => openEventForView(event)}>
-                          View
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        color="success"
-                        variant="flat"
-                        isDisabled={folioLocked}
-                        onPress={() => {
-                          if (invoice) {
-                            openReceiptFromInvoice(invoice);
-                            return;
-                          }
-                          openReceiptModal('create', undefined, {
-                            ...(event || {}),
-                            balance: Math.abs(activeFolioBalance),
-                          });
-                        }}
-                      >
-                        Record receipt
-                      </Button>
-                      <Button
-                        size="sm"
-                        color="primary"
-                        variant="flat"
-                        isDisabled={folioLocked}
-                        onPress={() => {
-                          setFolioEntryForm((prev) => ({ ...prev, type: 'charge' }));
-                          setFolioComposerOpen(true);
-                        }}
-                      >
-                        Add charge
-                      </Button>
-                      <Button size="sm" variant="flat" isDisabled={folioLocked} onPress={() => createDebitNote(activeFolio)}>
-                        Debit note
-                      </Button>
-                      <div className="ml-auto flex items-center gap-2">
-                        {invoice && (
-                          <Button size="sm" variant="flat" onPress={() => handleDownloadInvoicePdf(invoice)}>
-                            Print invoice
-                          </Button>
-                        )}
-                        <Button size="sm" variant="flat" onPress={handlePrintEventFolio}>
-                          Report
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {folioComposerOpen && (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <div className="mb-3 flex items-center justify-between">
-                      <p className="text-sm font-medium text-slate-800">Add charge</p>
-                      <Button size="sm" variant="light" onPress={() => setFolioComposerOpen(false)}>
-                        Cancel
-                      </Button>
-                    </div>
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                      <Input
-                        label="Amount"
-                        type="number"
-                        placeholder="0.00"
-                        value={folioEntryForm.amount > 0 ? String(folioEntryForm.amount) : ''}
-                        onValueChange={(value) => setFolioEntryForm((prev) => ({ ...prev, amount: parseFloat(value) || 0 }))}
-                        startContent={<span className="text-slate-400">₵</span>}
-                      />
-                      <Input
-                        label="Description"
-                        placeholder="Extra hours, equipment, late change"
-                        value={folioEntryForm.description}
-                        onValueChange={(value) => setFolioEntryForm((prev) => ({ ...prev, description: value }))}
-                        className="md:col-span-2"
-                      />
-                    </div>
-                    <div className="mt-3 flex justify-end">
-                      <Button
-                        size="sm"
-                        color="primary"
-                        onPress={handleAddFolioEntry}
-                        isDisabled={!folioEntryForm.description.trim() || folioEntryForm.amount <= 0}
-                      >
-                        Post charge
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                <div>
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                    <h4 className="text-sm font-semibold text-slate-800">Account</h4>
-                    {(activeFolio.entries.length + (activeFolio.openingBalance !== 0 ? 1 : 0)) > FOLIO_PAGE_SIZE && (
-                      <Input
-                        size="sm"
-                        placeholder="Search entries"
-                        value={folioEntrySearch}
-                        onValueChange={(value) => { setFolioEntrySearch(value); setFolioPage(1); }}
-                        className="max-w-xs"
-                        variant="bordered"
-                      />
-                    )}
-                  </div>
-                  {activeFolio.entries.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-slate-200 py-10 text-center text-sm text-slate-500">
-                      No charges or payments on this folio yet.
-                    </div>
-                  ) : filteredFolioEntries.length === 0 ? (
-                    <div className="rounded-lg border border-slate-200 py-8 text-center text-sm text-slate-500">
-                      No entries match the search.
-                      <div className="mt-2">
-                        <Button size="sm" variant="flat" onPress={() => setFolioEntrySearch('')}>
-                          Clear search
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                    <div ref={folioAccountCols.frameRef} style={folioAccountCols.frameStyle}>
-                    <Table
-                      aria-label="Folio account"
-                      removeWrapper
-                      classNames={deskResizableTableClassNames()}
-                    >
-                      <TableHeader columns={folioAccountColumnList}>
-                        {(col) => renderFolioAccountColumn(col, folioSortKey, folioSortDir, sortFolioAccount, folioAccountCols)}
-                      </TableHeader>
-                      <TableBody>
-                        <React.Fragment>
-                          {folioPageRows.map((entry: EventFolioEntry) => {
-                            if (entry.id === '__opening') {
-                              return (
-                                <TableRow key="opening">
-                                  <TableCell>{entry.date ? new Date(entry.date).toLocaleDateString() : '—'}</TableCell>
-                                  <TableCell className="font-medium">Opening balance</TableCell>
-                                  <TableCell className="text-slate-400">—</TableCell>
-                                  <TableCell className="text-right">{entry.debit > 0 ? formatCurrency(entry.debit) : '—'}</TableCell>
-                                  <TableCell className="text-right">{entry.credit > 0 ? formatCurrency(entry.credit) : '—'}</TableCell>
-                                  <TableCell className="text-right font-semibold">{formatCurrency(entry.balance)}</TableCell>
-                                  <TableCell>—</TableCell>
-                                </TableRow>
-                              );
-                            }
-                            const linkedInvoice = entry.reference
-                              ? eventInvoices.find((inv) => inv.id === entry.reference)
-                              : null;
-                            const linkedReceipt = entry.reference
-                              ? eventReceipts.find((rcpt) => rcpt.id === entry.reference)
-                              : null;
-                            const line = formatFolioEntryCopy(entry);
-
-                            return (
-                              <TableRow key={entry.id}>
-                                <TableCell>
-                                  {entry.date ? new Date(entry.date).toLocaleDateString() : '—'}
-                                </TableCell>
-                                <TableCell>{line.description}</TableCell>
-                                <TableCell className="text-slate-600">{line.reference}</TableCell>
-                                <TableCell className="text-right tabular-nums">
-                                  {entry.debit > 0 ? formatCurrency(entry.debit) : '—'}
-                                </TableCell>
-                                <TableCell className="text-right tabular-nums">
-                                  {entry.credit > 0 ? formatCurrency(entry.credit) : '—'}
-                                </TableCell>
-                                <TableCell className={`text-right tabular-nums font-semibold ${entry.balance > 0.01 ? 'text-red-700' : entry.balance < -0.01 ? 'text-emerald-700' : 'text-slate-900'}`}>
-                                  {formatCurrency(entry.balance)}
-                                </TableCell>
-                                <TableCell className="w-px">
-                                  {activeFolio.status === 'Void' ? (
-                                    <span className="text-slate-400">—</span>
-                                  ) : (
-                                  <div className="flex items-center justify-end gap-1 whitespace-nowrap">
-                                    {linkedInvoice && (
-                                      <Tooltip content="Open invoice">
-                                        <Button
-                                          size="sm"
-                                          variant="light"
-                                          className="min-w-8 h-8"
-                                          onPress={() => handleEditInvoiceFromFolio(linkedInvoice)}
-                                        >
-                                          Edit
-                                        </Button>
-                                      </Tooltip>
-                                    )}
-                                    {linkedReceipt && (
-                                      <Tooltip content="Open receipt">
-                                        <Button
-                                          size="sm"
-                                          variant="light"
-                                          className="min-w-8 h-8"
-                                          onPress={() => handleEditReceiptFromFolio(linkedReceipt)}
-                                        >
-                                          Receipt
-                                        </Button>
-                                      </Tooltip>
-                                    )}
-                                    <Tooltip content="Reverse this line">
-                                      <Button
-                                        size="sm"
-                                        color="warning"
-                                        variant="light"
-                                        isIconOnly
-                                        className="min-w-8 h-8"
-                                        onPress={() => reverseFolioEntry(activeFolio, entry)}
-                                      >
-                                        ↻
-                                      </Button>
-                                    </Tooltip>
-                                    <Tooltip content="Remove this line">
-                                      <Button
-                                        size="sm"
-                                        color="danger"
-                                        variant="light"
-                                        isIconOnly
-                                        className="min-w-8 h-8"
-                                        onPress={() => deleteFolioEntry(activeFolio, entry.id)}
-                                      >
-                                        ✖
-                                      </Button>
-                                    </Tooltip>
-                                  </div>
-                                  )}
-                                </TableCell>
-                              </TableRow>
-                            );
-                          })}
-                        </React.Fragment>
-                      </TableBody>
-                    </Table>
-                    </div>
-                    {sortedFolioEntries.length > FOLIO_PAGE_SIZE && (
-                      <div className="mt-3 flex justify-end">
-                        <Pagination page={folioSafePage} total={folioPageCount} onChange={setFolioPage} size="sm" showControls />
-                      </div>
-                    )}
-                    </>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="py-10 text-center text-sm text-slate-500">
-                No folio selected
-              </div>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            {activeFolio && (
-              <>
-                <Button color="danger" variant="flat" onPress={deleteActiveFolio}>
-                  Delete
-                </Button>
-                <Button
-                  color="warning"
-                  variant="flat"
-                  isDisabled={activeFolio.status === 'Void'}
-                  onPress={voidActiveFolio}
-                >
-                  Void
-                </Button>
-              </>
-            )}
-            <Button color="default" variant="flat" onPress={closeFolioModal}>
-              Close
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
-      {/* Event Invoice Modal */}
-      <Modal
-        isOpen={isInvoiceModalOpen}
-        onClose={() => setIsInvoiceModalOpen(false)}
-        size="3xl"
-        scrollBehavior="inside"
-      >
-        <ModalContent>
-          <ModalHeader>
-            <div className="flex items-center gap-2">
-              <span className="text-2xl">📄</span>
-              <div>
-                <h3 className="text-lg font-semibold">
-                  {invoiceModalMode === 'edit' ? 'Edit Invoice' : 'Create Invoice'}
-                </h3>
-                <p className="text-sm text-gray-500">
-                  {invoiceForm.eventName || 'Event Invoice'}
-                </p>
-              </div>
-            </div>
-          </ModalHeader>
-          <ModalBody className="py-6">
-            <div className="space-y-6">
-              {/* Header Section */}
-              <Card className="border border-gray-200">
-                <CardHeader>
-                  <h4 className="font-semibold text-gray-800">Invoice Details</h4>
-                </CardHeader>
-                <CardBody className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Input
-                      label="Invoice Number"
-                      placeholder="INV-123456"
-                      value={invoiceForm.id || ''}
-                      onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, id: value }))}
-                      isInvalid={!!invoiceErrors.id}
-                      errorMessage={invoiceErrors.id}
-                    />
-                    <Input
-                      label="Reference (Optional)"
-                      value={invoiceForm.reference || ''}
-                      onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, reference: value }))}
-                      placeholder="PO number or reference"
-                    />
-                  </div>
-                  <Input
-                    label="Event"
-                    value={invoiceForm.eventName || ''}
-                    isReadOnly
-                    variant="flat"
-                    description="Linked to selected event"
-                  />
-                  <Input
-                    label="Client Name"
-                    value={invoiceForm.clientName || ''}
-                    onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, clientName: value }))}
-                    isInvalid={!!invoiceErrors.clientName}
-                    errorMessage={invoiceErrors.clientName}
-                  />
-                  <div className="grid grid-cols-2 gap-4">
-                    <Input
-                      label="Issue Date"
-                      type="date"
-                      value={invoiceForm.issueDate || ''}
-                      onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, issueDate: value }))}
-                      isInvalid={!!invoiceErrors.issueDate}
-                      errorMessage={invoiceErrors.issueDate}
-                    />
-                    <Input
-                      label="Due Date"
-                      type="date"
-                      value={invoiceForm.dueDate || ''}
-                      onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, dueDate: value }))}
-                      isInvalid={!!invoiceErrors.dueDate}
-                      errorMessage={invoiceErrors.dueDate}
-                    />
-                  </div>
-                </CardBody>
-              </Card>
-
-              {/* Financial Section */}
-              <Card className="border border-gray-200">
-                <CardHeader>
-                  <h4 className="font-semibold text-gray-800">Financial Details</h4>
-                </CardHeader>
-                <CardBody className="space-y-4">
-                  {/* Amount Breakdown */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Input
-                      label="Subtotal (₵)"
-                      type="number"
-                      value={invoiceForm.subtotal?.toString() || '0'}
-                      onValueChange={(value) => {
-                        const num = parseFloat(value) || 0;
-                        const tax = invoiceForm.tax || 0;
-                        const newTotal = num + tax;
-                        setInvoiceForm(prev => ({
-                          ...prev,
-                          subtotal: num,
-                          total: newTotal,
-                          balance: newTotal
-                        }));
-                      }}
-                      isInvalid={!!invoiceErrors.subtotal}
-                      errorMessage={invoiceErrors.subtotal}
-                      startContent={<span className="text-gray-500">₵</span>}
-                    />
-                    <Input
-                      label="Tax (₵)"
-                      type="number"
-                      value={invoiceForm.tax?.toString() || '0'}
-                      onValueChange={(value) => {
-                        const num = parseFloat(value) || 0;
-                        const subtotal = invoiceForm.subtotal || 0;
-                        const newTotal = subtotal + num;
-                        setInvoiceForm(prev => ({
-                          ...prev,
-                          tax: num,
-                          total: newTotal,
-                          balance: newTotal
-                        }));
-                      }}
-                      isInvalid={!!invoiceErrors.tax}
-                      errorMessage={invoiceErrors.tax}
-                      startContent={<span className="text-gray-500">₵</span>}
-                    />
-                  </div>
-
-                  {/* Total and Balance */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm font-medium text-gray-700">Total Amount:</span>
-                        <span className="text-lg font-bold text-gray-900">
-                          ₵{formatCurrency(invoiceForm.total || 0)}
-                        </span>
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        Subtotal: ₵{formatCurrency(invoiceForm.subtotal || 0)} +
-                        Tax: ₵{formatCurrency(invoiceForm.tax || 0)}
-                      </div>
-                    </div>
-                    <Input
-                      label="Outstanding Balance (₵)"
-                      type="number"
-                      value={invoiceForm.balance?.toString() || '0'}
-                      onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, balance: parseFloat(value) || 0 }))}
-                      isInvalid={!!invoiceErrors.balance}
-                      errorMessage={invoiceErrors.balance}
-                      description="Amount still owed by client"
-                      startContent={<span className="text-gray-500">₵</span>}
-                    />
-                  </div>
-                </CardBody>
-              </Card>
-
-              {/* Notes & Status Section */}
-              <Card className="border border-gray-200">
-                <CardHeader>
-                  <h4 className="font-semibold text-gray-800">Notes & Status</h4>
-                </CardHeader>
-                <CardBody className="space-y-4">
-                  <Textarea
-                    label="Invoice Notes"
-                    value={invoiceForm.notes || ''}
-                    onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, notes: value }))}
-                    placeholder="Payment terms, special instructions, or additional notes"
-                    minRows={3}
-                  />
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Select
-                      label="Invoice Status"
-                      selectedKeys={invoiceForm.status ? [invoiceForm.status] : []}
-                      onSelectionChange={(keys) => {
-                        const selected = Array.from(keys)[0] as EventInvoiceStatus;
-                        setInvoiceForm(prev => ({ ...prev, status: selected }));
-                      }}
-                      description="Current status of this invoice"
-                    >
-                      <SelectItem key="Draft">
-                        <div className="flex items-center gap-2">
-                          <span>📝</span>
-                          <span>Draft</span>
-                        </div>
-                      </SelectItem>
-                      <SelectItem key="Issued">
-                        <div className="flex items-center gap-2">
-                          <span>📤</span>
-                          <span>Issued</span>
-                        </div>
-                      </SelectItem>
-                      <SelectItem key="Paid">
-                        <div className="flex items-center gap-2">
-                          <span>✅</span>
-                          <span>Paid</span>
-                        </div>
-                      </SelectItem>
-                      <SelectItem key="Partial">
-                        <div className="flex items-center gap-2">
-                          <span>💰</span>
-                          <span>Partial</span>
-                        </div>
-                      </SelectItem>
-                      <SelectItem key="Overdue">
-                        <div className="flex items-center gap-2">
-                          <span>⚠️</span>
-                          <span>Overdue</span>
-                        </div>
-                      </SelectItem>
-                    </Select>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-gray-700">Quick Actions</label>
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          variant="flat"
-                          color="primary"
-                          onPress={() => {
-                            const event = allEvents.find(ev => ev.id === invoiceForm.eventId);
-                            if (event) {
-                              openEventForEdit(event, false, false);
-                            }
-                          }}
-                        >
-                          View Event
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="flat"
-                          color="secondary"
-                          onPress={() => {
-                            const details = `Invoice: ${invoiceForm.id}\nClient: ${invoiceForm.clientName}\nAmount: ₵${invoiceForm.total}\nDue: ${invoiceForm.dueDate}`;
-                            navigator.clipboard.writeText(details);
-                          }}
-                        >
-                          Copy Details
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Status Badge */}
-                  {invoiceForm.status && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-gray-600">Status:</span>
-                      <Badge
-                        color={
-                          invoiceForm.status === 'Paid' ? 'success' :
-                          invoiceForm.status === 'Partial' ? 'warning' :
-                          invoiceForm.status === 'Overdue' ? 'danger' :
-                          invoiceForm.status === 'Issued' ? 'primary' : 'default'
-                        }
-                        variant="flat"
-                      >
-                        {invoiceForm.status}
-                      </Badge>
-                      {invoiceForm.status === 'Paid' && (
-                        <span className="text-xs text-green-600">🎉 Fully paid</span>
-                      )}
-                      {invoiceForm.status === 'Overdue' && (
-                        <span className="text-xs text-red-600">⚠️ Requires attention</span>
-                      )}
-                    </div>
-                  )}
-                </CardBody>
-              </Card>
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            <div className="flex justify-between items-center w-full">
-              <div className="text-xs text-gray-500">
-                {invoiceModalMode === 'edit' ? 'Update existing invoice' : 'Create new invoice for event'}
-              </div>
-              <div className="flex gap-2">
-                <Button color="default" variant="flat" onPress={() => setIsInvoiceModalOpen(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  color="primary"
-                  onPress={handleInvoiceSave}
-                  startContent={<span>💾</span>}
-                >
-                  {invoiceModalMode === 'edit' ? 'Update Invoice' : 'Create Invoice'}
-                </Button>
-              </div>
-            </div>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
-      {/* Event Receipt Modal */}
-      <Modal
-        isOpen={isReceiptModalOpen}
-        onOpenChange={(open) => {
-          if (!open) closeReceiptWorkspace();
-        }}
-        onClose={closeReceiptWorkspace}
-        size="2xl"
-        scrollBehavior="inside"
-        classNames={{
-          base: 'max-h-[90vh]',
-          header: 'px-5 py-3 border-b border-slate-100',
-          body: 'px-5 py-4',
-          footer: 'px-5 py-3 border-t border-slate-100',
-        }}
-      >
-        <ModalContent>
-          {(() => {
-            const selectedInvoice = eventInvoices.find((inv) => inv.id === receiptForm.invoiceId);
-            const outstanding = Number(selectedInvoice?.balance || 0);
-            const invoiceTotal = Number(selectedInvoice?.total || 0);
-            const paidSoFar = Math.max(0, invoiceTotal - outstanding);
-            const receiptAmount = Number(receiptForm.amount || 0);
-            const invoiceQuery = receiptInvoiceQuery.trim().toLowerCase();
-            const invoiceItems = (() => {
-              if (receiptInvoiceLocked) {
-                return selectedInvoice
-                  ? [{ key: selectedInvoice.id, label: getInvoiceReceiptLabel(selectedInvoice) }]
-                  : [];
-              }
-              const unpaid = eventInvoices
-                .filter((inv) => Number(inv.balance || 0) > 0.01)
-                .sort((a, b) => Number(b.balance || 0) - Number(a.balance || 0));
-              const matches = invoiceQuery.length < 2
-                ? []
-                : unpaid.filter((inv) => {
-                    const haystack = [
-                      getConferenceInvoiceNumber(inv.id, inv.eventId),
-                      inv.eventName,
-                      inv.clientName,
-                      inv.id,
-                    ].join(' ').toLowerCase();
-                    return haystack.includes(invoiceQuery);
-                  }).slice(0, 20);
-              if (selectedInvoice && !matches.some((inv) => inv.id === selectedInvoice.id)) {
-                return [selectedInvoice, ...matches].map((inv) => ({ key: inv.id, label: getInvoiceReceiptLabel(inv) }));
-              }
-              return matches.map((inv) => ({ key: inv.id, label: getInvoiceReceiptLabel(inv) }));
-            })();
-            const linkedReceipts = selectedInvoice
-              ? eventReceipts.filter((rcpt) => rcpt.invoiceId === selectedInvoice.id)
-              : [];
-            const invoicePaid = !!selectedInvoice && outstanding <= 0;
-            const afterThisReceipt = Math.max(0, outstanding - receiptAmount);
-            const applyInvoiceSelection = (invoiceId: string) => {
-              const invoice = eventInvoices.find((inv) => inv.id === invoiceId);
-              if (!invoice) return;
-              const event = allEvents.find((ev) => ev.id === invoice.eventId);
-              setReceiptForm((prev) => ({
-                ...prev,
-                eventId: invoice.eventId,
-                eventName: invoice.eventName || getEventDisplayName(event),
-                clientName: invoice.clientName || getEventClientName(event),
-                invoiceId: invoice.id,
-                amount: Number(invoice.balance || 0),
-              }));
-              setReceiptErrors((prev) => {
-                const next = { ...prev };
-                delete next.invoiceId;
-                delete next.eventId;
-                delete next.clientName;
-                return next;
-              });
-            };
-            return (
-              <>
-          <ModalHeader>
-            <div>
-              <h3 className="text-lg font-semibold text-ghana-black">
-                {receiptModalMode === 'edit' ? 'Edit Receipt' : 'Record Receipt'}
-                {receiptForm.status === 'Void' ? ' · Void' : ''}
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                {receiptModalMode === 'edit'
-                  ? 'Update this payment against the selected invoice.'
-                  : receiptInvoiceLocked
-                    ? 'Payment against this invoice.'
-                    : 'Search the unpaid invoice. Do not browse the full invoice book.'}
-              </p>
-            </div>
-          </ModalHeader>
-          <ModalBody>
-            <div className="space-y-4">
-              {receiptInvoiceLocked && selectedInvoice ? (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
-                  <p className="text-xs text-slate-500">Invoice</p>
-                  <p className="font-semibold text-slate-900">
-                    {getConferenceInvoiceNumber(selectedInvoice.id, selectedInvoice.eventId) || 'Invoice'}
-                  </p>
-                  <p className="text-sm text-slate-600">
-                    {receiptForm.eventName || selectedInvoice.eventName || 'Event'}
-                    {receiptForm.clientName || selectedInvoice.clientName
-                      ? ` · ${receiptForm.clientName || selectedInvoice.clientName}`
-                      : ''}
-                  </p>
-                </div>
-              ) : (
-              <Autocomplete
-                size="sm"
-                label="Invoice"
-                placeholder="Type invoice number, event, or client"
-                selectedKey={receiptForm.invoiceId || null}
-                items={invoiceItems}
-                menuTrigger="input"
-                inputValue={receiptInvoiceQuery}
-                isInvalid={!!receiptErrors.invoiceId || !!receiptErrors.clientName}
-                errorMessage={receiptErrors.invoiceId || receiptErrors.clientName}
-                description={invoiceQuery.length < 2 ? 'Type at least 2 characters to find an unpaid invoice' : 'Unpaid invoices matching your search'}
-                onInputChange={setReceiptInvoiceQuery}
-                onSelectionChange={(key) => {
-                  if (key == null) return;
-                  applyInvoiceSelection(String(key));
-                }}
-              >
-                {(item) => (
-                  <AutocompleteItem key={item.key} textValue={item.label}>
-                    {item.label}
-                  </AutocompleteItem>
-                )}
-              </Autocomplete>
-              )}
-
-              {selectedInvoice && (
-                <>
-                  {!receiptInvoiceLocked && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Chip size="sm" color="primary" variant="flat">{receiptForm.eventName || selectedInvoice.eventName || 'Event'}</Chip>
-                    <Chip size="sm" color="secondary" variant="flat">{receiptForm.clientName || selectedInvoice.clientName || 'Client'}</Chip>
-                    {linkedReceipts.length > 0 && (
-                      <Chip size="sm" variant="flat">
-                        {linkedReceipts.length} receipt{linkedReceipts.length === 1 ? '' : 's'}
-                      </Chip>
-                    )}
-                  </div>
-                  )}
-                  <Card className="bg-blue-50 border border-blue-200 shadow-none">
-                    <CardBody className="py-3">
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                        <div>
-                          <div className="text-gray-500">Invoice</div>
-                          <div className="font-semibold">{getConferenceInvoiceNumber(selectedInvoice.id, selectedInvoice.eventId) || 'Invoice'}</div>
-                        </div>
-                        <div>
-                          <div className="text-gray-500">Invoice total</div>
-                          <div className="font-medium">{formatCurrency(invoiceTotal)}</div>
-                        </div>
-                        <div>
-                          <div className="text-gray-500">Balance due</div>
-                          <div className={`font-bold ${invoicePaid ? 'text-green-700' : 'text-orange-600'}`}>
-                            {formatCurrency(outstanding)}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-gray-500">After this receipt</div>
-                          <div className="font-bold text-green-700">{formatCurrency(afterThisReceipt)}</div>
-                        </div>
-                      </div>
-                    </CardBody>
-                  </Card>
-                </>
-              )}
-              {invoicePaid && receiptModalMode === 'create' && (
-                <p className="text-xs text-success">
-                  This invoice is already settled{linkedReceipts[0] ? ` (${linkedReceipts[0].id})` : ''}. Enter an amount only if you are recording an additional payment.
-                </p>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Input
-                  size="sm"
-                  label="Amount received *"
-                  type="number"
-                  placeholder="0.00"
-                  value={receiptForm.amount?.toString() ?? ''}
-                  onValueChange={(value) => setReceiptForm(prev => ({ ...prev, amount: parseFloat(value) || 0 }))}
-                  isInvalid={!!receiptErrors.amount}
-                  errorMessage={receiptErrors.amount}
-                  description={selectedInvoice ? `Balance due ${formatCurrency(outstanding)}` : 'Enter amount received'}
-                  startContent={<span className="text-slate-400 text-xs">₵</span>}
-                  endContent={
-                    selectedInvoice && outstanding > 0 ? (
-                      <Button
-                        size="sm"
-                        variant="flat"
-                        onPress={() => setReceiptForm((prev) => ({ ...prev, amount: outstanding }))}
-                      >
-                        Fill
-                      </Button>
-                    ) : undefined
-                  }
-                />
-                <Input
-                  size="sm"
-                  label="Receipt date"
-                  type="date"
-                  value={receiptForm.date || ''}
-                  onValueChange={(value) => setReceiptForm(prev => ({ ...prev, date: value }))}
-                  isInvalid={!!receiptErrors.date}
-                  errorMessage={receiptErrors.date}
-                />
-                <Select
-                  size="sm"
-                  label="Payment method"
-                  selectedKeys={[resolveReceiptMethod(receiptForm.method)]}
-                  onSelectionChange={(keys) => {
-                    const method = resolveReceiptMethod(Array.from(keys)[0] as string);
-                    setReceiptForm(prev => ({
-                      ...prev,
-                      method,
-                      ...(method !== 'Cheque' ? { checkNumber: '' } : {}),
-                    }));
-                  }}
-                >
-                  {receiptMethods.map(method => (
-                    <SelectItem key={method} textValue={receiptMethodLabels[method]}>
-                      {receiptMethodLabels[method]}
-                    </SelectItem>
-                  ))}
-                </Select>
-                <Autocomplete
-                  size="sm"
-                  label="Recorded by"
-                  placeholder="Pick staff"
-                  selectedKey={receiptForm.recordedBy || null}
-                  inputValue={receiptForm.recordedBy || ''}
-                  allowsCustomValue
-                  items={withCurrentOption(
-                    eventStaffOptions.map((option) => option.label),
-                    receiptForm.recordedBy || ''
-                  ).map((name) => ({ key: name, label: name }))}
-                  onSelectionChange={(key) => {
-                    if (key != null) setReceiptForm((prev) => ({ ...prev, recordedBy: String(key) }));
-                  }}
-                  onInputChange={(value) => setReceiptForm((prev) => ({ ...prev, recordedBy: value }))}
-                >
-                  {(item) => (
-                    <AutocompleteItem key={item.key} textValue={item.label}>
-                      {item.label}
-                    </AutocompleteItem>
-                  )}
-                </Autocomplete>
-                {receiptForm.method === 'Cheque' && (
-                  <Input
-                    size="sm"
-                    label="Cheque number *"
-                    value={receiptForm.checkNumber || ''}
-                    onValueChange={(value) => setReceiptForm(prev => ({ ...prev, checkNumber: value }))}
-                    isInvalid={!!receiptErrors.checkNumber}
-                    errorMessage={receiptErrors.checkNumber}
-                  />
-                )}
-                <Input
-                  size="sm"
-                  label="Reference / transaction ID"
-                  value={receiptForm.reference || ''}
-                  onValueChange={(value) => setReceiptForm(prev => ({ ...prev, reference: value }))}
-                  placeholder="Bank ref, MoMo txn…"
-                  className={receiptForm.method === 'Cheque' ? '' : 'sm:col-span-2'}
-                />
-                <Input
-                  size="sm"
-                  label="Notes (optional)"
-                  placeholder="Internal note"
-                  value={receiptForm.notes || ''}
-                  onValueChange={(value) => setReceiptForm(prev => ({ ...prev, notes: value }))}
-                  className="sm:col-span-2"
-                />
-              </div>
-              {selectedInvoice && receiptAmount > outstanding && outstanding > 0 && (
-                <p className="text-xs text-warning">Amount is above the outstanding balance of {formatCurrency(outstanding)}.</p>
-              )}
-              {receiptModalMode !== 'edit' && (
-                <Checkbox
-                  size="sm"
-                  isSelected={receiptPrintAfterSave}
-                  onValueChange={setReceiptPrintAfterSave}
-                >
-                  Print receipt after posting
-                </Checkbox>
-              )}
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            <Button
-              size="sm"
-              color="danger"
-              variant="flat"
-              isDisabled={receiptModalMode !== 'edit' || !receiptForm.id}
-              onPress={deleteActiveReceipt}
-            >
-              Delete
-            </Button>
-            <Button
-              size="sm"
-              color="warning"
-              variant="flat"
-              isDisabled={
-                receiptModalMode !== 'edit' ||
-                !receiptForm.id ||
-                receiptForm.status === 'Void'
-              }
-              onPress={voidActiveReceipt}
-            >
-              Void
-            </Button>
-            <Button size="sm" variant="flat" onPress={closeReceiptWorkspace}>
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              color="primary"
-              onPress={handleReceiptSave}
-              isDisabled={
-                (receiptModalMode === 'create' && receiptAmount <= 0) ||
-                receiptForm.status === 'Void'
-              }
-            >
-              {receiptModalMode === 'edit' ? 'Save Changes' : 'Post Receipt'}
-            </Button>
-          </ModalFooter>
-              </>
-            );
-          })()}
-        </ModalContent>
-      </Modal>
-
-      <Modal
-        isOpen={isFolioCreateModalOpen}
-        onClose={() => {
-          setIsFolioCreateModalOpen(false);
-          setFolioCreateError('');
-        }}
-        size="2xl"
-        scrollBehavior="inside"
-        classNames={{
-          base: 'max-h-[90vh]',
-          header: 'px-5 py-3 border-b border-slate-100',
-          body: 'px-5 py-4',
-          footer: 'px-5 py-3 border-t border-slate-100',
-        }}
-      >
-        <ModalContent>
-          {(() => {
-            const selectedEvent = allEvents.find((ev) => ev.id === folioCreateForm.eventId);
-            const linkedInvoice = selectedEvent
-              ? eventInvoices.find((inv) => inv.eventId === selectedEvent.id)
-              : undefined;
-            const linkedReceipts = selectedEvent
-              ? eventReceipts.filter((rcpt) => rcpt.eventId === selectedEvent.id)
-              : [];
-            const existingFolio = selectedEvent
-              ? eventFolios.find((f) => f.eventId === selectedEvent.id)
-              : undefined;
-            const eventItems = getFolioCandidateEvents().map((ev) => ({
-              key: ev.id,
-              label: getFolioEventLabel(ev),
-            }));
-            if (selectedEvent && !eventItems.some((item) => item.key === selectedEvent.id)) {
-              eventItems.unshift({ key: selectedEvent.id, label: getFolioEventLabel(selectedEvent) });
-            }
-            return (
-              <>
-          <ModalHeader>
-            <div>
-              <h3 className="text-lg font-semibold text-ghana-black">New Folio</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Select the event. The folio posts any existing invoice and receipts, then opens the ledger.
-              </p>
-            </div>
-          </ModalHeader>
-          <ModalBody>
-            <div className="space-y-4">
-              <Autocomplete
-                size="sm"
-                label="Event"
-                placeholder="Type to filter events"
-                selectedKey={folioCreateForm.eventId || null}
-                items={eventItems}
-                isInvalid={!!folioCreateError}
-                errorMessage={folioCreateError}
-                description="Pick an event. Existing folios open the ledger instead of creating a second one."
-                onSelectionChange={(key) => {
-                  if (key == null) return;
-                  setFolioCreateForm((prev) => ({ ...prev, eventId: String(key) }));
-                  setFolioCreateError('');
-                }}
-              >
-                {(item) => (
-                  <AutocompleteItem key={item.key} textValue={item.label}>
-                    {item.label}
-                  </AutocompleteItem>
-                )}
-              </Autocomplete>
-
-              {selectedEvent && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <Chip size="sm" color="primary" variant="flat">{getEventDisplayName(selectedEvent)}</Chip>
-                  <Chip size="sm" color="secondary" variant="flat">{getEventClientName(selectedEvent)}</Chip>
-                  {existingFolio ? (
-                    <Chip size="sm" color="success" variant="flat">{existingFolio.id}</Chip>
-                  ) : linkedInvoice ? (
-                    <>
-                      <Chip size="sm" color="success" variant="flat">{linkedInvoice.id}</Chip>
-                      <Chip size="sm" color="warning" variant="flat">Due {formatCurrency(Number(linkedInvoice.balance || 0))}</Chip>
-                    </>
-                  ) : (
-                    <Chip size="sm" variant="flat">No invoice yet</Chip>
-                  )}
-                  {linkedReceipts.length > 0 && (
-                    <Chip size="sm" color="success" variant="flat">{linkedReceipts.length} receipt{linkedReceipts.length === 1 ? '' : 's'}</Chip>
-                  )}
-                </div>
-              )}
-
-              {existingFolio ? (
-                <p className="text-xs text-slate-500">
-                  This event already has a folio. Open it to add charges or payments.
-                </p>
-              ) : linkedInvoice ? (
-                <p className="text-xs text-slate-500">
-                  Invoice {linkedInvoice.id} ({formatCurrency(Number(linkedInvoice.total || 0))}) and its receipts will post onto this folio.
-                </p>
-              ) : selectedEvent ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Input
-                    size="sm"
-                    label="Opening balance"
-                    type="number"
-                    value={String(folioCreateForm.openingBalance ?? 0)}
-                    onValueChange={(value) =>
-                      setFolioCreateForm((prev) => ({
-                        ...prev,
-                        openingBalance: parseFloat(value) || 0,
-                      }))
-                    }
-                    description="Optional — skip if charges will come later"
-                    startContent={<span className="text-slate-400 text-xs">₵</span>}
-                  />
-                  <Input
-                    size="sm"
-                    label="Note"
-                    placeholder="Opening balance note"
-                    value={folioCreateForm.note || ''}
-                    onValueChange={(value) => setFolioCreateForm((prev) => ({ ...prev, note: value }))}
-                  />
-                </div>
-              ) : (
-                <p className="text-xs text-slate-500">Select an event to create or open its folio.</p>
-              )}
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            <Button size="sm" variant="flat" onPress={() => setIsFolioCreateModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button size="sm" color="primary" onPress={handleCreateFolio} isDisabled={!folioCreateForm.eventId}>
-              {existingFolio ? 'Open Folio' : 'Create Folio'}
-            </Button>
-          </ModalFooter>
-              </>
-            );
-          })()}
-        </ModalContent>
-      </Modal>
-
-      <Modal
-        isOpen={isInvoiceEventPickerOpen}
-        onClose={() => setIsInvoiceEventPickerOpen(false)}
-        size="md"
-      >
-        <ModalContent>
-          <ModalHeader>Select Proforma</ModalHeader>
-          <ModalBody className="space-y-4">
-            <p className="text-sm text-gray-600">
-              Choose the quote / proforma to convert. The same event form opens so you can edit the details and issue the invoice.
-            </p>
-            <Autocomplete
-              label="Proforma"
-              placeholder="Type to filter quotes"
-              selectedKey={invoiceCreateEventId || null}
-              items={getInvoiceableProformas().map((ev) => ({
-                key: ev.id,
-                label: getProformaPickerLabel(ev),
-              }))}
-              onSelectionChange={(key) => {
-                if (key == null) return;
-                setInvoiceCreateEventId(String(key));
-              }}
-            >
-              {(item) => (
-                <AutocompleteItem key={item.key} textValue={item.label}>
-                  {item.label}
-                </AutocompleteItem>
-              )}
-            </Autocomplete>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={() => setIsInvoiceEventPickerOpen(false)}>
-              Cancel
-            </Button>
-            <Button color="primary" onPress={confirmCreateInvoiceForEvent}>
-              Continue
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
-      <Modal
-        isOpen={Boolean(docCautionPrompt)}
-        onClose={() => setDocCautionPrompt(null)}
-        size="sm"
-      >
-        <ModalContent>
-          <ModalHeader className="flex flex-col gap-1">
-            <span>{docCautionPrompt?.title || 'Please confirm'}</span>
-          </ModalHeader>
-          <ModalBody>
-            <p className="text-sm text-slate-600">{docCautionPrompt?.message}</p>
-          </ModalBody>
-          <ModalFooter>
-            <Button size="sm" variant="flat" onPress={() => setDocCautionPrompt(null)}>
-              Keep as is
-            </Button>
-            <Button
-              size="sm"
-              color={docCautionPrompt?.kind?.startsWith('delete') ? 'danger' : 'warning'}
-              onPress={confirmDocCaution}
-            >
-              {docCautionPrompt?.confirmLabel || 'Confirm'}
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+      {isEventModalOpen && <EventEditorModal />}
+      {isVenueModalOpen && <VenueModal />}
+      {(isServiceModalOpen || isBEOModalOpen) && <EventFunctionSheetModal />}
+      {(isClientViewModalOpen || isClientEditModalOpen || isContractModalOpen) && <EventClientModals />}
+      {isFolioModalOpen && <EventFolioModal />}
+      {isInvoiceModalOpen && <EventInvoiceModal />}
+      {isReceiptModalOpen && <EventReceiptModal />}
+      {isFolioCreateModalOpen && <EventFolioCreateModal />}
+      {isInvoiceEventPickerOpen && <EventProformaPickerModal />}
+      {docCautionPrompt && <EventDocCautionModal />}
     </>
+    </EventsScreenProvider>
   );
 }

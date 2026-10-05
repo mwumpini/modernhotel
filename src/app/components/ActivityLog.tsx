@@ -386,15 +386,15 @@ export default function ActivityLog() {
               size="sm"
               color="warning"
               variant="flat"
-              onClick={() => {
-                if (confirm('Download and clear all logs?')) {
-                  exportLogs();
-                  setTimeout(() => {
-                    setLogs([]);
-                    setFilteredLogs([]);
-                    alert('Logs cleared.');
-                  }, 1000);
-                }
+              onClick={async () => {
+                const { confirmDelete } = await import('./DangerConfirm');
+                if (!(await confirmDelete('all activity logs', 'They will be downloaded first, then permanently removed.'))) return;
+                exportLogs();
+                setTimeout(() => {
+                  setLogs([]);
+                  setFilteredLogs([]);
+                  alert('Logs cleared.');
+                }, 1000);
               }}
             >
               <ArrowDownTrayIcon className="h-4 w-4 mr-1" />
@@ -417,17 +417,18 @@ export default function ActivityLog() {
           <Button
             size="sm"
             variant="light"
-            onClick={() => {
-              if (confirm('Download and clear old logs?')) {
-                exportLogs();
-                const thirtyDaysAgo = new Date();
-                thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-                const oldLogs = logs.filter(log => new Date(log.timestamp) < thirtyDaysAgo);
-                if (oldLogs.length > 0) {
-                  setLogs(logs.filter(log => new Date(log.timestamp) >= thirtyDaysAgo));
-                  setFilteredLogs(filteredLogs.filter(log => new Date(log.timestamp) >= thirtyDaysAgo));
-                  alert(`Cleared ${oldLogs.length} old entries.`);
-                }
+            onClick={async () => {
+              const { confirmChoice } = await import('./DangerConfirm');
+              const ok = await confirmChoice('Clean old logs', 'Logs older than 30 days will be downloaded, then removed.', 'Clean old');
+              if (!ok) return;
+              exportLogs();
+              const thirtyDaysAgo = new Date();
+              thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+              const oldLogs = logs.filter(log => new Date(log.timestamp) < thirtyDaysAgo);
+              if (oldLogs.length > 0) {
+                setLogs(logs.filter(log => new Date(log.timestamp) >= thirtyDaysAgo));
+                setFilteredLogs(filteredLogs.filter(log => new Date(log.timestamp) >= thirtyDaysAgo));
+                alert(`Cleared ${oldLogs.length} old entries.`);
               }
             }}
           >
@@ -439,12 +440,12 @@ export default function ActivityLog() {
             size="sm"
             variant="light"
             color="danger"
-            onClick={() => {
-              if (confirm('Clear all logs?')) {
-                setLogs([]);
-                setFilteredLogs([]);
-                alert('All logs cleared.');
-              }
+            onClick={async () => {
+              const { confirmDelete } = await import('./DangerConfirm');
+              if (!(await confirmDelete('all activity logs', 'Every log on this screen will be permanently removed.'))) return;
+              setLogs([]);
+              setFilteredLogs([]);
+              alert('All logs cleared.');
             }}
           >
             Clear All

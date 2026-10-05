@@ -55,6 +55,7 @@ interface ComplianceState {
   updateReport: (id: string, updates: Partial<ComplianceReport>) => void;
   upsertReport: (report: Omit<ComplianceReport, 'id'>) => void;
   hydrateReportFilingsFromApi: () => Promise<void>;
+  updateReportingRule: (rule: ReportingRule) => void;
   calculateTax: (
     amount: number,
     category?: string,
@@ -210,6 +211,11 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
   // Find-by-(country, reportType, period) then update-or-create — the one place this pattern
   // lives, shared by payroll's PAYE/SSNIT sync and tax remittance's filing sync, instead of
   // each duplicating its own find/patch/push logic.
+  // The server has already saved it (PUT /api/compliance/reports); this just shows the saved schedule.
+  updateReportingRule: (rule) => {
+    set((state) => ({ reportingRules: state.reportingRules.map((r) => (r.id === rule.id ? rule : r)) }));
+  },
+
   upsertReport: (report) => {
     set((state) => {
       const idx = state.reports.findIndex(

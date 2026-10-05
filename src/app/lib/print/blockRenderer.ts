@@ -94,12 +94,16 @@ function styleBlock(style: TemplateStyle): string {
     th + th, td + td { border-left:var(--bw) solid var(--border); }
     tr + tr th, tr + tr td { border-top:var(--bw) solid var(--border); }
     th { background:#f7f7f7; text-align:left; }
+    /* One shared line per edge. A separate outer border sat outside the gray
+       header and read as a second box around that row alone. */
+    table.data-grid { border-collapse:collapse; border:none; }
+    table.data-grid th, table.data-grid td { border:var(--bw) solid var(--border); }
     .bill-grid { width:${narrow ? '100%' : 'max-content'}; min-width:${narrow ? '0' : '50%'}; max-width:100%; margin-left:auto; border:var(--bw) solid var(--border); box-sizing:border-box; }
     .bill-grid table { width:100%; margin:0; border:none; }
     .bill-grid .lbl { white-space:${narrow ? 'normal' : 'nowrap'}; }
     .bill-grid .amt { white-space:nowrap; min-width:${narrow ? '0' : '11em'}; }
     .right { text-align:right; }
-    .totals { width:${narrow ? '100%' : '50%'}; margin-left:auto; margin-top:0; }
+    .totals { width:${narrow ? '100%' : '50%'}; margin-left:auto; margin-top:0; border:none; }
     .totals td { border:none; padding:2px 8px; line-height:1.25; }
     .totals .label { color:var(--muted); text-align:left; }
     .totals .value { text-align:right; font-weight:600; }
@@ -210,7 +214,7 @@ function renderMatrixTable(_block: BlockConfig, data: PrintData, currency: strin
     </tr>`;
   }).join('');
   return `
-  <table>
+  <table class="data-grid">
     <thead>
       <tr>
         <th>#</th>
@@ -244,7 +248,7 @@ function renderScheduleTable(_block: BlockConfig, data: PrintData, currency: str
     </tr>`).join('');
   }).join('');
   return `
-  <table>
+  <table class="data-grid">
     <thead>
       <tr>
         <th>#</th><th>Description</th>
@@ -269,7 +273,7 @@ function renderLineItemsTable(block: BlockConfig, data: PrintData, currency: str
         <td class="right">${l.credit ? money(l.credit, currency) : ''}</td>
       </tr>`).join('');
     return `
-    <table>
+    <table class="data-grid">
       <thead><tr><th>#</th><th>Account</th><th class="right">Debit</th><th class="right">Credit</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
@@ -317,7 +321,7 @@ function renderLineItemsTable(block: BlockConfig, data: PrintData, currency: str
       <td class="right">${money(it.amount, currency)}</td>
     </tr>`).join('');
   return `
-  <table>
+  <table class="data-grid">
     <thead>
       <tr>
         <th>#</th><th>Description</th>
@@ -375,7 +379,7 @@ function payslipTable(block: BlockConfig, items: PrintLineItem[] | undefined, cu
   const rows = (items || []).map(it => `
     <tr><td>${it.description}</td><td class="right">${money(it.amount, currency)}</td></tr>`).join('');
   return `
-  <table>
+  <table class="data-grid">
     <thead><tr><th>${sectionHeading}</th><th class="right">Amount</th></tr></thead>
     <tbody>${rows}</tbody>
     <tfoot><tr><td style="font-weight:700;">${totalLabel}</td><td class="right" style="font-weight:700;">${money(total, currency)}</td></tr></tfoot>
@@ -507,7 +511,8 @@ function renderDocTitle(block: BlockConfig, data: PrintData): string {
 function renderDocNumber(block: BlockConfig, data: PrintData): string {
   if (!data.docNumber) return '';
   const label = block.docNumberLabel != null ? block.docNumberLabel : 'No.';
-  const labelHtml = !label ? '' : block.border === 'none' ? `${label} ` : `<span class="badge">${label}</span> `;
+  // A bordered number already has its frame. A badge inside that frame is a second box.
+  const labelHtml = !label ? '' : block.border ? `${label} ` : `<span class="badge">${label}</span> `;
   return `<div>${labelHtml}${data.docNumber}</div>`;
 }
 
@@ -549,6 +554,7 @@ function renderGuestDetails(block: BlockConfig, data: PrintData): string {
   const body = hasDistinctBillingParty
     ? `<div>${guest.company}</div>${guest.name ? `<div>Guest Name: ${guest.name}</div>` : ''}`
     : `<div>${guest.name || guest.company || ''}</div>`;
+  const address = guest.address ? `<div style="white-space:pre-line; margin-top:4px;">${guest.address}</div>` : '';
   // An explicit '' (as opposed to unset) suppresses the heading line — for a
   // minimal style that addresses the recipient directly with no label at all.
   const headingText = block.heading !== undefined ? block.heading : (hasDistinctBillingParty ? 'Billing Person' : 'Guest / Client');
@@ -556,6 +562,7 @@ function renderGuestDetails(block: BlockConfig, data: PrintData): string {
   <div class="box"${boxStyle}>
     ${headingText ? `<div style="font-weight:600; margin-bottom:6px;">${headingText}</div>` : ''}
     ${body}
+    ${address}
   </div>`;
 }
 

@@ -480,11 +480,34 @@ export function voidCharge(self: StoreLike, reservationId: string, chargeId: str
 	const folio = getOrCreateFolio(self, reservationId);
 	const ch = folio.charges.find(c => c.id === chargeId);
 	if (!ch) return false;
-	folio.charges.push({ id: genChargeId('C'), date: new Date().toISOString(), description: `VOID ${ch.description} - ${reason}`, amount: -Math.abs(ch.amount), tax: -(ch.tax || 0) } as any);
+	folio.charges.push({ id: genChargeId('C'), date: new Date().toISOString(), description: `VOID ${ch.description} - ${reason}`, amount: -Math.abs(ch.amount), tax: -(ch.tax || 0), voidsChargeId: chargeId } as any);
 	updateFolioBalances(self, folio);
 	self.notify();
 	trackEvent('FO.Folio.ChargeVoided', { reservationId, amount: ch.amount });
 	try { logAudit({ area: 'frontdesk', action: 'void', entity: 'Folio', entityId: reservationId, details: `Voided charge ${chargeId}: ${reason}`, severity: 'high' }); } catch {}
+	return true;
+}
+
+/** Remove a void line so the original charge counts again. */
+export function unvoidCharge(self: StoreLike, reservationId: string, voidLineId: string) {
+	const folio = getOrCreateFolio(self, reservationId);
+	const line = (folio.charges || []).find((charge) => charge.id === voidLineId) as any;
+	if (!line) return null;
+	const originalId = String(line.voidsChargeId || '');
+	folio.charges = folio.charges.filter((charge) => charge.id !== voidLineId);
+	updateFolioBalances(self, folio);
+	self.notify();
+	return { originalId };
+}
+
+/** Put a voided payment back so it counts on the folio again. */
+export function unvoidPayment(self: StoreLike, reservationId: string, paymentId: string) {
+	const folio = getOrCreateFolio(self, reservationId);
+	const payment = (folio.payments || []).find((item) => item.id === paymentId) as any;
+	if (!payment || payment.status !== 'refunded') return false;
+	payment.status = 'completed';
+	updateFolioBalances(self, folio);
+	self.notify();
 	return true;
 }
 
@@ -707,13 +730,27 @@ export function updateFolioPayment(
 }
 
 export function removeFolioPayment(self: StoreLike, reservationId: string, paymentId: string) {
-	const f = findMainFolio(self.folios, reservationId);
-	if (!f) return false;
-	const idx = f.payments.findIndex((p: FolioPayment) => p.id === paymentId);
-	if (idx < 0) return false;
-	f.payments.splice(idx, 1);
-	updateFolioBalances(self, f);
+	const rows = (self.folios || []).filter((f: Folio) => f.reservationId === reservationId);
+	let removed: FolioPayment | undefined;
+	for (const folio of rows) {
+		const idx = (folio.payments || []).findIndex((p: FolioPayment) => p.id === paymentId);
+		if (idx < 0) continue;
+		removed = folio.payments[idx];
+		folio.payments.splice(idx, 1);
+		updateFolioBalances(self, folio);
+	}
+	if (!removed) return false;
 	self.notify();
+	try {
+		logAudit({
+			area: 'frontdesk',
+			action: 'delete',
+			entity: 'Payment',
+			entityId: paymentId,
+			details: `Deleted receipt ₵${removed.amount} from folio ${reservationId}`,
+			severity: 'high',
+		});
+	} catch {}
 	return true;
 }
 

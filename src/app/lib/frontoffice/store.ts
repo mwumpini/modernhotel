@@ -1349,9 +1349,61 @@ class FrontOfficeStore {
 
   splitCharge(reservationId: string, chargeId: string, targetReservationId: string, amountToMove: number, note?: string) { return folioHelpers.splitCharge(this as any, reservationId, chargeId, targetReservationId, amountToMove, note); }
 
-  voidCharge(reservationId: string, chargeId: string, reason: string) { return folioHelpers.voidCharge(this as any, reservationId, chargeId, reason); }
+  voidCharge(reservationId: string, chargeId: string, reason: string) {
+    const folio = this.getOrCreateFolio(reservationId);
+    const existing = (folio.charges || []).find((c) => c.id === chargeId);
+    const ok = folioHelpers.voidCharge(this as any, reservationId, chargeId, reason);
+    if (ok && existing) {
+      void invoiceHelpers.voidFolioChargeInAccounting(this as any, reservationId, existing).catch((e) =>
+        console.warn('FO: voided folio charge was not adjusted in Accounting', e),
+      );
+    }
+    return ok;
+  }
 
-  refundPayment(reservationId: string, paymentId: string, amount: number, reason?: string) { return folioHelpers.refundPayment(this as any, reservationId, paymentId, amount, reason); }
+  unvoidCharge(reservationId: string, voidLineId: string) {
+    const folio = this.getOrCreateFolio(reservationId);
+    const line = (folio.charges || []).find((charge) => charge.id === voidLineId) as any;
+    const original = line?.voidsChargeId
+      ? (folio.charges || []).find((charge) => charge.id === line.voidsChargeId)
+      : undefined;
+    const result = folioHelpers.unvoidCharge(this as any, reservationId, voidLineId);
+    if (result && original) {
+      void invoiceHelpers.unvoidFolioChargeInAccounting(this as any, reservationId, original).catch((error) =>
+        console.warn('FO: unvoided folio charge was not restored in Accounting', error),
+      );
+    }
+    return result;
+  }
+
+  refundPayment(reservationId: string, paymentId: string, amount: number, reason?: string) {
+    const folio = this.getOrCreateFolio(reservationId);
+    const existing = (folio.payments || []).find((p) => p.id === paymentId);
+    const voidAmount = existing ? Math.min(amount || existing.amount, existing.amount) : amount;
+    const ok = folioHelpers.refundPayment(this as any, reservationId, paymentId, amount, reason);
+    if (ok) {
+      void invoiceHelpers.voidFolioReceiptInAccounting(this as any, reservationId, {
+        id: paymentId,
+        amount: voidAmount,
+        ref: existing?.ref,
+      }).catch((e) => console.warn('FO: voided folio payment was not voided in Accounting', e));
+    }
+    return ok;
+  }
+
+  unvoidPayment(reservationId: string, paymentId: string) {
+    const folio = this.getOrCreateFolio(reservationId);
+    const existing = (folio.payments || []).find((payment) => payment.id === paymentId);
+    const ok = folioHelpers.unvoidPayment(this as any, reservationId, paymentId);
+    if (ok && existing) {
+      void invoiceHelpers.unvoidFolioReceiptInAccounting(this as any, reservationId, {
+        id: paymentId,
+        amount: existing.amount,
+        ref: existing.ref,
+      }).catch((error) => console.warn('FO: unvoided folio payment was not restored in Accounting', error));
+    }
+    return ok;
+  }
 
   // Allocate a single corporate/company receipt across multiple reservations' folios
   postCorporateReceipt(payer: string, reservationIds: string[], totalAmount: number, reference?: string, processedBy?: string) { return folioHelpers.postCorporateReceipt(this as any, payer, reservationIds, totalAmount, reference, processedBy); }
@@ -1376,7 +1428,19 @@ class FrontOfficeStore {
     return folioHelpers.updateFolioPayment(this as any, reservationId, paymentId, patch);
   }
   removeFolioPayment(reservationId: string, paymentId: string) {
-    return folioHelpers.removeFolioPayment(this as any, reservationId, paymentId);
+    const existing = (this.folios || [])
+      .filter((folio) => folio.reservationId === reservationId)
+      .flatMap((folio) => folio.payments || [])
+      .find((payment) => payment.id === paymentId);
+    const ok = folioHelpers.removeFolioPayment(this as any, reservationId, paymentId);
+    if (ok && existing) {
+      void invoiceHelpers.deleteFolioReceiptFromAccounting(this as any, reservationId, {
+        id: paymentId,
+        amount: existing.amount,
+        ref: existing.ref,
+      }).catch((e) => console.warn('FO: deleted folio payment was not removed from Accounting', e));
+    }
+    return ok;
   }
 
   // Credit management methods

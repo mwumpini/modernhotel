@@ -463,7 +463,8 @@ export default function DepartmentStockCountPanel({
   };
 
   const completeCount = async (count: StockCount) => {
-    if (!confirm(`Complete this stock count? Variances will adjust on-hand at ${count.location}.`)) return;
+    const { confirmChoice } = await import('../DangerConfirm');
+    if (!(await confirmChoice('Complete this stock count?', `Variances will adjust the stock on hand at ${count.location}.`, 'Complete'))) return;
     try {
       const res = await fetch('/api/inventory/stock-counts/complete', {
         method: 'POST',

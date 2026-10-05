@@ -13,7 +13,7 @@
   "vatStack": {
     "legalReference": "VAT Act 2025 (Act 1151), effective January 2026",
     "components": [
-      { "name": "VAT", "rate": 15, "note": "On subtotal + NHIL + GETFund" },
+      { "name": "VAT", "rate": 15, "note": "On the same taxable value as NHIL and GETFund" },
       { "name": "NHIL", "rate": 2.5, "note": "On exclusive base" },
       { "name": "GETFund Levy", "rate": 2.5, "note": "On exclusive base" },
       { "name": "VAT + Levies combined", "rate": 20, "note": "Effective on taxable value" },

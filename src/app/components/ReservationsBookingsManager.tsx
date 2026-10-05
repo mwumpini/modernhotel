@@ -621,10 +621,18 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
 
   // If multiple guests and third party is not selected, default to Guest Pays with optional confirmation
   useEffect(() => {
-    if (bulkGuests.length > 1 && useBillingPerson) {
-      const proceed = confirm('Multiple guests selected. Bill a third party for all guests? Click Cancel to keep Guest Pays.');
-      if (!proceed) setUseBillingPerson(false);
-    }
+    if (bulkGuests.length <= 1 || !useBillingPerson) return;
+    let cancelled = false;
+    void (async () => {
+      const { confirmChoice } = await import('./DangerConfirm');
+      const proceed = await confirmChoice(
+        'Bill a third party for all guests?',
+        'Several guests are on this reservation. Keep as is to leave each guest paying their own bill.',
+        'Bill third party',
+      );
+      if (!cancelled && !proceed) setUseBillingPerson(false);
+    })();
+    return () => { cancelled = true; };
   }, [bulkGuests.length]);
   
   const [formData, setFormData] = useState<ReservationFormData>({

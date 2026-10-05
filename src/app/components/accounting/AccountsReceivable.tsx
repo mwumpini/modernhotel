@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState, useCallback, useEffect, Suspense, lazy } from 'react';
 import HeadingInfo from '../HeadingInfo';
-import { confirmDelete, confirmVoid } from '../DangerConfirm';
+import { confirmDelete, confirmUnvoid, confirmVoid } from '../DangerConfirm';
 import {
 	Card, CardBody, Button,
 	Tabs, Tab,
@@ -74,8 +74,8 @@ type AgingSortKey =
 	| 'customer' | 'source' | 'invoiced' | 'paid' | 'balance'
 	| 'current' | 'days30' | 'days60' | 'days90' | 'over90';
 type ReceiptSortKey =
-	| 'receipt' | 'source' | 'customer' | 'date' | 'time' | 'method' | 'staff'
-	| 'invoice' | 'amount' | 'status';
+	| 'receipt' | 'source' | 'customer' | 'date' | 'method' | 'amount' | 'balance'
+	| 'invoice' | 'status' | 'time' | 'staff';
 type WhtSortKey =
 	| 'certificate' | 'agent' | 'tin' | 'invoice' | 'taxPeriod'
 	| 'wht' | 'whtVat' | 'total' | 'status';
@@ -152,7 +152,9 @@ export default function AccountsReceivable() {
 		receiveWHTCertificate,
 		updateWHTCertificate,
 		voidInvoice,
+		unvoidInvoice,
 		voidPayment,
+		unvoidPayment,
     } = useAccountingStore();
 	const settings = useSettingsStore();
 	const canManageAr = settings.hasPermission('accounting.manage-ar');
@@ -586,21 +588,30 @@ export default function AccountsReceivable() {
 	const exportReceiptsCSV = useCallback(() => {
 		const columns = [
 			{ key: 'paymentNumber', label: 'Receipt #' },
-			{ key: 'customerName', label: 'Customer' },
 			{ key: 'sourceModule', label: 'Source' },
+			{ key: 'customerName', label: 'Customer' },
 			{ key: 'date', label: 'Date' },
 			{ key: 'paymentMethod', label: 'Method' },
 			{ key: 'amount', label: 'Amount' },
+			{ key: 'balance', label: 'Balance' },
 			{ key: 'invoiceId', label: 'Invoice ID' },
-			{ key: 'staffName', label: 'Staff' },
 			{ key: 'status', label: 'Status' },
+			{ key: 'time', label: 'Time' },
+			{ key: 'staffName', label: 'Staff' },
 		];
-		const data = filteredReceipts.map((r: any) => ({
-			...r,
-			date: new Date(r.date).toLocaleString(),
-		}));
+		const data = filteredReceipts.map((r: any) => {
+			const inv = r.invoiceId ? salesInvoices.find((item: any) => item.id === r.invoiceId) : null;
+			const balance = inv ? (Number(inv.total) || 0) - (Number(inv.paidAmount) || 0) : '';
+			const when = new Date(r.date);
+			return {
+				...r,
+				date: when.toLocaleDateString(),
+				time: when.toLocaleTimeString(),
+				balance,
+			};
+		});
 		downloadCSV(data, 'receipts', columns);
-	}, [filteredReceipts]);
+	}, [filteredReceipts, salesInvoices]);
 
 	// Export Aging to CSV
 	const exportAgingCSV = useCallback(() => {
@@ -691,16 +702,26 @@ export default function AccountsReceivable() {
 
 	// Print Receipts Table as PDF
 	const printReceiptsTablePDF = useCallback(() => {
-		const rows = filteredReceipts.map((r: any) => `<tr>
+		const rows = filteredReceipts.map((r: any) => {
+			const inv = r.invoiceId ? salesInvoices.find((item: any) => item.id === r.invoiceId) : null;
+			const balance = inv ? (Number(inv.total) || 0) - (Number(inv.paidAmount) || 0) : null;
+			const when = new Date(r.date);
+			return `<tr>
 			<td>${r.paymentNumber || r.id}</td>
-			<td>${r.customerName || '-'}</td>
 			<td>${getSourceLabel(r.sourceModule).label}</td>
-			<td>${new Date(r.date).toLocaleString()}</td>
+			<td>${r.customerName || '-'}</td>
+			<td>${when.toLocaleDateString()}</td>
 			<td>${r.paymentMethod || 'Cash'}</td>
-			<td class="amount">${formatAccountingCurrency(Number(r.amount || 0))}</td>
+			<td class="amount">${formatAccountingCurrency(Number(r.amount || 0))}${r.status === 'Void' ? ' (void)' : ''}</td>
+			<td class="amount">${balance == null ? '—' : formatAccountingCurrency(balance)}</td>
+			<td>${r.invoiceId || '-'}</td>
+			<td>${r.status || '-'}</td>
+			<td>${when.toLocaleTimeString()}</td>
 			<td>${r.staffName || '-'}</td>
-		</tr>`).join('');
-		const totalAmount = filteredReceipts.reduce((s: number, r: any) => s + (r.amount || 0), 0);
+		</tr>`;
+		}).join('');
+		const totalAmount = filteredReceipts.reduce((s: number, r: any) => s + (r.status === 'Void' ? 0 : (r.amount || 0)), 0);
+		const voidedAmount = filteredReceipts.reduce((s: number, r: any) => s + (r.status === 'Void' ? (r.amount || 0) : 0), 0);
 		const html = generatePdfHtml('Receipts Report', `
 			<div class="header">
 				<h1>💳 Receipts Report</h1>
@@ -709,14 +730,15 @@ export default function AccountsReceivable() {
 			<div class="meta">
 				<div class="meta-item"><div class="meta-label">Total Receipts</div><div class="meta-value">${filteredReceipts.length}</div></div>
 				<div class="meta-item"><div class="meta-label">Total Received</div><div class="meta-value">${formatAccountingCurrency(totalAmount)}</div></div>
+				<div class="meta-item"><div class="meta-label">Voided</div><div class="meta-value">${formatAccountingCurrency(voidedAmount)}</div></div>
 			</div>
 			<table>
-				<thead><tr><th>Receipt #</th><th>Customer</th><th>Source</th><th>Date/Time</th><th>Method</th><th>Amount</th><th>Staff</th></tr></thead>
+				<thead><tr><th>Receipt #</th><th>Source</th><th>Customer</th><th>Date</th><th>Method</th><th>Amount</th><th>Balance</th><th>Invoice</th><th>Status</th><th>Time</th><th>Staff</th></tr></thead>
 				<tbody>${rows}</tbody>
 			</table>
 		`, 'Accounts Receivable • Receipts');
 		openPrintPreview(html);
-	}, [filteredReceipts]);
+	}, [filteredReceipts, salesInvoices]);
 
 	// Export WHT Certificates to CSV
 	const exportWHTCertificatesCSV = useCallback(() => {
@@ -998,6 +1020,7 @@ export default function AccountsReceivable() {
 					window.alert('No receipt selected to print.');
 					return;
 				}
+				if (receipt.status === 'Void') return;
 				printCustomerReceiptForPayment(receipt);
 			} catch (err) {
 				console.error('[AR] Print receipt failed', err);
@@ -1305,12 +1328,7 @@ export default function AccountsReceivable() {
 				paymentKind !== 'standard' && settlement && settlement.whtTotalRemaining > 0.009
 					? paymentKind
 					: 'standard';
-			const defaultAmount =
-				invoice && settlement
-					? settlement.whtTotalRemaining > 0
-						? settlement.cashRemaining
-						: settlement.balanceDue
-					: '';
+			const defaultAmount = invoice && settlement ? settlement.balanceDue : '';
 			const cashAmount =
 				kind === 'wht_only' ? 0 : kind === 'wht_settlement' ? settlement!.cashRemaining : '';
 			const whtAmount = kind !== 'standard' ? settlement!.whtRemaining : '';
@@ -1418,6 +1436,7 @@ export default function AccountsReceivable() {
 				cashAmount: '',
 				whtAmount: '',
 				whtVatAmount: '',
+				amount: settlement ? settlement.balanceDue : f.amount,
 			}));
 		}
 	};
@@ -1528,8 +1547,6 @@ export default function AccountsReceivable() {
 			const inv = salesInvoices.find((i: any) => i.id === target.id);
 			if (!inv) return;
 			const settlement = computeInvoiceWhtSettlement(inv, taxConfigs);
-			const suggested =
-				settlement.whtTotalRemaining > 0 ? settlement.cashRemaining : settlement.balanceDue;
 			setReceiptForm((f: any) => ({
 				...f,
 				targetKey,
@@ -1537,7 +1554,7 @@ export default function AccountsReceivable() {
 				invoiceNumber: inv.invoiceNumber,
 				businessPartnerId: inv.businessPartnerId,
 				customerName: (inv as { customerName?: string }).customerName || inv.businessPartnerId,
-				amount: suggested,
+				amount: settlement.balanceDue,
 				paymentKind: 'standard',
 				cashAmount: '',
 				whtAmount: '',
@@ -1569,22 +1586,8 @@ export default function AccountsReceivable() {
 	};
 
 	const fillReceiptFullBalance = () => {
-		if (selectedReceiptTarget) {
-			const amt =
-				selectedReceiptTarget.kind === 'invoice' &&
-				receiptWhtSettlement &&
-				receiptWhtSettlement.whtTotalRemaining > 0
-					? receiptWhtSettlement.cashRemaining
-					: receiptBalanceDue;
-			setReceiptForm((f: any) => ({ ...f, amount: amt }));
-			return;
-		}
-		if (!selectedReceiptInvoice) return;
-		const amt =
-			receiptWhtSettlement && receiptWhtSettlement.whtTotalRemaining > 0
-				? receiptWhtSettlement.cashRemaining
-				: receiptBalanceDue;
-		setReceiptForm((f: any) => ({ ...f, amount: amt }));
+		if (!selectedReceiptTarget && !selectedReceiptInvoice) return;
+		setReceiptForm((f: any) => ({ ...f, amount: receiptBalanceDue }));
 	};
 
 	const saveReceipt = () => {
@@ -2072,6 +2075,23 @@ export default function AccountsReceivable() {
 		handleRefresh();
 	};
 
+	const handleUnvoidInvoice = async (inv: any) => {
+		if (!useSettingsStore.getState().hasPermission('accounting.void-transaction')) {
+			setFormError("You don't have permission to unvoid invoices.");
+			return;
+		}
+		if (inv.status !== 'Void') return;
+		if (!(await confirmUnvoid(inv.invoiceNumber || 'this invoice', 'The invoice counts again. The void entry is reversed so the books match.'))) return;
+		await unvoidInvoice(inv.id);
+		const err = useAccountingStore.getState().error;
+		if (err) {
+			setFormError(err);
+			return;
+		}
+		setIsDetailOpen(false);
+		handleRefresh();
+	};
+
 	const handleDeleteInvoice = async (inv: any) => {
 		if (!useSettingsStore.getState().hasPermission('accounting.delete')) {
 			setFormError("You don't have permission to delete invoices.");
@@ -2142,6 +2162,23 @@ export default function AccountsReceivable() {
 		handleRefresh();
 	};
 
+	const handleUnvoidReceipt = async (receipt: StoredReceiptPayment) => {
+		if (!useSettingsStore.getState().hasPermission('accounting.void-transaction')) {
+			setFormError("You don't have permission to unvoid receipts.");
+			return;
+		}
+		if (receipt.status !== 'Void') return;
+		if (!(await confirmUnvoid(receipt.paymentNumber || 'this receipt', 'The receipt counts again. Unvoid the invoice first if that bill is still void.'))) return;
+		await unvoidPayment(receipt.id);
+		const err = useAccountingStore.getState().error;
+		if (err) {
+			setFormError(err);
+			return;
+		}
+		setIsReceiptDetailOpen(false);
+		handleRefresh();
+	};
+
 	// —— Desk table: per-list sort, resizable columns, pagination ——
 	const [salesSortKey, setSalesSortKey] = useState<SalesSortKey>('date');
 	const [salesSortDir, setSalesSortDir] = useState<'asc' | 'desc'>('desc');
@@ -2154,7 +2191,6 @@ export default function AccountsReceivable() {
 		const value = (inv: any): string | number => {
 			const balance = (inv.total || 0) - (inv.paidAmount || 0);
 			const isOverdue = balance > 0 && new Date(inv.dueDate) < new Date();
-			const settlement = computeInvoiceWhtSettlement(inv, taxConfigs);
 			const hasPendingWhtCert = (whtCertificates || []).some(
 				(c: any) => c.invoiceId === inv.id && c.status === 'Pending',
 			);
@@ -2170,14 +2206,14 @@ export default function AccountsReceivable() {
 				case 'paid': return Number(inv.paidAmount || 0);
 				case 'balance': return balance;
 				case 'status': return balance === 0 ? 'paid' : isOverdue ? 'overdue' : 'open';
-				case 'wht': return inv.whtStatus === 'Complete' ? 2 : inv.whtStatus === 'Pending' || hasPendingWhtCert ? 1 : settlement.whtTotalRemaining > 0 ? 0 : -1;
+				case 'wht': return inv.whtStatus === 'Complete' ? 2 : inv.whtStatus === 'Pending' || hasPendingWhtCert ? 1 : inv.whtStatus === 'Partial' ? 0 : -1;
 				case 'gl': return glChip?.label || '';
 				default: return '';
 			}
 		};
 		const sorted = [...filteredSalesInvoices].sort((a, b) => deskCmp(value(a), value(b)));
 		return salesSortDir === 'asc' ? sorted : sorted.reverse();
-	}, [filteredSalesInvoices, salesSortKey, salesSortDir, taxConfigs, whtCertificates, journalEntries]);
+	}, [filteredSalesInvoices, salesSortKey, salesSortDir, whtCertificates, journalEntries]);
 	const salesPaging = useDeskPagination(sortedSales, [statusFilter, sourceFilter, dateFrom, dateTo, searchQuery, salesSortKey, salesSortDir, invoiceDocType]);
 	const onSalesSort = (key: SalesSortKey) => {
 		if (salesSortKey === key) setSalesSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -2276,9 +2312,15 @@ export default function AccountsReceivable() {
 	const [receiptSortKey, setReceiptSortKey] = useState<ReceiptSortKey>('date');
 	const [receiptSortDir, setReceiptSortDir] = useState<'asc' | 'desc'>('desc');
 	const receiptCols = useResizableColumns<ReceiptSortKey>({
-		receipt: 128, source: 124, customer: 144, date: 92, time: 88, method: 88,
-		staff: 112, invoice: 120, amount: 100, status: 84,
+		receipt: 128, source: 124, customer: 144, date: 92, method: 88, amount: 100,
+		balance: 100, invoice: 120, status: 84, time: 88, staff: 112,
 	});
+	const receiptBalance = (invoiceId?: string) => {
+		if (!invoiceId) return null;
+		const inv = salesInvoices.find((item: any) => item.id === invoiceId);
+		if (!inv) return null;
+		return (Number(inv.total) || 0) - (Number(inv.paidAmount) || 0);
+	};
 	const sortedReceipts = useMemo(() => {
 		const value = (r: any): string | number => {
 			switch (receiptSortKey) {
@@ -2290,20 +2332,21 @@ export default function AccountsReceivable() {
 				case 'method': return (r.paymentMethod || '').toLowerCase();
 				case 'staff': return (r.staffName || '').toLowerCase();
 				case 'invoice': return (r.invoiceId || '').toLowerCase();
-				case 'amount': return Number(r.amount || 0);
+				case 'amount': return r.status === 'Void' ? 0 : Number(r.amount || 0);
+				case 'balance': return receiptBalance(r.invoiceId) ?? -1;
 				case 'status': return (r.status || '').toLowerCase();
 				default: return '';
 			}
 		};
 		const sorted = [...filteredReceipts].sort((a, b) => deskCmp(value(a), value(b)));
 		return receiptSortDir === 'asc' ? sorted : sorted.reverse();
-	}, [filteredReceipts, receiptSortKey, receiptSortDir]);
+	}, [filteredReceipts, receiptSortKey, receiptSortDir, salesInvoices]);
 	const receiptPaging = useDeskPagination(sortedReceipts, [sourceFilter, dateFrom, dateTo, searchQuery, receiptSortKey, receiptSortDir]);
 	const onReceiptSort = (key: ReceiptSortKey) => {
 		if (receiptSortKey === key) setReceiptSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
 		else {
 			setReceiptSortKey(key);
-			setReceiptSortDir(key === 'date' || key === 'time' || key === 'amount' ? 'desc' : 'asc');
+			setReceiptSortDir(key === 'date' || key === 'time' || key === 'amount' || key === 'balance' ? 'desc' : 'asc');
 		}
 	};
 	const receiptColumn = (key: ReceiptSortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
@@ -2423,7 +2466,6 @@ export default function AccountsReceivable() {
 							const source = getSourceLabel(inv.sourceModule);
 							const glChip = getGlSyncChip('invoice', inv);
 							const balance = (inv.total || 0) - (inv.paidAmount || 0);
-							const settlement = computeInvoiceWhtSettlement(inv, taxConfigs);
 							const hasPendingWhtCert = (whtCertificates || []).some(
 								(c: any) => c.invoiceId === inv.id && c.status === 'Pending',
 							);
@@ -2459,7 +2501,7 @@ export default function AccountsReceivable() {
 											<Chip size="sm" color="warning" variant="flat">Cert pending</Chip>
 										) : inv.whtStatus === 'Complete' ? (
 											<Chip size="sm" color="success" variant="flat">Cert done</Chip>
-										) : settlement.whtTotalRemaining > 0 && balance > 0 ? (
+										) : inv.whtStatus === 'Partial' ? (
 											<Chip size="sm" color="default" variant="flat">Tax due</Chip>
 										) : (
 											<span className="text-xs text-gray-400">—</span>
@@ -2820,16 +2862,18 @@ export default function AccountsReceivable() {
 										{receiptColumn('source', 'Source')}
                                         {receiptColumn('customer', 'Customer')}
                                         {receiptColumn('date', 'Date')}
-										{receiptColumn('time', 'Time')}
                                         {receiptColumn('method', 'Method')}
-										{receiptColumn('staff', 'Staff')}
-										{receiptColumn('invoice', 'Invoice')}
                                         {receiptColumn('amount', 'Amount', 'right')}
+                                        {receiptColumn('balance', 'Balance', 'right')}
+										{receiptColumn('invoice', 'Invoice')}
                                         {receiptColumn('status', 'Status')}
+										{receiptColumn('time', 'Time')}
+										{receiptColumn('staff', 'Staff')}
                                     </TableHeader>
                                     <TableBody emptyContent="No receipts found.">
 										{receiptPaging.paged.map((r: any) => {
 											const source = getSourceLabel(r.sourceModule);
+											const balance = receiptBalance(r.invoiceId);
 											return (
 												<TableRow key={r.id} className={rowClassNames(selectedReceipt?.id === r.id)} onClick={() => openReceiptDetail(r)}>
 													<TableCell>
@@ -2842,22 +2886,27 @@ export default function AccountsReceivable() {
 														<div className="font-medium">{r.customerName || r.businessPartnerId}</div>
 													</TableCell>
 													<TableCell>{new Date(r.date).toLocaleDateString()}</TableCell>
-													<TableCell className="text-gray-600">{new Date(r.date).toLocaleTimeString()}</TableCell>
 													<TableCell>
 														<Chip size="sm" variant="flat">{r.paymentMethod || 'Cash'}</Chip>
 													</TableCell>
-													<TableCell>
-														<div className="text-sm">{r.staffName || '-'}</div>
-														<div className="text-xs text-gray-500">{r.staffRole || ''}</div>
+													<TableCell className={`tabular-nums text-right font-medium ${r.status === 'Void' ? 'text-slate-400 line-through' : 'text-green-600'}`} title={r.status === 'Void' ? 'Voided amount' : undefined}>{formatAccountingCurrency(Number(r.amount || 0))}</TableCell>
+													<TableCell className="tabular-nums text-right font-medium">
+														{balance == null ? '—' : (
+															<span className={balance > 0.005 ? 'text-orange-700' : 'text-green-700'}>{formatAccountingCurrency(balance)}</span>
+														)}
 													</TableCell>
 													<TableCell>
 														{r.invoiceId ? (
 															<span className="font-mono text-xs text-blue-600">{r.invoiceId.slice(0, 15)}...</span>
 														) : '-'}
 													</TableCell>
-													<TableCell className="tabular-nums text-right font-medium text-green-600">{formatAccountingCurrency(Number(r.amount || 0))}</TableCell>
 													<TableCell>
 														<Chip size="sm" color={r.status === 'Posted' ? 'success' : r.status === 'Void' ? 'danger' : 'default'} variant="flat">{r.status || 'Draft'}</Chip>
+													</TableCell>
+													<TableCell className="text-gray-600">{new Date(r.date).toLocaleTimeString()}</TableCell>
+													<TableCell>
+														<div className="text-sm">{r.staffName || '-'}</div>
+														<div className="text-xs text-gray-500">{r.staffRole || ''}</div>
 													</TableCell>
                                             </TableRow>
 											);
@@ -3693,47 +3742,56 @@ export default function AccountsReceivable() {
 									</Select>
 								</div>
 
-								{activeRevenueCenters.length > 0 && (
-									<Select
-										label="Revenue centre (optional)"
-										placeholder="Suggested when you pick folio or invoice"
-										className="mb-4"
-										selectedKeys={
-											receiptForm.revenueCenterCode ? [receiptForm.revenueCenterCode] : []
-										}
-										onSelectionChange={(s) => {
-											const key = Array.from(s)[0] as string | undefined;
-											setReceiptForm((f: any) => ({
-												...f,
-												revenueCenterCode: key || '',
-											}));
-										}}
-									>
-										{activeRevenueCenters.map((rc) => (
-											<SelectItem key={rc.code} textValue={`${rc.code} — ${rc.name}`}>
-												{rc.code} — {rc.name}
-											</SelectItem>
-										))}
-									</Select>
-								)}
+								{(!editingReceiptId || activeRevenueCenters.length > 0) && (
+									<div className={`mb-4 grid grid-cols-1 gap-4 ${!editingReceiptId && activeRevenueCenters.length > 0 ? 'sm:grid-cols-2' : ''}`}>
+										{!editingReceiptId && (
+											<Select
+												label="Payment type"
+												description={
+													selectedReceiptTarget?.kind !== 'invoice'
+														? 'Choose a posted invoice above. Withholding does not apply to an in-house folio.'
+														: receiptWhtAvailable
+															? 'Net cash + WHT records the cash and the tax the customer withheld. WHT certificate only records the withheld tax when the cash is already on file.'
+															: 'This invoice has no withholding left to record.'
+												}
+												selectedKeys={[receiptForm.paymentKind || 'standard']}
+												onSelectionChange={(s) =>
+													onReceiptPaymentKindChange(Array.from(s)[0] as string | null)
+												}
+											>
+												<SelectItem key="standard">Full payment (cash/bank)</SelectItem>
+												<SelectItem key="wht_settlement" isDisabled={!receiptWhtAvailable}>
+													Net cash + WHT (certificate later OK)
+												</SelectItem>
+												<SelectItem key="wht_only" isDisabled={!receiptWhtAvailable}>
+													WHT certificate only
+												</SelectItem>
+											</Select>
+										)}
 
-								{selectedReceiptTarget?.kind === 'invoice' && !editingReceiptId && (
-									<Select
-										label="Payment type"
-										className="mb-4"
-										selectedKeys={[receiptForm.paymentKind || 'standard']}
-										onSelectionChange={(s) =>
-											onReceiptPaymentKindChange(Array.from(s)[0] as string | null)
-										}
-									>
-										<SelectItem key="standard">Full payment (cash/bank)</SelectItem>
-										<SelectItem key="wht_settlement" isDisabled={!receiptWhtAvailable}>
-											Net cash + WHT (certificate later OK)
-										</SelectItem>
-										<SelectItem key="wht_only" isDisabled={!receiptWhtAvailable}>
-											WHT certificate only
-										</SelectItem>
-									</Select>
+										{activeRevenueCenters.length > 0 && (
+											<Select
+												label="Revenue centre (optional)"
+												placeholder="Suggested when you pick folio or invoice"
+												selectedKeys={
+													receiptForm.revenueCenterCode ? [receiptForm.revenueCenterCode] : []
+												}
+												onSelectionChange={(s) => {
+													const key = Array.from(s)[0] as string | undefined;
+													setReceiptForm((f: any) => ({
+														...f,
+														revenueCenterCode: key || '',
+													}));
+												}}
+											>
+												{activeRevenueCenters.map((rc) => (
+													<SelectItem key={rc.code} textValue={`${rc.code} — ${rc.name}`}>
+														{rc.code} — {rc.name}
+													</SelectItem>
+												))}
+											</Select>
+										)}
+									</div>
 								)}
 
 								{selectedReceiptTarget?.kind === 'folio' && (
@@ -3807,6 +3865,8 @@ export default function AccountsReceivable() {
 										editingReceiptId) && (
 									<Input
 										type="number"
+										min={0}
+										step="0.01"
 										label="Amount received *"
 										placeholder="0.00"
 										value={receiptForm.amount?.toString() ?? ''}
@@ -3833,6 +3893,8 @@ export default function AccountsReceivable() {
 										<>
 											<Input
 												type="number"
+												min={0}
+												step="0.01"
 												label="Cash/bank received"
 												placeholder="0.00"
 												value={receiptForm.cashAmount?.toString() ?? ''}
@@ -3858,6 +3920,8 @@ export default function AccountsReceivable() {
 												</Checkbox>
 												<Input
 													type="number"
+													min={0}
+													step="0.01"
 													label={whtLabels.whtLabel}
 													placeholder="0.00"
 													value={receiptForm.whtAmount?.toString() ?? ''}
@@ -3880,6 +3944,8 @@ export default function AccountsReceivable() {
 												</Checkbox>
 												<Input
 													type="number"
+													min={0}
+													step="0.01"
 													label={whtLabels.whtVatLabel}
 													placeholder="0.00"
 													value={receiptForm.whtVatAmount?.toString() ?? ''}
@@ -3957,20 +4023,20 @@ export default function AccountsReceivable() {
 											onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, checkNumber: v }))}
 										/>
 									)}
-									<Input
-										label="Reference / transaction ID"
-										placeholder="Bank ref, MoMo txn…"
-										value={receiptForm.reference || ''}
-										onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, reference: v }))}
-										className={receiptForm.paymentMethod === 'Cheque' ? '' : 'col-span-2'}
-									/>
-									<Input
-										label="Notes (optional)"
-										placeholder="Internal note"
-										value={receiptForm.notes || ''}
-										onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, notes: v }))}
-										className="col-span-2"
-									/>
+									<div className="col-span-2 grid gap-4" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 2fr)' }}>
+										<Input
+											label="Reference / transaction ID"
+											placeholder="Bank ref, MoMo txn…"
+											value={receiptForm.reference || ''}
+											onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, reference: v }))}
+										/>
+										<Input
+											label="Notes (optional)"
+											placeholder="Internal note"
+											value={receiptForm.notes || ''}
+											onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, notes: v }))}
+										/>
+									</div>
 									<AttachmentUpload
 										label="Attachments — bank slip, cheque photo, MoMo screenshot (optional)"
 										attachments={receiptForm.attachments || []}
@@ -4313,7 +4379,7 @@ export default function AccountsReceivable() {
 																	<td className="py-1">{new Date(r.date).toLocaleString()}</td>
 																	<td className="py-1">{r.paymentMethod}</td>
 																	<td className="py-1">{r.staffName || '-'}</td>
-																	<td className="py-1 text-right font-semibold text-green-700">{formatAccountingCurrency(Number(r.amount))}</td>
+																	<td className={`py-1 text-right font-semibold ${r.status === 'Void' ? 'text-slate-400 line-through' : 'text-green-700'}`}>{formatAccountingCurrency(Number(r.amount))}</td>
 																</tr>
 															))}
 														</tbody>
@@ -4346,6 +4412,11 @@ export default function AccountsReceivable() {
 									{!isProforma && selectedInvoice.status !== 'Void' && isManualArApSource(selectedInvoice.sourceModule) && invoiceReceipts.length === 0 && settings.hasPermission('accounting.void-transaction') && (
 										<Button color="danger" variant="flat" size="sm" onPress={() => handleVoidInvoice(selectedInvoice)}>
 											Void invoice
+										</Button>
+									)}
+									{!isProforma && selectedInvoice.status === 'Void' && settings.hasPermission('accounting.void-transaction') && (
+										<Button color="warning" variant="flat" size="sm" onPress={() => handleUnvoidInvoice(selectedInvoice)}>
+											Unvoid invoice
 										</Button>
 									)}
 									{canDeleteInvoice && selectedInvoice.status !== 'Void' && invoiceReceipts.length === 0 && (isProforma || isManualArApSource(selectedInvoice.sourceModule)) && (
@@ -4410,7 +4481,10 @@ export default function AccountsReceivable() {
 										{/* Amount Received - Clean Highlight */}
 										<div className="text-center py-3 border-b">
 											<p className="text-[11px] text-gray-500 uppercase tracking-wide mb-0.5">Amount Received</p>
-											<p className="text-2xl font-bold text-gray-900">{formatAccountingCurrency(Number(selectedReceipt.amount || 0))}</p>
+											<p className={`text-2xl font-bold ${selectedReceipt.status === 'Void' ? 'text-slate-400 line-through' : 'text-gray-900'}`}>{formatAccountingCurrency(Number(selectedReceipt.amount || 0))}</p>
+											{selectedReceipt.status === 'Void' && (
+												<p className="text-xs text-slate-500 mt-0.5">Voided {formatAccountingCurrency(Number(selectedReceipt.amount || 0))} · counts as {formatAccountingCurrency(0)}</p>
+											)}
 											<p className="text-xs text-gray-500 mt-0.5">{selectedReceipt.currency || 'GHS'} • {selectedReceipt.paymentMethod || 'Cash'}</p>
 										</div>
 
@@ -4465,7 +4539,7 @@ export default function AccountsReceivable() {
 														</tr>
 														<tr className="font-semibold">
 															<td className="py-1 text-gray-800">Amount</td>
-															<td className="py-1 text-right font-mono text-green-700">{formatAccountingCurrency(Number(selectedReceipt.amount || 0))}</td>
+															<td className={`py-1 text-right font-mono ${selectedReceipt.status === 'Void' ? 'text-slate-400 line-through' : 'text-green-700'}`}>{formatAccountingCurrency(Number(selectedReceipt.amount || 0))}</td>
 														</tr>
 													</tbody>
 												</table>
@@ -4547,9 +4621,16 @@ export default function AccountsReceivable() {
 											Void receipt
 										</Button>
 									)}
-									<Button color="primary" variant="flat" size="sm" onPress={() => printReceiptPDF(selectedReceipt)}>
-										Print Receipt
-									</Button>
+									{selectedReceipt.status === 'Void' && settings.hasPermission('accounting.void-transaction') && (
+										<Button color="warning" variant="flat" size="sm" onPress={() => handleUnvoidReceipt(selectedReceipt)}>
+											Unvoid receipt
+										</Button>
+									)}
+									{selectedReceipt.status !== 'Void' && (
+										<Button color="primary" variant="flat" size="sm" onPress={() => printReceiptPDF(selectedReceipt)}>
+											Print Receipt
+										</Button>
+									)}
 								</ModalFooter>
 							</>
 						);

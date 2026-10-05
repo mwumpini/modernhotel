@@ -448,6 +448,13 @@ export async function updatePayment(tenantId: string, id: string, patch: Partial
   return toStorePayment(row)
 }
 
+export async function deletePayment(tenantId: string, id: string): Promise<Payment | null> {
+  const existing = await prisma.accountingPayment.findFirst({ where: { id, tenantId } })
+  if (!existing) return null
+  await prisma.accountingPayment.delete({ where: { id } })
+  return toStorePayment(existing)
+}
+
 // ---------------------------------------------------------------------------
 // Bank reconciliation — was previously localStorage-only (unscoped by tenant,
 // no backend at all). Field shape matches src/app/lib/accounting/bankRecon/types.ts.

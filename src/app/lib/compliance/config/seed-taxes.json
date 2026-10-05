@@ -5,8 +5,10 @@
     "name": "NHIL",
     "rate": 2.5,
     "glCode": "2120",
-    "appliesTo": ["ALL"],
-    "description": "National Health Insurance Levy (Act 1151)",
+    "appliesTo": [
+      "ALL"
+    ],
+    "description": "National Health Insurance Levy — 2.5% of the taxable value. Claimable as input tax on purchases (Act 1151).",
     "enabled": true,
     "priority": 10,
     "calculationBase": "subtotal",
@@ -15,7 +17,7 @@
     "domain": "sales",
     "operation": "external",
     "effect": "add",
-    "isRecoverable": false
+    "isRecoverable": true
   },
   {
     "id": "gh-getfund",
@@ -23,8 +25,10 @@
     "name": "GETFund Levy",
     "rate": 2.5,
     "glCode": "2130",
-    "appliesTo": ["ALL"],
-    "description": "Ghana Education Trust Fund Levy (Act 1151)",
+    "appliesTo": [
+      "ALL"
+    ],
+    "description": "Ghana Education Trust Fund Levy — 2.5% of the same taxable value as NHIL and VAT. Claimable as input tax on purchases (Act 1151).",
     "enabled": true,
     "priority": 11,
     "calculationBase": "subtotal",
@@ -33,7 +37,7 @@
     "domain": "sales",
     "operation": "external",
     "effect": "add",
-    "isRecoverable": false
+    "isRecoverable": true
   },
   {
     "id": "gh-vat",
@@ -41,13 +45,15 @@
     "name": "VAT (Standard Rate)",
     "rate": 15,
     "glCode": "2110",
-    "appliesTo": ["ALL"],
-    "description": "VAT 15% on (subtotal + NHIL + GETFund) — Act 1151, effective Jan 2026",
+    "appliesTo": [
+      "ALL"
+    ],
+    "description": "VAT 15% of the same taxable value as NHIL and GETFund. Not calculated on top of those levies (Act 1151).",
     "enabled": true,
     "priority": 20,
-    "calculationBase": "subtotal_plus_applied",
+    "calculationBase": "subtotal",
     "method": "rate",
-    "stacking": "compound",
+    "stacking": "additive",
     "domain": "sales",
     "operation": "external",
     "effect": "add",
@@ -59,7 +65,12 @@
     "name": "Tourism Levy",
     "rate": 1,
     "glCode": "2150",
-    "appliesTo": ["ROOM", "HOTEL", "FOOD", "EVENT"],
+    "appliesTo": [
+      "ROOM",
+      "HOTEL",
+      "FOOD",
+      "EVENT"
+    ],
     "description": "Tourism Development Levy (L.I. 2185) — separate from VAT base",
     "enabled": true,
     "priority": 30,
@@ -77,7 +88,9 @@
     "name": "Withholding Tax (Services)",
     "rate": 7.5,
     "glCode": "2160",
-    "appliesTo": ["SERVICE"],
+    "appliesTo": [
+      "SERVICE"
+    ],
     "description": "Resident WHT on services — 2026 rate",
     "enabled": true,
     "priority": 5,
@@ -95,7 +108,9 @@
     "name": "Withholding Tax (Goods)",
     "rate": 3,
     "glCode": "2160",
-    "appliesTo": ["GOODS"],
+    "appliesTo": [
+      "GOODS"
+    ],
     "description": "Resident WHT on supply of goods exceeding the GRA invoice threshold — 2026 rate",
     "enabled": true,
     "priority": 5,
@@ -113,7 +128,9 @@
     "name": "Withholding Tax (Works)",
     "rate": 5,
     "glCode": "2160",
-    "appliesTo": ["WORKS"],
+    "appliesTo": [
+      "WORKS"
+    ],
     "description": "Resident WHT on works/contracts (e.g. construction, building works) — 2026 rate",
     "enabled": true,
     "priority": 5,
@@ -128,11 +145,33 @@
   {
     "id": "gh-wht-rent",
     "countryCode": "GH",
-    "name": "Withholding Tax (Rent)",
+    "name": "Withholding Tax (Rent — commercial)",
+    "rate": 15,
+    "glCode": "2160",
+    "appliesTo": [
+      "RENT"
+    ],
+    "description": "Resident WHT on rent of non-residential business premises — 15%. Final tax. Residential rent is the separate 8% rule.",
+    "enabled": true,
+    "priority": 5,
+    "calculationBase": "subtotal",
+    "method": "rate",
+    "stacking": "additive",
+    "domain": "purchases",
+    "operation": "internal",
+    "effect": "subtract",
+    "isRecoverable": false
+  },
+  {
+    "id": "gh-wht-rent-residential",
+    "countryCode": "GH",
+    "name": "Withholding Tax (Rent — residential)",
     "rate": 8,
     "glCode": "2160",
-    "appliesTo": ["RENT"],
-    "description": "Resident WHT on rent of business premises — 2026 rate",
+    "appliesTo": [
+      "RENT_RESIDENTIAL"
+    ],
+    "description": "Resident WHT on rent of residential premises — 8%. Final tax.",
     "enabled": true,
     "priority": 5,
     "calculationBase": "subtotal",
@@ -149,20 +188,42 @@
     "name": "PAYE (Income Tax)",
     "rate": 0,
     "glCode": "2210",
-    "appliesTo": ["PAYE"],
+    "appliesTo": [
+      "PAYE"
+    ],
     "description": "Progressive monthly PAYE on taxable income — GRA table, effective 1 Jan 2024 (confirmed current against gra.gov.gh/domestic-tax/tax-types/paye/). Edit the tiers below if GRA revises the bands; the last tier (rate 35, no 'upto') is intentionally open-ended.",
     "enabled": true,
     "priority": 1,
     "calculationBase": "subtotal",
     "method": "tiered",
     "tiers": [
-      { "upto": 490, "rate": 0 },
-      { "upto": 110, "rate": 5 },
-      { "upto": 130, "rate": 10 },
-      { "upto": 3166.67, "rate": 17.5 },
-      { "upto": 16000, "rate": 25 },
-      { "upto": 30520, "rate": 30 },
-      { "rate": 35 }
+      {
+        "upto": 490,
+        "rate": 0
+      },
+      {
+        "upto": 110,
+        "rate": 5
+      },
+      {
+        "upto": 130,
+        "rate": 10
+      },
+      {
+        "upto": 3166.67,
+        "rate": 17.5
+      },
+      {
+        "upto": 16000,
+        "rate": 25
+      },
+      {
+        "upto": 30520,
+        "rate": 30
+      },
+      {
+        "rate": 35
+      }
     ],
     "stacking": "additive",
     "domain": "payroll",
@@ -178,7 +239,9 @@
     "ceiling": 69000,
     "floor": 587.8,
     "glCode": "2220",
-    "appliesTo": ["TIER1"],
+    "appliesTo": [
+      "TIER1"
+    ],
     "description": "Mandatory basic national pension, remitted to SSNIT: 13.5% of BASIC SALARY only (5.5% employee, 8% employer) — allowances, bonuses, and overtime are excluded from the base. Capped at the monthly insurable-earnings ceiling, floored at the minimum insurable earnings. Rename this rule to match how you refer to it on payslips (e.g. \"SSNIT\") — the rename is purely cosmetic and does not change the calculation. VERIFY the current rate/ceiling/floor against SSNIT guidance before relying on this for a real payroll run.",
     "enabled": true,
     "priority": 2,
@@ -198,7 +261,9 @@
     "ceiling": 69000,
     "floor": 587.8,
     "glCode": "2225",
-    "appliesTo": ["TIER2"],
+    "appliesTo": [
+      "TIER2"
+    ],
     "description": "Mandatory occupational pension, remitted to a licensed private trustee (separate institution from Tier 1/SSNIT): 5% of BASIC SALARY, employer-funded only — no employee deduction. Same base rules as Tier 1 (basic salary only, capped/floored at the insurable-earnings limits). Rename this rule to your actual trustee's name — cosmetic only. VERIFY the current rate against your trustee/NPRA guidance before relying on this for a real payroll run.",
     "enabled": true,
     "priority": 3,
@@ -215,7 +280,9 @@
     "name": "Tier 3",
     "rate": 16.5,
     "glCode": "2221",
-    "appliesTo": ["TIER3_RELIEF_CAP"],
+    "appliesTo": [
+      "TIER3_RELIEF_CAP"
+    ],
     "description": "Voluntary provident fund, remitted to a private trustee of the employee's choosing — a separate institution from Tier 1 and Tier 2. Not itself a withholding: this rule stores the tax-relief ceiling (% of basic salary) for how much of the employee's elected contribution is tax-relieved; the elected contribution rate lives on the employee record (Employee.tier3ContributionPct), since it's chosen per employee, not statutory. Rename this rule to your provident fund provider's name — cosmetic only. VERIFY current NPRA guidance before relying on this for a real payroll run.",
     "enabled": true,
     "priority": 4,

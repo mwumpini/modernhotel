@@ -1138,8 +1138,9 @@ export default function BankCashManagementPage() {
                       <Button
                         color="warning"
                         variant="flat"
-                        onPress={() => {
-                          if (!window.confirm(`Deactivate "${viewItem.accountName}"? It will be hidden from payment pickers but history is kept.`)) return;
+                        onPress={async () => {
+                          const { confirmChoice } = await import('../DangerConfirm');
+                          if (!(await confirmChoice(`Deactivate ${viewItem.accountName}?`, 'It will be hidden from payment pickers but history is kept.', 'Deactivate'))) return;
                           updateBankAccount(viewItem.id, { isActive: false, updatedAt: new Date().toISOString() });
                           closeView();
                         }}

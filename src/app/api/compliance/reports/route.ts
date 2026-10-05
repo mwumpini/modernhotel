@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/app/lib/api/auth-guard';
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant';
-import { listReportingRules } from '@/app/lib/compliance/repository';
+import { listReportingRules, upsertReportingRule } from '@/app/lib/compliance/repository';
 
 /** Filing schedules / reporting rules for Compliance → Reports & Filing (the shared
  * reference data -- due dates/frequencies -- distinct from /api/compliance/report-filings,

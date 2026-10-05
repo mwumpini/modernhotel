@@ -183,7 +183,7 @@ function invoiceDescription(
 }
 
 const RANGE_REPORT_KEYS = new Set([
-  'on-site', 'arriving', 'departing', 'pending', 'cancelled', 'particulars',
+  'on-site', 'arriving', 'departing', 'pending', 'cancelled', 'no-show', 'particulars',
   'hall-diary', 'services', 'proformas', 'outstanding', 'invoices', 'receipts',
 ]);
 const NO_DATE_REPORT_KEYS = new Set(['halls', 'catering']);
@@ -198,6 +198,7 @@ const REPORT_GROUPS = {
       ['departing', 'Departing'],
       ['pending', 'Pending'],
       ['cancelled', 'Cancelled'],
+      ['no-show', 'No show'],
       ['particulars', 'Particulars'],
     ],
   },
@@ -250,6 +251,7 @@ const REPORT_DESCRIPTIONS: Record<string, string> = {
   departing: 'Bookings whose end date falls in the period, excluding cancelled.',
   pending: 'Quoted or pending bookings that overlap the period.',
   cancelled: 'Cancelled bookings that overlap the period.',
+  'no-show': 'Bookings whose end date has passed and nobody was checked in. Quotes, cancelled bookings, and finished events stay off this list.',
   particulars: 'Only the particulars that were priced separately. A combined conference package stays one Package line — dinner or rooms are not guessed.',
   'hall-diary': 'Each hall with the stored bookings that overlap the period. Event count and value come from those rows.',
   services: 'On-site and arriving bookings and the catering / AV / decoration flags stored on each booking.',
@@ -295,6 +297,7 @@ const REPORT_COLUMNS: Record<string, ReportColumnDefinition[]> = {
   departing: EVENT_COLUMNS,
   pending: EVENT_COLUMNS,
   cancelled: EVENT_COLUMNS,
+  'no-show': EVENT_COLUMNS,
   particulars: [
     { key: 'startDate', label: 'Start' },
     { key: 'bookingNumber', label: 'Booking' },
@@ -384,6 +387,7 @@ type EventBookingRow = {
   particularLabels?: { rooms?: string; dinnerPax?: string; lunchPax?: string; conferencePax?: string };
   combinedPackage?: boolean;
   residential?: boolean;
+  checkedIn?: boolean;
 };
 
 function bookingReportStatus(row: { status?: string; completionStatus?: string }) {
@@ -585,6 +589,7 @@ export default function EventsReportsAnalysis({ embedded = false }: { embedded?:
           particularLabels: details.particularLabels || row.particularLabels,
           combinedPackage: Boolean(details.combinedPackage ?? (details.ratesByParticulars === false)),
           residential: Boolean(details.residential),
+          checkedIn: Boolean(details.checkedIn || row.checkedIn),
         };
       })
     );
@@ -667,6 +672,19 @@ export default function EventsReportsAnalysis({ embedded = false }: { embedded?:
         return overlappingBookings(isCancelledStatus);
       case 'particulars':
         return overlappingBookings().flatMap(explodeParticulars);
+      case 'no-show': {
+        const today = new Date().toISOString().slice(0, 10);
+        return reportBookings
+          .filter((row) => {
+            const business = statusOf(row.status);
+            if (business === 'quote' || business === 'pending' || isCancelledStatus(business) || business === 'completed' || business === 'invoiced' || business === 'billed') return false;
+            if (row.checkedIn) return false;
+            if (!row.endDate || row.endDate >= today) return false;
+            if (reportDateMode === 'today') return true;
+            return inDateRange(row.endDate, startDate, endDate);
+          })
+          .map((row) => ({ ...row, status: 'No show' }));
+      }
       case 'hall-diary': {
         const live = overlappingBookings((status) => !isCancelledStatus(status));
         const listedHalls = reportHalls.length
@@ -890,6 +908,14 @@ export default function EventsReportsAnalysis({ embedded = false }: { embedded?:
         { label: 'Total', value: money(storedValue), hint: 'Stored invoice total' },
         { label: 'Paid', value: money(paid), hint: 'Stored amount paid' },
         { label: 'Balance', value: money(balance), hint: 'Total minus paid' },
+      ];
+    }
+    if (selectedReport === 'no-show') {
+      return [
+        { label: 'No shows', value: count.toLocaleString(), hint: 'End date passed, not checked in' },
+        { label: 'Pax', value: attendees.toLocaleString(), hint: 'Stored attendees' },
+        { label: 'Value', value: money(storedValue), hint: 'Stored total' },
+        { label: 'As of', value: reportDateMode === 'today' ? 'Today' : (startDate === endDate ? startDate : `${startDate} – ${endDate}`), hint: 'Missed bookings' },
       ];
     }
     if (selectedReport === 'receipts') {

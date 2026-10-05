@@ -55,6 +55,7 @@ const FAMILIES: FamilyOption[] = [
           { key: 'event-proforma', label: 'Proforma / Quotation' },
           { key: 'event-invoice', label: 'Invoice' },
           { key: 'event-receipt', label: 'Receipt' },
+          { key: 'event-contract', label: 'Contract' },
         ],
       },
     ],

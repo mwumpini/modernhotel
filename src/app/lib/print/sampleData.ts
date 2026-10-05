@@ -8,6 +8,28 @@ const placeholderOrg: PrintOrgInfo = {
   taxId: 'C0012345678',
 };
 
+const sampleBankDetails = {
+  bankName: 'GCB Bank PLC',
+  accountName: 'Golden Palm Hotel',
+  accountNumber: '1011223344556',
+  branch: 'Accra Main',
+  mobileMoneyNumber: '020 123 4567',
+};
+
+const BANK_SAMPLE_TYPES = new Set<PrintType>([
+  'invoice',
+  'proforma',
+  'receipt',
+  'accommodation-proforma',
+  'accommodation-invoice',
+  'accommodation-receipt',
+  'event-proforma',
+  'event-invoice',
+  'event-receipt',
+  'payment-voucher',
+  'payslip',
+]);
+
 /**
  * Realistic sample data per document type — used by the builder's live preview.
  * `org` defaults to a placeholder hotel so the preview works before setup, but the
@@ -15,6 +37,14 @@ const placeholderOrg: PrintOrgInfo = {
  * including the uploaded logo — matches what actually prints.
  */
 export function getSampleData(docType: PrintType, org: PrintOrgInfo = placeholderOrg): PrintData {
+  const data = sampleDocument(docType, org);
+  if (BANK_SAMPLE_TYPES.has(docType) && !data.bankDetails) {
+    return { ...data, bankDetails: { ...sampleBankDetails, accountName: org.name || sampleBankDetails.accountName } };
+  }
+  return data;
+}
+
+function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
   const sampleOrg = org;
   switch (docType) {
     case 'payment-voucher':
@@ -192,6 +222,21 @@ export function getSampleData(docType: PrintType, org: PrintOrgInfo = placeholde
         ],
         totals: { subTotal: 5900, taxes: { vat: 1180, nhil: 147.5, levy: 59 }, payments: 4000, balance: 3286.5, grandTotal: 7286.5 },
         footerNotes: ['Generated via Events & Conferences workflow.'],
+        currency: '₵',
+      };
+    case 'event-contract':
+      return {
+        org: sampleOrg,
+        guest: { name: 'Ama Adjei', company: 'Adjei Family', address: '020 000 0000\nevents@sample.hotel' },
+        docDate: new Date().toISOString(),
+        title: 'Event Services Contract',
+        items: [
+          { description: 'Accommodation', unit: 'per night', unitPrice: 200, amount: 200 },
+          { description: 'Conference', unit: 'per person', unitPrice: 300, amount: 300 },
+          { description: 'Catering', unit: 'per person', unitPrice: 50, amount: 50 },
+        ],
+        totals: { subTotal: 0, grandTotal: 0 },
+        event: { summary: 'Adjei Family Naming Ceremony\n3 October 2026\nOforwaa Hall (200 seats)\n60 guests · Day event' },
         currency: '₵',
       };
     case 'event-receipt':
