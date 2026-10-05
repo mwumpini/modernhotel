@@ -38,7 +38,7 @@ const STAFF: Array<[string, string, string, 'female' | 'male', string, number, n
 
 /** Ghana PAYE on a month's chargeable income (resident bands). */
 function monthlyPaye(chargeable: number): number {
-  const bands: Array<[number, number]> = [[490, 0], [110, 0.05], [130, 0.1], [3166.67, 0.175], [16000, 0.25], [30520, 0.3], [Infinity, 0.35]]
+  const bands: Array<[number, number]> = [[588, 0], [80, 0.05], [100, 0.1], [2900, 0.175], [16000, 0.25], [30332, 0.3], [Infinity, 0.35]]
   let left = chargeable, tax = 0
   for (const [width, rate] of bands) {
     const slice = Math.min(left, width)

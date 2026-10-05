@@ -1,6 +1,7 @@
 import { prisma } from '../database/client'
 import { ComplianceDB } from './db'
 import { getSeedTaxes, getSeedReports } from './config'
+import { act1178PayePatch } from './payeBands'
 
 function toStoreReport(row: any) {
   return {
@@ -136,7 +137,8 @@ const ACT_1151_VAT_NOTE = 'VAT 15% of the same taxable value as NHIL and GETFund
 /** Ghana Act 1151 (1 Jan 2026) for hotels seeded before it: VAT no longer compounds on the
  * levies, NHIL/GETFund become claimable, Tourism is not, and rent WHT splits into 15%
  * commercial + 8% residential. Mirrors the file-side migration in db.ts. Each row is touched
- * once (marked `act1151`), so a hotel's later edits are never overwritten. */
+ * once (marked `act1151`), so a hotel's later edits are never overwritten. PAYE bands still on the
+ * exact Act 1111 defaults move to Act 1178 (see payeBands.ts). */
 function act1151Patch(data: Record<string, any>): Record<string, any> | null {
   if (data.act1151) return null
   const id = String(data.id || '')
@@ -162,9 +164,11 @@ async function migrateAct1151(tenantId: string, countryCode: string, rows: any[]
   for (const row of rows) {
     const data = { ...(row.data as Record<string, any>), id: row.code }
     const patch = act1151Patch(data)
-    if (!patch) continue
-    if (row.code === 'gh-wht-rent') addResidential = true
-    await prisma.complianceTaxRule.update({ where: { id: row.id }, data: { data: { ...data, ...patch, act1151: true } } })
+    const paye = act1178PayePatch(data)
+    if (!patch && !paye) continue
+    if (patch && row.code === 'gh-wht-rent') addResidential = true
+    const next = { ...data, ...(patch ? { ...patch, act1151: true } : {}), ...(paye || {}) }
+    await prisma.complianceTaxRule.update({ where: { id: row.id }, data: { data: next } })
     changed = true
   }
   if (addResidential && !rows.some((r) => r.code === 'gh-wht-rent-residential')) {

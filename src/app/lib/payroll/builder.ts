@@ -2,6 +2,7 @@
 // Universal Payroll Builder - integrated as a library module
 
 import { useComplianceStore } from '../compliance/store';
+import { splitGhanaPaye, resolveGhanaSpecialRates } from './ghanaSpecialRates';
 
 // Currency amounts are never fractions of a pesewa — without a final rounding pass,
 // chained percentage math accumulates float artifacts like 123.44999999999998 by the time
@@ -318,10 +319,31 @@ export default class UniversalPayrollBuilder {
 
     if (config.country === 'GH') {
       const payeRule = findGhanaTaxRule('PAYE');
-      if (payeRule) {
+      // Bonus, qualifying overtime, casual and non-resident pay are taxed at flat rates;
+      // only what is left goes through the graduated bands (see ghanaSpecialRates.ts).
+      const earned = (code: string) =>
+        payrollResult.earnings.items
+          .filter((i: any) => i.taxable && i.component?.code === code)
+          .reduce((s: number, i: any) => s + Number(i.amount || 0), 0);
+      const gh = employee.ghTax || {};
+      const split = splitGhanaPaye(
+        {
+          taxable: payrollResult.summary.taxable,
+          taxableEarnings: payrollResult.earnings.taxable,
+          monthlyBasic: Number(employee.employment?.salary || 0),
+          monthlyAllowances: Number(gh.allowances || 0),
+          bonus: earned('BONUS'),
+          overtime: earned('OVERTIME'),
+          bonusEarlierThisYear: Number(gh.bonusEarlierThisYear || 0),
+          employmentClass: gh.employmentClass,
+          residencyStatus: gh.residencyStatus,
+        },
+        resolveGhanaSpecialRates(payeRule as any),
+      );
+      if (payeRule && split.graduatedBase > 0) {
         const result = useComplianceStore
           .getState()
-          .calculateTax(payrollResult.summary.taxable, 'PAYE', { domain: 'payroll', operation: 'internal' });
+          .calculateTax(split.graduatedBase, 'PAYE', { domain: 'payroll', operation: 'internal' });
         const line = result.taxes.find((t) => t.ruleId === payeRule.id);
         if (!line) {
           console.warn('[Payroll] GH PAYE rule is loaded but calculateTax() returned no matching line (check the rule\'s enabled/effectiveFrom/effectiveTo/appliesTo/domain/operation fields) — income tax not withheld.');
@@ -329,8 +351,12 @@ export default class UniversalPayrollBuilder {
         const payeAmount = line?.amount || 0;
         payrollResult.taxes.items.push({ type: 'income', name: payeRule.name, ruleId: payeRule.id, amount: payeAmount, employerAmount: 0 });
         employeeTaxTotal += payeAmount;
-      } else {
+      } else if (!payeRule) {
         console.warn('[Payroll] No GH PAYE tax rule loaded from the compliance store — income tax not withheld.');
+      }
+      for (const flat of split.flatLines) {
+        payrollResult.taxes.items.push({ type: 'income', name: flat.name, amount: flat.amount, base: flat.base, rate: flat.rate, employerAmount: 0 });
+        employeeTaxTotal += flat.amount;
       }
 
       // Reuse the Tier 1/Tier 2 results already computed in calculatePreTaxDeductions (same

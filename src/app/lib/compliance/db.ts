@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getSeedReports, getSeedTaxes } from './config';
+import { act1178PayePatch } from './payeBands';
 
 type JsonObject = Record<string, any>;
 
@@ -85,6 +86,11 @@ function migrateLegacyGhanaRates(items: JsonObject[]): JsonObject[] {
         changed = true;
         return { ...t, enabled: false, description: 'Abolished by Act 1151 (1 Jan 2026). Use the standard 15% VAT.' };
       }
+    }
+    const paye = act1178PayePatch(t);
+    if (paye) {
+      changed = true;
+      return { ...t, ...paye };
     }
     if (t.name === 'Withholding Tax (Services)' && Number(t.rate) === 5) {
       changed = true;

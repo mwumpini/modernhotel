@@ -46,12 +46,12 @@
       "type": "income",
       "calculationMethod": "progressive",
       "brackets": [
-        { "threshold": 490, "rate": 0 },
-        { "threshold": 600, "rate": 5 },
-        { "threshold": 730, "rate": 10 },
-        { "threshold": 3896.67, "rate": 17.5 },
-        { "threshold": 19896.67, "rate": 25 },
-        { "threshold": 50416.67, "rate": 30 },
+        { "threshold": 588, "rate": 0 },
+        { "threshold": 668, "rate": 5 },
+        { "threshold": 768, "rate": 10 },
+        { "threshold": 3668, "rate": 17.5 },
+        { "threshold": 19668, "rate": 25 },
+        { "threshold": 50000, "rate": 30 },
         { "threshold": 999999, "rate": 35 }
       ]
     }

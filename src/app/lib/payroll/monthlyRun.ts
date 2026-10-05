@@ -104,6 +104,22 @@ export function impliedHourlyRate(basicSalary: number, statedHourly?: number) {
   return Math.round((basic / STANDARD_MONTHLY_HOURS) * 100) / 100;
 }
 
+/** Bonus paid to one person in earlier months of the same year, for the 15%-of-basic limit. */
+function earlierBonusThisYear(employeeId: string, month: number, year: number) {
+  const { payrollPeriods, payrollRecords } = usePayrollStore.getState();
+  const earlier = new Set(
+    payrollPeriods
+      .filter((p) => {
+        const my = monthYearOf(p);
+        return my && my.year === year && my.month < month;
+      })
+      .map((p) => p.id),
+  );
+  return payrollRecords
+    .filter((r) => r.employeeId === employeeId && earlier.has(r.payrollPeriodId))
+    .reduce((s, r) => s + Number(r.bonuses || 0), 0);
+}
+
 interface CalcContext {
   builder: UniversalPayrollBuilder;
   runtimeId: string;
@@ -145,6 +161,16 @@ function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number
     existing.employment.salary = basicForRate;
     existing.employment.hourlyRate = hourly;
   }
+
+  // Inputs for the flat-rate parts of Ghana PAYE (bonus within the yearly 15% limit, junior
+  // overtime, casual and non-resident staff).
+  const bonusEarlierThisYear = earlierBonusThisYear(eid, month, year);
+  profiles.get(eid).ghTax = {
+    employmentClass: (emp as any).employmentClass,
+    residencyStatus: (emp as any).residencyStatus,
+    allowances: Number(adj.allowances ?? (emp as any).allowances ?? 0),
+    bonusEarlierThisYear,
+  };
 
   // Pay comes from the staff file. Drop template placeholders (a flat transport line, a second
   // basic) so they are not added on top of the recorded salary.

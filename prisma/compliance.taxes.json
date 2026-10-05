@@ -110,26 +110,26 @@
     "appliesTo": [
       "PAYE"
     ],
-    "description": "Progressive monthly PAYE on taxable income — GRA table, effective 1 Jan 2024 (confirmed current against gra.gov.gh/domestic-tax/tax-types/paye/). Edit the tiers below if GRA revises the bands; the last tier (rate 35, no 'upto') is intentionally open-ended.",
+    "description": "Progressive monthly PAYE on taxable income — Act 1178 resident bands, effective 1 Sep 2026 (first GHS 588 at 0%, 35% above GHS 50,000). Each tier is the width of that slice; edit the tiers if GRA revises the bands. The last tier (rate 35, no upto) is open-ended.",
     "enabled": true,
     "priority": 20,
     "calculationBase": "subtotal",
     "method": "tiered",
     "tiers": [
       {
-        "upto": 490,
+        "upto": 588,
         "rate": 0
       },
       {
-        "upto": 110,
+        "upto": 80,
         "rate": 5
       },
       {
-        "upto": 130,
+        "upto": 100,
         "rate": 10
       },
       {
-        "upto": 3166.67,
+        "upto": 2900,
         "rate": 17.5
       },
       {
@@ -137,7 +137,7 @@
         "rate": 25
       },
       {
-        "upto": 30520,
+        "upto": 30332,
         "rate": 30
       },
       {
@@ -147,7 +147,18 @@
     "stacking": "additive",
     "domain": "payroll",
     "operation": "internal",
-    "effect": "informational"
+    "effect": "informational",
+    "specialRates": {
+      "bonusRate": 5,
+      "bonusCapPctOfAnnualBasic": 15,
+      "qualifyingAnnualIncomeCap": 18000,
+      "overtimeRate": 5,
+      "overtimeExcessRate": 10,
+      "overtimeThresholdPctOfBasic": 50,
+      "casualRate": 5,
+      "nonResidentRate": 25,
+      "nonResidentBonusOvertimeRate": 20
+    }
   },
   {
     "id": "gh-tier3-relief-cap",

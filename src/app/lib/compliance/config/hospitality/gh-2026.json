@@ -23,16 +23,16 @@
     "abolished": ["COVID-19 levy (2026)", "VAT flat rate scheme for hospitality (Act 1151)"]
   },
   "paye": {
-    "description": "Monthly PAYE for resident employees — 2026 bands",
+    "description": "Monthly PAYE for resident employees — Act 1178 bands from 1 Sep 2026",
     "returnDueDay": 15,
     "bandsAnnual": [
-      { "upTo": 5880, "rate": 0 },
-      { "upTo": 7200, "rate": 5 },
-      { "upTo": 8760, "rate": 10 },
-      { "upTo": 46760, "rate": 17.5 },
-      { "upTo": 238760, "rate": 25 },
-      { "upTo": 605000, "rate": 30 },
-      { "above": 605000, "rate": 35 }
+      { "upTo": 7056, "rate": 0 },
+      { "upTo": 8016, "rate": 5 },
+      { "upTo": 9216, "rate": 10 },
+      { "upTo": 44016, "rate": 17.5 },
+      { "upTo": 236016, "rate": 25 },
+      { "upTo": 600000, "rate": 30 },
+      { "above": 600000, "rate": 35 }
     ]
   },
   "withholdingTax": {
