@@ -11,6 +11,7 @@ import { syncPayrollRunToComplianceFiling } from '@/app/lib/compliance/payrollSy
 import { runMonthlyPayroll } from '@/app/lib/payroll/monthlyRun';
 import { useCurrentUserName } from '@/app/lib/auth/useCurrentUserName';
 import PayrollTaxRatesEditor from './PayrollTaxRatesEditor';
+import { saveRecord } from '../lib/api/tenantRecords';
 
 export default function PayrollBuilderPanel() {
   const builder = useMemo(() => new UniversalPayrollBuilder(), []);
@@ -118,10 +119,13 @@ export default function PayrollBuilderPanel() {
     setEditableConfig(saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(cfg)));
   };
 
-  // Auto-save edits to localStorage
+  // Auto-save edits: the server keeps the hotel's copy; this browser's copy is what a payroll run reads.
   React.useEffect(() => {
     if (!editableConfig?.country) return;
-    try { localStorage.setItem(`payroll.config.${editableConfig.country}`, JSON.stringify(editableConfig)); } catch {}
+    const json = JSON.stringify(editableConfig);
+    let previous: string | null = null;
+    try { previous = localStorage.getItem(`payroll.config.${editableConfig.country}`); localStorage.setItem(`payroll.config.${editableConfig.country}`, json); } catch {}
+    if (previous !== json) void saveRecord('setting.payrollConfig', editableConfig.country, { id: editableConfig.country, config: editableConfig });
   }, [editableConfig]);
 
   const addBracket = () => {

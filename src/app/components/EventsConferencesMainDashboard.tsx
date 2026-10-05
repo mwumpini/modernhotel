@@ -10,6 +10,7 @@ import { EventsScreenProvider } from './events/eventsScreenContext';
 import { EventManagementTab } from './events/EventManagementTab';
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { createRecordSync, loadRecords, saveRecord } from '../lib/api/tenantRecords';
 import dynamic from 'next/dynamic';
 import { 
   Card, 
@@ -215,7 +216,6 @@ import {
   GUEST_RATES_STORAGE_KEY_PREFIX,
   EVENTS_DOCS_STORAGE_KEY_PREFIX,
   guestRatesStorageKey,
-  eventsDocsStorageKey,
   HARDCODED_EVENT_IDS,
   HARDCODED_BILLING_IDS,
   isHardcodedDemoEventId,
@@ -610,34 +610,44 @@ export default function EventsConferencesMainDashboard({
 
   const [billingDocsReady, setBillingDocsReady] = useState(false);
 
+  // Event bills live on the server (TenantRecord), so every computer sees the same ones.
+  const invoiceSync = useRef(createRecordSync<EventInvoice>('events.invoice')).current;
+  const receiptSync = useRef(createRecordSync<EventReceipt>('events.receipt')).current;
+  const folioSync = useRef(createRecordSync<EventFolio>('events.folio')).current;
+
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(eventsDocsStorageKey());
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed.invoices)) {
-          setEventInvoices(parsed.invoices.filter((doc: EventInvoice) => !isHardcodedBillingDoc(doc)));
-        }
-        if (Array.isArray(parsed.receipts)) {
-          setEventReceipts(
-            parsed.receipts
-              .filter((doc: EventReceipt) => !isHardcodedBillingDoc(doc))
-              .map((doc: EventReceipt) => ({ ...doc, method: resolveReceiptMethod(doc.method) }))
-          );
-        }
-        if (Array.isArray(parsed.folios)) {
-          setEventFolios(
-            parsed.folios
-              .filter((doc: EventFolio) => !isHardcodedBillingDoc(doc))
-              .map((doc: EventFolio) => withFolioStatus(normalizeFolioEntries(doc)))
-          );
-        }
+    let cancelled = false;
+    (async () => {
+      const [invoices, receipts, folios] = await Promise.all([
+        loadRecords<EventInvoice>('events.invoice'),
+        loadRecords<EventReceipt>('events.receipt'),
+        loadRecords<EventFolio>('events.folio'),
+      ]);
+      if (cancelled) return;
+      if (invoices) {
+        const list = invoices.filter((doc) => !isHardcodedBillingDoc(doc));
+        invoiceSync.prime(list);
+        setEventInvoices(list);
       }
-    } catch {
-      // Keep starter invoices/receipts if stored docs cannot be read.
-    }
-    setBillingDocsReady(true);
-  }, []);
+      if (receipts) {
+        const list = receipts
+          .filter((doc) => !isHardcodedBillingDoc(doc))
+          .map((doc) => ({ ...doc, method: resolveReceiptMethod(doc.method) }));
+        receiptSync.prime(list);
+        setEventReceipts(list);
+      }
+      if (folios) {
+        const list = folios
+          .filter((doc) => !isHardcodedBillingDoc(doc))
+          .map((doc) => withFolioStatus(normalizeFolioEntries(doc)));
+        folioSync.prime(list);
+        setEventFolios(list);
+      }
+      // Nothing is saved until the server has answered, so an outage can't wipe its copy.
+      if (invoices && receipts && folios) setBillingDocsReady(true);
+    })();
+    return () => { cancelled = true; };
+  }, [invoiceSync, receiptSync, folioSync]);
 
   useEffect(() => {
     if (!billingDocsReady) return;
@@ -656,15 +666,10 @@ export default function EventsConferencesMainDashboard({
 
   useEffect(() => {
     if (!billingDocsReady) return;
-    try {
-      localStorage.setItem(
-        eventsDocsStorageKey(),
-        JSON.stringify({ invoices: eventInvoices, receipts: eventReceipts, folios: eventFolios })
-      );
-    } catch {
-      // Ignore quota / private-mode write failures.
-    }
-  }, [billingDocsReady, eventInvoices, eventReceipts, eventFolios]);
+    invoiceSync.push(eventInvoices);
+    receiptSync.push(eventReceipts);
+    folioSync.push(eventFolios);
+  }, [billingDocsReady, eventInvoices, eventReceipts, eventFolios, invoiceSync, receiptSync, folioSync]);
 
   useEffect(() => {
     if (!billingDocsReady) return;
@@ -1580,12 +1585,27 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     () => (loadStoredConferenceRates() ?? DEFAULT_CONFERENCE_RATES).length
   );
 
+  // Rates are set-up kept on the server; this browser's copy only paints the first frame.
+  const ratesLoaded = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    loadRecords<{ id: string; rates: any[] }>('setting.eventRates').then((records) => {
+      if (cancelled || !records) return;
+      const saved = records.find((r) => r.id === 'main');
+      if (saved && Array.isArray(saved.rates)) setConferenceRates(saved.rates);
+      else if (loadStoredConferenceRates()) void saveRecord('setting.eventRates', 'main', { id: 'main', rates: loadStoredConferenceRates() });
+      ratesLoaded.current = true;
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   useEffect(() => {
     try {
       localStorage.setItem(guestRatesStorageKey(), JSON.stringify(conferenceRates));
     } catch {
       /* ignore storage errors */
     }
+    if (ratesLoaded.current) void saveRecord('setting.eventRates', 'main', { id: 'main', rates: conferenceRates });
   }, [conferenceRates]);
 
   // Auto-populate rates when organization is selected

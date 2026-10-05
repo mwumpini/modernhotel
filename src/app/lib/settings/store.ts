@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import { getClientTenantSubdomain } from '../api/clientTenant';
+import { loadRecords, saveRecord } from '../api/tenantRecords';
 import { pickOperationalPolicy } from '../frontoffice/operationalPolicies';
 import type { BlockTemplate } from '../print/blocks';
 import type { PrintType } from '../print/templates';
@@ -2586,6 +2587,46 @@ const DEFAULT_PRINTING: SettingsStore['printing'] = {
   'event-contract': 'builtin-event-contract-classic',
 };
 
+// ---------------------------------------------------------------------------
+// Main settings and payroll set-up are kept on the server (TenantRecord), so every
+// computer of a hotel shows the same ones. This browser's copy is a cache.
+// ---------------------------------------------------------------------------
+let serverSettingsPulled = false;
+let serverSettingsReady = false;
+let settingsPushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function pullServerSettings(reload: () => void, pushLocal: () => void) {
+  if (serverSettingsPulled || typeof window === 'undefined' || !getClientTenantSubdomain()) return;
+  serverSettingsPulled = true;
+  void loadRecords<{ id: string; settings: Record<string, unknown> }>('setting.system').then((records) => {
+    if (!records) { serverSettingsPulled = false; return; } // server unreachable: try again next load
+    serverSettingsReady = true;
+    const main = records.find((r) => r.id === 'main');
+    if (!main?.settings) { pushLocal(); return; } // first computer to sync: send ours up
+    const next = JSON.stringify(main.settings);
+    let local: string | null = null;
+    try { local = localStorage.getItem('system.settings'); } catch {}
+    if (local !== next) {
+      try { localStorage.setItem('system.settings', next); } catch {}
+      reload();
+    }
+  });
+  void loadRecords<{ id: string; config: unknown }>('setting.payrollConfig').then((records) => {
+    for (const r of records || []) {
+      try { localStorage.setItem(`payroll.config.${r.id}`, JSON.stringify(r.config)); } catch {}
+    }
+  });
+}
+
+/** Sends the main settings a moment after the last change (counters can change several times in a row). */
+function pushServerSettings(settings: Record<string, unknown>) {
+  if (!serverSettingsReady) return; // never overwrite the server before it has been read
+  if (settingsPushTimer) clearTimeout(settingsPushTimer);
+  settingsPushTimer = setTimeout(() => {
+    void saveRecord('setting.system', 'main', { id: 'main', settings });
+  }, 1500);
+}
+
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
   ...defaultSettings,
   subscribers: new Set(),
@@ -2646,6 +2687,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
   
   loadSettings: () => {
+    pullServerSettings(
+      () => get().loadSettings(),
+      () => get().saveSettings(),
+    );
     try {
       // Load system settings
       const systemSettings = localStorage.getItem('system.settings');
@@ -2987,6 +3032,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         ...rest
       } = state as any;
       localStorage.setItem('system.settings', JSON.stringify(rest));
+      pushServerSettings(rest);
       if (rest.initialSetupCompleted) syncSetupStatusToApi();
 
       // Save room management settings locally. Deliberately NOT synced to the

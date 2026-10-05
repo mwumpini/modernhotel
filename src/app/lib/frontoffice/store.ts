@@ -39,6 +39,7 @@ import { postNoShowPenaltyToLedger } from '../accounting/simpleFlow';
 import { DEMO_BILLING_PERSONS, DEMO_RESERVATION_IDS as demoReservationIds, isDemoFixturesEnabled } from '../demo';
 import { notifyError } from '../notifications/notify';
 import { genId } from './helpers/ids';
+import { createRecordSync, loadRecords } from '../api/tenantRecords';
 
 function localStayDate(now = new Date()) {
   const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -120,18 +121,20 @@ class FrontOfficeStore {
    *  room records — see EventsConferencesMainDashboard's checkInEventGroup)
    *  that have been checked in as a group, so the Executive dashboard's
    *  In-House Guests KPI can include their pax alongside individually
-   *  checked-in reservations. Event bookings themselves aren't persisted
-   *  anywhere today (they live only in that component's own React state for
-   *  the session), so this is in-memory too — consistent with that, not a
-   *  regression from it. */
+   *  checked-in reservations. */
   inHouseGroups: Array<{ id: string; eventId: string; eventName?: string; pax: number; checkedInAt: string }> = [];
+  // Both lists are kept on the server (TenantRecord) and loaded with the rest in runPullFromApi.
+  private inHouseGroupSync = createRecordSync<{ id: string; eventId: string; eventName?: string; pax: number; checkedInAt: string }>('fo.inHouseGroup');
+  private clientServiceSync = createRecordSync<FrontOfficeStore['clientServices'][number]>('fo.clientService');
   addInHouseGroup(eventId: string, pax: number, eventName?: string) {
     this.inHouseGroups = this.inHouseGroups.filter(g => g.eventId !== eventId);
     this.inHouseGroups.push({ id: genId('IHG'), eventId, eventName, pax: pax || 0, checkedInAt: new Date().toISOString() });
+    this.inHouseGroupSync.push(this.inHouseGroups);
     this.notify();
   }
   removeInHouseGroup(eventId: string) {
     this.inHouseGroups = this.inHouseGroups.filter(g => g.eventId !== eventId);
+    this.inHouseGroupSync.push(this.inHouseGroups);
     this.notify();
   }
   getInHouseGroupPax(): number {
@@ -493,6 +496,13 @@ class FrontOfficeStore {
         }
       }
     } catch (e) { console.warn('FO: business date sync failed', e); }
+    const [services, groups] = await Promise.all([
+      loadRecords<FrontOfficeStore['clientServices'][number]>('fo.clientService'),
+      loadRecords<FrontOfficeStore['inHouseGroups'][number]>('fo.inHouseGroup'),
+    ]);
+    if (services) { this.clientServices = services; this.clientServiceSync.prime(services); }
+    if (groups) { this.inHouseGroups = groups; this.inHouseGroupSync.prime(groups); }
+    if (services || groups) this.notify();
     // Reached only once the reservations/guests/folios fetches above have all
     // been attempted (success or failure) — see the hydrationComplete field
     // comment for why persistFolio needs this instead of hydratedFromApi.
@@ -913,6 +923,7 @@ class FrontOfficeStore {
     createdAt: string;
   }) {
     this.clientServices.push(service);
+    this.clientServiceSync.push(this.clientServices);
     this.notify();
     trackEvent('FO.ClientService.Added' as any, { clientId: service.clientId, serviceName: service.serviceName, type: service.serviceType });
     return service;
@@ -922,6 +933,7 @@ class FrontOfficeStore {
     const idx = this.clientServices.findIndex(s => s.id === serviceId);
     if (idx === -1) return null;
     this.clientServices[idx] = { ...this.clientServices[idx], ...updates };
+    this.clientServiceSync.push(this.clientServices);
     this.notify();
     trackEvent('FO.ClientService.Updated' as any, { id: serviceId });
     return this.clientServices[idx];
@@ -931,6 +943,7 @@ class FrontOfficeStore {
     const before = this.clientServices.length;
     this.clientServices = (this.clientServices || []).filter(s => s.clientId !== clientId);
     const removed = before - this.clientServices.length;
+    this.clientServiceSync.push(this.clientServices);
     this.notify();
     if (removed > 0) trackEvent('FO.ClientService.DeletedForClient' as any, { clientId, removed });
   }

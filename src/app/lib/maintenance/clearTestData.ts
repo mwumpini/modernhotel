@@ -11,7 +11,7 @@ import { markDataReset } from './dataResetMarker'
  *           loaded again afterwards, fresh around today's date.
  *           Guests, company clients, F&B customers, suppliers, business partners and HR
  *           employees that testers created (sample ones stay).
- * Kept:     settings, staff logins, roles, rooms and rates, menu, recipes, stock items, chart of
+ * Kept:     settings (incl. "setting." TenantRecords), staff logins, roles, rooms and rates, menu, recipes, stock items, chart of
  *           accounts, taxes, payment methods, departments, compliance rules and report designs,
  *           document templates, and the audit log.
  * Reset:    stock on hand of non-sample items → 0; every cash/bank register → its opening balance;
@@ -49,6 +49,9 @@ const PROFILE_MODELS = ['guest', 'company', 'fBCustomer', 'businessPartner', 'su
 
 type Counts = Record<string, number>
 
+/** Activity kept in TenantRecord (event bills, kitchen log, …). Set-up kinds ("setting.") stay. */
+const activityRecords = (tenantId: string) => ({ tenantId, NOT: { kind: { startsWith: 'setting.' } } })
+
 function model(name: string): any {
   const m = (prisma as any)[name]
   if (!m || typeof m.deleteMany !== 'function') throw new Error(`Unknown table: ${name}`)
@@ -64,6 +67,7 @@ function notSample(tenantId: string) {
 export async function countTestData(tenantId: string): Promise<{ transactions: Counts; profiles: Counts; total: number }> {
   const transactions: Counts = {}
   for (const name of TRANSACTION_MODELS) transactions[name] = await model(name).count({ where: { tenantId } })
+  transactions.tenantRecord = await prisma.tenantRecord.count({ where: activityRecords(tenantId) })
   const profiles: Counts = {}
   for (const name of PROFILE_MODELS) profiles[name] = await model(name).count({ where: notSample(tenantId) })
   const total = [...Object.values(transactions), ...Object.values(profiles)].reduce((s, n) => s + n, 0)
@@ -94,6 +98,7 @@ export async function clearTestData(tenantId: string): Promise<{ removed: Counts
   ops.push(prisma.pettyCashFund.updateMany({ where: { tenantId }, data: { balance: 0 } }))
   ops.push(prisma.restaurantTable.updateMany({ where: { tenantId }, data: { status: 'available' } }))
   ops.push(prisma.fBMenuItem.updateMany({ where: { tenantId }, data: { readyNow: false, readyPortions: null, readyForDate: null } }))
+  ops.push(prisma.tenantRecord.deleteMany({ where: activityRecords(tenantId) }))
 
   const results = await prisma.$transaction(ops)
   // Tell every browser to drop its local copies of what was just cleared.
@@ -103,6 +108,7 @@ export async function clearTestData(tenantId: string): Promise<{ removed: Counts
   TRANSACTION_MODELS.forEach((name, i) => { removed[name] = results[i]?.count ?? 0 })
   const profileStart = TRANSACTION_MODELS.length + 1
   PROFILE_MODELS.forEach((name, i) => { removed[name] = results[profileStart + i]?.count ?? 0 })
+  removed.tenantRecord = results[results.length - 1]?.count ?? 0
 
   // Fresh sample set around today, only for a hotel that had it loaded.
   let notes: string[] = []

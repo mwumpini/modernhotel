@@ -87,6 +87,7 @@ model Tenant {
   inventoryAlertAcks InventoryAlertAcknowledgment[]
   complianceReports ComplianceReport[]
   complianceTaxRules ComplianceTaxRule[]
+  tenantRecords          TenantRecord[]
   complianceTaxTypes ComplianceTaxType[]
   complianceReportingRules ComplianceReportingRule[]
   bankReconciliations BankReconciliation[]
@@ -2908,4 +2909,22 @@ model SecurityShift {
 
   @@index([tenantId, status])
   @@map("security_shifts")
+}
+
+/// Records that used to live only in one browser (event bills, client service contracts,
+/// kitchen log, settings…), kept per hotel by kind + id. Kinds starting "setting." are
+/// set-up and survive Clear test data; every other kind is cleared with the test data.
+model TenantRecord {
+  id        String   @id @default(cuid())
+  tenantId  String
+  kind      String
+  recordId  String
+  data      Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, kind, recordId])
+  @@index([tenantId, kind])
 }

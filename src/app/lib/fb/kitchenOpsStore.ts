@@ -1,6 +1,7 @@
 'use client';
 
 import { getClientTenantSubdomain } from '../api/clientTenant';
+import { loadRecords, saveRecord } from '../api/tenantRecords';
 
 const STORAGE_KEY_PREFIX = 'kitchen.ops.log';
 const MAX_RECORDS = 200;
@@ -45,23 +46,18 @@ class KitchenOpsStore {
   private listeners: Array<() => void> = [];
   private hydrated = false;
 
+  // The log is kept on the server (TenantRecord 'kitchen.op') so every screen sees it.
   private hydrate() {
     if (this.hydrated || typeof window === 'undefined') return;
     this.hydrated = true;
-    try {
-      const raw = localStorage.getItem(storageKey());
-      if (raw) this.records = JSON.parse(raw);
-    } catch {
-      this.records = [];
-    }
-  }
-
-  private persist() {
-    try {
-      localStorage.setItem(storageKey(), JSON.stringify(this.records.slice(0, MAX_RECORDS)));
-    } catch {
-      /* ignore */
-    }
+    try { localStorage.removeItem(storageKey()); } catch { /* old browser-only copy */ }
+    void loadRecords<KitchenOpRecord>('kitchen.op').then((server) => {
+      if (!server) return;
+      const byId = new Map(server.map((r) => [r.id, r]));
+      for (const r of this.records) byId.set(r.id, r);
+      this.records = Array.from(byId.values()).sort((a, b) => b.at.localeCompare(a.at)).slice(0, MAX_RECORDS);
+      this.listeners.forEach((l) => l());
+    });
   }
 
   add(partial: Omit<KitchenOpRecord, 'id' | 'at'> & Partial<Pick<KitchenOpRecord, 'at'>>) {
@@ -71,7 +67,7 @@ class KitchenOpsStore {
     const rec: KitchenOpRecord = { id, at, ...partial } as KitchenOpRecord;
     this.records.unshift(rec);
     if (this.records.length > MAX_RECORDS) this.records.length = MAX_RECORDS;
-    this.persist();
+    void saveRecord('kitchen.op', rec.id, rec);
     this.listeners.forEach(l => l());
   }
 
