@@ -89,6 +89,13 @@ function mergeServerRecordsByRecency<T extends { id: string; updatedAt?: string 
   return Array.from(byId.values());
 }
 
+/** The server is the record: drop what it no longer has, unless this browser made it moments ago (save still on the way). */
+function keepServerOrFresh<T extends { id: string; createdAt?: string }>(merged: T[], serverRecords: T[]): T[] {
+  const onServer = new Set(serverRecords.map((r) => r.id));
+  const cutoff = Date.now() - 2 * 60 * 1000;
+  return merged.filter((r) => onServer.has(r.id) || Date.parse(r.createdAt || '') > cutoff);
+}
+
 let ledgerRefreshInFlight: Promise<void> | null = null;
 let accountingInitInFlight: Promise<void> | null = null;
 
@@ -3564,11 +3571,13 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         if (serverPartners && serverPartners.length > 0) next.businessPartners = serverPartners;
         if (serverBankTxns && serverBankTxns.length > 0) next.bankTransactions = serverBankTxns;
         if (serverAudit && serverAudit.length > 0) next.auditTrail = serverAudit;
-        if (serverJEs && serverJEs.length > 0) {
-          next.journalEntries = mergeServerRecordsByRecency(s.journalEntries, serverJEs);
+        if (serverJEs && (serverJEs.length > 0 || !demoMode)) {
+          const merged = mergeServerRecordsByRecency(s.journalEntries, serverJEs);
+          next.journalEntries = demoMode ? merged : keepServerOrFresh(merged, serverJEs);
         }
-        if (serverInvoices && serverInvoices.length > 0) {
-          const invoices = mergeServerRecordsByRecency(s.invoices, serverInvoices);
+        if (serverInvoices && (serverInvoices.length > 0 || !demoMode)) {
+          const merged = mergeServerRecordsByRecency(s.invoices, serverInvoices);
+          const invoices = demoMode ? merged : keepServerOrFresh(merged, serverInvoices);
           // invoiceSettings.nextNumber only lives in this browser's localStorage —
           // raise it past every invoiceNumber the server already has, so a fresh or
           // reset browser can't hand out a number a previous session already used.
@@ -3580,8 +3589,9 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
           } catch {}
           next.invoices = invoices;
         }
-        if (serverPayments && serverPayments.length > 0) {
-          const payments = mergeServerRecordsByRecency(s.payments, serverPayments);
+        if (serverPayments && (serverPayments.length > 0 || !demoMode)) {
+          const merged = mergeServerRecordsByRecency(s.payments, serverPayments);
+          const payments = demoMode ? merged : keepServerOrFresh(merged, serverPayments as any[]);
           next.payments = payments;
           next.whtCertificates = mergeWhtCertificateLists(
             s.whtCertificates,

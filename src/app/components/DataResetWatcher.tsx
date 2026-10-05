@@ -16,7 +16,20 @@ const LOCAL_DATA_KEYS = (tenant: string) => [
   `kitchen.ops.log.${tenant}`,
   'fo.guests',
   'fo.nightAudit',
+  // Event folios, invoices and receipts are kept only in this browser.
+  `events.billingDocs.${tenant}`,
+  // Actions queued while offline would send cleared records back.
+  'ghanaHotel_offlineData',
+  'hr.addEmployee.draft',
+  'payroll.advicePeriodId',
+  'exec.ackAlerts',
 ];
+
+/** Bump when LOCAL_DATA_KEYS grows, so browsers that already handled a clear run the fuller cleanup once. */
+const CLEANUP_VERSION = 2;
+
+/** When this page was opened. Anything it holds in memory is from then or later. */
+const PAGE_OPENED_AT = new Date().toISOString();
 
 export default function DataResetWatcher() {
   const { status } = useSession();
@@ -24,16 +37,30 @@ export default function DataResetWatcher() {
   useEffect(() => {
     if (status !== 'authenticated') return;
     let cancelled = false;
-    fetch('/api/settings/data-reset', { cache: 'no-store' })
+    // A tab left open during a clear still holds the old records in memory (Accounting keeps
+    // invoices the server no longer has), so check again whenever the tab comes back into view.
+    const check = () => fetch('/api/settings/data-reset', { cache: 'no-store' })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         const resetAt = typeof data?.resetAt === 'string' ? data.resetAt : null;
         if (cancelled || !resetAt) return;
         const tenant = getClientTenantSubdomain() || 'default';
-        const seenKey = `data.resetSeen.${tenant}`;
+        const seenKey = `data.resetSeen.v${CLEANUP_VERSION}.${tenant}`;
         let seen: string | null = null;
         try { seen = localStorage.getItem(seenKey); } catch { return; }
-        if (seen && seen >= resetAt) return;
+        // Reload at most once per clear, so a computer clock behind the server's can't loop.
+        const reloadOnce = () => {
+          const doneKey = `data.resetReloaded.${tenant}`;
+          try {
+            if (sessionStorage.getItem(doneKey) === resetAt) return;
+            sessionStorage.setItem(doneKey, resetAt);
+          } catch { return; }
+          window.location.reload();
+        };
+        if (seen && seen >= resetAt) {
+          if (resetAt > PAGE_OPENED_AT) reloadOnce();
+          return;
+        }
         let hadLocalData = false;
         try {
           for (const storage of [localStorage, sessionStorage]) {
@@ -45,10 +72,16 @@ export default function DataResetWatcher() {
           localStorage.setItem(seenKey, resetAt);
         } catch { return; }
         // Screens already loaded their copy into memory; reload so they start from the server.
-        if (hadLocalData) window.location.reload();
+        if (hadLocalData || resetAt > PAGE_OPENED_AT) reloadOnce();
       })
       .catch(() => {});
-    return () => { cancelled = true; };
+    check();
+    const onVisible = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [status]);
 
   return null;

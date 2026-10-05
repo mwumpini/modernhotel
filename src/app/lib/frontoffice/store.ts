@@ -47,6 +47,13 @@ function localStayDate(now = new Date()) {
 }
 
 /** The fields PUT /api/folios stores — used to skip re-sending an unchanged folio. */
+/** A record only this browser has, made so recently that its save may still be on the way. */
+const UNSYNCED_GRACE_MS = 2 * 60 * 1000;
+function isFreshLocal(rec: { createdAt?: string }): boolean {
+  const t = Date.parse(rec.createdAt || '');
+  return Number.isFinite(t) && Date.now() - t < UNSYNCED_GRACE_MS;
+}
+
 function folioSignature(f: Folio): string {
   return JSON.stringify([
     f.reservationId, f.status, f.currency || 'GHS', f.type ?? null, f.description ?? null,
@@ -388,7 +395,7 @@ class FrontOfficeStore {
       const res = await fetch('/api/reservations', { headers: { 'x-tenant-subdomain': t } });
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data.reservations) && data.reservations.length > 0) {
+        if (Array.isArray(data.reservations)) {
           // Merge by id (like guests/folios below) instead of replacing the array
           // wholesale. A reservation created locally moments before this GET
           // resolves may not have finished its own async POST to the server yet;
@@ -401,6 +408,10 @@ class FrontOfficeStore {
           // no longer serve their purpose — a fixed set of fake ids (never persisted server-side) that would
           // otherwise sit in this merge forever, since nothing with a matching id ever arrives to replace them.
           demoReservationIds.forEach((id) => byId.delete(id));
+          // The server is the record. A stay it doesn't have was removed (or cleared) there,
+          // unless this browser made it moments ago and its save is still on the way.
+          const serverResIds = new Set(data.reservations.map((r: Reservation) => r.id));
+          byId.forEach((r, id) => { if (!serverResIds.has(id) && !isFreshLocal(r)) byId.delete(id); });
           this.reservations = Array.from(byId.values());
           // First-night room charges and the gl_pending retry both read folios, so
           // they run at the end of this pull, once /api/folios has landed — see below.
@@ -416,9 +427,10 @@ class FrontOfficeStore {
       const res = await fetch('/api/guests?includeInactive=true', { headers: { 'x-tenant-subdomain': t } });
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data.guests) && data.guests.length > 0) {
+        if (Array.isArray(data.guests)) {
           const byId = new Map<string, GuestProfile>();
-          this.guests.forEach(g => byId.set(g.id, g));
+          const serverGuestIds = new Set(data.guests.map((g: GuestProfile) => g.id));
+          this.guests.forEach(g => { if (serverGuestIds.has(g.id) || isFreshLocal(g)) byId.set(g.id, g); });
           data.guests.forEach((g: GuestProfile) => byId.set(g.id, g));
           this.guests = Array.from(byId.values());
           try { useSettingsStore.getState().reconcileNumberFloor('client', this.guests.map((g) => g.serialNumber)); } catch {}
@@ -430,7 +442,7 @@ class FrontOfficeStore {
       const res = await fetch('/api/folios', { headers: { 'x-tenant-subdomain': t } });
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data.folios) && data.folios.length > 0) {
+        if (Array.isArray(data.folios)) {
           const byId = new Map<string, Folio>();
           this.folios.forEach(f => byId.set(f.id, f));
           data.folios.forEach((f: Folio) => {
@@ -461,6 +473,9 @@ class FrontOfficeStore {
               byId.delete(id);
             }
           });
+          // A bill the server doesn't have, for a stay that is no longer here, was cleared.
+          const liveResIds = new Set(this.reservations.map((r) => r.id));
+          byId.forEach((f, id) => { if (!serverIds.has(id) && !liveResIds.has(f.reservationId)) byId.delete(id); });
           this.folios = Array.from(byId.values());
           try { useSettingsStore.getState().reconcileNumberFloor('folio', this.folios.map((f) => f.id)); } catch {}
           this.notify();
@@ -482,6 +497,8 @@ class FrontOfficeStore {
     // been attempted (success or failure) — see the hydrationComplete field
     // comment for why persistFolio needs this instead of hydratedFromApi.
     this.hydrationComplete = true;
+    // This browser's saved guest list now matches the server (cleared guests drop out).
+    this.persistGuests();
     this.reservations.forEach((r) => {
       if (r.status === 'checked-in') {
         try { this.ensureFolioRoomCharges(r.id); } catch {}
@@ -551,8 +568,8 @@ class FrontOfficeStore {
       if (typeof window !== 'undefined') {
         const serialized = JSON.stringify(this.guests);
         const existing = localStorage.getItem('fo.guests');
-        // Avoid overwriting non-empty storage with empty in edge cases
-        if (this.guests.length === 0 && existing) {
+        // Avoid overwriting non-empty storage with empty before the server has answered.
+        if (this.guests.length === 0 && existing && !this.hydrationComplete) {
           const parsed = JSON.parse(existing);
           if (Array.isArray(parsed) && parsed.length > 0) {
             return;
@@ -648,6 +665,7 @@ class FrontOfficeStore {
     const guest: GuestProfile = { 
       ...g, 
       id: genId('G'),
+      createdAt: g.createdAt || new Date().toISOString(),
       serialNumber,
       isActive: g.isActive !== false,
       // Generate self-reservation token

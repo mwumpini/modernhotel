@@ -127,7 +127,7 @@ export function taxConfigsFromGhanaTemplate(): TaxConfig[] {
     // WITHHOLDING_VAT is the purchase-side VAT withholding (account 2170). It is applied
     // by purchaseWht.ts, not by the guest sales stack — leaving it as type Other put 7%
     // onto checkout journals and then scaled the real levies down to fit the folio tax.
-    const nonCreditable = type === 'NHIL' || type === 'GETFund' || type === 'Tourism';
+    const nonCreditable = type === 'Tourism';
     const purchaseVatWithholding = key === 'WITHHOLDING_VAT';
     const applyOnPurchases = !nonCreditable && type !== 'Withholding' && !purchaseVatWithholding;
     const applyOnSales = type !== 'Withholding' && !purchaseVatWithholding;

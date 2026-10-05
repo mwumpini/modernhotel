@@ -2029,15 +2029,15 @@ export default function RoomConfigurationDashboard() {
             <CardBody>
               {visualDisplayExpanded ? (
                 // Full display when expanded
-                <div className="grid grid-cols-3 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-12 gap-2">
+                <div className="grid gap-2 grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))]">
                   {settingsStore.roomManagement.rooms.map((room) => (
                     <div
                       key={room.id}
                       className="relative group cursor-pointer"
                       onClick={() => handleEditRoom(room)}
                     >
-                      <Card className="h-16 border border-gray-300 hover:border-blue-400 transition-all duration-200 hover:shadow-sm">
-                        <CardBody className="p-2 text-center">
+                      <Card className="min-h-[4.5rem] border border-gray-300 hover:border-blue-400 transition-all duration-200 hover:shadow-sm">
+                        <CardBody className="p-2 pt-3 text-center overflow-hidden justify-center">
                           <div className="text-sm font-bold text-gray-800 mb-1">
                             {room.number}
                           </div>
@@ -2057,6 +2057,7 @@ export default function RoomConfigurationDashboard() {
                                   size="sm" 
                                   variant="light" 
                                   isIconOnly
+                                  className="min-w-6 w-6 h-6"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleEditRoom(room);
@@ -2072,6 +2073,7 @@ export default function RoomConfigurationDashboard() {
                                   variant="light" 
                                   color={room.isActive ? 'warning' : 'success'}
                                   isIconOnly
+                                  className="min-w-6 w-6 h-6"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     room.isActive ? handleDeleteRoom(room) : handleToggleRoomActive(room);
@@ -2088,6 +2090,7 @@ export default function RoomConfigurationDashboard() {
                                   variant="light" 
                                   color="danger" 
                                   isIconOnly
+                                  className="min-w-6 w-6 h-6"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleDeleteRoom(room);
@@ -2102,6 +2105,7 @@ export default function RoomConfigurationDashboard() {
                                   variant="light" 
                                   color={room.isActive ? 'warning' : 'success'}
                                   isIconOnly
+                                  className="min-w-6 w-6 h-6"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleToggleRoomActive(room);
@@ -2122,15 +2126,15 @@ export default function RoomConfigurationDashboard() {
               ) : (
                 // Compact display when collapsed - show only first 24 rooms with "show more" option
                 <div>
-                  <div className="grid grid-cols-3 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-12 gap-2">
+                  <div className="grid gap-2 grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))]">
                     {settingsStore.roomManagement.rooms.slice(0, 24).map((room) => (
                       <div
                         key={room.id}
                         className="relative group cursor-pointer"
                         onClick={() => handleEditRoom(room)}
                       >
-                        <Card className="h-16 border border-gray-300 hover:border-blue-400 transition-all duration-200 hover:shadow-sm">
-                          <CardBody className="p-2 text-center">
+                        <Card className="min-h-[4.5rem] border border-gray-300 hover:border-blue-400 transition-all duration-200 hover:shadow-sm">
+                          <CardBody className="p-2 pt-3 text-center overflow-hidden justify-center">
                             <div className="text-sm font-bold text-gray-800 mb-1">
                               {room.number}
                             </div>
@@ -2146,6 +2150,7 @@ export default function RoomConfigurationDashboard() {
                                     size="sm" 
                                     variant="light" 
                                     isIconOnly
+                                    className="min-w-6 w-6 h-6"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       handleEditRoom(room);
@@ -2161,6 +2166,7 @@ export default function RoomConfigurationDashboard() {
                                     variant="light" 
                                     color={room.isActive ? 'warning' : 'success'}
                                     isIconOnly
+                                    className="min-w-6 w-6 h-6"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       room.isActive ? handleDeleteRoom(room) : handleToggleRoomActive(room);
@@ -2177,6 +2183,7 @@ export default function RoomConfigurationDashboard() {
                                     variant="light" 
                                     color="danger" 
                                     isIconOnly
+                                    className="min-w-6 w-6 h-6"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       handleDeleteRoom(room);
@@ -2191,6 +2198,7 @@ export default function RoomConfigurationDashboard() {
                                     variant="light" 
                                     color={room.isActive ? 'warning' : 'success'}
                                     isIconOnly
+                                    className="min-w-6 w-6 h-6"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       handleToggleRoomActive(room);
