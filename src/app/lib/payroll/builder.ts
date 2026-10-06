@@ -3,6 +3,7 @@
 
 import { useComplianceStore } from '../compliance/store';
 import { splitGhanaPaye, resolveGhanaSpecialRates } from './ghanaSpecialRates';
+import { ACT_1111_TIERS, ACT_1178_FIRST_MONTH, graduatedTax } from '../compliance/payeBands';
 
 // Currency amounts are never fractions of a pesewa — without a final rounding pass,
 // chained percentage math accumulates float artifacts like 123.44999999999998 by the time
@@ -340,7 +341,14 @@ export default class UniversalPayrollBuilder {
         },
         resolveGhanaSpecialRates(payeRule as any),
       );
-      if (payeRule && split.graduatedBase > 0) {
+      // Months before Act 1178 took effect are taxed on the bands in force then.
+      const period = payrollResult.period;
+      const monthKey = period?.year && period?.month ? `${period.year}-${String(period.month).padStart(2, '0')}` : '';
+      if (payeRule && split.graduatedBase > 0 && monthKey && monthKey < ACT_1178_FIRST_MONTH) {
+        const payeAmount = graduatedTax(split.graduatedBase, ACT_1111_TIERS);
+        payrollResult.taxes.items.push({ type: 'income', name: payeRule.name, ruleId: payeRule.id, amount: payeAmount, employerAmount: 0 });
+        employeeTaxTotal += payeAmount;
+      } else if (payeRule && split.graduatedBase > 0) {
         const result = useComplianceStore
           .getState()
           .calculateTax(split.graduatedBase, 'PAYE', { domain: 'payroll', operation: 'internal' });

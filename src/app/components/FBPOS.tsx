@@ -38,7 +38,7 @@ import { fbTenantHeaders, normalizePosVenue, createFbOrder, patchFbOrderStatus, 
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import { computeSalesTaxTotal } from '../lib/tax/engine';
 import { useSettingsStore } from '../lib/settings/store';
-import { managerPinMatches } from '../lib/settings/managerPin';
+import { verifyManagerPin } from '../lib/settings/managerPin';
 import { notifyError } from '../lib/notifications/notify';
 import { isOnReadyBoard } from '../lib/fb/readyBoard';
 import { confirmDelete, confirmVoid } from './DangerConfirm';
@@ -1274,8 +1274,9 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     void requestDeleteWithPin(orderId);
   };
 
-  const confirmManagerPin = () => {
-    if (managerPinMatches(pinValue)) {
+  const confirmManagerPin = async () => {
+    const check = await verifyManagerPin(pinValue);
+    if (check.ok) {
       if (pendingManagerAction?.type === 'delete') {
         deleteOrder(pendingManagerAction.orderId);
       }
@@ -1284,7 +1285,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
       setPinValue('');
       setPinError('');
     } else {
-      setPinError('Incorrect PIN');
+      setPinError(check.error || 'Incorrect PIN');
     }
   };
 

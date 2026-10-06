@@ -61,7 +61,6 @@ function check(name: string, ok: boolean, detail = '') {
 async function main() {
   const settingsMod = await import('../src/app/lib/settings/store');
   const { passwordPolicyError } = await import('../src/app/lib/settings/passwordPolicy');
-  const { managerPinMatches } = await import('../src/app/lib/settings/managerPin');
   const { approvalDecision } = await import('../src/app/lib/settings/approvalDecision');
   const { applyDisplay, readStoredDisplay } = await import('../src/app/lib/theme/applyTheme');
   const { creditTermDays } = await import('../src/app/lib/frontoffice/operationalPolicies');
@@ -142,9 +141,7 @@ async function main() {
   check('password missing a number is rejected', !!passwordPolicyError('Abcdefghij', policy()));
   check('password that meets the saved rules is accepted', passwordPolicyError('Abcdefghij1', policy()) === null);
 
-  store.getState().updateNestedSetting('posSettings.managerPin', '9090');
-  check('POS void accepts the saved manager PIN', managerPinMatches('9090'));
-  check('POS void rejects the old PIN', !managerPinMatches('1234'));
+  // The POS manager PIN is checked on the server now (/api/settings/manager-pin), not here.
 
   store.getState().updateRoomSettings({ autoAssignRooms: false });
   check('check-in stops auto-assigning when the switch is off', autoAssignRoomsEnabled() === false);
@@ -213,7 +210,6 @@ async function main() {
 
   check('password policy survived reload', passwordPolicyError('Abcdefghij1', store.getState().security.passwordPolicy) === null && !!passwordPolicyError('short', store.getState().security.passwordPolicy));
   check('session timeout and 2FA switch survived reload', store.getState().security.sessionTimeout === 45 && store.getState().security.twoFactorAuth === false);
-  check('manager PIN survived reload', managerPinMatches('9090') && store.getState().posSettings.managerPin === '9090');
   check('auto-assign switch survived reload', autoAssignRoomsEnabled() === false);
   check('credit days and check-in hour survived reload', store.getState().roomManagement.defaultCreditTermsDays === 21 && store.getState().roomManagement.standardCheckInHour === 16);
   const htmlAfter = renderPrint('invoice', 'not-a-saved-template', {

@@ -99,6 +99,8 @@ class FrontOfficeStore {
   private static readonly LIVE_REFRESH_MS = 15_000;
   // Serializes API writes so a reservation's POST always lands before its PATCH.
   private writeQueue: Promise<unknown> = Promise.resolve();
+  /** Counts saves, so a refresh can tell that one was made while it was loading. */
+  private writesStarted = 0;
   clientServices: Array<{
     id: string;
     clientId: string;
@@ -268,6 +270,7 @@ class FrontOfficeStore {
 
   private enqueueWrite(fn: () => Promise<unknown>) {
     if (typeof window === 'undefined' || !this.tenant()) return;
+    this.writesStarted += 1;
     this.writeQueue = this.writeQueue
       .then(() => this.withRetry(fn))
       .catch(e => {
@@ -394,9 +397,14 @@ class FrontOfficeStore {
 
   private async runPullFromApi() {
     const t = this.tenant(); if (!t) return;
+    // A refresh must never show an edit going back to its old value: wait for saves still on
+    // their way, and skip this round's copy if a new save was made while it loaded.
+    try { await this.writeQueue; } catch {}
+    const writesAtStart = this.writesStarted;
+    const savedMeanwhile = () => this.writesStarted !== writesAtStart;
     try {
       const res = await fetch('/api/reservations', { headers: { 'x-tenant-subdomain': t } });
-      if (res.ok) {
+      if (res.ok && !savedMeanwhile()) {
         const data = await res.json();
         if (Array.isArray(data.reservations)) {
           // Merge by id (like guests/folios below) instead of replacing the array
@@ -428,7 +436,7 @@ class FrontOfficeStore {
     } catch (e) { console.warn('FO: reservation sync failed', e); }
     try {
       const res = await fetch('/api/guests?includeInactive=true', { headers: { 'x-tenant-subdomain': t } });
-      if (res.ok) {
+      if (res.ok && !savedMeanwhile()) {
         const data = await res.json();
         if (Array.isArray(data.guests)) {
           const byId = new Map<string, GuestProfile>();

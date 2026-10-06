@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Button, Input, Switch } from '@heroui/react';
 import { useSettingsStore } from '../../lib/settings/store';
 import { pinLengthError } from '../../lib/auth/posPin';
+import { managerPinIsSet, saveManagerPin as saveManagerPinOnServer } from '../../lib/settings/managerPin';
 import PosWaiterSwitchSetting from './PosWaiterSwitchSetting';
 
 function NumberField({
@@ -122,7 +123,9 @@ export default function SecurityPolicyPanel({
   onOpenTax: () => void;
 }) {
   const security = useSettingsStore((s) => s.security);
-  const managerPin = useSettingsStore((s) => s.posSettings.managerPin);
+  // The manager PIN is kept hashed on the server for the whole hotel.
+  const [pinIsSet, setPinIsSet] = React.useState<boolean | null>(null);
+  React.useEffect(() => { void managerPinIsSet().then(setPinIsSet); }, []);
   const updateNestedSetting = useSettingsStore((s) => s.updateNestedSetting);
   const canManage2fa = useSettingsStore((s) => s.hasPermission('settings.manage-2fa'));
   const canManage = useSettingsStore((s) => s.hasPermission('settings.manage-security-policy'));
@@ -140,7 +143,7 @@ export default function SecurityPolicyPanel({
     updateNestedSetting('security.pinPolicy.maxLength', Math.max(minLength, maxLength));
   };
 
-  const saveManagerPin = () => {
+  const saveManagerPin = async () => {
     const error = pinLengthError(nextPin, pin);
     if (error) {
       setPinMessage({ tone: 'error', text: error });
@@ -150,10 +153,15 @@ export default function SecurityPolicyPanel({
       setPinMessage({ tone: 'error', text: 'The two PINs do not match.' });
       return;
     }
-    updateNestedSetting('posSettings.managerPin', nextPin);
+    const saved = await saveManagerPinOnServer(nextPin);
+    if (!saved.ok) {
+      setPinMessage({ tone: 'error', text: saved.error || 'The PIN could not be saved. Try again.' });
+      return;
+    }
     setNextPin('');
     setConfirmPin('');
-    setPinMessage({ tone: 'ok', text: 'Manager PIN saved on this computer. The POS uses it before an order is deleted.' });
+    setPinIsSet(true);
+    setPinMessage({ tone: 'ok', text: 'Manager PIN saved for the whole hotel. Every POS uses it before an order is deleted.' });
   };
 
   return (
@@ -240,7 +248,7 @@ export default function SecurityPolicyPanel({
         </div>
         <p className="mt-2 text-xs text-slate-500">
           {pin.minLength === pin.maxLength ? `Every PIN is ${pin.minLength} digits.` : `A PIN is ${pin.minLength} to ${pin.maxLength} digits.`}
-          {managerPin === '1234' ? ' The manager PIN is still the starter 1234.' : ' A manager PIN is saved on this computer.'}
+          {pinIsSet === false ? ' The manager PIN is still the starter 1234.' : pinIsSet ? ' A manager PIN is set for the hotel.' : ''}
         </p>
         <div className="mt-3 flex flex-wrap items-end gap-2">
           <Input

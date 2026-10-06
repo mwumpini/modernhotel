@@ -2,7 +2,8 @@
  * Ghana PAYE parts taxed at a flat rate instead of the graduated bands (Income Tax Act, as
  * amended; rates per GRA / Act 1178 schedule, 2026):
  * - Bonus up to 15% of annual basic salary: 5% final tax. The excess joins graduated income.
- * - Overtime of a qualifying junior employee (annual employment income up to GHS 18,000):
+ * - Overtime of a qualifying junior employee (annual employment income up to GHS 18,000 —
+ *   basic plus allowances and benefits, per GRA):
  *   5% on overtime up to 50% of monthly basic, 10% above that. Anyone else's overtime is
  *   graduated income.
  * - Casual worker: 5% final withholding on the payment.

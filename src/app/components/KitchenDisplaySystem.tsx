@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useState, useCallback, useRef } from 'react'
+import { createSaveGuard } from '../lib/api/saveGuard'
 import { fetchFbOrders, fetchKitchenStaff, patchFbOrder, patchFbOrderStatus, openKitchenOverview, type FbOrderDto } from '../lib/fb/api'
 import { parseTicketTag } from '../lib/fb/ticketTag'
 import { logKitchenStatusChange } from '../lib/fb/kitchenEvents'
@@ -244,6 +245,8 @@ export default function KitchenDisplaySystem({ embedded = false, lockStation = '
   const stationRef      = useRef(stationFilter)         // for sound detection inside closure
   stationRef.current    = stationFilter
   const lastOrderIdsRef = useRef<Set<string>>(new Set())
+  // A reload that started before a status change must not put the old status back.
+  const saveGuard = useRef(createSaveGuard()).current
   const allVenuesRef    = useRef<string[]>([])
 
   // Unlock AudioContext on first user interaction — required by browser autoplay policy
@@ -269,6 +272,7 @@ export default function KitchenDisplaySystem({ embedded = false, lockStation = '
 
   // ── Fetch & process orders ────────────────────────────────────────────────
   const fetchOrders = useCallback(async () => {
+    const startedAt = saveGuard.started()
     try {
       const all: KDSOrder[] = await fetchFbOrders(
         venueFilter !== 'all' ? { venue: venueFilter } : undefined
@@ -314,6 +318,7 @@ export default function KitchenDisplaySystem({ embedded = false, lockStation = '
         return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
       })
 
+      if (saveGuard.isStale(startedAt)) return
       setOrders(filtered)
       setLastRefresh(new Date())
       setError(null)
@@ -365,7 +370,9 @@ export default function KitchenDisplaySystem({ embedded = false, lockStation = '
     if (!order || (order.assignedToId === cookId && order.assignedToName === cookName)) return
     setUpdating(orderId)
     try {
+      saveGuard.mark()
       const updated = await patchFbOrder(orderId, { assignedToId: cookId, assignedToName: cookName })
+      saveGuard.mark()
       setOrders(prev => prev.map(o => (o.id === orderId ? updated : o)))
       logKitchenStatusChange({
         order: updated,
@@ -395,7 +402,9 @@ export default function KitchenDisplaySystem({ embedded = false, lockStation = '
         extra.assignedToId = order.assignedToId
         extra.assignedToName = order.assignedToName
       }
+      saveGuard.mark()
       const updated = await patchFbOrderStatus(orderId, newStatus, extra)
+      saveGuard.mark()
 
       logKitchenStatusChange({
         order: updated,
@@ -423,7 +432,9 @@ export default function KitchenDisplaySystem({ embedded = false, lockStation = '
     setUpdating(orderId); setConfirmCancel(null)
     const order = orders.find(o => o.id === orderId)
     try {
+      saveGuard.mark()
       const updated = await patchFbOrderStatus(orderId, 'cancelled')
+      saveGuard.mark()
       if (order) {
         logKitchenStatusChange({
           order: updated,

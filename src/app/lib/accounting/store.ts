@@ -564,7 +564,8 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     }
     return {
     journalEntries: state.journalEntries.map(entry =>
-      entry.id === id ? { ...entry, ...updates } : entry
+      // Stamped so a background reload keeps this edit instead of the older server copy.
+      entry.id === id ? { ...entry, ...updates, updatedAt: new Date().toISOString() } : entry
     )
     };
   }),
@@ -1327,7 +1328,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     persistInvoicePatch(id, updates);
     return {
       businessPartners: partners,
-      invoices: state.invoices.map(invoice => invoice.id === id ? { ...invoice, ...updates } : invoice)
+      invoices: state.invoices.map(invoice => invoice.id === id ? { ...invoice, ...updates, updatedAt: new Date().toISOString() } : invoice)
     };
   }),
   
@@ -1577,7 +1578,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     persistPaymentPatch(id, updates);
     return {
       businessPartners: partners,
-      payments: state.payments.map(payment => payment.id === id ? { ...payment, ...updates } : payment)
+      payments: state.payments.map(payment => payment.id === id ? { ...payment, ...updates, updatedAt: new Date().toISOString() } as Payment : payment)
     };
   }),
   

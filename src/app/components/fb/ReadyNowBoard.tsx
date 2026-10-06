@@ -5,6 +5,10 @@ import { Button, Chip, Input } from '@heroui/react';
 import { fbTenantHeaders } from '../../lib/fb/api';
 import { isOnReadyBoard, todayServiceDate } from '../../lib/fb/readyBoard';
 import { useSettingsStore } from '../../lib/settings/store';
+import { createSaveGuard } from '../../lib/api/saveGuard';
+
+/** Shared by every board in this file: a reload must not undo a dish just changed. */
+const saveGuard = createSaveGuard();
 
 type Dish = {
   id: string;
@@ -60,7 +64,10 @@ export function ReadyNowPage() {
 
   const refresh = useCallback(async () => {
     try {
-      setDishes(await loadKitchenMenu());
+      const startedAt = saveGuard.started();
+      const menu = await loadKitchenMenu();
+      if (saveGuard.isStale(startedAt)) return; // a save landed meanwhile; next reload shows it
+      setDishes(menu);
       setFailed(false);
     } catch {
       setFailed(true);
@@ -77,11 +84,13 @@ export function ReadyNowPage() {
     const pinned = !dish.isPinned;
     setDishes((prev) => prev.map((row) => (row.id === dish.id ? { ...row, isPinned: pinned } : row)));
     try {
+      saveGuard.mark();
       const res = await fetch('/api/fb/menu', {
         method: 'PATCH',
         headers: fbTenantHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ id: dish.id, isPinned: pinned }),
       });
+      saveGuard.mark();
       if (!res.ok) throw new Error('The star did not save');
     } catch {
       refresh();
@@ -249,7 +258,10 @@ export default function ReadyNowBoard() {
 
   const refresh = useCallback(async () => {
     try {
-      setDishes(await loadKitchenMenu());
+      const startedAt = saveGuard.started();
+      const menu = await loadKitchenMenu();
+      if (saveGuard.isStale(startedAt)) return; // a save landed meanwhile; next reload shows it
+      setDishes(menu);
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load the menu');
@@ -272,6 +284,7 @@ export default function ReadyNowBoard() {
     };
     setDishes((prev) => prev.map((row) => (row.id === dish.id ? next : row)));
     try {
+      saveGuard.mark();
       const res = await fetch('/api/fb/menu', {
         method: 'PATCH',
         headers: fbTenantHeaders({ 'Content-Type': 'application/json' }),
@@ -282,6 +295,7 @@ export default function ReadyNowBoard() {
           readyPortions: next.readyPortions,
         }),
       });
+      saveGuard.mark();
       if (!res.ok) throw new Error('The ready board did not save');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The ready board did not save');
@@ -296,11 +310,13 @@ export default function ReadyNowBoard() {
     const pinned = !dish.isPinned;
     setDishes((prev) => prev.map((row) => (row.id === dish.id ? { ...row, isPinned: pinned } : row)));
     try {
+      saveGuard.mark();
       const res = await fetch('/api/fb/menu', {
         method: 'PATCH',
         headers: fbTenantHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ id: dish.id, isPinned: pinned }),
       });
+      saveGuard.mark();
       if (!res.ok) throw new Error('The star did not save');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The star did not save');
@@ -312,11 +328,13 @@ export default function ReadyNowBoard() {
     if (!canPublish || !dishes.some((dish) => dish.readyNow)) return;
     setError('');
     try {
+      saveGuard.mark();
       const res = await fetch('/api/fb/menu', {
         method: 'PATCH',
         headers: fbTenantHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ clearReadyBoard: true }),
       });
+      saveGuard.mark();
       if (!res.ok) throw new Error('Could not clear the ready board');
       await refresh();
     } catch (err) {

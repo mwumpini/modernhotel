@@ -2,7 +2,7 @@
 type Tier = { upto?: number; rate: number };
 
 /** Act 1111 schedule, used 1 Jan 2024 – 31 Aug 2026. */
-const ACT_1111_TIERS: Tier[] = [
+export const ACT_1111_TIERS: Tier[] = [
   { upto: 490, rate: 0 }, { upto: 110, rate: 5 }, { upto: 130, rate: 10 }, { upto: 3166.67, rate: 17.5 },
   { upto: 16000, rate: 25 }, { upto: 30520, rate: 30 }, { rate: 35 },
 ];
@@ -12,6 +12,22 @@ export const ACT_1178_TIERS: Tier[] = [
   { upto: 588, rate: 0 }, { upto: 80, rate: 5 }, { upto: 100, rate: 10 }, { upto: 2900, rate: 17.5 },
   { upto: 16000, rate: 25 }, { upto: 30332, rate: 30 }, { rate: 35 },
 ];
+
+/** First payroll month (YYYY-MM) on the Act 1178 bands; earlier months keep the Act 1111 bands. */
+export const ACT_1178_FIRST_MONTH = '2026-09';
+
+/** Tax on a monthly amount through slice-width tiers (the last tier has no limit). */
+export function graduatedTax(amount: number, tiers: Tier[]): number {
+  let left = Math.max(0, amount);
+  let tax = 0;
+  for (const t of tiers) {
+    const slice = t.upto == null ? left : Math.min(left, t.upto);
+    tax += slice * (t.rate / 100);
+    left -= slice;
+    if (left <= 0) break;
+  }
+  return Math.round(tax * 100) / 100;
+}
 
 export const ACT_1178_DESCRIPTION =
   "Progressive monthly PAYE on taxable income — Act 1178 resident bands, effective 1 Sep 2026 (first GHS 588 at 0%, 35% above GHS 50,000). Each tier is the width of that slice; edit the tiers if GRA revises the bands. The last tier (rate 35, no 'upto') is open-ended.";

@@ -2738,7 +2738,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       
       // Load POS settings
       const posSettings = {
-        managerPin: localStorage.getItem('manager.pin') || defaultSettings.posSettings.managerPin,
+        managerPin: defaultSettings.posSettings.managerPin,
         printMethod: (localStorage.getItem('print.method') as 'browser' | 'bridge') || defaultSettings.posSettings.printMethod,
         bridgeUrl: localStorage.getItem('print.bridgeUrl') || defaultSettings.posSettings.bridgeUrl,
         routeReceipts: localStorage.getItem('print.route.receipt') || defaultSettings.posSettings.routeReceipts,
@@ -3046,7 +3046,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       localStorage.setItem('room.management', JSON.stringify(state.roomManagement));
 
       // Save POS settings
-      localStorage.setItem('manager.pin', state.posSettings.managerPin);
+      try { localStorage.removeItem('manager.pin'); } catch {} // the PIN lives on the server now
       localStorage.setItem('print.method', state.posSettings.printMethod);
       localStorage.setItem('print.bridgeUrl', state.posSettings.bridgeUrl);
       localStorage.setItem('print.route.receipt', state.posSettings.routeReceipts);

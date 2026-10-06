@@ -168,7 +168,13 @@ function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number
   profiles.get(eid).ghTax = {
     employmentClass: (emp as any).employmentClass,
     residencyStatus: (emp as any).residencyStatus,
-    allowances: Number(adj.allowances ?? (emp as any).allowances ?? 0),
+    // GRA's junior-overtime test counts all employment income besides basic (cash allowances
+    // and benefits), not just cash allowances.
+    allowances:
+      Number(adj.allowances ?? (emp as any).allowances ?? 0) +
+      Number((emp as any).vehicleBenefit || 0) +
+      Number((emp as any).housingBenefit || 0) +
+      Number((emp as any).otherNonCashBenefits || 0),
     bonusEarlierThisYear,
   };
 
