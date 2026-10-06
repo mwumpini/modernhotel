@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { 
   Card, CardBody, CardHeader, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
@@ -9,6 +9,16 @@ import {
 } from "@heroui/react";
 import { toRollupCoa } from '@/app/lib/accounting/coaHierarchy';
 import { useAccountingStore } from '@/app/lib/accounting/store';
+import { useSettingsStore } from '@/app/lib/settings/store';
+import {
+  financialQuarterIndex,
+  financialYearContaining,
+  financialYearCycleLabel,
+  financialYearEndedLabel,
+  financialYearEnding,
+  quarterOfFinancialYear,
+  yearReadyToClose,
+} from '@/app/lib/accounting/financialYear';
 import { GHANA_CHART_OF_ACCOUNTS } from '@/app/lib/accounting/models';
 import {
   buildFinancialAccountTree,
@@ -116,35 +126,49 @@ const addNetColumns = (into: { debit: number; credit: number }, debit: number, c
 };
 
 // Get period dates helper
-const getPeriodDates = (periodType: PeriodType, selectedMonth: string, selectedQuarter: string, selectedYear: string, customFrom: string, customTo: string) => {
+const getPeriodDates = (
+  periodType: PeriodType,
+  selectedMonth: string,
+  selectedQuarter: string,
+  selectedYear: string,
+  customFrom: string,
+  customTo: string,
+  yearStartIso?: string | null,
+) => {
   const now = new Date();
+  const openYear = financialYearContaining(now, yearStartIso);
   let startDate: Date;
   let endDate: Date;
 
   switch (periodType) {
-    case 'month':
+    case 'month': {
       const [monthYear, month] = selectedMonth.split('-').map(Number);
       startDate = new Date(monthYear || now.getFullYear(), (month || now.getMonth() + 1) - 1, 1);
       endDate = new Date(monthYear || now.getFullYear(), month || now.getMonth() + 1, 0);
       break;
-    case 'quarter':
-      const qYear = parseInt(selectedYear) || now.getFullYear();
-      const qNum = parseInt(selectedQuarter?.replace('Q', '') || '1');
-      startDate = new Date(qYear, (qNum - 1) * 3, 1);
-      endDate = new Date(qYear, qNum * 3, 0);
+    }
+    case 'quarter': {
+      const endingYear = parseInt(selectedYear, 10) || openYear.endingYear;
+      const quarter = parseInt(selectedQuarter?.replace('Q', '') || '1', 10);
+      const range = quarterOfFinancialYear(endingYear, quarter, yearStartIso);
+      startDate = range.start;
+      endDate = range.end;
       break;
-    case 'year':
-      const year = parseInt(selectedYear) || now.getFullYear();
-      startDate = new Date(year, 0, 1);
-      endDate = new Date(year, 11, 31);
+    }
+    case 'year': {
+      const endingYear = parseInt(selectedYear, 10) || openYear.endingYear;
+      const year = financialYearEnding(endingYear, yearStartIso);
+      startDate = year.start;
+      endDate = year.end;
       break;
+    }
     case 'ytd':
-      startDate = new Date(now.getFullYear(), 0, 1);
+      startDate = openYear.start;
       endDate = now;
       break;
     case 'custom':
     default:
-      startDate = customFrom ? new Date(customFrom) : new Date(now.getFullYear(), 0, 1);
+      startDate = customFrom ? new Date(customFrom) : openYear.start;
       endDate = customTo ? new Date(customTo) : now;
   }
 
@@ -211,6 +235,8 @@ export default function FinancialReportsPage() {
     addJournalEntry,
     addAuditTrail,
   } = useAccountingStore();
+  const yearStartIso = useSettingsStore((s) => s.companySettings?.financialYearStartDate);
+  const yearCycleLabel = financialYearCycleLabel(yearStartIso);
 
   // ==================== STATE ====================
   const [selectedTab, setSelectedTab] = useState("overview");
@@ -226,10 +252,17 @@ export default function FinancialReportsPage() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
-  const [selectedQuarter, setSelectedQuarter] = useState(() => `Q${Math.floor(new Date().getMonth() / 3) + 1}`);
-  const [selectedYear, setSelectedYear] = useState(() => String(new Date().getFullYear()));
+  const [selectedQuarter, setSelectedQuarter] = useState(() => {
+    const start = useSettingsStore.getState().companySettings?.financialYearStartDate;
+    return `Q${financialQuarterIndex(new Date(), start)}`;
+  });
+  const [selectedYear, setSelectedYear] = useState(() => {
+    const start = useSettingsStore.getState().companySettings?.financialYearStartDate;
+    return String(financialYearContaining(new Date(), start).endingYear);
+  });
   const [customDateFrom, setCustomDateFrom] = useState('');
   const [customDateTo, setCustomDateTo] = useState('');
+  const periodPickTouched = useRef(false);
   
   // Report Options
   const [reportFormat, setReportFormat] = useState<ReportFormat>('detailed');
@@ -249,6 +282,13 @@ export default function FinancialReportsPage() {
     initializeAccounting();
   }, [initializeAccounting]);
 
+  useEffect(() => {
+    if (periodPickTouched.current) return;
+    const open = financialYearContaining(new Date(), yearStartIso);
+    setSelectedYear(String(open.endingYear));
+    setSelectedQuarter(`Q${financialQuarterIndex(new Date(), yearStartIso)}`);
+  }, [yearStartIso]);
+
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     await initializeAccounting();
@@ -264,8 +304,8 @@ export default function FinancialReportsPage() {
 
   // ==================== PERIOD CALCULATIONS ====================
   const { startDate, endDate } = useMemo(() =>
-    getPeriodDates(periodType, selectedMonth, selectedQuarter, selectedYear, customDateFrom, customDateTo),
-    [periodType, selectedMonth, selectedQuarter, selectedYear, customDateFrom, customDateTo]
+    getPeriodDates(periodType, selectedMonth, selectedQuarter, selectedYear, customDateFrom, customDateTo, yearStartIso),
+    [periodType, selectedMonth, selectedQuarter, selectedYear, customDateFrom, customDateTo, yearStartIso]
   );
 
   // Prior-year comparison: same period/as-at date, shifted back exactly one year — the
@@ -292,10 +332,10 @@ export default function FinancialReportsPage() {
       return startDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
     }
     if (periodType === 'quarter') {
-      return `${selectedQuarter} ${selectedYear}`;
+      return `${selectedQuarter} — ${periodRangeLabel}`;
     }
     if (periodType === 'year') {
-      return `Year ended 31 December ${selectedYear}`;
+      return financialYearEndedLabel(endDate);
     }
     if (periodType === 'ytd') {
       return `Year to Date — ${periodRangeLabel}`;
@@ -351,11 +391,15 @@ export default function FinancialReportsPage() {
   }, [rollupCoa]);
 
   const yearOptions = useMemo(() => {
-    const current = new Date().getFullYear();
-    const from = Math.min(2024, current);
-    const to = current + 1;
+    const ending = financialYearContaining(new Date(), yearStartIso).endingYear;
+    const from = Math.min(2024, ending - 1);
+    const to = Math.max(new Date().getFullYear() + 1, ending + 1);
     return Array.from({ length: to - from + 1 }, (_, i) => from + i);
-  }, []);
+  }, [yearStartIso]);
+
+  const yearToClose = useMemo(() => yearReadyToClose(new Date(), yearStartIso), [yearStartIso]);
+  const yearEndedLabel = (endingYear: number) =>
+    financialYearEndedLabel(financialYearEnding(endingYear, yearStartIso).end);
 
   const accountTreePeriod = useMemo(
     () => buildFinancialAccountTree(rollupCoa, journalEntries, { kind: 'period', startDate, endDate }),
@@ -1106,6 +1150,7 @@ export default function FinancialReportsPage() {
         <SelectItem key="year">Full Year</SelectItem>
         <SelectItem key="custom">Custom Range</SelectItem>
       </Select>
+      <span className="text-xs text-gray-500">Year runs {yearCycleLabel}</span>
 
       {periodType === 'month' && (
         <Input
@@ -1124,7 +1169,10 @@ export default function FinancialReportsPage() {
         <>
           <Select
             selectedKeys={[selectedQuarter]}
-            onSelectionChange={(keys) => setSelectedQuarter(Array.from(keys)[0] as string)}
+            onSelectionChange={(keys) => {
+              periodPickTouched.current = true;
+              setSelectedQuarter(Array.from(keys)[0] as string);
+            }}
             size="sm"
             variant="bordered"
             aria-label="Quarter"
@@ -1138,15 +1186,18 @@ export default function FinancialReportsPage() {
           </Select>
           <Select
             selectedKeys={[selectedYear]}
-            onSelectionChange={(keys) => setSelectedYear(Array.from(keys)[0] as string)}
+            onSelectionChange={(keys) => {
+              periodPickTouched.current = true;
+              setSelectedYear(Array.from(keys)[0] as string);
+            }}
             size="sm"
             variant="bordered"
-            aria-label="Year"
-            className="w-20"
+            aria-label="Accounting year"
+            className="w-64"
             classNames={{ trigger: 'h-8 min-h-8' }}
           >
             {yearOptions.map((y) => (
-              <SelectItem key={String(y)}>{y}</SelectItem>
+              <SelectItem key={String(y)} textValue={yearEndedLabel(y)}>{yearEndedLabel(y)}</SelectItem>
             ))}
           </Select>
         </>
@@ -1155,15 +1206,18 @@ export default function FinancialReportsPage() {
       {periodType === 'year' && (
         <Select
           selectedKeys={[selectedYear]}
-          onSelectionChange={(keys) => setSelectedYear(Array.from(keys)[0] as string)}
+          onSelectionChange={(keys) => {
+            periodPickTouched.current = true;
+            setSelectedYear(Array.from(keys)[0] as string);
+          }}
           size="sm"
           variant="bordered"
-          aria-label="Year"
-          className="w-20"
+          aria-label="Accounting year"
+          className="w-64"
           classNames={{ trigger: 'h-8 min-h-8' }}
         >
           {yearOptions.map((y) => (
-            <SelectItem key={String(y)}>{y}</SelectItem>
+            <SelectItem key={String(y)} textValue={yearEndedLabel(y)}>{yearEndedLabel(y)}</SelectItem>
           ))}
         </Select>
       )}
@@ -1724,6 +1778,16 @@ export default function FinancialReportsPage() {
                         />
                       </div>
                       <Button
+                        size="sm"
+                        variant="flat"
+                        onPress={() => {
+                          setCloseDateEdited(true);
+                          setCloseAsOfDate(formatLocalIsoDate(yearToClose.end));
+                        }}
+                      >
+                        {financialYearEndedLabel(yearToClose.end)}
+                      </Button>
+                      <Button
                         color="primary"
                         size="sm"
                         isDisabled={closeBusy || closeAlreadyPosted || !closeAsOfDate}
@@ -1744,10 +1808,9 @@ export default function FinancialReportsPage() {
                       </p>
                     )}
                     <p className="text-xs text-gray-500">
-                      The date follows the report end date until you change it. One posted close per calendar date. Once posted, every posting path (folio checkout,
-                      manual invoices/payments, departmental capture) refuses new entries dated on or before
-                      this date — reopen by voiding the close entry if a correction is needed.
-                      Reversals are not automated — void or adjust manually if needed.
+                      This company&apos;s year runs {yearCycleLabel}. Use {financialYearEndedLabel(yearToClose.end)} to fill the close date for the year that has finished. The opening day is under Settings, Accounting year.
+                      One posted close per date. Once posted, folio checkout, invoices, payments, and other postings refuse a date on or before
+                      this date. Void the close entry to reopen it.
                     </p>
                   </CardBody>
                 </Card>

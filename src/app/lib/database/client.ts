@@ -1,4 +1,11 @@
+import path from 'path'
 import { PrismaClient } from '@prisma/client'
+
+// The hotel launcher sets an absolute path. Dev and seed fall back to prisma/test.db.
+if (!process.env.SQLITE_DATABASE_URL) {
+  const db = path.join(process.cwd(), 'prisma', 'test.db').replace(/\\/g, '/')
+  process.env.SQLITE_DATABASE_URL = `file:${db}`
+}
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined

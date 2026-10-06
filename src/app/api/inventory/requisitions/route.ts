@@ -9,6 +9,7 @@ import {
   type RequisitionItemInput,
 } from '@/app/lib/inventory/repository';
 import { getApprovalRequirement } from '@/app/lib/api/approvalThresholds';
+import { rejectIfBackdated } from '@/app/lib/frontoffice/postingDateGuard';
 
 async function resolveTenantId(req: NextRequest): Promise<string | null> {
   const subdomain = getTenantFromRequest(req);
@@ -63,6 +64,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields: requestedBy, items' }, { status: 400 });
     }
 
+    const blocked = await rejectIfBackdated(tenantId, body.requestedDate, { model: 'requisition', id: body.id });
+    if (blocked) return blocked;
+
     const requisition = await upsertRequisition({
       id: body.id,
       tenantId,
@@ -107,6 +111,9 @@ export async function PUT(req: NextRequest) {
 
     const existing = await getRequisitionById(tenantId, body.id);
     if (!existing) return NextResponse.json({ error: 'Requisition not found' }, { status: 404 });
+
+    const blocked = await rejectIfBackdated(tenantId, body.requestedDate, { model: 'requisition', id: body.id });
+    if (blocked) return blocked;
 
     if (body.status && body.status !== existing.status) {
       const permCheck = await requirePermission(req, 'inventory.approve-requisition');

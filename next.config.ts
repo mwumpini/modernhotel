@@ -1,6 +1,29 @@
+import path from "path";
 import type { NextConfig } from "next";
 
+// Prisma reads this when the client is created. The hotel launcher sets its own
+// path before start; this default keeps `next dev` on prisma/test.db.
+if (!process.env.SQLITE_DATABASE_URL) {
+  const db = path.join(process.cwd(), "prisma", "test.db").replace(/\\/g, "/");
+  process.env.SQLITE_DATABASE_URL = `file:${db}`;
+}
+
+const hotelBuild = process.env.HOTEL_BUILD === "1";
+
 const nextConfig: NextConfig = {
+  ...(hotelBuild
+    ? {
+        output: "standalone" as const,
+        distDir: ".next-hotel",
+        outputFileTracingIncludes: {
+          "/*": [
+            "./node_modules/.prisma/client/**/*",
+            "./node_modules/@prisma/client/**/*",
+          ],
+        },
+        serverExternalPackages: ["@prisma/client", "prisma"],
+      }
+    : {}),
   eslint: {
     ignoreDuringBuilds: false,
   },

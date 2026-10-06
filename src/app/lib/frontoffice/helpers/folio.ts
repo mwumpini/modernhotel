@@ -21,6 +21,7 @@ import { roundMoney2 } from '../../tax/engine';
 import { useComplianceStore } from '../../compliance/store';
 import { useSettingsStore } from '../../settings/store';
 import { genId as genChargeId } from './ids';
+import { recordedCollection } from '../../payments/guestCollection';
 import {
   chargeGross,
   chargeNet,
@@ -673,6 +674,11 @@ export function addPayment(self: StoreLike, reservationId: string, method: 'Cash
 		processedBy: options?.processedBy || 'Front Desk',
 		...options
 	};
+	if (method === 'Card' || method === 'Mobile Money') {
+		const collection = recordedCollection(useSettingsStore.getState().financialSettings.guestCollection?.service);
+		payment.collectionService = collection.service;
+		payment.collectionMode = collection.mode;
+	}
 	f.payments.push(payment);
 	updateFolioBalances(self, f);
 	self.notify();

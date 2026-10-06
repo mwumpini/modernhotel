@@ -6,6 +6,7 @@ import { SortHeader, deskTableCardBodyClassName, deskTableCardClassName, deskTab
 import { sizedTableClassNames } from '../frontoffice/columnResize';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import { useInventoryScreen } from './inventoryScreenContext';
+import PostingDateField from '../shared/PostingDateField';
 
 /** Inventory → Purchase Orders. Order table. */
 export function PurchaseOrdersTable() {
@@ -178,7 +179,7 @@ export function PurchaseOrderModals() {
                       <SelectItem key={supplier.id}>{supplier.name}</SelectItem>
                     ))}
                   </Select>
-                  <Input
+                  <PostingDateField
                     label="Order Date"
                     type="date"
                     value={inventoryScreen.poFormData.orderDate instanceof Date 

@@ -3,6 +3,7 @@
 import React from 'react';
 import { Card, CardBody, CardHeader, Switch } from '@heroui/react';
 import { useSettingsStore } from '../../lib/settings/store';
+import { normalizeGuestPaymentService } from '../../lib/payments/guestCollection';
 import { hourStamp } from '../../lib/frontoffice/operationalPolicies';
 
 const policyInput = 'mt-1 w-full h-9 rounded-lg border border-gray-300 px-3 text-sm';
@@ -45,9 +46,29 @@ function PolicyRow({ label, hint, children }: { label: string; hint?: string; ch
 
 export default function OperationalPoliciesPanel() {
   const settingsStore = useSettingsStore();
+  const roleId = settingsStore.sessionRoleId ?? settingsStore.currentUser?.roleId;
+  const canAllowBackdating = roleId === 'admin' || roleId === 'manager';
   return (
 <div className="space-y-8">
-  <p className="text-sm text-gray-500">Front desk rules for arrival, departure, booking changes, company accounts, and night audit. Each change saves immediately.</p>
+  <p className="text-sm text-gray-500">Front desk rules for arrival, departure, booking changes, company accounts, night audit, and whether a posting can use an earlier date. Each change saves immediately.</p>
+  <PolicyGroup title="Posting dates" description="Payments, charges, journals, bills, goods received, and stock movements. Guest details, bookings, and report ranges stay free.">
+    <PolicyCard title="Backdating" wide>
+      <PolicyRow
+        label="Allow backdating"
+        hint={canAllowBackdating
+          ? 'Off: a new posting uses today or a later date. On: those same forms accept an earlier date. Turn it off again after the correction.'
+          : 'Only an admin or a manager can change this. While it is off, a new posting cannot be dated before today.'}
+      >
+        <Switch
+          isSelected={settingsStore.roomManagement.allowBackdating === true}
+          isDisabled={!canAllowBackdating}
+          onValueChange={(v) => settingsStore.updateNestedSetting('roomManagement.allowBackdating', v)}
+        >
+          {settingsStore.roomManagement.allowBackdating === true ? 'On' : 'Off'}
+        </Switch>
+      </PolicyRow>
+    </PolicyCard>
+  </PolicyGroup>
   <PolicyGroup title="Check-in and checkout" description="Standard arrival and departure times, and what happens when a guest leaves early or stays past checkout.">
     <PolicyCard title="Standard times">
       <div className="grid grid-cols-2 gap-3 max-w-md">
@@ -317,6 +338,22 @@ export default function OperationalPoliciesPanel() {
       <p className="text-xs text-gray-500 mt-3">
         Line rounding applies to taxes and line items on invoices, folios, and POS. Rounding the amount due nudges the total to a cash figure, and the difference posts as a Rounding Adjustment (GL 4900) at checkout. The same values are used in Setup.
       </p>
+    </PolicyCard>
+  </PolicyGroup>
+
+  <PolicyGroup title="Phone and card payments" description="Cash and mobile money stay on the desk. A payments service can be connected later so the guest approves on their phone and the amount posts to the folio.">
+    <PolicyCard title="Ghana payments service" wide>
+      <PolicyRow label="Service" hint="Saved for later. Staff still record card and mobile money by hand.">
+        <select
+          className={policyInput}
+          value={settingsStore.financialSettings.guestCollection?.service ?? 'none'}
+          onChange={(e) => settingsStore.updateNestedSetting('financialSettings.guestCollection.service', normalizeGuestPaymentService(e.target.value))}
+        >
+          <option value="none">Not connected</option>
+          <option value="hubtel">Hubtel</option>
+          <option value="paystack">Paystack</option>
+        </select>
+      </PolicyRow>
     </PolicyCard>
   </PolicyGroup>
 </div>

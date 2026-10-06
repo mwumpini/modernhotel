@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant';
 import { requireAuth } from '@/app/lib/api/auth-guard';
+import { rejectIfBackdated } from '@/app/lib/frontoffice/postingDateGuard';
 import {
   listStockCounts,
   upsertStockCount,
@@ -62,6 +63,9 @@ export async function PUT(req: NextRequest) {
         { status: 400 }
       );
     }
+
+    const blocked = await rejectIfBackdated(tenantId, body.startDate, { model: 'stockCount', id: body.id });
+    if (blocked) return blocked;
 
     const count = await upsertStockCount({
       id: body.id,

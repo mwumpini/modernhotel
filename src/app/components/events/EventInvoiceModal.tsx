@@ -3,6 +3,7 @@
 import { Autocomplete, AutocompleteItem, Badge, Button, Card, CardBody, CardHeader, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Select, SelectItem, Textarea } from '@heroui/react';
 import type { EventInvoiceStatus } from './eventTypes';
 import { useEventsScreen } from './eventsScreenContext';
+import PostingDateField from '../shared/PostingDateField';
 
 /** Events → invoice dialog. */
 export function EventInvoiceModal() {
@@ -69,7 +70,7 @@ export function EventInvoiceModal() {
                       errorMessage={eventsScreen.invoiceErrors.clientName}
                     />
                     <div className="grid grid-cols-2 gap-4">
-                      <Input
+                      <PostingDateField
                         label="Issue Date"
                         type="date"
                         value={eventsScreen.invoiceForm.issueDate || ''}

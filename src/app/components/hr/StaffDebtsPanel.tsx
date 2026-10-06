@@ -11,6 +11,7 @@ import type { StaffDebt, StaffDebtStatus, StaffDebtType } from '@/app/lib/hr/mod
 import { formatGhs, formatMoney } from '@/app/lib/format/currency';
 import { printDetailSheet } from '@/app/lib/print/simpleReport';
 import { confirmDelete } from '@/app/components/DangerConfirm';
+import PostingDateField from '@/app/components/shared/PostingDateField';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { DetailField, DetailGrid } from '../frontoffice/detailView';
 import { useDeskPagination } from '../dashboard/deskTableUi';
@@ -286,7 +287,7 @@ export default function StaffDebtsPanel() {
                   />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <Input label="Issued on" type="date" value={form.issuedDate} onChange={(e) => setForm({ ...form, issuedDate: e.target.value })} variant="bordered" />
+                  <PostingDateField label="Issued on" type="date" value={form.issuedDate} onChange={(e) => setForm({ ...form, issuedDate: e.target.value })} variant="bordered" />
                   <Input
                     label="Grace (months)"
                     type="number"

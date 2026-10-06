@@ -7,7 +7,8 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = "file:./test.db"
+  // Local dev and the hotel PC installer. Cloud deploys use schema.production.prisma.
+  url      = env("SQLITE_DATABASE_URL")
 }
 
 model Tenant {

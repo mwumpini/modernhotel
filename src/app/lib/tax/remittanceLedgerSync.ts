@@ -1,5 +1,6 @@
 import type { JournalEntry } from '../accounting/models';
 import { useAccountingStore } from '../accounting/store';
+import { useSettingsStore } from '../settings/store';
 import { assertPeriodNotClosed } from '../accounting/periodClose';
 import { logAccountingProcessWarn } from '../accounting/accountingProcessLog';
 import { findJournalReversal, postJournalReversal } from '../accounting/journalReversal';
@@ -143,7 +144,7 @@ function syncTaxRemittanceToComplianceFiling(input: CaptureTaxRemittanceInput): 
   periodEnd.setMonth(periodEnd.getMonth() + 1);
   periodEnd.setDate(0);
   const dueDate = schedule
-    ? toIsoDateLocal(getNextDueDateForSchedule(scheduleInputFromRule(schedule), periodEnd))
+    ? toIsoDateLocal(getNextDueDateForSchedule(scheduleInputFromRule(schedule), periodEnd, useSettingsStore.getState().companySettings?.financialYearStartDate))
     : input.date.slice(0, 10);
 
   compliance.upsertReport({

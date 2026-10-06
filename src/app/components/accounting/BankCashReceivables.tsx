@@ -11,6 +11,7 @@ import {
   Dropdown, DropdownTrigger, DropdownMenu, DropdownItem,
 } from "@heroui/react";
 import { useAccountingStore } from '@/app/lib/accounting/store';
+import PostingDateField from '@/app/components/shared/PostingDateField';
 import {
   defaultGlCodeForKind,
   isPettyCashAccount,
@@ -975,7 +976,7 @@ export default function BankCashManagementPage() {
                   />
                   {errors.amount && <div className="text-red-600 text-xs mt-1">{errors.amount}</div>}
                 </div>
-                <Input
+                <PostingDateField
                   type="date"
                   label="Date"
                   value={txnForm?.transactionDate?.slice(0, 10) || new Date().toISOString().slice(0, 10)}

@@ -537,6 +537,10 @@ export interface FolioPayment {
   description?: string;
   processedBy?: string;
   status: 'pending' | 'completed' | 'failed' | 'refunded';
+  /** Ghana payments service saved for this hotel. "none" means the desk recorded it. */
+  collectionService?: 'none' | 'hubtel' | 'paystack';
+  /** recorded: staff already have the money. prompt: waiting for the guest's phone. */
+  collectionMode?: 'recorded' | 'prompt';
 }
 
 export interface Folio {

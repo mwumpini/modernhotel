@@ -11,6 +11,8 @@ import { useCashierShift, type ShiftPreview } from '../lib/frontoffice/useCashie
 import type { CashierOutlet, CashierShiftDTO } from '../lib/frontoffice/cashierShiftRepository';
 import { printSimpleReport } from '../lib/print/simpleReport';
 import { DateFilterPills, matchesDateFilter, useDateFilter } from './fb/DateFilterPills';
+import { useSettingsStore } from '../lib/settings/store';
+import { BACKDATE_MESSAGE, postingDateError, postingDateMin } from '../lib/frontoffice/backdate';
 
 type TransferUser = { id: string; name: string; role?: string; isActive?: boolean };
 
@@ -122,6 +124,7 @@ export default function CashierShiftPanel({
   outlet?: CashierOutlet;
 } = {}) {
   const { data: session } = useSession();
+  const allowBackdating = useSettingsStore((s) => s.roomManagement.allowBackdating === true);
   const currentUserId = (session?.user as any)?.id as string | undefined;
   const {
     shifts, myOpenShift, loading, openShift, closeShift, updateShift, deleteShift, fetchPreview,
@@ -297,6 +300,8 @@ export default function CashierShiftPanel({
     const val = parseFloat(openingFloat);
     if (isNaN(val) || val < 0) { setOpenError('Enter a valid opening float.'); return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) { setOpenError('Pick a valid business date.'); return; }
+    const backdate = postingDateError(businessDate, allowBackdating);
+    if (backdate) { setOpenError(backdate); return; }
     setOpening(true);
     setOpenError(null);
     const result = await openShift(val, openNotes || undefined, businessDate);
@@ -325,6 +330,11 @@ export default function CashierShiftPanel({
     const floatVal = parseFloat(editFloat);
     if (isNaN(floatVal) || floatVal < 0) { setModalError('Enter a valid opening float.'); return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(editBusinessDate)) { setModalError('Pick a valid business date.'); return; }
+    const originalDay = (selected.businessDate || '').slice(0, 10);
+    if (editBusinessDate !== originalDay) {
+      const backdate = postingDateError(editBusinessDate, allowBackdating);
+      if (backdate) { setModalError(backdate); return; }
+    }
     let countVal: number | undefined;
     if (selected.status === 'closed' || editCount !== '') {
       countVal = parseFloat(editCount);
@@ -464,7 +474,18 @@ export default function CashierShiftPanel({
           <CardBody className="space-y-3">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <Field label="Business date">
-                <input type="date" className={fieldInputClass} value={businessDate} onChange={(e) => setBusinessDate(e.target.value)} />
+                <input
+                  type="date"
+                  className={fieldInputClass}
+                  min={postingDateMin(allowBackdating)}
+                  value={businessDate}
+                  onChange={(e) => {
+                    const error = postingDateError(e.target.value, allowBackdating);
+                    if (error) { setOpenError(error); return; }
+                    setBusinessDate(e.target.value);
+                    setOpenError((prev) => (prev === BACKDATE_MESSAGE ? null : prev));
+                  }}
+                />
               </Field>
               <Field label="Opening float (GH₵)">
                 <input type="number" min={0} step="0.01" className={fieldInputClass} value={openingFloat} onChange={(e) => setOpeningFloat(e.target.value)} placeholder="0.00" />
@@ -752,7 +773,21 @@ export default function CashierShiftPanel({
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <Field label="Business date">
-                    <input type="date" className={fieldInputClass} value={editBusinessDate} onChange={(e) => setEditBusinessDate(e.target.value)} />
+                    <input
+                      type="date"
+                      className={fieldInputClass}
+                      min={editBusinessDate && editBusinessDate < (postingDateMin(allowBackdating) || '') ? undefined : postingDateMin(allowBackdating)}
+                      value={editBusinessDate}
+                      onChange={(e) => {
+                        const originalDay = (selected?.businessDate || '').slice(0, 10);
+                        if (e.target.value !== originalDay) {
+                          const error = postingDateError(e.target.value, allowBackdating);
+                          if (error) { setModalError(error); return; }
+                        }
+                        setEditBusinessDate(e.target.value);
+                        setModalError((prev) => (prev === BACKDATE_MESSAGE ? null : prev));
+                      }}
+                    />
                   </Field>
                   <Field label="Opening float (GH₵)">
                     <input type="number" min={0} step="0.01" className={fieldInputClass} value={editFloat} onChange={(e) => setEditFloat(e.target.value)} />

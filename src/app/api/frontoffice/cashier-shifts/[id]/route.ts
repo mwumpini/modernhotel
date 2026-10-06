@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth } from '@/app/lib/api/auth-guard'
+import { rejectIfBackdated } from '@/app/lib/frontoffice/postingDateGuard'
 import {
   closeCashierShift,
   deleteCashierShift,
@@ -62,6 +63,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     try {
+      if (body.businessDate) {
+        const blocked = await rejectIfBackdated(ctx.tenantId, body.businessDate, { model: 'cashierShift', id })
+        if (blocked) return blocked
+      }
       const shift = await updateCashierShift(ctx.tenantId, id, {
         businessDate: body.businessDate,
         openingFloat: body.openingFloat !== undefined ? Number(body.openingFloat) : undefined,

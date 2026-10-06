@@ -29,6 +29,7 @@ import {
   Tooltip,
   Pagination,
 } from '@heroui/react';
+import PostingDateField from '@/app/components/shared/PostingDateField';
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { useBankReconStore } from '@/app/lib/accounting/bankReconStore';
 import {
@@ -936,7 +937,7 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
               value={itemForm.reference}
               onValueChange={(v) => setItemForm({ ...itemForm, reference: v })}
             />
-            <Input
+            <PostingDateField
               type="date"
               label="Date"
               value={itemForm.transactionDate}

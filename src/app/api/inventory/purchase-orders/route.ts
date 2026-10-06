@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant';
 import { requireAuth } from '@/app/lib/api/auth-guard';
+import { rejectIfBackdated } from '@/app/lib/frontoffice/postingDateGuard';
 import {
   listPurchaseOrders,
   upsertPurchaseOrder,
@@ -53,6 +54,9 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+
+    const blocked = await rejectIfBackdated(tenantId, body.orderDate, { model: 'purchaseOrder', id: body.id });
+    if (blocked) return blocked;
 
     const items: PurchaseOrderItemInput[] = body.items.map((item: any) => ({
       itemId: item.itemId,

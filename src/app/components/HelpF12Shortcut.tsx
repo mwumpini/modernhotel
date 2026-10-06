@@ -19,8 +19,12 @@ export default function HelpF12Shortcut() {
   React.useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const ctrlShift = e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey;
-      // Ctrl+Shift+L signs out from anywhere, even mid-typing (a waiter handing over the POS).
-      if (ctrlShift && e.key.toLowerCase() === 'l') {
+      const ctrlOnly = e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey;
+      // Sign out: Ctrl+L when not typing in a field (so a habit press can't lose a half-filled
+      // form), Ctrl+Shift+L from anywhere (a waiter handing over the POS).
+      const signOutKeys =
+        e.key.toLowerCase() === 'l' && (ctrlShift || (ctrlOnly && !isEditableTarget(e.target)));
+      if (signOutKeys) {
         e.preventDefault();
         try { sessionStorage.removeItem('session.lastActivity'); } catch {}
         void signOut({ callbackUrl: '/' });

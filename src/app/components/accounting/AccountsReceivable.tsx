@@ -14,6 +14,7 @@ import {
 	Autocomplete, AutocompleteItem,
 } from '@heroui/react';
 import { useAccountingStore } from '@/app/lib/accounting/store';
+import PostingDateField from '@/app/components/shared/PostingDateField';
 import { frontOfficeStore } from '@/app/lib/frontoffice/store';
 import { useFrontOfficeSelector } from '@/app/lib/frontoffice/useFoStore';
 import { findMainFolio } from '@/app/lib/frontoffice/helpers/folio';
@@ -3547,7 +3548,7 @@ export default function AccountsReceivable() {
 									</Autocomplete>
 									<Input label={invoiceForm.isProforma ? "Proforma Number" : "Invoice Number"} value={invoiceForm.invoiceNumber || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, invoiceNumber: e.target.value })} placeholder="Auto-generated" />
 									<Input label="Customer PO / Reference" placeholder="Buyer's PO number (optional)" value={invoiceForm.poNumber || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, poNumber: e.target.value })} />
-									<Input type="date" label={invoiceForm.isProforma ? "Proforma Date" : "Invoice Date"} value={invoiceForm.date || ''} onValueChange={(v) => setInvoiceForm((f: any) => ({ ...f, date: v, dueDate: dueDateFromTerms(v, f.businessPartnerId, f.customerPaymentTerms) }))} />
+									<PostingDateField type="date" label={invoiceForm.isProforma ? "Proforma Date" : "Invoice Date"} value={invoiceForm.date || ''} onValueChange={(v) => setInvoiceForm((f: any) => ({ ...f, date: v, dueDate: dueDateFromTerms(v, f.businessPartnerId, f.customerPaymentTerms) }))} />
 									<Input type="date" label={invoiceForm.isProforma ? "Valid Until" : "Due Date"} value={invoiceForm.dueDate || ''} onValueChange={(v) => setInvoiceForm({ ...invoiceForm, dueDate: v })} description="Auto-set from payment terms — editable" />
 									<Input type="number" label="Subtotal" value={invoiceForm.subtotal?.toString() || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, subtotal: e.target.value, total: Number(e.target.value) + Number(invoiceForm.taxAmount || 0) })} />
 									<Input type="number" label="Tax Amount" value={invoiceForm.taxAmount?.toString() || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, taxAmount: e.target.value, total: Number(invoiceForm.subtotal || 0) + Number(e.target.value) })} />
@@ -3975,7 +3976,7 @@ export default function AccountsReceivable() {
 										</>
 									)}
 
-									<Input
+									<PostingDateField
 										type="date"
 										label="Receipt date"
 										value={receiptForm.date || ''}

@@ -963,6 +963,11 @@ export interface SystemSettings {
     overtimeApprovalThreshold: number;
     // Whole-month payroll gate — when on, Payment Advice needs manager Approve before pay.
     requireApprovalForPayroll: boolean;
+    // Which Ghana payments service should prompt the guest's phone later.
+    // "none" keeps card and mobile money as a manual desk record.
+    guestCollection?: {
+      service: 'none' | 'hubtel' | 'paystack';
+    };
   };
   
   // Communication Settings
@@ -1215,6 +1220,9 @@ export interface RoomManagementSettings {
   depositType?: 'percent' | 'flat';
   depositValue?: number;
   requireDepositToConfirm?: boolean;
+
+  /** When false (the default), payments, journals, bills, and stock postings cannot use a date before today. */
+  allowBackdating?: boolean;
 
   // Invoicing reminders
   invoiceReminderScheduleDays?: number[]; // e.g., [7,14,30]
@@ -2407,6 +2415,7 @@ const defaultSettings: SystemSettings = {
     requireApprovalForOvertime: true,
     overtimeApprovalThreshold: 8,
     requireApprovalForPayroll: true,
+    guestCollection: { service: 'none' },
   },
   
   // Communication Settings
@@ -4330,6 +4339,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     depositType: 'percent',
     depositValue: 0,
     requireDepositToConfirm: false,
+    allowBackdating: false,
     invoiceReminderScheduleDays: [7, 14, 30],
     roomTypes: [],
     rooms: [],

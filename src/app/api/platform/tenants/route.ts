@@ -18,6 +18,7 @@ export async function POST(request: NextRequest) {
     subdomain: String(body.subdomain || ''),
     hosting: (body.hosting === 'local' || body.hosting === 'sync' ? body.hosting : 'cloud') as HotelHosting,
     monthlyFee: body.monthlyFee,
+    trialDays: body.trialDays,
     adminName: String(body.adminName || ''),
     adminEmail: String(body.adminEmail || ''),
     password: String(body.password || ''),

@@ -4,7 +4,7 @@ import { passwordPolicyError } from '@/app/lib/settings/passwordPolicy';
 import { DEFAULT_SECURITY_POLICY } from '@/app/lib/settings/securityPolicy';
 import { ensureDefaultRolesForTenant } from '@/app/lib/settings/roleRepository';
 import { findUserForLogin } from '@/app/lib/auth/loginLookup';
-import { nextPaidUntil, parseMonthlyFee, paymentDue, readBill, readExpenses, readPayments, todayISO } from '@/app/lib/platform/billing';
+import { addDaysISO, nextPaidUntil, onFreeTrial, parseMonthlyFee, parseTrialDays, paymentDue, readBill, readExpenses, readPayments, readTrial, todayISO } from '@/app/lib/platform/billing';
 import { frontDeskOnly, normalizePaidModules, readPaidModules, type PaidModules } from '@/app/lib/platform/hotelModules';
 
 import { OPERATOR_ROLE, PLATFORM_SUBDOMAIN } from './operatorRole';
@@ -105,6 +105,9 @@ function presentHotel(row: { id: string; name: string; subdomain: string; status
     monthlyFee: bill.monthlyFee,
     paidUntil: bill.paidUntil,
     paymentDue: paymentDue(bill.paidUntil),
+    trialDays: readTrial(row.metadata).days,
+    trialEndsOn: readTrial(row.metadata).endsOn,
+    onTrial: onFreeTrial(row.metadata),
     payments: readPayments(row.metadata),
     modules: readPaidModules(row.metadata),
     createdAt: row.createdAt.toISOString(),
@@ -125,6 +128,7 @@ export async function openHotel(input: {
   subdomain: string;
   hosting: HotelHosting;
   monthlyFee: unknown;
+  trialDays: unknown;
   adminName: string;
   adminEmail: string;
   password: string;
@@ -145,11 +149,15 @@ export async function openHotel(input: {
   if (input.hosting !== 'cloud' && input.hosting !== 'local' && input.hosting !== 'sync') return { error: 'Choose where this hotel runs.' };
   const monthlyFee = parseMonthlyFee(input.monthlyFee);
   if (monthlyFee == null) return { error: 'Enter a monthly fee in cedis.' };
+  const trialDays = parseTrialDays(input.trialDays);
+  if (trialDays == null) return { error: 'Enter the free trial in whole days, from 0 to 365.' };
 
   const taken = await prisma.tenant.findUnique({ where: { subdomain }, select: { id: true } });
   if (taken) return { error: 'That Tenant ID is already used.' };
 
-  const paidUntil = nextPaidUntil(null);
+  const today = todayISO();
+  const trialEndsOn = trialDays > 0 ? addDaysISO(today, trialDays) : null;
+  const paidUntil = trialEndsOn ?? today;
   const hotel = await prisma.tenant.create({
     data: {
       name,
@@ -164,7 +172,8 @@ export async function openHotel(input: {
         hosting: input.hosting,
         monthlyFee,
         paidUntil,
-        payments: [{ paidOn: todayISO(), amount: monthlyFee, paidUntil }],
+        payments: [],
+        ...(trialDays > 0 ? { trialDays, trialEndsOn } : {}),
         region: 'ghana',
         industry: 'hospitality',
         modules: input.modules == null ? frontDeskOnly() : normalizePaidModules(input.modules),
@@ -225,6 +234,26 @@ export async function setHotelModules(id: string, raw: unknown) {
   const updated = await prisma.tenant.update({
     where: { id },
     data: { metadata: { ...meta, modules } },
+  });
+  return { hotel: presentHotel(updated) };
+}
+
+export async function setHotelTrial(id: string, rawDays: unknown) {
+  const hotel = await prisma.tenant.findUnique({ where: { id } });
+  if (!hotel || hotel.subdomain === PLATFORM_SUBDOMAIN) return { error: 'Hotel not found.' };
+  const trialDays = parseTrialDays(rawDays);
+  if (trialDays == null) return { error: 'Enter the free trial in whole days, from 0 to 365.' };
+  const meta = hotel.metadata && typeof hotel.metadata === 'object' && !Array.isArray(hotel.metadata)
+    ? (hotel.metadata as Record<string, unknown>)
+    : {};
+  if (readPayments(meta).length > 0) return { error: 'This hotel has already paid. Record the next month instead of a free trial.' };
+  const today = todayISO();
+  const trialEndsOn = trialDays > 0 ? addDaysISO(today, trialDays) : null;
+  const paidUntil = trialEndsOn ?? today;
+  const { trialDays: _oldDays, trialEndsOn: _oldEnd, ...rest } = meta;
+  const updated = await prisma.tenant.update({
+    where: { id },
+    data: { metadata: trialDays > 0 ? { ...rest, paidUntil, trialDays, trialEndsOn } : { ...rest, paidUntil } },
   });
   return { hotel: presentHotel(updated) };
 }

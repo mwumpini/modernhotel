@@ -7,6 +7,7 @@
  */
 
 import { useAccountingStore } from '../accounting/store';
+import { useSettingsStore } from '../settings/store';
 import { useComplianceStore } from './store';
 import { rollupTaxLedger } from '../tax/ledgerRollup';
 import { TAX_LIABILITY_GL, TAX_CODE_TO_REPORT_TYPE } from '../tax/glMap';
@@ -38,7 +39,7 @@ export function syncOpenSalesTaxFilings(): void {
     const [year, month] = row.period.split('-').map(Number);
     const periodEnd = new Date(year, month, 0);
     const dueDate = schedule
-      ? toIsoDateLocal(getNextDueDateForSchedule(scheduleInputFromRule(schedule), periodEnd))
+      ? toIsoDateLocal(getNextDueDateForSchedule(scheduleInputFromRule(schedule), periodEnd, useSettingsStore.getState().companySettings?.financialYearStartDate))
       : toIsoDateLocal(periodEnd);
 
     compliance.upsertReport({

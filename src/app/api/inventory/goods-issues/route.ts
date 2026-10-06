@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant';
 import { requireAuth } from '@/app/lib/api/auth-guard';
+import { rejectIfBackdated } from '@/app/lib/frontoffice/postingDateGuard';
 import {
   listGoodsIssues,
   upsertGoodsIssue,
@@ -58,6 +59,9 @@ export async function PUT(req: NextRequest) {
         { status: 400 }
       );
     }
+
+    const blocked = await rejectIfBackdated(tenantId, body.issueDate, { model: 'goodsIssue', id: body.id });
+    if (blocked) return blocked;
 
     const issue = await upsertGoodsIssue({
       id: body.id,

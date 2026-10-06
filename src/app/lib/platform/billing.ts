@@ -10,6 +10,12 @@ export function todayISO(now = new Date()): string {
   return now.toISOString().slice(0, 10);
 }
 
+/** A date this many days later. 6 Oct plus 14 days is 20 Oct. */
+export function addDaysISO(iso: string, days: number): string {
+  const [year, month, day] = iso.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
 /** One calendar month later. A 31st lands on the last day of the next month. */
 export function addMonthsISO(iso: string, months: number): string {
   const [year, month, day] = iso.split('-').map(Number);
@@ -93,4 +99,25 @@ export function parseMonthlyFee(raw: unknown): number | null {
   const value = typeof raw === 'number' ? raw : Number(raw);
   if (!Number.isFinite(value) || value < 0 || value > 1_000_000) return null;
   return Math.round(value);
+}
+
+/** Whole days, from none up to one year. */
+export function parseTrialDays(raw: unknown): number | null {
+  const value = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 365) return null;
+  return value;
+}
+
+export function readTrial(metadata: unknown): { days: number | null; endsOn: string | null } {
+  const bag = metaBag(metadata);
+  const days = typeof bag.trialDays === 'number' && Number.isInteger(bag.trialDays) && bag.trialDays > 0 ? bag.trialDays : null;
+  const endsOn = typeof bag.trialEndsOn === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(bag.trialEndsOn) ? bag.trialEndsOn : null;
+  return { days, endsOn };
+}
+
+/** A free trial is still running when its end date has not passed and no fee has been recorded. */
+export function onFreeTrial(metadata: unknown, today = todayISO()): boolean {
+  const trial = readTrial(metadata);
+  if (!trial.endsOn || trial.endsOn < today) return false;
+  return readPayments(metadata).length === 0;
 }

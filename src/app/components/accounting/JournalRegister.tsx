@@ -32,6 +32,9 @@ import { migrateCoaParentIds } from '../../lib/accounting/coaTree';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { useDeskPagination } from '../dashboard/deskTableUi';
 import HeadingInfo from '../HeadingInfo';
+import PostingDateField from '../shared/PostingDateField';
+import { useSettingsStore } from '../../lib/settings/store';
+import { businessToday, postingDateError } from '../../lib/frontoffice/backdate';
 import { DeskKpiStrip, useAccountingDeskPeriod } from './DeskKpiStrip';
 
 type JournalSortKey = 'entry' | 'date' | 'reference' | 'description' | 'source' | 'status' | 'debit' | 'credit';
@@ -166,6 +169,7 @@ export default function JournalRegister() {
   const deleteJournalEntry = useAccountingStore((s) => s.deleteJournalEntry);
   const voidJournalEntry = useAccountingStore((s) => s.voidJournalEntry);
   const unvoidJournalEntry = useAccountingStore((s) => s.unvoidJournalEntry);
+  const allowBackdating = useSettingsStore((s) => s.roomManagement.allowBackdating === true);
   const { period: kpiPeriod, todayISO: kpiToday, bounds: kpiBounds } = useAccountingDeskPeriod();
   const [query, setQuery] = useState('');
   const [fromDate, setFromDate] = useState('');
@@ -177,7 +181,7 @@ export default function JournalRegister() {
   const [notice, setNotice] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [draftDate, setDraftDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [draftDate, setDraftDate] = useState(() => businessToday());
   const [draftReference, setDraftReference] = useState('');
   const [draftDescription, setDraftDescription] = useState('');
   const [draftLines, setDraftLines] = useState<DraftLine[]>(() => [blankLine(), blankLine()]);
@@ -339,7 +343,7 @@ export default function JournalRegister() {
 
   const openComposer = () => {
     setEditingId(null);
-    setDraftDate(new Date().toISOString().slice(0, 10));
+    setDraftDate(businessToday());
     setDraftReference('');
     setDraftDescription('');
     setDraftLines([blankLine(), blankLine()]);
@@ -357,7 +361,7 @@ export default function JournalRegister() {
       return;
     }
     setEditingId(entry.id);
-    setDraftDate(dayOf(entry.date) || new Date().toISOString().slice(0, 10));
+    setDraftDate(dayOf(entry.date) || businessToday());
     setDraftReference(entry.reference || '');
     setDraftDescription(entry.description || '');
     const lines = (entry.lines || []).map((line) => ({
@@ -377,6 +381,14 @@ export default function JournalRegister() {
     if (!draftDate) {
       setDraftError('Choose a date.');
       return;
+    }
+    const originalDay = editingId ? dayOf(journalEntries.find((entry) => entry.id === editingId)?.date) : '';
+    if (draftDate !== originalDay) {
+      const backdate = postingDateError(draftDate, allowBackdating);
+      if (backdate) {
+        setDraftError(backdate);
+        return;
+      }
     }
     if (!description) {
       setDraftError('Say what this entry is for.');
@@ -863,7 +875,7 @@ export default function JournalRegister() {
                   className="grid gap-3 items-end"
                   style={{ gridTemplateColumns: '8.5rem minmax(7rem, 0.9fr) minmax(0, 1.4fr)' }}
                 >
-                  <Input
+                  <PostingDateField
                     type="date"
                     label="Date"
                     size="sm"

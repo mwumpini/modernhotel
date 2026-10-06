@@ -23,6 +23,7 @@ import { GL_ACCOUNTS } from '@/app/lib/accounting/integration';
 import { isManualArApSource } from '@/app/lib/accounting/journalReversal';
 import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
 import AttachmentUpload from '@/app/components/shared/AttachmentUpload';
+import PostingDateField from '@/app/components/shared/PostingDateField';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { useDeskPagination } from '../dashboard/deskTableUi';
 import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName, useAccountingDeskPeriod } from './DeskKpiStrip';
@@ -2215,7 +2216,7 @@ export default function AccountsPayablePage() {
                     isInvalid={!!errors.invoiceNumber}
                     errorMessage={errors.invoiceNumber}
                   />
-                  <Input
+                  <PostingDateField
                     size="sm"
                     type="date"
                     label="Invoice date"
@@ -2940,7 +2941,7 @@ export default function AccountsPayablePage() {
                       </AutocompleteItem>
                     ))}
                   </Autocomplete>
-                  <Input
+                  <PostingDateField
                     size="sm"
                     type="date"
                     label="Payment date"
@@ -3152,7 +3153,7 @@ export default function AccountsPayablePage() {
                         <SelectItem key="Other">Other</SelectItem>
                       </Select>
                       <Input size="sm" label="ID number" value={form.receiverIdNumber || ''} onChange={(e) => setForm({ ...form, receiverIdNumber: e.target.value })} />
-                      <Input size="sm" type="date" label="Received date" value={form.receivedDate || ''} onChange={(e) => setForm({ ...form, receivedDate: e.target.value })} />
+                      <PostingDateField size="sm" type="date" label="Received date" value={form.receivedDate || ''} onChange={(e) => setForm({ ...form, receivedDate: e.target.value })} />
                     </div>
                     <AttachmentUpload attachments={form.attachments || []} onChange={(next) => setForm({ ...form, attachments: next })} />
                   </div>

@@ -10,6 +10,7 @@ import { trackEvent } from '../../lib/analytics/trackEvent';
 import { useSupplierStore } from '../../lib/inventory/supplierStore';
 import { inventoryHeaders } from './inventoryHeaders';
 import { useInventoryScreen } from './inventoryScreenContext';
+import PostingDateField from '../shared/PostingDateField';
 
 /** Inventory → Receive & Recon. Goods receipt and stock count lists. */
 export function ReceiveAndReconTable() {
@@ -755,7 +756,7 @@ export function StockCountModal() {
                       ))}
                     </>
                   </Select>
-                  <Input
+                  <PostingDateField
                     label="Start Date"
                     type="date"
                     value={inventoryScreen.stockCountFormData.startDate instanceof Date

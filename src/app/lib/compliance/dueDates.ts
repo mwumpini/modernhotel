@@ -4,6 +4,7 @@
  */
 
 import type { ReportingRule } from '../models';
+import { addDays, addMonths, financialYearContaining, quarterOfFinancialYear } from '../accounting/financialYear';
 
 export type DueRule =
   | { type: 'dayOfFollowingMonth'; day: number }
@@ -55,16 +56,28 @@ function nextFixedCalendarDate(dates: string[], from: Date): Date {
   return future[0] ?? candidates[candidates.length - 1];
 }
 
-function nextQuarterEnd(from: Date): Date {
-  const quarterEnds = [2, 5, 8, 11];
-  for (const endMonth of quarterEnds) {
-    const candidate = new Date(from.getFullYear(), endMonth + 1, 0);
-    if (candidate > from) return candidate;
+function nextAccountingQuarterEnd(from: Date, yearStartIso?: string | null): Date {
+  const year = financialYearContaining(from, yearStartIso);
+  for (let quarter = 1; quarter <= 4; quarter += 1) {
+    const end = quarterOfFinancialYear(year.endingYear, quarter, yearStartIso).end;
+    if (end.getTime() > from.getTime()) return end;
   }
-  return new Date(from.getFullYear() + 1, 2, 31);
+  return quarterOfFinancialYear(year.endingYear + 1, 1, yearStartIso).end;
 }
 
-export function getNextDueDateForSchedule(input: FilingScheduleInput, from: Date = new Date()): Date {
+function nextMonthsAfterYearEnd(from: Date, months: number, yearStartIso?: string | null): Date {
+  const current = financialYearContaining(from, yearStartIso);
+  const previousEnd = addDays(current.start, -1);
+  const forPreviousYear = addMonths(previousEnd, months);
+  if (forPreviousYear.getTime() > from.getTime()) return forPreviousYear;
+  return addMonths(current.end, months);
+}
+
+export function getNextDueDateForSchedule(
+  input: FilingScheduleInput,
+  from: Date = new Date(),
+  yearStartIso?: string | null,
+): Date {
   const rule = input.dueRule;
   const freq = input.frequency;
 
@@ -100,18 +113,11 @@ export function getNextDueDateForSchedule(input: FilingScheduleInput, from: Date
   }
 
   if (rule?.type === 'quarterEndOfAccountingYear') {
-    return nextQuarterEnd(from);
+    return nextAccountingQuarterEnd(from, yearStartIso);
   }
 
   if (rule?.type === 'monthsAfterYearEnd') {
-    const yearEnd = new Date(from.getFullYear(), 11, 31);
-    let due = new Date(yearEnd);
-    due.setMonth(due.getMonth() + rule.months);
-    if (due <= from) {
-      due = new Date(from.getFullYear() + 1, 11, 31);
-      due.setMonth(due.getMonth() + rule.months);
-    }
-    return due;
+    return nextMonthsAfterYearEnd(from, rule.months, yearStartIso);
   }
 
   const dueDay = input.dueDay ?? 15;
@@ -138,13 +144,21 @@ export function getNextDueDateForSchedule(input: FilingScheduleInput, from: Date
   return nextDue;
 }
 
-export function getDaysUntilDueForSchedule(input: FilingScheduleInput, from: Date = new Date()): number {
-  const next = getNextDueDateForSchedule(input, from);
+export function getDaysUntilDueForSchedule(
+  input: FilingScheduleInput,
+  from: Date = new Date(),
+  yearStartIso?: string | null,
+): number {
+  const next = getNextDueDateForSchedule(input, from, yearStartIso);
   return Math.ceil((next.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-export function formatDueDateForSchedule(input: FilingScheduleInput, from: Date = new Date()): string {
-  return getNextDueDateForSchedule(input, from).toLocaleDateString();
+export function formatDueDateForSchedule(
+  input: FilingScheduleInput,
+  from: Date = new Date(),
+  yearStartIso?: string | null,
+): string {
+  return getNextDueDateForSchedule(input, from, yearStartIso).toLocaleDateString();
 }
 
 /** `date.toISOString().slice(0, 10)` reads the date back in UTC, which silently steps a

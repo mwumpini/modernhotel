@@ -25,6 +25,7 @@ import {
   useDisclosure,
 } from '@heroui/react';
 import { useComplianceStore } from '@/app/lib/compliance/store';
+import { useSettingsStore } from '@/app/lib/settings/store';
 import { useFilingSnapshots } from '@/app/hooks/useFilingSnapshots';
 import { getCountryDisplayName } from '@/app/lib/compliance/config';
 import {
@@ -143,6 +144,7 @@ export default function ComplianceReports() {
   const updateReportingRule = useComplianceStore((s) => s.updateReportingRule);
   const upsertReport = useComplianceStore((s) => s.upsertReport);
   const updateReport = useComplianceStore((s) => s.updateReport);
+  const yearStartIso = useSettingsStore((s) => s.companySettings?.financialYearStartDate);
 
   useEffect(() => {
     void hydrateReportFilingsFromApi().then(() => {
@@ -256,7 +258,7 @@ export default function ComplianceReports() {
       const statusChanged = editStatus !== (filing?.status || 'pending');
       if (amountChanged || statusChanged) {
         const period = filing?.period || snapshot?.period || new Date().toISOString().slice(0, 7);
-        const dueDate = filing?.dueDate || toIsoDateLocal(getNextDueDateForSchedule(scheduleInput(saved)));
+        const dueDate = filing?.dueDate || toIsoDateLocal(getNextDueDateForSchedule(scheduleInput(saved), new Date(), yearStartIso));
         if (filing) {
           updateReport(filing.id, { amount: nextAmount, status: editStatus, dueDate });
         } else {
@@ -352,8 +354,8 @@ export default function ComplianceReports() {
               <TableBody emptyContent="No schedules">
                 {reportingRules.map((rule) => {
                   const input = scheduleInput(rule);
-                  const daysUntilDue = getDaysUntilDueForSchedule(input);
-                  const nextDueDate = formatDueDateForSchedule(input);
+                  const daysUntilDue = getDaysUntilDueForSchedule(input, new Date(), yearStartIso);
+                  const nextDueDate = formatDueDateForSchedule(input, new Date(), yearStartIso);
                   const snapshot = filingSnapshots.get(rule.id);
                   const filing = latestFilingForRule(reports, rule);
                   const status = filingStatusChip(filing, daysUntilDue);

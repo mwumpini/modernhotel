@@ -26,6 +26,7 @@ import {
   Textarea,
   useDisclosure,
 } from '@heroui/react';
+import PostingDateField from '../shared/PostingDateField';
 import { useSession } from 'next-auth/react';
 import { getClientTenantSubdomain } from '../../lib/api/clientTenant';
 import { DEPARTMENT_LOCATIONS } from '../../lib/inventory/departmentLocations';
@@ -686,7 +687,7 @@ export default function DepartmentStockCountPanel({
                     ))}
                   </>
                 </Select>
-                <Input
+                <PostingDateField
                   label="Start Date"
                   type="date"
                   value={form.startDate.toISOString().split('T')[0]}

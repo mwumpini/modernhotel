@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth } from '@/app/lib/api/auth-guard'
+import { rejectIfBackdated } from '@/app/lib/frontoffice/postingDateGuard'
+import { businessToday } from '@/app/lib/frontoffice/backdate'
 import {
   createCashTransfer,
   getCashCustody,
@@ -60,7 +62,9 @@ export async function POST(request: NextRequest) {
     const businessDate =
       /^\d{4}-\d{2}-\d{2}$/.test(String(body.businessDate || ''))
         ? String(body.businessDate)
-        : new Date().toISOString().slice(0, 10)
+        : businessToday()
+    const blocked = await rejectIfBackdated(ctx.tenantId, businessDate)
+    if (blocked) return blocked
 
     try {
       // Optional: refuse forwarding more than current holding (head cashier weekly drop).

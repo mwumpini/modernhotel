@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth } from '@/app/lib/api/auth-guard'
+import { rejectIfBackdated } from '@/app/lib/frontoffice/postingDateGuard'
+import { businessToday } from '@/app/lib/frontoffice/backdate'
 import {
   listCashierShifts,
   findOpenShiftForCashier,
@@ -64,7 +66,9 @@ export async function POST(request: NextRequest) {
     const businessDateRaw = String(body.businessDate || '').trim()
     const businessDate = /^\d{4}-\d{2}-\d{2}$/.test(businessDateRaw)
       ? businessDateRaw
-      : new Date().toISOString().slice(0, 10)
+      : businessToday()
+    const blocked = await rejectIfBackdated(ctx.tenantId, businessDate)
+    if (blocked) return blocked
 
     const shift = await openCashierShift(
       ctx.tenantId,

@@ -27,6 +27,9 @@ type Hotel = {
   monthlyFee: number | null;
   paidUntil: string | null;
   paymentDue: boolean;
+  trialDays: number | null;
+  trialEndsOn: string | null;
+  onTrial: boolean;
   payments?: FeePayment[];
   modules: PaidModules;
   createdAt: string;
@@ -64,8 +67,16 @@ function cedis(amount: number) {
 
 function standing(hotel: Hotel) {
   if (hotel.status === 'suspended') return { label: 'Suspended', tone: 'bg-gray-200 text-gray-700' };
+  if (hotel.onTrial) return { label: 'Free trial', tone: 'bg-amber-50 text-amber-800' };
   if (hotel.paymentDue) return { label: 'Payment due', tone: 'bg-red-50 text-red-700' };
   return { label: 'Active', tone: 'bg-emerald-50 text-emerald-800' };
+}
+
+function coverageLine(hotel: Hotel) {
+  if (hotel.onTrial && hotel.trialEndsOn) return `Free trial until ${formatDay(hotel.trialEndsOn)}`;
+  if (hotel.monthlyFee == null) return 'No payment date';
+  if (hotel.paidUntil && !hotel.paymentDue) return `Paid until ${formatDay(hotel.paidUntil)}`;
+  return 'Payment due';
 }
 
 const fieldClass = {
@@ -101,6 +112,7 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
   const [hosting, setHosting] = useState<Hosting>('cloud');
   const [fee, setFee] = useState(String(DEFAULT_MONTHLY_FEE.cloud));
   const [feeTouched, setFeeTouched] = useState(false);
+  const [trialDays, setTrialDays] = useState('14');
   const [adminName, setAdminName] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -166,6 +178,7 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
     setHosting('cloud');
     setFee(String(DEFAULT_MONTHLY_FEE.cloud));
     setFeeTouched(false);
+    setTrialDays('14');
     setModules(frontDeskOnly());
   };
 
@@ -175,8 +188,14 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
     setNotice('');
     setSaving(true);
     const monthlyFee = Number(fee);
+    const days = Number(trialDays);
     if (!fee.trim() || !Number.isFinite(monthlyFee)) {
       setError('Enter a monthly fee in cedis.');
+      setSaving(false);
+      return;
+    }
+    if (!trialDays.trim() || !Number.isInteger(days)) {
+      setError('Enter the free trial in whole days.');
       setSaving(false);
       return;
     }
@@ -184,14 +203,18 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
       const res = await fetch('/api/platform/tenants', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, subdomain, hosting, monthlyFee, adminName, adminEmail, password, modules }),
+        body: JSON.stringify({ name, subdomain, hosting, monthlyFee, trialDays: days, adminName, adminEmail, password, modules }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.error || 'Could not open this hotel.');
         return;
       }
-      setNotice(`${data.name} is open. The admin signs in with Tenant ID “${data.subdomain}” and ${data.adminEmail}.`);
+      setNotice(
+        data.onTrial && data.trialEndsOn
+          ? `${data.name} is open on a free trial until ${formatDay(data.trialEndsOn)}. The admin signs in with Tenant ID “${data.subdomain}” and ${data.adminEmail}.`
+          : `${data.name} is open with no free trial. Record a payment for them to keep signing in. The admin signs in with Tenant ID “${data.subdomain}” and ${data.adminEmail}.`,
+      );
       resetForm();
       setCreating(false);
       await load();
@@ -228,6 +251,26 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
     }
   };
 
+  const setTrial = async (hotel: Hotel, days: number) => {
+    setError('');
+    setBusy('trial');
+    try {
+      const res = await fetch(`/api/platform/tenants/${hotel.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trialDays: days }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || 'Could not set the free trial.');
+        return;
+      }
+      setHotels((rows) => rows.map((row) => (row.id === hotel.id ? { ...row, ...data } : row)));
+      await refreshSelected(hotel.id);
+    } finally {
+      setBusy('');
+    }
+  };
   const markPaid = async (hotel: Hotel) => {
     setError('');
     setBusy('paid');
@@ -344,6 +387,7 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
             }}
             onStatus={setStatus}
             onPaid={markPaid}
+            onSetTrial={setTrial}
             onModules={saveModules}
             onDeleteAsk={() => setDeleteOpen(true)}
             onDeleteText={setDeleteText}
@@ -448,13 +492,25 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
               <Input
                 type="number"
                 label="Monthly fee (₵)"
-                description="One amount per hotel, each month. The first month is included."
+                description="What they pay each month after the free trial."
                 value={fee}
                 min={0}
                 onChange={(e) => {
                   setFeeTouched(true);
                   setFee(e.target.value);
                 }}
+                isRequired
+                variant="bordered"
+                classNames={fieldClass}
+              />
+              <Input
+                type="number"
+                label="Free trial (days)"
+                description="How long they can sign in before the first payment. 0 means no free trial."
+                value={trialDays}
+                min={0}
+                max={365}
+                onChange={(e) => setTrialDays(e.target.value)}
                 isRequired
                 variant="bordered"
                 classNames={fieldClass}
@@ -600,8 +656,8 @@ function CompanyFinancials({
                 cell(hotel.name),
                 cell(hotel.subdomain),
                 cell(cedis(hotel.monthlyFee ?? 0), hotel.monthlyFee ?? 0),
-                cell(hotel.paidUntil ? formatDay(hotel.paidUntil) : 'No date', hotel.paidUntil ?? ''),
-                cell(hotel.paymentDue ? 'Payment due' : 'Paid'),
+                cell(hotel.onTrial && hotel.trialEndsOn ? `Trial until ${formatDay(hotel.trialEndsOn)}` : hotel.paidUntil ? formatDay(hotel.paidUntil) : 'No date', hotel.paidUntil ?? ''),
+                cell(hotel.onTrial ? 'Free trial' : hotel.paymentDue ? 'Payment due' : 'Paid'),
               ],
             }))}
           />
@@ -782,7 +838,7 @@ function HotelCard({ hotel, onOpen }: { hotel: Hotel; onOpen: () => void }) {
         </div>
       </dl>
       <p className={`mt-2 text-sm leading-tight ${hotel.paymentDue ? 'font-medium text-red-600' : 'text-gray-600'}`}>
-        {hotel.monthlyFee == null ? 'No payment date' : hotel.paidUntil ? `Paid until ${formatDay(hotel.paidUntil)}` : 'Payment due'}
+        {coverageLine(hotel)}
       </p>
       <span className="mt-2 text-sm font-semibold text-ghana-green">Open</span>
     </button>
@@ -801,6 +857,7 @@ function HotelDesk({
   onBack,
   onStatus,
   onPaid,
+  onSetTrial,
   onModules,
   onDeleteAsk,
   onDeleteText,
@@ -817,11 +874,18 @@ function HotelDesk({
   onBack: () => void;
   onStatus: (hotel: Hotel, status: 'active' | 'suspended') => void;
   onPaid: (hotel: Hotel) => void;
+  onSetTrial: (hotel: Hotel, days: number) => void;
   onModules: (hotel: Hotel, modules: PaidModules) => void;
   onDeleteAsk: () => void;
   onDeleteText: (value: string) => void;
   onDelete: (hotel: Hotel) => void;
 }) {
+  const [trialInput, setTrialInput] = useState('14');
+  useEffect(() => {
+    if (!detail) return;
+    setTrialInput(String(detail.trialDays ?? 0));
+  }, [detail]);
+
   if (loading || !detail) {
     return (
       <div>
@@ -915,9 +979,34 @@ function HotelDesk({
         <section className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-3">
             <Fact label="Monthly fee" value={detail.monthlyFee == null ? 'Not billed' : cedis(detail.monthlyFee)} />
-            <Fact label="Paid until" value={detail.paidUntil ? formatDay(detail.paidUntil) : 'No date'} />
-            <Fact label="Standing" value={detail.paymentDue ? 'Payment due' : detail.monthlyFee == null ? 'Not billed' : 'Paid'} />
+            <Fact label={detail.onTrial ? 'Free trial until' : 'Paid until'} value={detail.paidUntil ? formatDay(detail.paidUntil) : 'No date'} />
+            <Fact label="Standing" value={detail.onTrial ? 'Free trial' : detail.paymentDue ? 'Payment due' : detail.monthlyFee == null ? 'Not billed' : 'Paid'} />
           </div>
+          {detail.payments.length === 0 && (
+            <form
+              className="flex flex-wrap items-end gap-3 rounded-2xl border border-gray-200 bg-white p-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const days = Number(trialInput);
+                if (!trialInput.trim() || !Number.isInteger(days)) return;
+                onSetTrial(detail, days);
+              }}
+            >
+              <Input
+                type="number"
+                label="Free trial (days)"
+                description="Change it before the first payment. 0 removes the free trial."
+                value={trialInput}
+                min={0}
+                max={365}
+                onChange={(e) => setTrialInput(e.target.value)}
+                variant="bordered"
+                classNames={fieldClass}
+                className="w-56"
+              />
+              <Button type="submit" variant="flat" isLoading={busy === 'trial'}>Set free trial</Button>
+            </form>
+          )}
           {detail.monthlyFee != null && (
             <Button className="bg-ghana-green text-white" isLoading={busy === 'paid'} onPress={() => onPaid(detail)}>Mark paid</Button>
           )}

@@ -41,7 +41,8 @@ export type HelpTopic = {
 
 /** Every keyboard shortcut, shown on the Help page, in its "Keyboard shortcuts" topic and in the manual. */
 export const keyboardShortcuts = [
-  { keys: 'Ctrl + Shift + L', action: 'Sign out at once, from any screen (hand the till or desk to the next person)' },
+  { keys: 'Ctrl + L', action: 'Sign out at once (hand the till or desk to the next person). Not while typing in a box, so a slip cannot lose a half-filled form' },
+  { keys: 'Ctrl + Shift + L', action: 'Sign out from anywhere, even while typing' },
   { keys: 'Ctrl + Shift + H', action: 'Open this Help page from any desk' },
   { keys: 'F1 / F12', action: 'Open Ask Mamani on the current desk. Opens this Help page when that desk has no assistant.' },
   { keys: 'Ctrl + M', action: 'Open the department messenger (when not typing in a field)' },
@@ -619,11 +620,12 @@ export const helpTopics: HelpTopic[] = [
   {
     id: 'help-keys',
     title: 'Keyboard shortcuts',
-    description: 'Keys that save time on every desk. The most useful: Ctrl + Shift + L signs you out at once.',
+    description: 'Keys that save time on every desk. The most useful: Ctrl + L signs you out at once.',
     keywords: ['keyboard', 'shortcut', 'f12', 'f1', 'escape', 'sign out', 'log out', 'logout', 'help'],
     category: 'general',
     steps: [
-      'Ctrl + Shift + L: sign out at once, from any screen. Use it when you hand the till or the desk to someone else.',
+      'Ctrl + L: sign out at once. Use it when you hand the till or the desk to someone else. It does nothing while the cursor is in a text box, so a slip cannot lose what you were typing.',
+      'Ctrl + Shift + L: sign out from anywhere, even while typing.',
       'Ctrl + Shift + H: open this Help page from any desk.',
       'F1 or F12: open Ask Mamani on the current desk (this Help page when the desk has no assistant).',
       'Ctrl + M: open the department messenger.',

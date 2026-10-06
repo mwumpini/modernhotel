@@ -7,6 +7,7 @@ import { sizedTableClassNames } from '../frontoffice/columnResize';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import { useSupplierStore } from '../../lib/inventory/supplierStore';
 import { useInventoryScreen } from './inventoryScreenContext';
+import PostingDateField from '../shared/PostingDateField';
 
 /** Inventory → Supplier invoices. Invoice table. */
 export function SupplierInvoicesTable() {
@@ -227,7 +228,7 @@ export function SupplierInvoiceModals() {
                     value={inventoryScreen.invoiceFormData.grnNumber || 'None yet'}
                     isReadOnly
                   />
-                  <Input
+                  <PostingDateField
                     label="Invoice Date"
                     type="date"
                     value={

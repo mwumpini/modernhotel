@@ -60,6 +60,7 @@ const POLICY_KEYS = [
   'depositType',
   'depositValue',
   'requireDepositToConfirm',
+  'allowBackdating',
 ] as const;
 
 const ENUMS: Record<string, readonly string[]> = {

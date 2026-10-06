@@ -5,6 +5,7 @@ import { SortHeader, deskTableCardBodyClassName, deskTableCardClassName, deskTab
 import { StockItem } from '../../lib/inventory/models';
 import { sizedTableClassNames } from '../frontoffice/columnResize';
 import { useInventoryScreen } from './inventoryScreenContext';
+import PostingDateField from '../shared/PostingDateField';
 
 /** Inventory → Requisitions. Requisition table. */
 export function RequisitionsTable() {
@@ -149,7 +150,7 @@ export function RequisitionModals() {
                     onChange={(e) => inventoryScreen.setRequisitionFormData({ ...inventoryScreen.requisitionFormData, requestedBy: e.target.value })}
                     isRequired
                   />
-                  <Input
+                  <PostingDateField
                     label="Requested Date"
                     type="date"
                     value={inventoryScreen.requisitionFormData.requestedDate instanceof Date

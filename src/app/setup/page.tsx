@@ -574,7 +574,13 @@ export default function SetupWizardPage() {
                 <Input label="Email" value={company.contact.email} onChange={e => setCompany((v: any) => ({ ...v, contact: { ...v.contact, email: e.target.value } }))} />
                 <Input label="Website" value={company.contact.website} onChange={e => setCompany((v: any) => ({ ...v, contact: { ...v.contact, website: e.target.value } }))} />
                 <Input label="Default Currency" value={company.defaultCurrency} onChange={e => setCompany((v: any) => ({ ...v, defaultCurrency: e.target.value }))} />
-                <Input type="date" label="Financial Year Start Date" value={company.financialYearStartDate} onChange={e => setCompany((v: any) => ({ ...v, financialYearStartDate: e.target.value }))} />
+                <Input
+                  type="date"
+                  label="Financial year opens on"
+                  description="The month and day the books open every year. 1 January runs to 31 December. 1 April runs to 31 March. The year on this date is only a sample."
+                  value={company.financialYearStartDate}
+                  onChange={e => setCompany((v: any) => ({ ...v, financialYearStartDate: e.target.value }))}
+                />
               </div>
               <Divider />
               {company.logoUrl && (

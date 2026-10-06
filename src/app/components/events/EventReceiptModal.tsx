@@ -3,6 +3,7 @@
 import { Autocomplete, AutocompleteItem, Button, Card, CardBody, Checkbox, Chip, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Select, SelectItem } from '@heroui/react';
 import { resolveReceiptMethod, withCurrentOption } from './eventShared';
 import { useEventsScreen } from './eventsScreenContext';
+import PostingDateField from '../shared/PostingDateField';
 
 /** Events → receipt dialog. */
 export function EventReceiptModal() {
@@ -210,7 +211,7 @@ export function EventReceiptModal() {
                       ) : undefined
                     }
                   />
-                  <Input
+                  <PostingDateField
                     size="sm"
                     label="Receipt date"
                     type="date"

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant'
 import { upsertReconcilingItem, deleteReconcilingItem } from '@/app/lib/accounting/repository'
+import { rejectIfBackdated } from '@/app/lib/frontoffice/postingDateGuard'
 
 // POST /api/accounting/bank-reconciliation/items — create or update one reconciling item
 export async function POST(request: NextRequest) {
@@ -14,6 +15,9 @@ export async function POST(request: NextRequest) {
     if (!body.id || !body.reconciliationId || !body.itemType || body.amount === undefined) {
       return NextResponse.json({ error: 'id, reconciliationId, itemType, and amount are required' }, { status: 400 })
     }
+
+    const blocked = await rejectIfBackdated(ctx.tenantId, body.transactionDate, { model: 'reconcilingItem', id: body.id })
+    if (blocked) return blocked
 
     const item = await upsertReconcilingItem(ctx.tenantId, {
       id: body.id,

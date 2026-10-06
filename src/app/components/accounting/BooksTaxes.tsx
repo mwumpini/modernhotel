@@ -18,6 +18,7 @@ import {
 import { accountingAmountsLabel, formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
 import BankAccountOptionLabel from '@/app/components/shared/BankAccountOptionLabel';
+import PostingDateField from '@/app/components/shared/PostingDateField';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { useDeskPagination } from '../dashboard/deskTableUi';
 import { DeskKpiStrip, useAccountingDeskPeriod } from './DeskKpiStrip';
@@ -573,7 +574,7 @@ export default function BooksTaxes() {
 							{remitErrors.amount && <div className="text-xs text-danger mt-1">{remitErrors.amount}</div>}
 						</div>
 						<div>
-							<Input
+							<PostingDateField
 								type="date"
 								label="Payment date"
 								isRequired

@@ -77,6 +77,10 @@ export async function POST(request: NextRequest) {
     }
 
     const patch: Record<string, any> = pickOperationalPolicy(body)
+    const role = String((auth.session as any).user?.role || '')
+    if (role !== 'admin' && role !== 'manager') {
+      delete patch.allowBackdating
+    }
     if (canManageRoomConfig) {
       for (const k of ROOM_CONFIG_ARRAY_KEYS) {
         if (Array.isArray(body[k])) patch[k] = body[k]

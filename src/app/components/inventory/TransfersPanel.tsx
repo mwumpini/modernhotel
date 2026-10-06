@@ -5,6 +5,7 @@ import { DESK_PAGE_SIZE, SortHeader, deskTableCardBodyClassName, deskTableCardCl
 import { StockItem, StockTransferItem } from '../../lib/inventory/models';
 import { sizedTableClassNames } from '../frontoffice/columnResize';
 import { useInventoryScreen } from './inventoryScreenContext';
+import PostingDateField from '../shared/PostingDateField';
 
 /** Inventory → Transfers. Transfer list. */
 export function TransfersTable() {
@@ -204,7 +205,7 @@ export function StockTransferModal() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
-                  <Input
+                  <PostingDateField
                     label="Transfer Date"
                     type="date"
                     value={inventoryScreen.stockTransferFormData.transferDate instanceof Date 

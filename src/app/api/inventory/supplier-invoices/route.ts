@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant';
 import { requireAuth } from '@/app/lib/api/auth-guard';
+import { rejectIfBackdated } from '@/app/lib/frontoffice/postingDateGuard';
 import {
   listSupplierInvoices,
   upsertSupplierInvoice,
@@ -63,6 +64,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const blocked = await rejectIfBackdated(tenantId, body.invoiceDate, { model: 'supplierInvoice', id: body.id });
+    if (blocked) return blocked;
+
     const invoice = await upsertSupplierInvoice({
       id: body.id,
       tenantId,
@@ -104,6 +108,9 @@ export async function PUT(req: NextRequest) {
 
     const body = await req.json();
     if (!body.id) return NextResponse.json({ error: 'Missing required field: id' }, { status: 400 });
+
+    const blocked = await rejectIfBackdated(tenantId, body.invoiceDate, { model: 'supplierInvoice', id: body.id });
+    if (blocked) return blocked;
 
     const invoice = await upsertSupplierInvoice({
       id: body.id,
