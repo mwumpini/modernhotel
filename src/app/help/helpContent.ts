@@ -39,6 +39,17 @@ export type HelpTopic = {
   complianceTab?: 'tax' | 'payroll' | 'reports';
 };
 
+/** Every keyboard shortcut, shown on the Help page, in its "Keyboard shortcuts" topic and in the manual. */
+export const keyboardShortcuts = [
+  { keys: 'Ctrl + Shift + L', action: 'Sign out at once, from any screen (hand the till or desk to the next person)' },
+  { keys: 'Ctrl + Shift + H', action: 'Open this Help page from any desk' },
+  { keys: 'F1 / F12', action: 'Open Ask Mamani on the current desk. Opens this Help page when that desk has no assistant.' },
+  { keys: 'Ctrl + M', action: 'Open the department messenger (when not typing in a field)' },
+  { keys: 'Esc', action: 'Close the open window. From this Help page: back to the dashboard' },
+  { keys: 'Ctrl + Enter', action: 'POS: send the order' },
+  { keys: 'Ctrl + P', action: 'POS: open payment' },
+];
+
 /** High-level map for staff — avoids hunting in the wrong module */
 export const configurationGuide = {
   title: 'Where to configure what',
@@ -76,6 +87,8 @@ export const helpMaintainerGuide = {
     'To deep-link into Compliance, set section: "compliance" and complianceTab to tax | payroll | reports.',
     'For standalone pages (e.g. setup wizard), set href: "/setup" instead of section.',
     'Optional: add steps[] for the procedure, image for a screenshot in public/help-images, and notHere to warn users away from the wrong module.',
+    'Screenshots: with the dev server running and sample data loaded, run node scripts/capture-help-screenshots.mjs (all of them) or name a few (e.g. front-checkin users). Add a new screen to the SHOTS list in that script.',
+    'The Download manual button on the Help page builds the manual from this same file, so new topics and pictures appear in it with nothing else to do.',
     'Country list, category labels, seed taxes/reports, rule templates, and hospitality reference: src/app/lib/compliance/config/*.json (loaded via config.ts).',
     'Runtime edits persist to prisma/compliance.*.json via ComplianceDB APIs.',
     'Press F1 or F12 in the app to verify search finds new keywords and "Open in app" lands on the right tab.',
@@ -89,10 +102,12 @@ export const helpTopics: HelpTopic[] = [
     description: 'Every department screen has a title, a summary you can hide, and tabs for the work.',
     keywords: ['summary', 'tabs', 'show summary', 'hide summary', 'tablet', 'layout', 'desk'],
     category: 'start',
+    image: '/help-images/desk-summary.png',
+    imageAlt: "The Front Office desk with the summary shown: count cards at the top, Hide summary and Customize at the top right.",
     steps: [
-      'The title row names the desk. Show summary / Hide summary sits beside it.',
-      'On a phone, tablet, or short window the summary hides on its own so the tabs stay on screen. Show summary brings the counts back. The choice is remembered for that desk.',
-      'Summary means the count cards, today\'s operations, and quick actions. Recent activity and notices stay visible.',
+      'The title row names the desk. Show summary / Hide summary sits at the top right, next to Customize and Expand.',
+      'The summary (the count cards, today\'s operations, and quick actions) is hidden when a desk opens, so the work tabs come first. Press Show summary to bring it up, and Hide summary to put it away. Each desk remembers your choice.',
+      'Customize picks which summary cards a desk shows. Recent activity and notices stay visible either way.',
       'Wide tables scroll inside their own box. The page itself does not scroll sideways.',
     ],
   },
@@ -167,6 +182,8 @@ export const helpTopics: HelpTopic[] = [
     description: 'Create staff accounts, assign roles, and manage personal preferences.',
     keywords: ['users', 'roles', 'admin', 'preferences', 'password'],
     category: 'configuration',
+    image: '/help-images/users.png',
+    imageAlt: "Settings, Users & Roles: the staff accounts and what each role may do.",
     section: 'settings',
     settingsTab: 'users',
     steps: [
@@ -181,6 +198,8 @@ export const helpTopics: HelpTopic[] = [
     description: 'Room types, rate plans, seasonal pricing, and operational policies.',
     keywords: ['rates', 'pricing', 'room types', 'seasonal', 'rate plan', 'bar'],
     category: 'configuration',
+    image: '/help-images/rooms-pricing.png',
+    imageAlt: "Settings, Rooms & Pricing: room types, rooms, rate plans and service charges.",
     section: 'settings',
     settingsTab: 'rooms',
     steps: [
@@ -195,6 +214,8 @@ export const helpTopics: HelpTopic[] = [
     description: 'Invoice, receipt, reservation, and client ID formats and next numbers.',
     keywords: ['invoice', 'receipt', 'numbering', 'prefix', 'folio', 'reservation number'],
     category: 'configuration',
+    image: '/help-images/numbering.png',
+    imageAlt: "Settings, Document Numbering: the prefix and next number for invoices, receipts and other documents.",
     section: 'settings',
     settingsTab: 'numbering',
     steps: [
@@ -209,6 +230,8 @@ export const helpTopics: HelpTopic[] = [
     description: 'Two-factor auth, session timeout, and password policy for all staff.',
     keywords: ['2fa', 'password', 'session', 'security', 'lockout'],
     category: 'configuration',
+    image: '/help-images/security-settings.png',
+    imageAlt: "Settings, Security: password, session, PIN rules and the manager PIN.",
     section: 'settings',
     settingsTab: 'security',
     notHere: 'Company tax ID or VAT rates.',
@@ -232,11 +255,14 @@ export const helpTopics: HelpTopic[] = [
       'withholding', 'wht', 'goods', 'supplier', 'guest bill', 'claim back', 'gl',
     ],
     category: 'configuration',
+    image: '/help-images/compliance.png',
+    imageAlt: "Compliance, Tax rules: the guest-bill taxes and supplier withholding rates.",
     section: 'compliance',
     complianceTab: 'tax',
     steps: [
       'Open Compliance & Reports in the side menu, then Tax rules. Leave the country on Ghana.',
       'The standard rates are already on the list. Check them before you add a new one.',
+      'Careful: VAT, NHIL, and GETFund work on both sides. Changing one of their rates, or switching one off, changes what is added to guest bills (sales) and what you claim back on supplier bills (purchases) at the same time. The Tourism Levy changes guest bills only; withholding rules change supplier payments only. Change a rate only when GRA changes it, and tell your accountant.',
       'Guest bills is what is added to a room or a meal: Tourism Levy 1% (Claim back No), NHIL 2.5% (Yes), GETFund 2.5% (Yes), and VAT 15% (Yes). VAT, NHIL, and GETFund are each worked out on the same amount.',
       'Claim back Yes means a supplier bill can claim that tax. Tourism stays No, so it is never claimed.',
       'Supplier bills is money kept back from a supplier: services 7.5%, goods 3%, works 5%, commercial rent 15%, residential rent 8%. These are not added to a guest bill.',
@@ -253,6 +279,8 @@ export const helpTopics: HelpTopic[] = [
     description: 'Set the PAYE bands and SSNIT rates used when you pay staff.',
     keywords: ['paye', 'payroll', 'ssnit', 'income tax', 'staff tax', 'bands', 'setup'],
     category: 'configuration',
+    image: '/help-images/paye.png',
+    imageAlt: "Compliance, Payroll tax: PAYE bands and the SSNIT tiers used by payroll.",
     section: 'compliance',
     complianceTab: 'payroll',
     steps: [
@@ -268,6 +296,8 @@ export const helpTopics: HelpTopic[] = [
     description: 'When each return is due, and where the hotel’s company income tax sits.',
     keywords: ['vat return', 'filing', 'ssnit', 'paye', 'wht', 'gsl', 'cit', 'income tax', 'company tax', 'reports', 'due date', 'setup'],
     category: 'configuration',
+    image: '/help-images/compliance-reports.png',
+    imageAlt: "Compliance, Reports & Filing: what to file and when it is due.",
     section: 'compliance',
     complianceTab: 'reports',
     steps: [
@@ -318,6 +348,8 @@ export const helpTopics: HelpTopic[] = [
     description: 'Move an arriving reservation to in-house and assign a room.',
     keywords: ['check-in', 'check in', 'arrival', 'assign room', 'walk in'],
     category: 'operations',
+    image: '/help-images/front-checkin.png',
+    imageAlt: "The stay window at check-in: room nights with tax, the financial summary, Take payment and Check in.",
     section: 'frontdesk',
     steps: [
       'Open Front Office → Reservations and find the arrival, or open Desk from the side menu for check-in.',
@@ -332,6 +364,8 @@ export const helpTopics: HelpTopic[] = [
     description: 'Settle the folio and release the room to housekeeping.',
     keywords: ['checkout', 'check out', 'payment', 'folio', 'cashier', 'invoice'],
     category: 'operations',
+    image: '/help-images/front-checkout.png',
+    imageAlt: "An in-house stay: charges, payments, Open the folio and Check out.",
     section: 'frontdesk',
     steps: [
       'Open the stay from Desk or Reservations.',
@@ -347,6 +381,8 @@ export const helpTopics: HelpTopic[] = [
     description: 'Room transfer keeps the same stay and folio.',
     keywords: ['room transfer', 'move room', 'change room'],
     category: 'operations',
+    image: '/help-images/front-transfer.png',
+    imageAlt: "Room Transfer: pick the guest, the new room and the reason.",
     section: 'frontdesk',
     steps: [
       'Open Front Office → Room Transfer. Rooms in the side menu opens the room board.',
@@ -360,6 +396,8 @@ export const helpTopics: HelpTopic[] = [
     description: 'Post the day\'s room charges and roll the business date. The hotel can also run this automatically at 1:00 AM.',
     keywords: ['night audit', 'close day', 'business date', 'end of day', 'catch up'],
     category: 'operations',
+    image: '/help-images/front-audit.png',
+    imageAlt: "Night Audit: the business date, the checks, and Close.",
     section: 'frontdesk',
     steps: [
       'Open Front Office → Night Audit. Night in the side menu opens the same screen.',
@@ -391,6 +429,8 @@ export const helpTopics: HelpTopic[] = [
     description: 'Mark a room clean so the front desk can sell or assign it.',
     keywords: ['clean room', 'dirty', 'inspected', 'room status', 'attendant'],
     category: 'operations',
+    image: '/help-images/hk-clean.png',
+    imageAlt: "Housekeeping Work: cleaning tasks and maintenance jobs.",
     section: 'housekeeping',
     steps: [
       'Open Housekeeping → Floor and find the dirty room, or open Work and take the task.',
@@ -422,6 +462,8 @@ export const helpTopics: HelpTopic[] = [
     description: 'Take the order in the POS and send it to the kitchen.',
     keywords: ['pos', 'send order', 'ctrl enter', 'payment', 'cover'],
     category: 'operations',
+    image: '/help-images/fb-order.png',
+    imageAlt: "The POS: menu on the left, the order on the right, Send to kitchen and payment.",
     section: 'food-beverage',
     steps: [
       'Open Restaurant & Bar → POS Terminal, or press Open POS on the desk.',
@@ -486,6 +528,8 @@ export const helpTopics: HelpTopic[] = [
     description: 'Reconcile what is on the shelf, then raise a purchase order for what is short.',
     keywords: ['stock count', 'reorder', 'low stock', 'purchase order', 'physical'],
     category: 'operations',
+    image: '/help-images/inv-count.png',
+    imageAlt: "Kitchen Supplies: request stock from the store and count what is on hand.",
     section: 'inventory',
     steps: [
       'Open Inventory & Stores and start Stock Count from Quick actions, or the count on Stock & Supply.',
@@ -552,6 +596,8 @@ export const helpTopics: HelpTopic[] = [
     description: 'Prepare the month, check the figures, then send it for approval.',
     keywords: ['payroll run', 'salary', 'net pay', 'approve payroll', 'payslip'],
     category: 'finance',
+    image: '/help-images/hr-payroll.png',
+    imageAlt: "HR Payroll: run the month, check each line, then approve.",
     section: 'hr',
     steps: [
       'Open HR & Payroll → Payroll, or press Run Payroll on the summary.',
@@ -573,9 +619,17 @@ export const helpTopics: HelpTopic[] = [
   {
     id: 'help-keys',
     title: 'Keyboard shortcuts',
-    description: 'F1 or F12 opens Ask Mamani on the current desk. This Help page opens when that desk has no assistant. Esc returns to the dashboard from this page.',
-    keywords: ['keyboard', 'shortcut', 'f12', 'f1', 'escape'],
+    description: 'Keys that save time on every desk. The most useful: Ctrl + Shift + L signs you out at once.',
+    keywords: ['keyboard', 'shortcut', 'f12', 'f1', 'escape', 'sign out', 'log out', 'logout', 'help'],
     category: 'general',
+    steps: [
+      'Ctrl + Shift + L: sign out at once, from any screen. Use it when you hand the till or the desk to someone else.',
+      'Ctrl + Shift + H: open this Help page from any desk.',
+      'F1 or F12: open Ask Mamani on the current desk (this Help page when the desk has no assistant).',
+      'Ctrl + M: open the department messenger.',
+      'Esc: close the open window. From this Help page it returns to the dashboard.',
+      'On the POS: Ctrl + Enter sends the order, Ctrl + P opens payment.',
+    ],
   },
   // —— Fixing mistakes: void, delete, edit ——
   {
@@ -585,6 +639,8 @@ export const helpTopics: HelpTopic[] = [
       'Void keeps the invoice on file marked Void and posts a reversing entry, so the books stay correct. Delete removes it for good and is only for drafts, proformas, and invoices typed in by hand.',
     keywords: ['void invoice', 'cancel invoice', 'delete invoice', 'wrong invoice', 'reverse invoice', 'receivable', 'customer invoice'],
     category: 'finance',
+    image: '/help-images/accounting.png',
+    imageAlt: "Accounting, Receivable: who owes the hotel, invoices and receipts.",
     section: 'accounting-management',
     steps: [
       'Accounting → Accounts Receivable → Invoices, then open the invoice.',
@@ -617,6 +673,8 @@ export const helpTopics: HelpTopic[] = [
       'Voiding a bill or a supplier payment posts a reversing entry. A voided payment puts the amount back on the bill as owed.',
     keywords: ['void bill', 'cancel bill', 'wrong bill', 'supplier payment', 'void payment', 'payable', 'supplier'],
     category: 'finance',
+    image: '/help-images/acc-payable.png',
+    imageAlt: "Accounting, Payable: supplier bills and payments.",
     section: 'accounting-management',
     steps: [
       'Accounting → Accounts Payable → Bills, then open the bill.',
@@ -631,6 +689,8 @@ export const helpTopics: HelpTopic[] = [
       'A posted journal entry is not deleted. Voiding it posts the opposite entry so the two cancel out, and both stay on record.',
     keywords: ['void journal', 'reverse journal', 'wrong journal', 'cancel entry', 'journal entry', 'ledger'],
     category: 'finance',
+    image: '/help-images/acc-journal.png',
+    imageAlt: "Accounting, Journal: entries posted to the books.",
     section: 'accounting-management',
     steps: [
       'Accounting → Journal, then open the entry.',

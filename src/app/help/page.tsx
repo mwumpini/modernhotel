@@ -17,17 +17,12 @@ import {
   configurationGuide,
   helpMaintainerGuide,
   helpCategoryLabels,
+  keyboardShortcuts,
   type HelpTopic,
   type HelpTopicCategory,
 } from './helpContent';
 
-const shortcuts = [
-  { keys: 'F1 / F12', action: 'Open Ask Mamani on the current desk. Opens this Help page when that desk has no assistant.' },
-  { keys: 'Esc', action: 'From this page: return to the main dashboard' },
-  { keys: 'Ctrl + M', action: 'Open department messenger (when not typing in a field)' },
-  { keys: 'Ctrl + Enter', action: 'F&B POS: send order' },
-  { keys: 'Ctrl + P', action: 'F&B POS: open payment' },
-];
+const shortcuts = keyboardShortcuts;
 
 const CATEGORY_ORDER: HelpTopicCategory[] = ['start', 'operations', 'configuration', 'finance', 'general'];
 
@@ -168,9 +163,15 @@ export default function HelpPage() {
               from a desk to open Ask Mamani. This page opens when that desk has no assistant.
             </p>
           </div>
-          <Button color="primary" variant="flat" onPress={() => router.push('/')}>
-            Back to dashboard
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button color="primary" variant="flat" onPress={() => router.push('/')}>
+              Back to dashboard
+            </Button>
+            {/* The whole Help as one printable manual; the print window offers "Save as PDF". */}
+            <Button color="primary" variant="solid" onPress={() => window.open('/help/manual?print=1', '_blank', 'noopener')}>
+              Download manual
+            </Button>
+          </div>
         </div>
 
         <Input

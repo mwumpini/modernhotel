@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import { signOut } from 'next-auth/react';
 import { openMessengerFromShell, requestAskMamani } from '../lib/openMessenger';
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -17,6 +18,20 @@ export default function HelpF12Shortcut() {
 
   React.useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      const ctrlShift = e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey;
+      // Ctrl+Shift+L signs out from anywhere, even mid-typing (a waiter handing over the POS).
+      if (ctrlShift && e.key.toLowerCase() === 'l') {
+        e.preventDefault();
+        try { sessionStorage.removeItem('session.lastActivity'); } catch {}
+        void signOut({ callbackUrl: '/' });
+        return;
+      }
+      // Ctrl+Shift+H opens the Help page (F1 opens the desk assistant when there is one).
+      if (ctrlShift && e.key.toLowerCase() === 'h') {
+        e.preventDefault();
+        if (pathname !== '/help') router.push('/help');
+        return;
+      }
       const helpKeys = e.key === 'F12' || e.key === 'F1';
       if (helpKeys) {
         if (isEditableTarget(e.target)) return;
