@@ -30,9 +30,29 @@ const literata = Literata({
   subsets: ["latin"],
 });
 
+// Link previews (WhatsApp, Facebook, X) need full addresses. Vercel provides the production
+// domain at build time; once agmsync.com is connected it is used automatically.
+const siteUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
+  ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+  : 'http://localhost:3000';
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: "AGM Sync",
   description: "Your property, simply connected. agmsync.com",
+  openGraph: {
+    title: 'AGM Sync',
+    description: 'Your property, simply connected.',
+    siteName: 'AGM Sync',
+    type: 'website',
+    images: [{ url: '/brand/og-image.png', width: 1200, height: 630, alt: 'AGM Sync: Your property, simply connected.' }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'AGM Sync',
+    description: 'Your property, simply connected.',
+    images: ['/brand/og-image.png'],
+  },
   // src/app/icon.svg is picked up as the browser-tab icon; favicon.ico stays for old browsers.
   icons: {
     icon: [{ url: '/icon.svg', type: 'image/svg+xml' }, { url: '/favicon.ico' }],

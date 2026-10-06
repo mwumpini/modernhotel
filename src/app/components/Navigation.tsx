@@ -10,7 +10,7 @@ import { useSettingsStore } from '../lib/settings/store';
 import { moduleEnabled, reportsEnabled } from '../lib/settings/moduleAccess';
 import { openMessengerFromShell } from '../lib/openMessenger';
 import SidebarSticky from './SidebarSticky';
-import { BrandMark, BrandWordmark, BRAND_TAGLINE } from './BrandLogo';
+import { BrandMark, BrandWordmark } from './BrandLogo';
 
 /** After a dev-server restart the old chunk URLs 404. Reload once so the new build is picked up. */
 function isChunkLoadError(error: unknown) {
@@ -850,7 +850,6 @@ export default function Navigation({ onLogout }: NavigationProps) {
             <BrandMark size={48} className="mr-4 shrink-0" />
             <div>
               <h1 className="text-xl"><BrandWordmark /></h1>
-              <p className="text-xs text-default-500 mt-1">{BRAND_TAGLINE}</p>
               <Badge color="primary" variant="flat" size="sm" className="mt-1">Executive</Badge>
             </div>
             <Tooltip content="Hide side pane (Ctrl+B)" placement="bottom">
