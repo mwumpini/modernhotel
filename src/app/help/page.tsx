@@ -291,7 +291,7 @@ export default function HelpPage() {
 
         <Divider className="bg-slate-200" />
         <p className="text-center text-xs text-slate-500">
-          Ghana Hotel Management System — Esc (outside a field) returns to the dashboard.
+          AGM Sync — Esc (outside a field) returns to the dashboard.
         </p>
       </div>
     </div>

@@ -1,7 +1,7 @@
 {
-  "name": "Ghana Hotel Management System",
-  "short_name": "Ghana Hotel",
-  "description": "Professional hospitality management system for Ghanaian hotels",
+  "name": "AGM Sync",
+  "short_name": "AGM Sync",
+  "description": "Your property, simply connected. agmsync.com",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

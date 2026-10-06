@@ -18,7 +18,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 }
 
 $source = $PSScriptRoot
-$dest = Join-Path $env:ProgramFiles 'Ghana Hotel System'
+$dest = Join-Path $env:ProgramFiles 'AGM Sync'
 if (-not (Test-Path (Join-Path $source 'app\server.js'))) {
   Write-Host 'This folder does not contain the built hotel system.'
   Write-Host 'On the computer where the project lives, run: npm run package:hotel'
@@ -50,14 +50,14 @@ function New-Shortcut($shortcutPath, $target) {
   $link.Save()
 }
 
-$startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Ghana Hotel System'
+$startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\AGM Sync'
 $startup = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\StartUp'
 New-Item -ItemType Directory -Force -Path $startMenu | Out-Null
 $startCmd = Join-Path $dest 'Start Hotel System.cmd'
-New-Shortcut (Join-Path $env:Public 'Desktop\Ghana Hotel System.lnk') $startCmd
-New-Shortcut (Join-Path $startMenu 'Ghana Hotel System.lnk') $startCmd
-New-Shortcut (Join-Path $startMenu 'Stop Ghana Hotel System.lnk') (Join-Path $dest 'Stop Hotel System.cmd')
-New-Shortcut (Join-Path $startup 'Ghana Hotel System.lnk') $startCmd
+New-Shortcut (Join-Path $env:Public 'Desktop\AGM Sync.lnk') $startCmd
+New-Shortcut (Join-Path $startMenu 'AGM Sync.lnk') $startCmd
+New-Shortcut (Join-Path $startMenu 'Stop AGM Sync.lnk') (Join-Path $dest 'Stop Hotel System.cmd')
+New-Shortcut (Join-Path $startup 'AGM Sync.lnk') $startCmd
 
 Write-Host ''
 Write-Host 'Installed. The system also starts when someone signs in to Windows on this computer.'

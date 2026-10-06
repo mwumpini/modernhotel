@@ -50,6 +50,6 @@ export function verifyTotp(secret: string, code: string, at = Date.now()): boole
   return false;
 }
 
-export function otpauthUri(secret: string, email: string, issuer = 'Ghana Hotel'): string {
+export function otpauthUri(secret: string, email: string, issuer = 'AGM Sync'): string {
   return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(email)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&digits=6&period=30`;
 }

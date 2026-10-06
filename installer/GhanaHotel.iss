@@ -1,4 +1,4 @@
-#define MyAppName "Ghana Hotel System"
+#define MyAppName "AGM Sync"
 #define MyAppVersion "0.1.0"
 #define Dist "..\dist\GhanaHotel"
 
@@ -9,7 +9,7 @@ AppVersion={#MyAppVersion}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 OutputDir=..\dist
-OutputBaseFilename=GhanaHotel-Setup
+OutputBaseFilename=AGMSync-Setup
 Compression=lzma2
 SolidCompression=yes
 PrivilegesRequired=admin

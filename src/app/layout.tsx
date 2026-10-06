@@ -31,12 +31,13 @@ const literata = Literata({
 });
 
 export const metadata: Metadata = {
-  title: "Ghana Hotel Management System",
-  description: "Professional hospitality facility management system for 4-star hotels in Ghana",
+  title: "AGM Sync",
+  description: "Your property, simply connected. agmsync.com",
+  // src/app/icon.svg is picked up as the browser-tab icon; favicon.ico stays for old browsers.
   icons: {
-    icon: '/favicon.ico',
+    icon: [{ url: '/icon.svg', type: 'image/svg+xml' }, { url: '/favicon.ico' }],
     shortcut: '/favicon.ico',
-    apple: '/favicon.ico',
+    apple: '/apple-touch-icon.png',
   },
 };
 

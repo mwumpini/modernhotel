@@ -2,6 +2,7 @@
 
 import React, { useEffect } from 'react';
 import Link from 'next/link';
+import BrandLogo from '../../components/BrandLogo';
 import {
   helpTopics,
   configurationGuide,
@@ -83,7 +84,8 @@ export default function HelpManualPage() {
 
       <main>
         <section className="cover">
-          <h1>Hotel Management System: User Manual</h1>
+          <BrandLogo size="lg" syncClass="text-slate-900" className="mb-6" />
+          <h1>User Manual</h1>
           <p>Step-by-step guide to every desk: front office, restaurant, kitchen, housekeeping, stores, events, security, HR and payroll, accounting and tax.</p>
           <p>Generated {today}. The Help page in the app always has the latest version.</p>
         </section>

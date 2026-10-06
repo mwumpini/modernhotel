@@ -1,4 +1,4 @@
 @echo off
-title Install Ghana Hotel System
+title Install AGM Sync
 cd /d "%~dp0"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1"

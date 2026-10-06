@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { Button, Input, Checkbox, Link } from "@heroui/react";
 import { signIn } from 'next-auth/react';
 import { setClientTenantSubdomain } from '../lib/api/clientTenant';
+import BrandLogo from './BrandLogo';
 
 export default function LoginForm() {
   const [email, setEmail] = useState('');
@@ -70,18 +71,11 @@ export default function LoginForm() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-ghana-green to-ghana-gold">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#0B5F64] via-[#0E7C80] to-[#E9A23B]">
       <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-2xl shadow-2xl">
         <div className="text-center">
-          <div className="mx-auto h-16 w-16 bg-ghana-gold rounded-full flex items-center justify-center mb-4">
-            <span className="text-3xl">🏨</span>
-          </div>
-          <h2 className="text-3xl font-bold text-ghana-black">
-            Welcome Back
-          </h2>
-          <p className="mt-2 text-sm text-ghana-black">
-            Sign in to your hotel management account
-          </p>
+          <BrandLogo size="lg" stacked syncClass="text-slate-900" />
+          <p className="mt-1 text-xs text-gray-500">agmsync.com</p>
         </div>
         
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>

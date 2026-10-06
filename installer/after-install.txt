@@ -1,6 +1,6 @@
 The hotel system is now on this computer.
 
-Leave the Ghana Hotel System window open while the hotel is working. On this computer and on the other computers, open the address shown in that window.
+Leave the AGM Sync window open while the hotel is working. On this computer and on the other computers, open the address shown in that window.
 
 The internet can be down. This computer is the one that must stay on.
 Hotel records stay in C:\ProgramData\GhanaHotel

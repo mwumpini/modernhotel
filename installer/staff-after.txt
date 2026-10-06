@@ -1,5 +1,5 @@
-A Ghana Hotel icon is on the desktop.
+An AGM Sync icon is on the desktop.
 
 Click that icon. The browser opens the hotel system. Sign in and start work.
 
-The office computer must already be running the hotel system. If its address changes, run this setup again and type the new address.
+The office computer must already be running AGM Sync. If its address changes, run this setup again and type the new address.

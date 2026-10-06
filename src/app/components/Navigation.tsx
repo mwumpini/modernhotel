@@ -10,6 +10,7 @@ import { useSettingsStore } from '../lib/settings/store';
 import { moduleEnabled, reportsEnabled } from '../lib/settings/moduleAccess';
 import { openMessengerFromShell } from '../lib/openMessenger';
 import SidebarSticky from './SidebarSticky';
+import { BrandMark, BrandWordmark, BRAND_TAGLINE } from './BrandLogo';
 
 /** After a dev-server restart the old chunk URLs 404. Reload once so the new build is picked up. */
 function isChunkLoadError(error: unknown) {
@@ -846,12 +847,10 @@ export default function Navigation({ onLogout }: NavigationProps) {
             aria-label="Go to main dashboard"
             onClick={() => setActiveSection('dashboard')}
           >
-            <div className="h-12 w-12 bg-gradient-to-br from-ghana-green to-ghana-gold rounded-2xl flex items-center justify-center mr-4">
-              <span className="text-3xl">🏨</span>
-            </div>
+            <BrandMark size={48} className="mr-4 shrink-0" />
             <div>
-              <h1 className="text-xl font-bold text-ghana-black">Ghana Hotel</h1>
-              <p className="text-sm text-gray-600">Management System</p>
+              <h1 className="text-xl"><BrandWordmark /></h1>
+              <p className="text-xs text-default-500 mt-1">{BRAND_TAGLINE}</p>
               <Badge color="primary" variant="flat" size="sm" className="mt-1">Executive</Badge>
             </div>
             <Tooltip content="Hide side pane (Ctrl+B)" placement="bottom">
@@ -943,7 +942,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
               />
               <div>
                 <p className="font-semibold text-ghana-black">{currentUserName}</p>
-                <p className="text-xs text-gray-600">{currentUserRoleLabel || 'Ghana Hotel Management'}</p>
+                <p className="text-xs text-gray-600">{currentUserRoleLabel || 'AGM Sync'}</p>
               </div>
             </div>
             <Button

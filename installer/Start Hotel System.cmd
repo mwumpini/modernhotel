@@ -1,5 +1,5 @@
 @echo off
-title Ghana Hotel System
+title AGM Sync
 cd /d "%~dp0"
 if not exist "%~dp0node\node.exe" (
   echo This copy is not complete. Double-click "Install Hotel System.cmd" from the built package.

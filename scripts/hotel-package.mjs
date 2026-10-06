@@ -132,11 +132,11 @@ for (const name of fs.readdirSync(installerDir)) {
 
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 fs.writeFileSync(path.join(dest, 'version.txt'), `${pkg.version}\n`, 'utf8')
-fs.writeFileSync(path.join(dest, 'INSTALL.txt'), `Ghana Hotel System
+fs.writeFileSync(path.join(dest, 'INSTALL.txt'), `AGM Sync
 
 1. Double-click "Install Hotel System.cmd"
 2. Approve the Windows prompt
-3. Leave the Ghana Hotel System window open while the hotel is working
+3. Leave the AGM Sync window open while the hotel is working
 4. On this computer and on the other computers, open the address shown in that window
 
 The internet can be down. This computer is the one that must stay on.

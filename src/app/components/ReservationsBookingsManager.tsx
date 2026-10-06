@@ -464,7 +464,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           guestEmail,
           guestName: reservation.guestName || '',
           pdfBuffer: pdfBuffer.split(',')[1],
-          hotelName: useSettingsStore.getState().saasSettings.customBranding.companyName || 'Ghana Hotel Management',
+          hotelName: useSettingsStore.getState().saasSettings.customBranding.companyName || 'Hotel',
           reservationDetails: {
             checkIn: new Date(reservation.arrival).toLocaleDateString(),
             checkOut: new Date(reservation.departure).toLocaleDateString(),

@@ -204,7 +204,7 @@ const clearPid = () => fs.rmSync(pidFile, { force: true })
 process.on('exit', clearPid)
 
 console.log('')
-console.log('Ghana Hotel System is starting on this computer.')
+console.log('AGM Sync is starting on this computer.')
 console.log(`This computer and the other computers in the hotel open: ${publicUrl}`)
 console.log('Leave this window open. Closing it stops the system.')
 console.log('The internet can be down. This computer is the one that must stay on.')
