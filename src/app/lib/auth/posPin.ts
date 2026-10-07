@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs'
+import { stripRecoverySecrets } from '@/app/lib/auth/recoveryQuestions'
 
 /**
  * Waiter PINs for the shared POS terminal. The terminal stays signed in as the cashier; a waiter
@@ -53,7 +54,7 @@ export function withoutPinKeys(prefs: Prefs): Prefs {
 export function publicUser<T extends { preferences?: unknown }>(user: T): T & { hasPin: boolean } {
   const prefs = user.preferences && typeof user.preferences === 'object' ? (user.preferences as Prefs) : null
   if (!prefs) return { ...user, hasPin: false }
-  const safe = withoutPinKeys(prefs)
+  const safe = stripRecoverySecrets(withoutPinKeys(prefs))
   delete safe.twoFactorSecret
   return { ...user, preferences: safe, hasPin: hasPin(prefs) }
 }

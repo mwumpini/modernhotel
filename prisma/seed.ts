@@ -4,6 +4,7 @@ import { buildPrebuiltChartOfAccounts } from '../src/app/lib/accounting/prebuilt
 import { seedChartOfAccountsForTenant } from '../src/app/lib/accounting/seedChartOfAccounts'
 import { ensureDefaultRolesForTenant } from '../src/app/lib/settings/roleRepository'
 import { ensurePlatformOperator } from '../src/app/lib/platform/operator'
+import { provisionGhanaHotel } from '../src/app/lib/platform/ghanaStarter'
 
 const prisma = new PrismaClient()
 
@@ -165,42 +166,6 @@ async function main() {
   await ensureDefaultRolesForTenant(demoTenant.id)
   console.log('✅ Created default roles')
 
-  // Create demo rooms
-  const roomTypes = ['standard', 'deluxe', 'suite']
-  const floors = [1, 2, 3]
-  const roomNumbers = ['101', '102', '103', '201', '202', '203', '301', '302', '303']
-
-  for (let i = 0; i < roomNumbers.length; i++) {
-    const roomNumber = roomNumbers[i]
-    const floor = floors[Math.floor(i / 3)]
-    const roomType = roomTypes[i % roomTypes.length]
-    const features = roomType === 'suite' ? ['king_bed', 'ocean_view', 'balcony', 'jacuzzi'] :
-                    roomType === 'deluxe' ? ['king_bed', 'ocean_view'] : ['queen_bed']
-
-    await prisma.room.upsert({
-      where: {
-        tenantId_propertyId_roomNumber: {
-          tenantId: demoTenant.id,
-          propertyId: demoProperty.id,
-          roomNumber
-        }
-      },
-      update: {},
-      create: {
-        tenantId: demoTenant.id,
-        propertyId: demoProperty.id,
-        roomNumber,
-        roomType,
-        floor,
-        features,
-        status: 'clean',
-        isActive: true
-      }
-    })
-  }
-
-  console.log('✅ Created demo rooms')
-
   // No demo guests: deploys must not add test records. Guests for testing come from
   // Settings → Sample Data, which can be removed again (and Clear test data resets them).
 
@@ -233,21 +198,15 @@ async function main() {
       roomSettings: {
         defaultStatus: 'clean',
         statuses: ['clean', 'occupied', 'dirty', 'inspected', 'ooo'],
-        // NOT `roomTypes: [...]` here — that key collides with the richer
-        // {id, name, amenities: [], ...} room-type objects Settings > Rooms &
-        // Pricing reads from this same JSON column via /api/settings/
-        // room-management. A plain string here (the old room-status feature's
-        // shape) crashes that screen the moment it tries rt.amenities.includes(...)
-        // on a string. Room types are meant to be created through that screen,
-        // which builds the correct shape.
-        features: ['king_bed', 'queen_bed', 'ocean_view', 'balcony', 'jacuzzi'],
+        features: ['wifi', 'air_conditioning', 'tv'],
         postFirstNightAtCheckin: false,
         nightAuditAutoRun: true,
       },
       financialSettings: {
         currency: 'GHS',
-        taxRate: 12.5,
-        serviceCharge: 10,
+        defaultCurrency: 'GHS',
+        supportedCurrencies: ['GHS'],
+        taxInclusive: false,
         depositRequired: true,
         depositPercentage: 20
       },
@@ -280,6 +239,9 @@ async function main() {
 
   console.log('✅ Created system settings')
 
+  await provisionGhanaHotel(demoTenant.id, demoProperty.name)
+  console.log('✅ Ghana compliance and starter rooms (Standard, Deluxe, Executive)')
+
   const prebuiltCoa = buildPrebuiltChartOfAccounts()
   const coaCount = await seedChartOfAccountsForTenant(
     prisma,
@@ -296,32 +258,6 @@ async function main() {
     ACCOUNT_TYPE_MAP
   )
   console.log(`✅ Seeded ${coaCount} prebuilt Chart of Accounts entries`)
-
-  // ── Ghana Tax Configuration ────────────────────────────────────────────────
-  const taxConfigs = [
-    { code: 'VAT', name: 'Value Added Tax', rate: 15.0, type: 'VAT', glCode: '2110', isInclusive: false },
-    { code: 'NHIL', name: 'National Health Insurance Levy', rate: 2.5, type: 'NHIL', glCode: '2120', isInclusive: false },
-    { code: 'GETFUND', name: 'Ghana Education Trust Fund', rate: 2.5, type: 'GETFund', glCode: '2130', isInclusive: false },
-    { code: 'TOURISM', name: 'Tourism Development Levy', rate: 1.0, type: 'Tourism', glCode: '2150', isInclusive: false },
-    { code: 'WITHHOLDING', name: 'Withholding Tax', rate: 5.0, type: 'Withholding', glCode: '2160', isInclusive: false },
-  ]
-
-  for (const tax of taxConfigs) {
-    await prisma.tax.upsert({
-      where: { tenantId_code: { tenantId: demoTenant.id, code: tax.code } },
-      update: { rate: tax.rate, isActive: true },
-      create: {
-        tenantId: demoTenant.id,
-        code: tax.code,
-        name: tax.name,
-        rate: tax.rate,
-        type: tax.type,
-        isInclusive: tax.isInclusive,
-        isActive: true,
-      },
-    })
-  }
-  console.log(`✅ Seeded ${taxConfigs.length} Ghana tax configurations`)
 
   // ── Payment Methods ────────────────────────────────────────────────────────
   const paymentMethods = [

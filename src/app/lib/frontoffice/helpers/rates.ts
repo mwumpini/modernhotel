@@ -114,3 +114,16 @@ export function quoteFromBreakdown(breakdown: RateBreakdownDay[]): ReservationQu
     breakdown,
   };
 }
+
+/** Price each night's stored room rate through the tax engine. The saved total is not the tax. */
+export function quoteFromRateBreakdown(breakdown: RateBreakdownDay[], taxExempt?: boolean): ReservationQuote {
+  const cents = (amount: number) => Math.round(amount * 100) / 100;
+  const priced = breakdown.map((day) => {
+    const base = cents(day.base || 0);
+    const total = base > 0
+      ? cents(resolveNightlyGross(base, 'subtotal', !!taxExempt))
+      : cents(day.total || 0);
+    return { ...day, base, total };
+  });
+  return quoteFromBreakdown(priced);
+}

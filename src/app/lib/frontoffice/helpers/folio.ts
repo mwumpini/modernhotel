@@ -126,9 +126,9 @@ function inferChargeTaxCategory(description?: string, category?: string): string
 /**
  * Tax on a folio charge via the real compliance engine (Settings → Compliance & Reports
  * → Tax Rate Builder) — replaces the old computeSalesTaxTotal(amount) from tax/engine.ts,
- * which applied the same flat stack to every charge regardless of type (e.g. Tourism
- * Levy, which should only apply to Room/Hotel/Food/Event, was leaking onto things like
- * laundry). Category-aware matching fixes that as a side effect of the engine switch.
+ * which applied the same flat stack to every charge regardless of type. Category-aware
+ * matching uses the charge's tax category. SERVICE is in the Tourism Levy's scope, so a
+ * pool, laundry, or spa charge picks up the same 1.21 factor as a room.
  */
 export function computeChargeTax(amount: number, description?: string, category?: string, taxExempt?: boolean): number {
 	if (!(amount > 0) || taxExempt) return 0;
@@ -620,8 +620,8 @@ export function postCompanyReceipt(
 
 /**
  * Canonical tax rates snapshot, sourced directly from the compliance engine's active
- * rules for GH (category 'HOTEL', so Tourism Levy — which only applies to
- * Room/Hotel/Food/Event — is included the same way it would be on a room charge).
+ * rules for GH (category 'HOTEL', so the Tourism Levy is included the same way it
+ * is on a room charge and on a service charge).
  */
 export function getTaxRates(_self: StoreLike) {
     const { taxes } = useComplianceStore.getState().calculateTax(100, 'HOTEL', SALES_TAX_CONTEXT);
@@ -641,11 +641,11 @@ export function getTaxRates(_self: StoreLike) {
  * reservation itself isn't exempt (e.g. a complimentary item) — it only ever
  * adds exemption, never removes it from an already tax-exempt reservation.
  */
-export function addCharge(self: StoreLike, reservationId: string, description: string, amount: number, forceExempt?: boolean, taxCategory?: string) {
+export function addCharge(self: StoreLike, reservationId: string, description: string, amount: number, forceExempt?: boolean, taxCategory?: string, reference?: string) {
 	const f = getOrCreateFolio(self, reservationId);
 	const reservation = self.reservations?.find((r: any) => r.id === reservationId);
 	const tax = computeChargeTax(amount, description, taxCategory, reservation?.taxExempt || forceExempt);
-	f.charges.push({ id: genChargeId('C'), date: new Date().toISOString(), description, amount, tax, category: taxCategory } as any);
+	f.charges.push({ id: genChargeId('C'), date: new Date().toISOString(), description, amount, tax, category: taxCategory, reference } as any);
 	updateFolioBalances(self, f);
 	self.notify();
 	trackEvent('FO.Folio.ChargePosted', { reservationId, description, amount, tax });

@@ -181,10 +181,39 @@ async function migrateAct1151(tenantId: string, countryCode: string, rows: any[]
   return changed ? prisma.complianceTaxRule.findMany({ where: { tenantId, countryCode } }) : rows
 }
 
+const TOURISM_SERVICE_SCOPE = ['ROOM', 'HOTEL', 'FOOD', 'EVENT', 'SERVICE']
+
+/** Service charges are category SERVICE. The Tourism Levy used to stop at rooms, food,
+ * and events, so those charges were taxed at 1.20 (VAT+NHIL+GETFund) while the engine's
+ * hotel factor is 1.21. Widen only an untouched default list; a customized appliesTo stays. */
+function tourismServiceScopePatch(data: Record<string, any>): Record<string, any> | null {
+  if (String(data.id || '') !== 'gh-tourism') return null
+  const applies = Array.isArray(data.appliesTo) ? data.appliesTo.map(String) : null
+  if (!applies || applies.includes('SERVICE') || applies.includes('ALL')) return null
+  const same = (expected: string[]) =>
+    applies.length === expected.length && expected.every((tag) => applies.includes(tag))
+  if (!same(['ROOM', 'HOTEL', 'FOOD']) && !same(['ROOM', 'HOTEL', 'FOOD', 'EVENT'])) return null
+  return { appliesTo: TOURISM_SERVICE_SCOPE }
+}
+
+async function migrateTourismServiceScope(tenantId: string, countryCode: string, rows: any[]) {
+  if (countryCode !== 'GH') return rows
+  let changed = false
+  for (const row of rows) {
+    const data = { ...(row.data as Record<string, any>), id: row.code }
+    const patch = tourismServiceScopePatch(data)
+    if (!patch) continue
+    await prisma.complianceTaxRule.update({ where: { id: row.id }, data: { data: { ...data, ...patch } } })
+    changed = true
+  }
+  return changed ? prisma.complianceTaxRule.findMany({ where: { tenantId, countryCode } }) : rows
+}
+
 export async function listTaxRules(tenantId: string, countryCode: string) {
   await ensureTaxRulesSeeded(tenantId, countryCode)
   const rows = await prisma.complianceTaxRule.findMany({ where: { tenantId, countryCode } })
-  return (await migrateAct1151(tenantId, countryCode, rows)).map(toStoreTaxRule)
+  const migrated = await migrateAct1151(tenantId, countryCode, rows)
+  return (await migrateTourismServiceScope(tenantId, countryCode, migrated)).map(toStoreTaxRule)
 }
 
 export async function upsertTaxRule(tenantId: string, rule: Record<string, any>) {

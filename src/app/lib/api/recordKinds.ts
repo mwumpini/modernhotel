@@ -7,6 +7,7 @@ export const RECORD_KINDS = [
   'events.receipt',
   'events.folio',
   'fo.clientService',
+  'fo.serviceCharge',
   'fo.inHouseGroup',
   'kitchen.op',
   'setting.system',

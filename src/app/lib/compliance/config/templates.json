@@ -113,7 +113,8 @@
             "ROOM",
             "HOTEL",
             "FOOD",
-            "EVENT"
+            "EVENT",
+            "SERVICE"
           ],
           "description": "Tourism Development Levy (L.I. 2185)",
           "enabled": true,

@@ -11,6 +11,12 @@ import { allPaidModulesOn, applyPaidModules, isPaidModuleKey, type PaidModules }
 
 const ROOM_CONFIG_KEYS = ['roomTypes', 'rooms', 'ratePlans', 'roomStatuses'] as const;
 
+/** Per hotel. A shared key copied the last hotel's rooms onto the next empty one. */
+function roomConfigStorageKey(): string {
+  const sub = typeof window !== 'undefined' ? getClientTenantSubdomain() : '';
+  return sub ? `room.management.${sub}` : 'room.management';
+}
+
 // Deliberately duplicated from lib/demo/index.ts's isDemoFixturesEnabled() rather
 // than imported — that module re-exports applyDemoFixturesIfNeeded, which imports
 // this store, so importing it here would be circular.
@@ -2739,7 +2745,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       }
 
       // Load room management settings
-      const roomManagement = localStorage.getItem('room.management');
+      const roomManagement = localStorage.getItem(roomConfigStorageKey());
       if (roomManagement) {
         const parsed = JSON.parse(roomManagement);
         set({ roomManagement: { ...get().roomManagement, ...parsed } });
@@ -3052,7 +3058,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       // pick up whatever demo-fixture placeholder data happened to be sitting
       // in local `roomManagement` state and push it to the server as if it
       // were real, overwriting a tenant's actual configuration.
-      localStorage.setItem('room.management', JSON.stringify(state.roomManagement));
+      localStorage.setItem(roomConfigStorageKey(), JSON.stringify(state.roomManagement));
 
       // Save POS settings
       try { localStorage.removeItem('manager.pin'); } catch {} // the PIN lives on the server now

@@ -21,6 +21,7 @@ export async function POST(request: NextRequest) {
     trialDays: body.trialDays,
     adminName: String(body.adminName || ''),
     adminEmail: String(body.adminEmail || ''),
+    adminUsername: String(body.adminUsername || ''),
     password: String(body.password || ''),
     modules: body.modules,
   });

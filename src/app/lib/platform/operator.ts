@@ -3,9 +3,11 @@ import { prisma } from '@/app/lib/database/client';
 import { passwordPolicyError } from '@/app/lib/settings/passwordPolicy';
 import { DEFAULT_SECURITY_POLICY } from '@/app/lib/settings/securityPolicy';
 import { ensureDefaultRolesForTenant } from '@/app/lib/settings/roleRepository';
-import { findUserForLogin } from '@/app/lib/auth/loginLookup';
+import { findUserForLogin, normalizeUsername, usernameError, usernameTaken } from '@/app/lib/auth/loginLookup';
 import { addDaysISO, nextPaidUntil, onFreeTrial, parseMonthlyFee, parseTrialDays, paymentDue, readBill, readExpenses, readPayments, readTrial, todayISO } from '@/app/lib/platform/billing';
 import { frontDeskOnly, normalizePaidModules, readPaidModules, type PaidModules } from '@/app/lib/platform/hotelModules';
+import { provisionGhanaHotel } from '@/app/lib/platform/ghanaStarter';
+import { ensureBookingApiKey, newBookingApiKey } from '@/app/lib/booking/websiteApiKey';
 
 import { OPERATOR_ROLE, PLATFORM_SUBDOMAIN } from './operatorRole';
 export { OPERATOR_ROLE, PLATFORM_SUBDOMAIN, isPlatformOperator } from './operatorRole';
@@ -131,6 +133,7 @@ export async function openHotel(input: {
   trialDays: unknown;
   adminName: string;
   adminEmail: string;
+  adminUsername: string;
   password: string;
   modules?: unknown;
 }) {
@@ -141,9 +144,13 @@ export async function openHotel(input: {
   const name = input.name.trim();
   const adminName = input.adminName.trim();
   const adminEmail = input.adminEmail.trim().toLowerCase();
+  const adminUsername = normalizeUsername(input.adminUsername);
   if (name.length < 2) return { error: 'Enter the hotel name.' };
   if (adminName.length < 2) return { error: 'Enter the first admin’s name.' };
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)) return { error: 'Enter a valid admin email.' };
+  if (!adminUsername) return { error: 'Enter a username for the first admin.' };
+  const usernameProblem = usernameError(adminUsername);
+  if (usernameProblem) return { error: usernameProblem };
   const passwordError = passwordPolicyError(input.password, DEFAULT_SECURITY_POLICY.passwordPolicy);
   if (passwordError) return { error: passwordError };
   if (input.hosting !== 'cloud' && input.hosting !== 'local' && input.hosting !== 'sync') return { error: 'Choose where this hotel runs.' };
@@ -176,6 +183,7 @@ export async function openHotel(input: {
         ...(trialDays > 0 ? { trialDays, trialEndsOn } : {}),
         region: 'ghana',
         industry: 'hospitality',
+        bookingApiKey: newBookingApiKey(),
         modules: input.modules == null ? frontDeskOnly() : normalizePaidModules(input.modules),
       },
     },
@@ -185,6 +193,7 @@ export async function openHotel(input: {
     data: {
       tenantId: hotel.id,
       email: adminEmail,
+      username: adminUsername,
       name: adminName,
       password: await bcrypt.hash(input.password, 12),
       role: 'admin',
@@ -207,9 +216,12 @@ export async function openHotel(input: {
   });
 
   await ensureDefaultRolesForTenant(hotel.id);
+  if ((hotel.metadata as { region?: string } | null)?.region === 'ghana') {
+    await provisionGhanaHotel(hotel.id, name);
+  }
 
   return {
-    hotel: { ...presentHotel(hotel), adminEmail },
+    hotel: { ...presentHotel(hotel), adminEmail, adminUsername },
   };
 }
 
@@ -273,14 +285,68 @@ export async function markHotelPaid(id: string) {
   return { hotel: presentHotel(updated) };
 }
 
+/** Sets a new email, username, and/or password on the hotel's first admin, and turns the account back on. */
+export async function resetHotelAdminLogin(id: string, input: { email?: string; username?: string; password?: string }) {
+  const hotel = await prisma.tenant.findUnique({ where: { id }, select: { id: true, subdomain: true } });
+  if (!hotel || hotel.subdomain === PLATFORM_SUBDOMAIN) return { error: 'Hotel not found.' as const };
+  const admin = await prisma.user.findFirst({
+    where: { tenantId: id, role: 'admin' },
+    orderBy: { createdAt: 'asc' },
+  });
+  if (!admin) return { error: 'This hotel has no admin to reset.' as const };
+
+  const email = (input.email ?? '').trim().toLowerCase();
+  const username = normalizeUsername(input.username);
+  const password = input.password ?? '';
+  if (!email && !username && !password) return { error: 'Enter a new email, a username, a new password, or any of them.' as const };
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: 'Enter a valid admin email.' as const };
+  if (username) {
+    const usernameProblem = usernameError(username);
+    if (usernameProblem) return { error: usernameProblem };
+    if (await usernameTaken(id, username, admin.id)) return { error: 'That username is already used in this hotel.' as const };
+  }
+  if (password) {
+    const passwordError = passwordPolicyError(password, DEFAULT_SECURITY_POLICY.passwordPolicy);
+    if (passwordError) return { error: passwordError };
+  }
+  if (email && email !== (admin.email || '').toLowerCase()) {
+    const taken = await prisma.user.findFirst({
+      where: { tenantId: id, email, NOT: { id: admin.id } },
+      select: { id: true },
+    });
+    if (taken) return { error: 'That email is already used in this hotel.' as const };
+  }
+
+  const prefs = admin.preferences && typeof admin.preferences === 'object' && !Array.isArray(admin.preferences)
+    ? (admin.preferences as Record<string, unknown>)
+    : {};
+  const { recoveryFails: _failedAttempts, ...prefsWithoutLock } = prefs;
+  await prisma.user.update({
+    where: { id: admin.id },
+    data: {
+      ...(email ? { email } : {}),
+      ...(username ? { username } : {}),
+      ...(password
+        ? {
+            password: await bcrypt.hash(password, 12),
+            preferences: { ...prefsWithoutLock, passwordChangedAt: new Date().toISOString() },
+          }
+        : {}),
+      isActive: true,
+    },
+  });
+  return getHotel(id);
+}
+
 export async function getHotel(id: string) {
   const hotel = await prisma.tenant.findUnique({ where: { id } });
   if (!hotel || hotel.subdomain === PLATFORM_SUBDOMAIN) return { error: 'Hotel not found.' as const };
+  const bookingApiKey = await ensureBookingApiKey(id);
   const [admin, staff, rooms, guests, reservations] = await Promise.all([
     prisma.user.findFirst({
       where: { tenantId: id, role: 'admin' },
       orderBy: { createdAt: 'asc' },
-      select: { name: true, email: true, lastLoginAt: true },
+      select: { name: true, email: true, username: true, lastLoginAt: true },
     }),
     prisma.user.count({ where: { tenantId: id } }),
     prisma.room.count({ where: { tenantId: id } }),
@@ -292,6 +358,8 @@ export async function getHotel(id: string) {
       ...presentHotel(hotel),
       adminName: admin?.name ?? null,
       adminEmail: admin?.email ?? null,
+      adminUsername: admin?.username ?? null,
+      bookingApiKey,
       lastLoginAt: admin?.lastLoginAt ? admin.lastLoginAt.toISOString() : null,
       payments: readPayments(hotel.metadata),
       counts: { staff, rooms, guests, reservations },

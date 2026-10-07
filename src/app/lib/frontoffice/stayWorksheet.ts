@@ -65,7 +65,12 @@ function plannedClock(which: 'in' | 'out') {
   return when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
-export function stayClock(stay: Reservation, which: 'in' | 'out') {
+export function stayClock(stay: {
+  arrival?: string;
+  departure?: string;
+  checkedInAt?: string;
+  checkedOutAt?: string;
+}, which: 'in' | 'out') {
   const actual = clockOf(which === 'in' ? stay.checkedInAt : stay.checkedOutAt);
   if (actual) return actual;
   const planned = clockOf(which === 'in' ? stay.arrival : stay.departure);

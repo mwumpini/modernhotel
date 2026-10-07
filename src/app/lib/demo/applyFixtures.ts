@@ -5,6 +5,7 @@
  * DELETE with the rest of `src/app/lib/demo` before production.
  */
 
+import { getClientTenantSubdomain } from '../api/clientTenant';
 import { useSettingsStore } from '../settings/store';
 import { isDemoFixturesEnabled } from './index';
 import {
@@ -56,7 +57,10 @@ export function applyDemoFixturesIfNeeded(): void {
   // data must never get pushed up as if it were a tenant's real, already-synced
   // room configuration. Persist locally only, matching the previous behavior of
   // surviving a reload within this browser.
-  try { localStorage.setItem('room.management', JSON.stringify(newRoomManagement)); } catch {}
+  try {
+    const sub = getClientTenantSubdomain();
+    localStorage.setItem(sub ? `room.management.${sub}` : 'room.management', JSON.stringify(newRoomManagement));
+  } catch {}
   state.publish();
   applied = true;
 }

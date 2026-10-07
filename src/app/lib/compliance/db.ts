@@ -102,18 +102,18 @@ function migrateLegacyGhanaRates(items: JsonObject[]): JsonObject[] {
       changed = true;
       return { ...t, name: 'Tier 3' };
     }
-    // Tourism Levy originally excluded EVENT from its scope, so it silently never applied to
-    // Events & Conferences bills — a coverage bug, not a deliberate exclusion. Only widen scope
-    // for tenants still on the exact original default; a tenant who already customized appliesTo
-    // (e.g. narrowed it) keeps their own choice untouched.
-    if (
-      t.id === 'gh-tourism' &&
-      Array.isArray(t.appliesTo) &&
-      t.appliesTo.length === 3 &&
-      ['ROOM', 'HOTEL', 'FOOD'].every((tag) => (t.appliesTo as string[]).includes(tag))
-    ) {
-      changed = true;
-      return { ...t, appliesTo: ['ROOM', 'HOTEL', 'FOOD', 'EVENT'] };
+    // Tourism Levy originally covered only rooms, food, and (later) events. Hotel ancillary
+    // charges — pool, laundry, spa — are category SERVICE, so they picked up VAT+NHIL+GETFund
+    // (factor 1.20) and missed the 1% levy the rest of the hotel bills at 1.21. Only widen
+    // scope for tenants still on an untouched default list; a customized appliesTo is left alone.
+    if (t.id === 'gh-tourism' && Array.isArray(t.appliesTo) && !t.appliesTo.includes('SERVICE') && !t.appliesTo.includes('ALL')) {
+      const tags = t.appliesTo as string[];
+      const isOriginal = tags.length === 3 && ['ROOM', 'HOTEL', 'FOOD'].every((tag) => tags.includes(tag));
+      const isWithEvent = tags.length === 4 && ['ROOM', 'HOTEL', 'FOOD', 'EVENT'].every((tag) => tags.includes(tag));
+      if (isOriginal || isWithEvent) {
+        changed = true;
+        return { ...t, appliesTo: ['ROOM', 'HOTEL', 'FOOD', 'EVENT', 'SERVICE'] };
+      }
     }
     return t;
   });

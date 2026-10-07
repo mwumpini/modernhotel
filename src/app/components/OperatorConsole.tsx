@@ -40,8 +40,10 @@ type FeePayment = { paidOn: string; amount: number; paidUntil: string };
 type HotelDetail = Hotel & {
   adminName: string | null;
   adminEmail: string | null;
+  adminUsername: string | null;
   lastLoginAt: string | null;
   payments: FeePayment[];
+  bookingApiKey: string;
   counts: { staff: number; rooms: number; guests: number; reservations: number };
 };
 
@@ -115,6 +117,7 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
   const [trialDays, setTrialDays] = useState('14');
   const [adminName, setAdminName] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
+  const [adminUsername, setAdminUsername] = useState('');
   const [password, setPassword] = useState('');
   const [modules, setModules] = useState<PaidModules>(frontDeskOnly);
 
@@ -174,6 +177,7 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
     setSubdomain('');
     setAdminName('');
     setAdminEmail('');
+    setAdminUsername('');
     setPassword('');
     setHosting('cloud');
     setFee(String(DEFAULT_MONTHLY_FEE.cloud));
@@ -203,7 +207,7 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
       const res = await fetch('/api/platform/tenants', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, subdomain, hosting, monthlyFee, trialDays: days, adminName, adminEmail, password, modules }),
+        body: JSON.stringify({ name, subdomain, hosting, monthlyFee, trialDays: days, adminName, adminEmail, adminUsername, password, modules }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -212,8 +216,8 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
       }
       setNotice(
         data.onTrial && data.trialEndsOn
-          ? `${data.name} is open on a free trial until ${formatDay(data.trialEndsOn)}. The admin signs in with Tenant ID “${data.subdomain}” and ${data.adminEmail}.`
-          : `${data.name} is open with no free trial. Record a payment for them to keep signing in. The admin signs in with Tenant ID “${data.subdomain}” and ${data.adminEmail}.`,
+          ? `${data.name} is open on a free trial until ${formatDay(data.trialEndsOn)}. The admin signs in with Tenant ID “${data.subdomain}”, username ${data.adminUsername}, or ${data.adminEmail}.`
+          : `${data.name} is open with no free trial. Record a payment for them to keep signing in. The admin signs in with Tenant ID “${data.subdomain}”, username ${data.adminUsername}, or ${data.adminEmail}.`,
       );
       resetForm();
       setCreating(false);
@@ -311,6 +315,28 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
     }
   };
 
+  const resetAdminLogin = async (hotel: Hotel, email: string, username: string, password: string) => {
+    setError('');
+    setNotice('');
+    setBusy('login');
+    try {
+      const res = await fetch(`/api/platform/tenants/${hotel.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resetLogin: true, adminEmail: email, adminUsername: username, password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || 'Could not reset the admin sign-in.');
+        return;
+      }
+      setNotice(`${hotel.name}: the admin now signs in with Tenant ID “${hotel.subdomain}”${data.adminUsername ? `, username ${data.adminUsername},` : ''} or ${data.adminEmail}. The new password is the one you just typed.`);
+      await refreshSelected(hotel.id);
+    } finally {
+      setBusy('');
+    }
+  };
+
   const saveModules = async (hotel: Hotel, next: PaidModules) => {
     setError('');
     setBusy('modules');
@@ -389,6 +415,7 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
             onPaid={markPaid}
             onSetTrial={setTrial}
             onModules={saveModules}
+            onResetLogin={resetAdminLogin}
             onDeleteAsk={() => setDeleteOpen(true)}
             onDeleteText={setDeleteText}
             onDelete={deleteHotel}
@@ -515,9 +542,18 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
                 variant="bordered"
                 classNames={fieldClass}
               />
+              <Input label="First admin name" value={adminName} onChange={(e) => setAdminName(e.target.value)} isRequired variant="bordered" classNames={fieldClass} />
               <div className="grid gap-4 sm:grid-cols-2">
-                <Input label="First admin name" value={adminName} onChange={(e) => setAdminName(e.target.value)} isRequired variant="bordered" classNames={fieldClass} />
                 <Input type="email" label="First admin email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} isRequired variant="bordered" classNames={fieldClass} />
+                <Input
+                  label="First admin username"
+                  description="3–32 characters: letters, numbers, dot, dash or underscore. They can sign in with this or the email."
+                  value={adminUsername}
+                  onChange={(e) => setAdminUsername(e.target.value)}
+                  isRequired
+                  variant="bordered"
+                  classNames={fieldClass}
+                />
               </div>
               <Input
                 type="password"
@@ -859,6 +895,7 @@ function HotelDesk({
   onPaid,
   onSetTrial,
   onModules,
+  onResetLogin,
   onDeleteAsk,
   onDeleteText,
   onDelete,
@@ -876,14 +913,25 @@ function HotelDesk({
   onPaid: (hotel: Hotel) => void;
   onSetTrial: (hotel: Hotel, days: number) => void;
   onModules: (hotel: Hotel, modules: PaidModules) => void;
+  onResetLogin: (hotel: Hotel, email: string, username: string, password: string) => void;
   onDeleteAsk: () => void;
   onDeleteText: (value: string) => void;
   onDelete: (hotel: Hotel) => void;
 }) {
   const [trialInput, setTrialInput] = useState('14');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [keyCopied, setKeyCopied] = useState(false);
+  const [copyError, setCopyError] = useState('');
   useEffect(() => {
     if (!detail) return;
     setTrialInput(String(detail.trialDays ?? 0));
+    setLoginEmail(detail.adminEmail || '');
+    setLoginUsername(detail.adminUsername || '');
+    setLoginPassword('');
+    setKeyCopied(false);
+    setCopyError('');
   }, [detail]);
 
   if (loading || !detail) {
@@ -931,10 +979,51 @@ function HotelDesk({
             <Fact label="Tenant ID" value={detail.subdomain} />
             <Fact label="Where it runs" value={hostingLabel(detail.hosting)} />
             <Fact label="Opened" value={formatDay(detail.createdAt)} />
-            <Fact label="First admin" value={detail.adminName ? `${detail.adminName}${detail.adminEmail ? ` · ${detail.adminEmail}` : ''}` : 'No admin on file'} />
+            <Fact label="First admin" value={detail.adminName ? [detail.adminName, detail.adminUsername, detail.adminEmail].filter(Boolean).join(' · ') : 'No admin on file'} />
             <Fact label="Last sign-in" value={detail.lastLoginAt ? formatWhen(detail.lastLoginAt) : 'Has not signed in'} />
             <Fact label="Monthly fee" value={detail.monthlyFee == null ? 'Not billed' : cedis(detail.monthlyFee)} />
           </div>
+          <div className="space-y-3 rounded-2xl border border-gray-200 bg-white p-4">
+            <h3 className="text-sm font-semibold text-ghana-black">Website booking</h3>
+            <p className="text-xs text-gray-500">
+              Share this key with the person who builds the hotel website. Their Book button uses it to see which rooms are free and to send the booking to this front desk. The hotel collects the money. Nothing is charged here.
+            </p>
+            <code className="block break-all rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-800">{detail.bookingApiKey}</code>
+            <button
+              type="button"
+              className="rounded-full bg-ghana-green px-4 py-1.5 text-sm font-medium text-white"
+              onClick={() => {
+                void navigator.clipboard.writeText(detail.bookingApiKey).then(
+                  () => { setKeyCopied(true); setCopyError(''); },
+                  () => setCopyError('Copy did not work. Select the key and copy it.'),
+                );
+              }}
+            >
+              {keyCopied ? 'Copied' : 'Copy key'}
+            </button>
+            {copyError && <p className="text-xs text-red-600">{copyError}</p>}
+            <div className="space-y-1 text-xs text-gray-600">
+              <p>Free rooms: GET /api/booking/availability?arrival=YYYY-MM-DD&amp;departure=YYYY-MM-DD</p>
+              <p>Make a booking: POST /api/booking/reservations</p>
+              <p>Send the key as Authorization: Bearer, or as the X-Api-Key header. Do not put the key in the web address.</p>
+            </div>
+          </div>
+          <form
+            className="space-y-3 rounded-2xl border border-gray-200 bg-white p-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              onResetLogin(detail, loginEmail, loginUsername, loginPassword);
+            }}
+          >
+            <h3 className="text-sm font-semibold text-ghana-black">Reset admin sign-in</h3>
+            <p className="text-xs text-gray-500">Use this when the hotel admin has forgotten the email, the username, or the password. The old password stops working.</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input label="Admin email" type="email" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} isRequired variant="bordered" classNames={fieldClass} />
+              <Input label="Admin username" description="Letters, numbers, dot, dash or underscore. They can sign in with this or the email." value={loginUsername} onChange={(e) => setLoginUsername(e.target.value)} variant="bordered" classNames={fieldClass} />
+            </div>
+            <Input label="New password" type="password" description="At least 8 characters, with an uppercase letter, a lowercase letter, a number, and a special character." value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} isRequired variant="bordered" classNames={fieldClass} />
+            <Button type="submit" className="bg-ghana-green text-white" isLoading={busy === 'login'} isDisabled={!detail.adminName}>Reset sign-in</Button>
+          </form>
           <div className="rounded-2xl border border-gray-200 bg-white p-4">
             <h3 className="text-sm font-semibold text-ghana-black">Modules</h3>
             <p className="mt-1 text-xs text-gray-500">What this hotel has paid for. The hotel cannot turn these on.</p>

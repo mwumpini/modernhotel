@@ -1,5 +1,9 @@
-// Builds one HTML page per tester from TESTER_SCRIPT.md.
-// Run: node scripts/build-tester-html.mjs  →  docs/testers/tester-{1,2,3}-*.html
+// Builds the tester pages from TESTER_SCRIPT.md.
+// Run: node scripts/build-tester-html.mjs
+//   docs/testers/tester-{1,2,3}-*.html          three people (unchanged split)
+//   docs/testers/one-tester.html                one person does every step
+//   docs/testers/two-tester-1-hotel.html        two people: the hotel floor
+//   docs/testers/two-tester-2-office.html       two people: the office
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -37,6 +41,11 @@ function sectionOwner(heading) {
 }
 
 function textFor(letter) {
+  return textForLetters([letter]);
+}
+
+function textForLetters(letters) {
+  const set = new Set(letters);
   const parts = [];
   for (const h1 of chunks(source, 1)) {
     const h = h1.heading || '';
@@ -47,13 +56,97 @@ function textFor(letter) {
       }
     } else if (/^Day \d/.test(h)) {
       const subs = chunks(h1.lines.join('\n'), 2);
-      const mine = subs.filter((s) => s.heading && sectionOwner(s.heading) === letter);
+      const mine = subs.filter((s) => s.heading && set.has(sectionOwner(s.heading)));
       if (mine.length) parts.push(`# ${h}\n\n` + mine.map((s) => s.lines.join('\n')).join('\n'));
     } else {
       parts.push(h1.lines.join('\n'));
     }
   }
   return parts.join('\n\n');
+}
+
+function otherTester(mine, letter) {
+  if (mine.has(letter)) return null;
+  return mine.has('C') ? 'Tester 1' : 'Tester 2';
+}
+
+function retitle(text) {
+  return text
+    .replace(/## Day 1 morning: setting up \(C first\)/g, '## Day 1 morning')
+    .replace(/## Day 1: Tester A \(front desk\)/g, '## Day 1 front desk')
+    .replace(/## Day 1: Tester B \(stores and restaurant\)/g, '## Day 1 stores and restaurant')
+    .replace(/## Day 1: Tester C \(back office\)/g, '## Day 1 back office')
+    .replace(/## Day 1: end of day \(A\)/g, '## Day 1 end of day')
+    .replace(/## Day (\d): Tester A\b/g, '## Day $1 front desk')
+    .replace(/## Day (\d): Tester B\b/g, '## Day $1 stores and restaurant')
+    .replace(/## Day (\d): Tester C\b/g, '## Day $1 back office');
+}
+
+function rewriteHandoffs(text, mine) {
+  const lines = text.split('\n').flatMap((line) => {
+    const waitOnly = /^\*Wait for ([ABC])/.exec(line.trim());
+    if (waitOnly) {
+      const who = otherTester(mine, waitOnly[1]);
+      if (!who) return [];
+      const step = /([ABC]\d+)/.exec(line);
+      return [step ? `*Wait for ${who} to finish step ${step[1]}.*` : `*Wait for ${who}.*`];
+    }
+    let next = line;
+    if (/Wait for B's Day 2/.test(next)) {
+      const who = otherTester(mine, 'B');
+      next = who
+        ? next.replace(/\*Wait for B's Day 2 till close \(B21\)\.\*/, `*Wait for ${who} to finish step B21.*`)
+        : next.replace(/\s*\*Wait for B's Day 2 till close \(B21\)\.\*/, '');
+    }
+    next = next.replace(/\*Wait for ([ABC])(\d+)\.\*/g, (_, letter, num) => {
+      const who = otherTester(mine, letter);
+      return who ? `*Wait for ${who} to finish step ${letter}${num}.*` : '';
+    });
+    if (/Tell A and B/.test(next)) {
+      const who = otherTester(mine, 'A');
+      next = who
+        ? `**C5. 📣 Tell ${who}:** "Rooms and stock places are ready."`
+        : '**C5. Setup is done.** Rooms and stock places are ready. Carry on with the next part.';
+    }
+    next = next.replace(/^(\d+\. )?📣 \*\*Tell ([ABC])\*\*([^\n]*)$/g, (_, num, letter, rest) => {
+      const who = otherTester(mine, letter);
+      return who ? `${num || ''}📣 **Tell ${who}**${rest}` : '';
+    });
+    next = next.replace(/when B says the delivery is in/g, () => {
+      const who = otherTester(mine, 'B');
+      return who
+        ? `when ${who} says the delivery is in`
+        : 'after you receive the goods in step B4. Come back to Visitors and log him out';
+    });
+    next = next.replace(/until C records the payment/g, () => {
+      const who = otherTester(mine, 'C');
+      return who ? `until ${who} records the payment` : 'until you record the payment in the accounting steps';
+    });
+    return [next];
+  });
+  return lines.join('\n');
+}
+
+function prepare(letters, mode) {
+  let text = textForLetters(letters);
+  text = text.replace(
+    '- **Do only your own letter.** Each step starts with **A**, **B** or **C**.\n- **Wait** when a step says *wait for*. Another tester has to finish something first. Message them on WhatsApp (or call) when you finish a step that someone is waiting for. Those steps are marked **📣 Tell A / B / C**.',
+    mode === 'solo'
+      ? '- **Do every step from the top.** You are the only tester. One login is enough.\n- **Do not wait for anyone.** The steps are already in the order you should do them.'
+      : '- **Do only the steps on this page.** The other person has the other page.\n- **Wait** only when a step says to wait for the other tester. Message them when you finish a step marked 📣.'
+  );
+  text = text.replace('# Answer sheet (C checks, everyone can use)', '# Answer sheet');
+  text = text.replace(
+    '1. Each tester sends the owner this script with ✅ / ❌ ticks and their notes.',
+    mode === 'solo'
+      ? '1. Press **Copy my results** and keep that note. The ticks stay in this browser too.'
+      : '1. Each of you presses **Copy my results** and sends that note to the owner.'
+  );
+  text = rewriteHandoffs(retitle(text), new Set(letters));
+  // Each part of the day is its own section, so the top links are not all called "Day 1".
+  text = text.replace(/^# Day \d[^\n]*\n+/gm, '');
+  text = text.replace(/^## Day /gm, '# Day ');
+  return text;
 }
 
 function personalise(text, letter) {
@@ -178,14 +271,21 @@ function render(md) {
 // ---------- page ----------
 
 function page(t) {
-  const { html, days } = render(personalise(textFor(t.letter), t.letter));
+  const { html, days } = render(t.markdown || personalise(textFor(t.letter), t.letter));
   const nav = days.map((d) => `<a href="#${d.id}">${esc(d.title)}</a>`).join('');
+  const who = t.who || `Tester ${t.n}`;
+  const storage = t.storage || `hotelTest.tester${t.n}.v1`;
+  const copyLabel = t.copyLabel || `Hotel test: Tester ${t.n}`;
+  const intro = t.intro || `<p><strong>You are Tester ${t.n}</strong> (${esc(t.role)}). Your steps are numbered <strong>${t.letter}1, ${t.letter}2, …</strong>. This page shows only your steps.</p>
+<p>Under each step, press <strong>✅ Pass</strong> or <strong>❌ Fail</strong>. If it fails, write what happened in the box. This browser remembers your ticks.</p>
+<p>At the end of each day, press <strong>Copy my results</strong> and paste the result into WhatsApp for the owner.</p>
+<p>Your name: <input id="tname" style="font:inherit;padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text)" placeholder="Type your name"></p>`;
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tester ${t.n} Script</title>
+<title>${esc(t.title || `Tester ${t.n} Script`)}</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--text:#1d2330;--muted:#5b6475;--line:#e3e6ec;--accent:#1f6feb;--accent-soft:#e8f0fe;--pass:#1a7f37;--pass-soft:#e6f4ea;--fail:#c62828;--fail-soft:#fdecea;--shout:#fff6db;--wait:#eef2f7;--th:#f0f2f6}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1216;--card:#171b21;--text:#e6e9ef;--muted:#9aa3b2;--line:#2a313b;--accent:#58a6ff;--accent-soft:#132339;--pass:#3fb950;--pass-soft:#12261a;--fail:#f47067;--fail-soft:#2d1615;--shout:#2b2412;--wait:#1b2129;--th:#1d232b}}
@@ -225,24 +325,21 @@ code{background:var(--th);padding:0 4px;border-radius:4px}
 </head>
 <body>
 <header><div class="bar">
-  <div class="who">Tester ${t.n} <small>${esc(t.role)}</small></div>
+  <div class="who">${esc(who)} <small>${esc(t.role)}</small></div>
   <div class="progress"><span id="done">0</span> / <span id="total">0</span> steps checked · <span id="fails">0</span> failed</div>
   <div class="actions"><button type="button" id="copy">Copy my results</button><button type="button" onclick="window.print()">Print</button></div>
   <div class="meter"><i id="meter"></i></div>
   <nav><a href="#top">Start</a>${nav}</nav>
 </div></header>
 <main id="top">
-<h1>Hotel system test: Tester ${t.n}</h1>
-<div class="intro"><p><strong>You are Tester ${t.n}</strong> (${esc(t.role)}). Your steps are numbered <strong>${t.letter}1, ${t.letter}2, …</strong>. This page shows only your steps.</p>
-<p>Under each step, press <strong>✅ Pass</strong> or <strong>❌ Fail</strong>. If it fails, write what happened in the box. This browser remembers your ticks.</p>
-<p>At the end of each day, press <strong>Copy my results</strong> and paste the result into WhatsApp for the owner.</p>
-<p>Your name: <input id="tname" style="font:inherit;padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text)" placeholder="Type your name"></p></div>
+<h1>${esc(t.heading || `Hotel system test: Tester ${t.n}`)}</h1>
+<div class="intro">${intro}</div>
 ${html}
 </main>
 <div class="toast" id="toast"></div>
 <script>
 (function(){
-  var KEY='hotelTest.tester${t.n}.v1', state={};
+  var KEY='${storage}', state={};
   try{state=JSON.parse(localStorage.getItem(KEY)||'{}')||{};}catch(e){state={};}
   function save(){try{localStorage.setItem(KEY,JSON.stringify(state));}catch(e){}}
   var steps=[].slice.call(document.querySelectorAll('.step'));
@@ -256,7 +353,7 @@ ${html}
   paint();
   function toast(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(function(){t.classList.remove('show');},2200);}
   document.getElementById('copy').addEventListener('click',function(){
-    var lines=['Hotel test: Tester ${t.n}'+(state.__name?' ('+state.__name+')':''),new Date().toLocaleString(),''];
+    var lines=['${copyLabel.replace(/'/g, "\\'")}'+(state.__name?' ('+state.__name+')':''),new Date().toLocaleString(),''];
     steps.forEach(function(s){var rec=state[s.dataset.step]||{};var title=s.querySelector('h4').textContent.trim();
       lines.push((rec.result==='pass'?'✅':rec.result==='fail'?'❌':'⬜')+' '+title+(rec.note?' | '+rec.note.trim():''));});
     var text=lines.join('\\n');
@@ -269,7 +366,54 @@ ${html}
 `;
 }
 
-for (const t of TESTERS) {
+const nameField = `<p>Your name: <input id="tname" style="font:inherit;padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text)" placeholder="Type your name"></p>`;
+const tickHelp = `<p>Under each step, press <strong>✅ Pass</strong> or <strong>❌ Fail</strong>. If it fails, write what happened in the box. This browser remembers your ticks.</p>
+<p>At the end of a day, press <strong>Copy my results</strong>.</p>
+${nameField}`;
+
+const EXTRA = [
+  {
+    file: 'one-tester.html',
+    title: 'One tester',
+    heading: 'Hotel system test: just you',
+    who: 'Just you',
+    role: 'Front desk, restaurant, stores and accounts',
+    storage: 'hotelTest.one.v1',
+    copyLabel: 'Hotel test: one tester',
+    markdown: prepare(['A', 'B', 'C'], 'solo'),
+    intro: `<p><strong>This test is for one person: you.</strong> You do the front desk, the restaurant and the stores, then the accounts. Work from the top of the page to the bottom, over three days. One login is enough.</p>
+<p>Before Day 1, open <strong>System Settings → Sample Data</strong>. It must say <strong>No sample data loaded</strong>. If old test records are there, press <strong>Clear test data</strong> first.</p>
+${tickHelp}`,
+  },
+  {
+    file: 'two-tester-1-hotel.html',
+    title: 'Tester 1 of 2',
+    heading: 'Hotel system test: Tester 1 of 2',
+    who: 'Tester 1 of 2',
+    role: 'Front desk, housekeeping, events, stores, restaurant and kitchen',
+    storage: 'hotelTest.two1.v1',
+    copyLabel: 'Hotel test: Tester 1 of 2',
+    markdown: prepare(['A', 'B'], 'pair'),
+    intro: `<p><strong>You are Tester 1 of 2.</strong> You run the hotel: front desk, housekeeping, events, security, stores, restaurant and kitchen. Your steps are numbered <strong>A</strong> and <strong>B</strong>.</p>
+<p>Tester 2 sets up the rooms and the tax first, then checks the accounts. Wait only when a step says to wait for Tester 2. When a step says 📣, message Tester 2.</p>
+${tickHelp}`,
+  },
+  {
+    file: 'two-tester-2-office.html',
+    title: 'Tester 2 of 2',
+    heading: 'Hotel system test: Tester 2 of 2',
+    who: 'Tester 2 of 2',
+    role: 'Settings, HR and payroll, accounting, tax',
+    storage: 'hotelTest.two2.v1',
+    copyLabel: 'Hotel test: Tester 2 of 2',
+    markdown: prepare(['C'], 'pair'),
+    intro: `<p><strong>You are Tester 2 of 2.</strong> You run the office: settings, staff, accounts and tax. Your steps are numbered <strong>C</strong>.</p>
+<p>Do the Day 1 morning setup first, then tell Tester 1 the rooms are ready. After that, wait when a step says Tester 1 has to finish something.</p>
+${tickHelp}`,
+  },
+];
+
+for (const t of [...TESTERS, ...EXTRA]) {
   const file = path.join(outDir, t.file);
   fs.writeFileSync(file, page(t));
   const steps = (fs.readFileSync(file, 'utf8').match(/class="step" data-step=/g) || []).length;

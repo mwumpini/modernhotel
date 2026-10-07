@@ -41,6 +41,7 @@ import {
   money,
   shortDay,
   sortStays,
+  stayClock,
   stayFigures,
   type StaySortKey,
 } from '../lib/frontoffice/stayWorksheet';
@@ -882,8 +883,8 @@ export default function FrontDeskCounter() {
                       <Fact label="Status" value={deskStatus(selected, today).label} />
                       <Fact label="Type" value={roomTypeName(selected.roomTypeId)} />
                       <Fact label="Nights" value={String(quote?.nights || calculateStayNights(selected.arrival, selected.departure) || 1)} />
-                      <Fact label="Check-in" value={shortDay(selected.arrival)} />
-                      <Fact label="Check-out" value={shortDay(selected.departure)} />
+                      <Fact label="Check-in" value={`${shortDay(selected.arrival)} · ${stayClock(selected, 'in')}`} />
+                      <Fact label="Check-out" value={`${shortDay(selected.departure)} · ${stayClock(selected, 'out')}`} />
                       <Fact label="Rate" value={money(stayFigures(selected).rate)} />
                     </div>
                   </CardBody>

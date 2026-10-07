@@ -304,8 +304,8 @@ export default function FrontdeskDashboard({
       </div>
       )}
 
-      <Card className="border-0 shadow-lg">
-        <CardBody className="p-0">
+      <Card className="min-w-0 overflow-hidden border-0 shadow-lg">
+        <CardBody className="overflow-x-hidden p-0">
           <Tabs
             selectedKey={selectedTab}
             onSelectionChange={(key) => setSelectedTab(key as string)}

@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import HeadingInfo from '../../components/HeadingInfo';
-import { confirmDelete, confirmVoid } from '../../components/DangerConfirm';
+import { confirmVoid } from '../../components/DangerConfirm';
 import {
   Card,
   CardBody,
@@ -25,13 +25,14 @@ import {
   ModalBody,
   ModalFooter,
   Badge,
+  Chip,
   Textarea,
   Divider,
   Pagination,
   Switch
 } from "@heroui/react";
 import { HideCardButton } from '../../components/dashboard/CustomizeViewControl';
-import { worksheetTableClassNames } from '../../components/frontoffice/StayWorksheetTable';
+import { deskResizableTableClassNames, rowClassNames, SortLabel, useResizableColumns } from '../../components/frontoffice/columnResize';
 import { FoDeskKpiCustomize, FO_SERVICE_CHARGES_KPI_SECTIONS, useFrontOfficeDeskVisibility, useFrontOfficeDeskPeriod } from '../../components/frontoffice/foDeskKpi';
 import { useHostSummaryCollapsed } from '../../lib/dashboard/useSummaryCollapsed';
 import { periodToDateFilter } from '../../lib/dashboard/useDashboardPeriod';
@@ -42,9 +43,11 @@ import { trackEvent } from '../../lib/analytics/trackEvent';
 import { openPrintPreview, openHtmlPrintWindow } from '../../lib/print/engine';
 import { listAllTemplates } from '../../lib/print/engine';
 import { buildOrgProfile } from '../../lib/print/buildOrgProfile';
-import { computeChargeTax } from '../../lib/frontoffice/helpers/folio';
+import { computeChargeTax, findMainFolio } from '../../lib/frontoffice/helpers/folio';
+import { stayCompanyName } from '../../lib/frontoffice/companyAccount';
+import { createRecordSync, loadRecords } from '../../lib/api/tenantRecords';
 import { formatMoney } from '../../lib/format/currency';
-import { localStayDay } from '../../lib/frontoffice/stayWorksheet';
+import { localStayDay, shortDay } from '../../lib/frontoffice/stayWorksheet';
 import { DateFilterPills } from '../../components/fb/DateFilterPills';
 const SERVICE_TAX_CATEGORIES = [
   { key: 'SERVICE', label: 'Standard sales tax' },
@@ -53,6 +56,42 @@ const SERVICE_TAX_CATEGORIES = [
   { key: 'HOTEL', label: 'Accommodation' },
 ] as const;
 type ServiceTaxCategory = typeof SERVICE_TAX_CATEGORIES[number]['key'];
+type FolioPayMethod = 'Cash' | 'Card' | 'Mobile Money' | 'Bank Transfer' | 'Check' | 'Corporate Account';
+
+const FOLIO_PAY_METHODS: { key: FolioPayMethod; label: string }[] = [
+  { key: 'Cash', label: '💵 Cash' },
+  { key: 'Card', label: '💳 Card' },
+  { key: 'Mobile Money', label: '📱 Mobile Money' },
+  { key: 'Bank Transfer', label: '🏦 Bank Transfer' },
+  { key: 'Check', label: '📝 Check' },
+  { key: 'Corporate Account', label: '🏢 Corporate Account' },
+];
+
+type ChargeCol = 'id' | 'customer' | 'type' | 'room' | 'category' | 'description' | 'amount' | 'status' | 'date';
+
+const CHARGE_COLUMNS: { key: ChargeCol; label: string; align?: 'left' | 'right' }[] = [
+  { key: 'id', label: 'ID' },
+  { key: 'date', label: 'Date' },
+  { key: 'customer', label: 'Customer' },
+  { key: 'room', label: 'Room' },
+  { key: 'category', label: 'Category' },
+  { key: 'type', label: 'Type' },
+  { key: 'amount', label: 'Amount', align: 'right' },
+  { key: 'status', label: 'Status' },
+  { key: 'description', label: 'Description' },
+];
+
+const CHARGE_COLUMN_WIDTHS: Record<ChargeCol, number> = {
+  id: 136,
+  customer: 144,
+  type: 108,
+  room: 108,
+  category: 168,
+  description: 200,
+  amount: 108,
+  status: 120,
+  date: 112,
+};
 
 
 function suggestedTaxCategory(charge: { name?: string; description?: string; category?: string; taxCategory?: string }): ServiceTaxCategory {
@@ -70,9 +109,9 @@ function suggestedTaxCategory(charge: { name?: string; description?: string; cat
  * Line total incl. tax (table / guest-facing amounts) — via the same compliance-engine
  * computeChargeTax the store's addCharge/addFolioCharge actually save with (see
  * frontoffice/helpers/folio.ts), so this preview can never show a different number than
- * what actually lands on the guest's folio. `description` lets it category-match the
- * same way (e.g. Laundry -> no Tourism Levy) when the charge is known; omit it for a
- * mixed-category aggregate, where a single per-item category wouldn't apply anyway.
+ * what actually lands on the guest's folio. The category is the one on the rate
+ * (service charges are SERVICE), and the Tourism Levy includes that category, so the
+ * guest price uses the engine's 1.21 factor rather than VAT+NHIL+GETFund alone.
  */
 function resolveTaxExempt(guestId?: string, forceExempt?: boolean): boolean | undefined {
   if (forceExempt) return true;
@@ -113,6 +152,76 @@ interface ServiceCharge {
   // toggle — only ever adds exemption on top of whatever the reservation itself has.
   taxExempt?: boolean;
   taxCategory?: string;
+  /** Folio line this charge was posted to, so the table and the room bill stay the same charge. */
+  folioChargeId?: string;
+  reservationId?: string;
+}
+
+function folioSettledStatus(row: ServiceCharge): ServiceCharge {
+  if (row.status === 'void' || !row.reservationId) return row;
+  const folio = findMainFolio(frontOfficeStore.folios, row.reservationId);
+  if (!folio || folio.balance == null) return row;
+  const voided = row.folioChargeId
+    ? folio.charges.some((charge) => (charge as { voidsChargeId?: string }).voidsChargeId === row.folioChargeId)
+    : false;
+  if (voided) return { ...row, status: 'void' };
+  if ((folio.totalCharges || 0) > 0 && folio.balance <= 0.009) {
+    return row.status === 'paid' ? row : { ...row, status: 'paid' };
+  }
+  return row;
+}
+
+/** Rows already on a room bill (including ones posted before this list was saved) belong in the table too. */
+function reconcileServiceCharges(saved: ServiceCharge[], local: ServiceCharge[]): ServiceCharge[] {
+  const byId = new Map<string, ServiceCharge>();
+  for (const row of [...saved, ...local]) byId.set(row.id, { ...byId.get(row.id), ...row });
+  const linked = new Set<string>();
+  for (const row of byId.values()) if (row.folioChargeId) linked.add(row.folioChargeId);
+
+  const catalog = useSettingsStore.getState().roomManagement.serviceCharges || [];
+  for (const stay of frontOfficeStore.reservations) {
+    const folio = findMainFolio(frontOfficeStore.folios, stay.id);
+    if (!folio) continue;
+    for (const charge of folio.charges) {
+      if (linked.has(charge.id)) continue;
+      if ((charge.amount || 0) < 0) continue;
+      if ((charge.description || '').startsWith('VOID ')) continue;
+      if (folio.charges.some((line) => (line as { voidsChargeId?: string }).voidsChargeId === charge.id)) continue;
+      const catalogItem = catalog.find((item) => item.name && (charge.description || '').toLowerCase().includes(item.name.toLowerCase()));
+      if (charge.reference && byId.has(charge.reference)) {
+        const existing = byId.get(charge.reference)!;
+        existing.folioChargeId = charge.id;
+        existing.reservationId = stay.id;
+        linked.add(charge.id);
+        continue;
+      }
+      if (!catalogItem) continue;
+      const qtyMatch = (charge.description || '').match(/\((\d+)x\)\s*$/i);
+      const quantity = qtyMatch ? Number(qtyMatch[1]) || 1 : 1;
+      const row: ServiceCharge = {
+        id: charge.reference || charge.id,
+        guestId: stay.guestId,
+        guestName: stay.guestName,
+        roomNumber: stay.roomId || '',
+        category: catalogItem.id,
+        description: (charge.description || '').replace(/\s*\(\d+x\)\s*$/i, ''),
+        amount: charge.amount,
+        quantity,
+        date: charge.date,
+        status: 'pending',
+        createdBy: 'Front Desk',
+        taxCategory: charge.category,
+        folioChargeId: charge.id,
+        reservationId: stay.id,
+      };
+      byId.set(row.id, row);
+      linked.add(charge.id);
+    }
+  }
+
+  return [...byId.values()]
+    .map(folioSettledStatus)
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 }
 
 const SERVICE_CHARGES_DASHBOARD_SECTIONS = FO_SERVICE_CHARGES_KPI_SECTIONS;
@@ -141,9 +250,10 @@ export default function ServiceChargesPage() {
   }, [kpiPeriod, kpiToday]);
   const [selectedCharge, setSelectedCharge] = useState<ServiceCharge | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [editForm, setEditForm] = useState({ quantity: 1, notes: '' });
   const printingReceipt = useSettingsStore(s => s.printing.receipt);
   const customTemplates = useSettingsStore(s => s.docBuilder?.templates);
   const receiptTemplates = useMemo(() => listAllTemplates('receipt', customTemplates), [customTemplates]);
@@ -177,7 +287,7 @@ export default function ServiceChargesPage() {
   // Payment form state
   const [paymentData, setPaymentData] = useState({
     amount: 0,
-    paymentMethod: 'cash',
+    paymentMethod: 'Cash' as FolioPayMethod,
     reference: '',
     notes: ''
   });
@@ -224,8 +334,35 @@ export default function ServiceChargesPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeVersion]);
 
-  // Mock service charges data (in real app, this would come from a store)
+  // Saved service-charge slips. In-house ones are also on the guest folio.
   const [serviceCharges, setServiceCharges] = useState<ServiceCharge[]>([]);
+  const chargeSync = useRef(createRecordSync<ServiceCharge>('fo.serviceCharge'));
+  const chargesLoaded = useRef(false);
+
+  useEffect(() => {
+    let cancel = false;
+    void loadRecords<ServiceCharge>('fo.serviceCharge').then((saved) => {
+      if (cancel) return;
+      const base = saved || [];
+      chargeSync.current.prime(base);
+      setServiceCharges((prev) => reconcileServiceCharges(base, prev));
+      chargesLoaded.current = true;
+    });
+    return () => { cancel = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!chargesLoaded.current) return;
+    setServiceCharges((prev) => {
+      const next = reconcileServiceCharges(prev, []);
+      return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
+    });
+  }, [storeVersion]);
+
+  useEffect(() => {
+    if (!chargesLoaded.current) return;
+    chargeSync.current.push(serviceCharges);
+  }, [serviceCharges]);
 
   // Charges created before this column used a timestamp id. Give those the same
   // document number new charges get, without posting another charge.
@@ -272,6 +409,45 @@ export default function ServiceChargesPage() {
   // Pagination state
   const [page, setPage] = useState(1);
   const rowsPerPage = 10;
+  const [sortKey, setSortKey] = useState<ChargeCol>('date');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const chargeCols = useResizableColumns<ChargeCol>(CHARGE_COLUMN_WIDTHS, { flexKeys: ['customer', 'category', 'description'] });
+
+  const sortedCharges = useMemo(() => {
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const text = (value: string) => value.toLowerCase();
+    const categoryName = (categoryId: string) =>
+      serviceChargesConfig.find(item => item.id === categoryId)?.name || categoryId;
+    return [...filteredCharges].sort((a, b) => {
+      let cmp = 0;
+      switch (sortKey) {
+        case 'id': cmp = text(a.id).localeCompare(text(b.id)); break;
+        case 'customer': cmp = text(a.guestName).localeCompare(text(b.guestName)); break;
+        case 'type':
+          cmp = text(a.roomNumber === 'External' ? 'external' : 'in-house')
+            .localeCompare(text(b.roomNumber === 'External' ? 'external' : 'in-house'));
+          break;
+        case 'room': cmp = text(a.roomNumber).localeCompare(text(b.roomNumber)); break;
+        case 'category': cmp = text(categoryName(a.category)).localeCompare(text(categoryName(b.category))); break;
+        case 'description': cmp = text(a.description).localeCompare(text(b.description)); break;
+        case 'amount':
+          cmp = serviceChargeGross(a.amount, a.description, a.guestId, a.taxExempt, taxCategoryForCharge(a))
+            - serviceChargeGross(b.amount, b.description, b.guestId, b.taxExempt, taxCategoryForCharge(b));
+          break;
+        case 'status': cmp = text(a.status).localeCompare(text(b.status)); break;
+        case 'date': cmp = (a.date || '').localeCompare(b.date || ''); break;
+      }
+      return cmp * dir;
+    });
+  }, [filteredCharges, serviceChargesConfig, sortDir, sortKey]);
+
+  const sortCharges = (key: ChargeCol) => {
+    if (sortKey === key) setSortDir(dir => dir === 'asc' ? 'desc' : 'asc');
+    else {
+      setSortKey(key);
+      setSortDir(key === 'date' || key === 'amount' ? 'desc' : 'asc');
+    }
+  };
 
   // Handle form submission
   const handleSubmit = (e: React.FormEvent) => {
@@ -335,8 +511,15 @@ export default function ServiceChargesPage() {
           `${formData.description} (${formData.quantity}x)`,
           finalAmount,
           formData.taxExempt,
-          newCharge.taxCategory
+          newCharge.taxCategory,
+          newCharge.id
         );
+        const folio = findMainFolio(frontOfficeStore.folios, reservation.id);
+        const posted = folio?.charges.find((charge) => charge.reference === newCharge.id);
+        if (posted) {
+          newCharge.folioChargeId = posted.id;
+          newCharge.reservationId = reservation.id;
+        }
       }
     }
 
@@ -409,7 +592,7 @@ export default function ServiceChargesPage() {
   };
 
   // Get status color
-  const getStatusColor = (status: string) => {
+  const getStatusColor = (status: string): 'warning' | 'primary' | 'secondary' | 'success' | 'danger' | 'default' => {
     switch (status) {
       case 'pending': return 'warning';
       case 'approved': return 'primary';
@@ -525,52 +708,53 @@ export default function ServiceChargesPage() {
   };
 
   // Handle payment processing
+  const chargeStay = (charge: ServiceCharge | null) => {
+    if (!charge || charge.roomNumber === 'External') return null;
+    const reservation = charge.reservationId
+      ? frontOfficeStore.reservations.find(r => r.id === charge.reservationId)
+      : frontOfficeStore.reservations.find(r => r.guestId === charge.guestId && (r.status === 'checked-in' || r.status === 'checked-out'));
+    if (!reservation) return null;
+    const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
+    return { reservation, company: stayCompanyName(reservation, guest) };
+  };
+
   const handlePayment = (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!selectedCharge) return;
+    if (!selectedCharge || paymentData.amount <= 0) return;
 
-    // Update charge status to paid
-    setServiceCharges(prev => 
-      prev.map(charge => 
-        charge.id === selectedCharge.id 
-          ? { ...charge, status: 'paid' as const }
+    const due = serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId, selectedCharge.taxExempt, taxCategoryForCharge(selectedCharge));
+    const settled = paymentData.amount + 0.009 >= due;
+    setServiceCharges(prev =>
+      prev.map(charge =>
+        charge.id === selectedCharge.id
+          ? { ...charge, status: settled ? 'paid' as const : charge.status }
           : charge
       )
     );
 
-    // Add payment to folio for in-house guests
-    if (selectedCharge.roomNumber !== 'External') {
-      const reservation = frontOfficeStore.reservations.find(r => 
-        r.guestId === selectedCharge.guestId && r.status === 'checked-in'
-      );
-      
-      if (reservation) {
-        frontOfficeStore.addPayment(
-          reservation.id,
-          paymentData.paymentMethod as 'Cash' | 'Card' | 'Mobile Money' | 'Credit' | 'Corporate Account' | 'Bank Transfer' | 'Check',
-          paymentData.amount,
-          {
-            notes: `Payment for ${selectedCharge.description}`,
-            processedBy: currentUserName,
-            ref: paymentData.reference || undefined
-          }
-        );
-      }
+    const stay = chargeStay(selectedCharge);
+    const method: FolioPayMethod = paymentData.paymentMethod === 'Corporate Account' && !stay?.company
+      ? 'Cash'
+      : paymentData.paymentMethod;
+    if (stay) {
+      const note = [paymentData.notes.trim(), `Payment for ${selectedCharge.description}`, selectedCharge.id].filter(Boolean).join(' · ');
+      frontOfficeStore.addPayment(stay.reservation.id, method, paymentData.amount, {
+        notes: note,
+        processedBy: currentUserName,
+        ref: paymentData.reference.trim() || selectedCharge.id,
+      });
     }
 
-    // Track payment event
     trackEvent('FO.ServiceCharge.PaymentProcessed' as any, {
       chargeId: selectedCharge.id,
       amount: paymentData.amount,
-      paymentMethod: paymentData.paymentMethod,
+      paymentMethod: method,
       customerType: selectedCharge.roomNumber === 'External' ? 'external' : 'inhouse'
     }, { sourceModule: 'Guest Services' });
 
-    // Reset payment form and close modal
     setPaymentData({
       amount: 0,
-      paymentMethod: 'cash',
+      paymentMethod: 'Cash',
       reference: '',
       notes: ''
     });
@@ -580,11 +764,35 @@ export default function ServiceChargesPage() {
   // Handle payment button click
   const handlePaymentClick = (charge: ServiceCharge) => {
     setSelectedCharge(charge);
+    const stay = chargeStay(charge);
     setPaymentData(prev => ({
       ...prev,
-      amount: serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge))
+      amount: serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge)),
+      paymentMethod: prev.paymentMethod === 'Corporate Account' && !stay?.company ? 'Cash' : prev.paymentMethod,
     }));
     setIsPaymentModalOpen(true);
+  };
+
+  const openEdit = (charge: ServiceCharge) => {
+    setSelectedCharge(charge);
+    setEditForm({ quantity: Math.max(1, charge.quantity || 1), notes: charge.notes || '' });
+    setIsViewModalOpen(false);
+    setIsEditModalOpen(true);
+  };
+
+  const saveEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCharge || selectedCharge.status === 'void' || selectedCharge.status === 'paid') return;
+    const quantity = Math.max(1, Math.round(editForm.quantity) || 1);
+    const unit = selectedCharge.quantity > 0 ? selectedCharge.amount / selectedCharge.quantity : selectedCharge.amount;
+    const amount = Math.round(unit * quantity * 100) / 100;
+    const notes = editForm.notes.trim();
+    setServiceCharges(prev => prev.map(charge => charge.id === selectedCharge.id ? { ...charge, quantity, amount, notes } : charge));
+    if (selectedCharge.reservationId && selectedCharge.folioChargeId) {
+      const description = quantity > 1 ? `${selectedCharge.description} (${quantity}x)` : selectedCharge.description;
+      frontOfficeStore.updateFolioCharge(selectedCharge.reservationId, selectedCharge.folioChargeId, { amount, description });
+    }
+    setIsEditModalOpen(false);
   };
 
   return (
@@ -592,7 +800,7 @@ export default function ServiceChargesPage() {
       {/* Header */}
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-1.5">
-          <h1 className="text-2xl font-bold text-ghana-black">Service Charges Management</h1>
+          <h1 className="text-2xl font-bold text-ghana-black">Service Charges</h1>
           <HeadingInfo label="About service charges">Manage additional charges for guests (swimming pool, laundry, spa, etc.)</HeadingInfo>
         </div>
         <div className="flex gap-2">
@@ -623,7 +831,7 @@ export default function ServiceChargesPage() {
       </div>
 
       {/* Filters — wrap on phone / zoom; date → Select under lg */}
-      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+      <div className="!mt-3 flex flex-wrap items-center gap-2">
         <Input
           size="sm"
           aria-label="Search service charges"
@@ -678,7 +886,7 @@ export default function ServiceChargesPage() {
 
       {/* Payment Summary — totals reflect the active filter so cards match table rows */}
       {!summaryCollapsed && hiddenStatsCount < SERVICE_CHARGES_DASHBOARD_SECTIONS.length && (
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+      <div className="!mt-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
         {!isHidden('svc.totalCharges') && (
         <Card className="relative border border-gray-200 shadow-none">
           <CardBody className="px-2 py-1.5 text-center">
@@ -735,150 +943,91 @@ export default function ServiceChargesPage() {
       )}
 
       {/* Service Charges Table */}
-      <Card className="min-w-0 overflow-hidden border-0 shadow-lg">
-        <CardBody className="px-2 py-3">
+      <Card className="!mt-3 min-w-0 overflow-hidden border-0 shadow-lg">
+        <CardBody className="overflow-x-hidden px-2 py-3">
+          <div ref={chargeCols.frameRef} style={chargeCols.frameStyle}>
           <Table
             aria-label="Service charges table"
             removeWrapper
-            classNames={{
-              ...worksheetTableClassNames,
-              base: 'max-w-full overflow-x-auto',
-              td: 'max-w-0 overflow-hidden border-b border-gray-100 px-2 py-2.5 align-middle',
-            }}
+            classNames={deskResizableTableClassNames()}
           >
-            <TableHeader>
-              <TableColumn className="w-[8.5rem]">ID</TableColumn>
-              <TableColumn className="w-[8rem]">CUSTOMER</TableColumn>
-              <TableColumn className="w-[5.5rem]">TYPE</TableColumn>
-              <TableColumn className="w-[6.5rem]">ROOM/REF</TableColumn>
-              <TableColumn className="w-[12.65rem]">CATEGORY</TableColumn>
-              <TableColumn>DESCRIPTION</TableColumn>
-              <TableColumn className="w-[5.5rem]">AMOUNT</TableColumn>
-              <TableColumn className="w-[6.5rem]">STATUS</TableColumn>
-              <TableColumn className="w-[6.5rem]">DATE</TableColumn>
-              <TableColumn className="w-[12rem]">ACTIONS</TableColumn>
-            </TableHeader>
-            <TableBody emptyContent={<div className="text-center text-gray-500 py-8">No service charges found</div>}>
-              {filteredCharges.length === 0 ? [] as any : (
-                filteredCharges
-                  .slice((page - 1) * rowsPerPage, page * rowsPerPage)
-                  .map((charge) => {
-                  const categoryInfo = getCategoryInfo(charge.category);
-                  const isExternal = charge.roomNumber === 'External';
-                  return (
-                    <TableRow key={charge.id}>
-                      <TableCell>
-                        <div className="truncate font-medium" title={charge.id}>{charge.id}</div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="font-medium">{charge.guestName}</div>
-                        {isExternal && (
-                          <div className="text-xs text-gray-500">External Customer</div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge 
-                          color={isExternal ? 'secondary' : 'primary'} 
-                          variant="flat"
-                        >
-                          {isExternal ? 'External' : 'In-House'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge color="primary" variant="flat">
-                          {isExternal ? 'External' : `Room ${charge.roomNumber}`}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <span className="block truncate" title={`${categoryInfo.icon} ${categoryInfo.name}`}>
-                          {categoryInfo.icon} {categoryInfo.name}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <div className="truncate" title={charge.description}>{charge.description}</div>
-                        {charge.quantity > 1 && (
-                          <div className="text-sm text-gray-500">Qty: {charge.quantity}</div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="font-semibold">₵{formatMoney(serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge)))}</div>
-                        {charge.quantity > 1 && (
-                          <div className="text-xs text-gray-500">
-                            ₵{formatMoney(serviceChargeGross(charge.amount / charge.quantity, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge)))} / unit
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold
-                          ${charge.status === 'paid' ? 'bg-green-100 text-green-700 border border-green-200'
-                          : charge.status === 'approved' ? 'bg-blue-100 text-blue-700 border border-blue-200'
-                          : charge.status === 'billed' ? 'bg-purple-100 text-purple-700 border border-purple-200'
-                          : 'bg-amber-100 text-amber-700 border border-amber-200'}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full
-                            ${charge.status === 'paid' ? 'bg-green-500'
-                            : charge.status === 'approved' ? 'bg-blue-500'
-                            : charge.status === 'billed' ? 'bg-purple-500'
-                            : 'bg-amber-500'}`} />
-                          {charge.status.charAt(0).toUpperCase() + charge.status.slice(1)}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <div className="text-sm">
-                          {new Date(charge.date).toLocaleDateString()}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {new Date(charge.date).toLocaleTimeString()}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          <Button
-                            size="sm"
-                            color="primary"
-                            variant="solid"
-                            className="min-w-0 bg-blue-600 px-2 font-semibold text-white"
-                            onClick={() => {
-                              setSelectedCharge(charge);
-                              setIsViewModalOpen(true);
-                            }}
-                          >
-                            View
-                          </Button>
-                          {charge.status !== 'paid' && (
-                            <Button
-                              size="sm"
-                              color="success"
-                              variant="solid"
-                              className="min-w-0 bg-green-600 px-2 font-semibold text-white"
-                              onClick={() => handlePaymentClick(charge)}
-                            >
-                              Pay
-                            </Button>
-                          )}
-                          <Button
-                            size="sm"
-                            color="default"
-                            variant="solid"
-                            className="min-w-0 bg-gray-600 px-2 font-semibold text-white"
-                            onClick={() => {
-                              setSelectedCharge(charge);
-                              setIsEditModalOpen(true);
-                            }}
-                          >
-                            Edit
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
+            <TableHeader columns={CHARGE_COLUMNS}>
+              {(col) => (
+                <TableColumn key={col.key} className="relative" style={chargeCols.style(col.key)}>
+                  <SortLabel
+                    active={sortKey === col.key}
+                    dir={sortDir}
+                    align={col.align}
+                    onPress={() => sortCharges(col.key)}
+                  >
+                    {col.label}
+                  </SortLabel>
+                  {chargeCols.sizer(col.key, col.label)}
+                </TableColumn>
               )}
+            </TableHeader>
+            <TableBody emptyContent={<div className="py-8 text-center text-gray-500">No service charges found</div>} items={sortedCharges.slice((page - 1) * rowsPerPage, page * rowsPerPage)}>
+              {(charge) => {
+                const categoryInfo = getCategoryInfo(charge.category);
+                const isExternal = charge.roomNumber === 'External';
+                const gross = serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge));
+                const unitGross = charge.quantity > 1
+                  ? serviceChargeGross(charge.amount / charge.quantity, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge))
+                  : gross;
+                const statusLabel = charge.status.charAt(0).toUpperCase() + charge.status.slice(1);
+                const cells: Record<ChargeCol, React.ReactNode> = {
+                  id: <span className="text-gray-600" title={charge.id}>{charge.id}</span>,
+                  customer: (
+                    <span className="block truncate font-semibold text-ghana-black" title={charge.guestName}>{charge.guestName}</span>
+                  ),
+                  type: <Chip size="sm" variant="flat" color={isExternal ? 'secondary' : 'primary'} className="max-w-full">{isExternal ? 'External' : 'In-House'}</Chip>,
+                  room: isExternal ? (
+                    <span className="block truncate text-gray-400">External</span>
+                  ) : (
+                    <Chip size="sm" variant="flat" color="success">{charge.roomNumber}</Chip>
+                  ),
+                  category: (
+                    <span className="block truncate" title={`${categoryInfo.icon} ${categoryInfo.name}`}>
+                      {categoryInfo.icon} {categoryInfo.name}
+                    </span>
+                  ),
+                  description: (
+                    <>
+                      <span className="block truncate" title={charge.description}>{charge.description}</span>
+                      {charge.quantity > 1 && <div className="text-xs text-gray-500">Qty: {charge.quantity}</div>}
+                    </>
+                  ),
+                  amount: (
+                    <>
+                      <span className="block text-right tabular-nums font-semibold">₵{formatMoney(gross)}</span>
+                      {charge.quantity > 1 && <div className="text-right text-xs text-gray-500">₵{formatMoney(unitGross)} / unit</div>}
+                    </>
+                  ),
+                  status: <Chip size="sm" variant="flat" color={getStatusColor(charge.status)} className="max-w-full">{statusLabel}</Chip>,
+                  date: <span>{shortDay(charge.date)}</span>,
+                };
+                return (
+                  <TableRow
+                    key={charge.id}
+                    className={rowClassNames(isViewModalOpen && selectedCharge?.id === charge.id)}
+                    onClick={() => {
+                      setSelectedCharge(charge);
+                      setIsViewModalOpen(true);
+                    }}
+                  >
+                    {(columnKey) => (
+                      <TableCell>{cells[columnKey as ChargeCol]}</TableCell>
+                    )}
+                  </TableRow>
+                );
+              }}
             </TableBody>
           </Table>
-          <div className="flex justify-end mt-3">
+          </div>
+          <div className="mt-3 flex justify-end">
             <Pagination
               page={page}
-              total={Math.max(1, Math.ceil(filteredCharges.length / rowsPerPage))}
+              total={Math.max(1, Math.ceil(sortedCharges.length / rowsPerPage))}
               onChange={setPage}
               showControls
               size="sm"
@@ -1070,9 +1219,15 @@ export default function ServiceChargesPage() {
       </Modal>
 
       {/* View Service Charge Modal */}
-      <Modal isOpen={isViewModalOpen} onClose={() => setIsViewModalOpen(false)} size="lg" scrollBehavior="inside">
+      <Modal
+        isOpen={isViewModalOpen}
+        onClose={() => setIsViewModalOpen(false)}
+        size="2xl"
+        scrollBehavior="inside"
+        classNames={{ closeButton: 'z-20 text-white hover:bg-white/20' }}
+      >
         <ModalContent>
-          <ModalHeader className="bg-gradient-to-r from-ghana-green to-emerald-700 text-white">
+          <ModalHeader className="bg-gradient-to-r from-ghana-green to-emerald-700 pr-12 text-white">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center text-xl">
                 {selectedCharge ? getCategoryInfo(selectedCharge.category).icon : '🧾'}
@@ -1113,6 +1268,12 @@ export default function ServiceChargesPage() {
                           <Badge color={getStatusColor(selectedCharge.status)} variant="flat">
                             {selectedCharge.status.toUpperCase()}
                           </Badge>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500">Time</label>
+                        <div className="font-medium">
+                          {shortDay(selectedCharge.date)} · {new Date(selectedCharge.date).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
                         </div>
                       </div>
                     </div>
@@ -1180,6 +1341,40 @@ export default function ServiceChargesPage() {
                   </CardBody>
                 </Card>
 
+                {(() => {
+                  if (!selectedCharge.reservationId) return null;
+                  const folio = findMainFolio(frontOfficeStore.folios, selectedCharge.reservationId);
+                  if (!folio) return null;
+                  const chargeLine = selectedCharge.folioChargeId
+                    ? folio.charges.find(charge => charge.id === selectedCharge.folioChargeId)
+                    : undefined;
+                  const payments = (folio.payments || []).filter(payment =>
+                    payment.ref === selectedCharge.id || (payment.notes || '').includes(selectedCharge.id)
+                  );
+                  if (!chargeLine && payments.length === 0) return null;
+                  return (
+                    <Card>
+                      <CardHeader className="pb-0">
+                        <h4 className="text-sm font-semibold text-gray-700">Folio</h4>
+                      </CardHeader>
+                      <CardBody className="gap-2 text-sm">
+                        {chargeLine && (
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="min-w-0 truncate">{chargeLine.description}</span>
+                            <span className="shrink-0 tabular-nums">₵{formatMoney((chargeLine.amount || 0) + (chargeLine.tax || 0))}</span>
+                          </div>
+                        )}
+                        {payments.map(payment => (
+                          <div key={payment.id} className="flex items-center justify-between gap-3 text-gray-700">
+                            <span className="min-w-0 truncate">{payment.method}{payment.ref ? ` · ${payment.ref}` : ''}</span>
+                            <span className="shrink-0 tabular-nums">₵{formatMoney(payment.amount || 0)}</span>
+                          </div>
+                        ))}
+                      </CardBody>
+                    </Card>
+                  );
+                })()}
+
                 <div className="text-xs text-gray-500 text-center">
                   Created by {selectedCharge.createdBy} on {new Date(selectedCharge.date).toLocaleDateString()} at{' '}
                   {new Date(selectedCharge.date).toLocaleTimeString()}
@@ -1195,23 +1390,29 @@ export default function ServiceChargesPage() {
             <Button variant="light" onPress={() => setIsViewModalOpen(false)}>
               Close
             </Button>
-            {selectedCharge && selectedCharge.status === 'pending' && selectedCharge.roomNumber === 'External' && (
-              <Button color="danger" variant="light" onPress={async () => {
-                const ok = await confirmDelete('this service charge', 'It was never posted to a folio and will be permanently removed.');
-                if (!ok) return;
-                setServiceCharges(prev => prev.filter(c => c.id !== selectedCharge.id));
-                setIsViewModalOpen(false);
-              }}>Delete</Button>
+            {selectedCharge && selectedCharge.status !== 'paid' && selectedCharge.status !== 'void' && (
+              <Button
+                color="success"
+                variant="flat"
+                onPress={() => {
+                  setIsViewModalOpen(false);
+                  handlePaymentClick(selectedCharge);
+                }}
+              >
+                Pay
+              </Button>
             )}
-            {selectedCharge && selectedCharge.status !== 'void' && !(selectedCharge.status === 'pending' && selectedCharge.roomNumber === 'External') && (
+            {selectedCharge && selectedCharge.status !== 'void' && selectedCharge.status !== 'paid' && (
+              <Button variant="flat" onPress={() => openEdit(selectedCharge)}>
+                Edit
+              </Button>
+            )}
+            {selectedCharge && selectedCharge.status !== 'void' && selectedCharge.status !== 'paid' && (
               <Button color="warning" variant="flat" onPress={async () => {
                 const ok = await confirmVoid('this service charge', 'The charge stays on file as Void. A reversing folio line keeps the guest bill even.');
                 if (!ok) return;
-                const stay = frontOfficeStore.reservations.find(r => r.guestId === selectedCharge.guestId && (r.status === 'checked-in' || r.status === 'checked-out'));
-                if (stay) {
-                  const folio = frontOfficeStore.getOrCreateFolio(stay.id);
-                  const match = folio.charges.find(c => String(c.description || '').startsWith(selectedCharge.description) && !String(c.description || '').startsWith('VOID '));
-                  if (match) frontOfficeStore.voidCharge(stay.id, match.id, 'Void service charge');
+                if (selectedCharge.reservationId && selectedCharge.folioChargeId) {
+                  frontOfficeStore.voidCharge(selectedCharge.reservationId, selectedCharge.folioChargeId, 'Void service charge');
                 }
                 setServiceCharges(prev => prev.map(c => c.id === selectedCharge.id ? { ...c, status: 'void' } : c));
                 setIsViewModalOpen(false);
@@ -1229,8 +1430,40 @@ export default function ServiceChargesPage() {
         </ModalContent>
       </Modal>
 
+      <Modal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} size="md">
+        <ModalContent>
+          <ModalHeader>Edit service charge</ModalHeader>
+          <form onSubmit={saveEdit}>
+            <ModalBody className="space-y-4">
+              {selectedCharge && (
+                <div className="text-sm text-gray-600">
+                  {selectedCharge.id} · {selectedCharge.description}
+                </div>
+              )}
+              <Input
+                type="number"
+                label="Quantity"
+                min={1}
+                value={String(editForm.quantity)}
+                onChange={(e) => setEditForm(prev => ({ ...prev, quantity: Math.max(1, Number(e.target.value) || 1) }))}
+              />
+              <Textarea
+                label="Notes"
+                value={editForm.notes}
+                onChange={(e) => setEditForm(prev => ({ ...prev, notes: e.target.value }))}
+                minRows={2}
+              />
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="light" onPress={() => setIsEditModalOpen(false)}>Cancel</Button>
+              <Button type="submit" className="bg-ghana-green text-white">Save</Button>
+            </ModalFooter>
+          </form>
+        </ModalContent>
+      </Modal>
+
       {/* Payment Modal */}
-      <Modal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} size="lg">
+      <Modal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} size="2xl">
         <ModalContent>
           <ModalHeader>Process Payment</ModalHeader>
           <form onSubmit={handlePayment}>
@@ -1279,42 +1512,53 @@ export default function ServiceChargesPage() {
                     />
                     <Select
                       label="Payment Method"
-                      value={paymentData.paymentMethod}
-                      onChange={(e) => setPaymentData(prev => ({ 
-                        ...prev, 
-                        paymentMethod: e.target.value 
-                      }))}
+                      selectedKeys={[paymentData.paymentMethod]}
+                      onSelectionChange={(keys) => {
+                        const value = Array.from(keys)[0] as FolioPayMethod | undefined;
+                        if (!value) return;
+                        setPaymentData(prev => ({ ...prev, paymentMethod: value }));
+                      }}
                       isRequired
                     >
-                      <SelectItem key="cash">💵 Cash</SelectItem>
-                      <SelectItem key="card">💳 Card</SelectItem>
-                      <SelectItem key="mobile_money">📱 Mobile Money</SelectItem>
-                      <SelectItem key="bank_transfer">🏦 Bank Transfer</SelectItem>
-                      <SelectItem key="check">📝 Check</SelectItem>
-                      <SelectItem key="corporate_account">🏢 Corporate Account</SelectItem>
+                      {FOLIO_PAY_METHODS
+                        .filter(method => method.key !== 'Corporate Account' || chargeStay(selectedCharge)?.company)
+                        .map(method => (
+                          <SelectItem key={method.key}>{method.label}</SelectItem>
+                        ))}
                     </Select>
                   </div>
+                  <p className="text-xs text-gray-500">
+                    {(() => {
+                      const stay = chargeStay(selectedCharge);
+                      if (!stay) return 'Walk-in. This settles the charge and does not post to a room folio.';
+                      if (paymentData.paymentMethod === 'Corporate Account' && stay.company) {
+                        return `Posts to ${stay.company} on room ${selectedCharge.roomNumber}. It stays on the company account.`;
+                      }
+                      return `Posts to room ${selectedCharge.roomNumber}'s folio${stay.reservation.invoiceGenerated ? ' and the guest account.' : '.'}`;
+                    })()}
+                  </p>
 
-                  <Input
-                    label="Reference/Transaction ID"
-                    value={paymentData.reference}
-                    onChange={(e) => setPaymentData(prev => ({ 
-                      ...prev, 
-                      reference: e.target.value 
-                    }))}
-                    placeholder="Enter transaction reference or check number"
-                  />
-
-                  <Textarea
-                    label="Payment Notes (Optional)"
-                    value={paymentData.notes}
-                    onChange={(e) => setPaymentData(prev => ({ 
-                      ...prev, 
-                      notes: e.target.value 
-                    }))}
-                    placeholder="Additional notes about this payment..."
-                    rows={3}
-                  />
+                  <div className="grid grid-cols-2 items-start gap-4">
+                    <Input
+                      label="Reference/Transaction ID"
+                      value={paymentData.reference}
+                      onChange={(e) => setPaymentData(prev => ({ 
+                        ...prev, 
+                        reference: e.target.value 
+                      }))}
+                      placeholder="Enter transaction reference or check number"
+                    />
+                    <Textarea
+                      label="Payment Notes (Optional)"
+                      value={paymentData.notes}
+                      onChange={(e) => setPaymentData(prev => ({ 
+                        ...prev, 
+                        notes: e.target.value 
+                      }))}
+                      placeholder="Additional notes about this payment..."
+                      minRows={1}
+                    />
+                  </div>
 
                   {/* Payment Summary */}
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">

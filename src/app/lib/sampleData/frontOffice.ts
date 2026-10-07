@@ -1,7 +1,7 @@
 import { SampleCtx, prisma, seedRows, bySampleId, dayOffset, dayString, round2 } from './common'
-
-// Ghana's stacked levies on a room rate (VAT + NHIL + GETFund + tourism levy), as the app posts them.
-const TAX_RATE = 0.219
+import { computeTaxStack } from '../compliance/calcEngine'
+import type { TaxRule } from '../models'
+import { listTaxRules } from '../compliance/repository'
 
 const SAMPLE_ROOM_TYPES = [
   { key: 'standard', name: 'Standard Room', baseRate: 350, capacity: 2, category: 'standard', description: 'Comfortable room with a queen bed', amenities: ['wifi', 'air_conditioning', 'tv'] },
@@ -52,6 +52,16 @@ export async function loadFrontOffice(ctx: SampleCtx): Promise<string[]> {
   // ---- rooms: use the hotel's own; add a sample set only if it has none configured ----
   const settings = await prisma.systemSettings.findUnique({ where: { tenantId } })
   if (!settings) return ['Front Office sample data was skipped: this hotel has no settings record yet — finish setup first.']
+  const taxRules = await listTaxRules(tenantId, 'GH')
+  const grossOf = (exclusive: number, category: string) =>
+    round2(computeTaxStack(taxRules as TaxRule[], exclusive, category, { domain: 'sales', operation: 'external' }).total)
+  const taxOf = (exclusive: number, category: string) => round2(grossOf(exclusive, category) - exclusive)
+  const engineCategory = (category: string) => {
+    const key = category.toLowerCase()
+    if (key === 'room' || key === 'hotel') return 'HOTEL'
+    if (key === 'f&b' || key === 'food') return 'FOOD'
+    return 'SERVICE'
+  }
   const rs = { ...((settings.roomSettings as Record<string, any>) || {}) }
   const objects = (v: unknown) => (Array.isArray(v) ? v.filter((x) => x && typeof x === 'object' && x.id) : [])
   let roomTypes: any[] = objects(rs.roomTypes)
@@ -108,7 +118,7 @@ export async function loadFrontOffice(ctx: SampleCtx): Promise<string[]> {
     const rate = Number(type?.baseRate || 350)
     const plan = ratePlans.find((rp) => rp.roomTypeId === type?.id)
     const nights = stay.depart - stay.arrive
-    const rateBreakdown = Array.from({ length: nights }, (_, n) => ({ date: dayString(ctx, stay.arrive + n), base: rate, total: round2(rate * (1 + TAX_RATE)) }))
+    const rateBreakdown = Array.from({ length: nights }, (_, n) => ({ date: dayString(ctx, stay.arrive + n), base: rate, total: grossOf(rate, 'HOTEL') }))
     const paidStatus = stay.settle ? 'paid' : stay.deposit ? 'partial' : 'unpaid'
     reservationRows.push({
       id: `${p}${stay.key}`, tenantId, guestId: `${p}${stay.guest}`, resId: `RES-SMP-${String(i + 1).padStart(3, '0')}`,
@@ -125,10 +135,10 @@ export async function loadFrontOffice(ctx: SampleCtx): Promise<string[]> {
     const lastBilledNight = stay.status === 'checked-in' ? -1 : stay.depart - 1
     const charges: Array<Record<string, any>> = []
     for (let night = stay.arrive; night <= lastBilledNight; night++) {
-      charges.push({ id: `C-${p}${stay.key}-n${night}`, date: `${dayString(ctx, night)}T02:00:00.000Z`, description: 'Room Charge', category: 'room', amount: rate, tax: round2(rate * TAX_RATE) })
+      charges.push({ id: `C-${p}${stay.key}-n${night}`, date: `${dayString(ctx, night)}T02:00:00.000Z`, description: 'Room Charge', category: 'room', amount: rate, tax: taxOf(rate, 'HOTEL') })
     }
     for (const extra of stay.extras || []) {
-      charges.push({ id: `C-${p}${stay.key}-x${extra.offset}`, date: `${dayString(ctx, extra.offset)}T20:00:00.000Z`, description: extra.description, category: extra.category, amount: extra.amount, tax: round2(extra.amount * TAX_RATE) })
+      charges.push({ id: `C-${p}${stay.key}-x${extra.offset}`, date: `${dayString(ctx, extra.offset)}T20:00:00.000Z`, description: extra.description, category: extra.category, amount: extra.amount, tax: taxOf(extra.amount, engineCategory(extra.category)) })
     }
     const totalCharges = round2(charges.reduce((s, c) => s + c.amount + c.tax, 0))
     const payments: Array<Record<string, any>> = []

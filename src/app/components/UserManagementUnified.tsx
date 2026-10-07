@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import HeadingInfo from './HeadingInfo';
+import RecoveryQuestionsForm from './settings/RecoveryQuestionsForm';
 import { confirmDelete } from './DangerConfirm';
 import { 
   Card, 
@@ -1079,6 +1080,8 @@ export default function UserManagementUnified() {
           </div>
         </CardBody>
       </Card>
+
+      <RecoveryQuestionsForm />
     </div>
   );
 

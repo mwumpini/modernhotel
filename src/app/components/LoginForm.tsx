@@ -1,14 +1,18 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Button, Input, Checkbox, Link } from "@heroui/react";
+import { Button, Input, Checkbox } from "@heroui/react";
+import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
 import { signIn } from 'next-auth/react';
 import { setClientTenantSubdomain } from '../lib/api/clientTenant';
 import BrandLogo from './BrandLogo';
+import ForgotPasswordPanel from './ForgotPasswordPanel';
 
 export default function LoginForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [forgot, setForgot] = useState(false);
   const [tenantId, setTenantId] = useState('demo'); // Default to demo tenant
   const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -114,13 +118,23 @@ export default function LoginForm() {
             />
             
             <Input
-              type="password"
+              type={showPassword ? 'text' : 'password'}
               label="Password"
               placeholder="Enter your password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               variant="bordered"
+              endContent={
+                <button
+                  type="button"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  className="text-gray-500 hover:text-ghana-black"
+                  onClick={() => setShowPassword((visible) => !visible)}
+                >
+                  {showPassword ? <EyeSlashIcon className="h-5 w-5" aria-hidden /> : <EyeIcon className="h-5 w-5" aria-hidden />}
+                </button>
+              }
               classNames={{
                 input: "text-ghana-black",
                 label: "text-ghana-black font-medium",
@@ -164,34 +178,41 @@ export default function LoginForm() {
             </div>
           )}
 
-          <div className="flex items-center justify-between">
-            <Checkbox
-              checked={rememberMe}
-              onChange={(e) => setRememberMe(e.target.checked)}
-              classNames={{
-                label: "text-sm text-ghana-black"
-              }}
-            >
-              Remember me
-            </Checkbox>
-            
-            <Link
-              href="#"
-              className="text-sm text-ghana-green hover:text-ghana-gold transition-colors"
-            >
-              Forgot password?
-            </Link>
-          </div>
+          {!forgot && (
+            <>
+              <div className="flex items-center justify-between">
+                <Checkbox
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  classNames={{
+                    label: "text-sm text-ghana-black"
+                  }}
+                >
+                  Remember me
+                </Checkbox>
 
-          <Button
-            type="submit"
-            className="w-full bg-ghana-green hover:bg-ghana-gold text-white font-semibold py-3 px-4 rounded-lg transition-all duration-200 transform hover:scale-105"
-            size="lg"
-            isLoading={isLoading}
-            disabled={isLoading}
-          >
-            {isLoading ? 'Signing In...' : needsCode ? 'Verify code' : 'Sign In'}
-          </Button>
+                <button
+                  type="button"
+                  className="text-sm text-ghana-green hover:text-ghana-gold transition-colors"
+                  onClick={() => setForgot(true)}
+                >
+                  Forgot password?
+                </button>
+              </div>
+
+              <Button
+                type="submit"
+                className="w-full bg-ghana-green hover:bg-ghana-gold text-white font-semibold py-3 px-4 rounded-lg transition-all duration-200 transform hover:scale-105"
+                size="lg"
+                isLoading={isLoading}
+                disabled={isLoading}
+              >
+                {isLoading ? 'Signing In...' : needsCode ? 'Verify code' : 'Sign In'}
+              </Button>
+            </>
+          )}
+        </form>
+        {forgot && <ForgotPasswordPanel tenantId={tenantId} login={email} onClose={() => setForgot(false)} />}
 
           {/* Local development only: on the live site this would hand anyone the admin login. */}
           {process.env.NODE_ENV !== 'production' && (
@@ -207,7 +228,6 @@ export default function LoginForm() {
               </p>
             </div>
           )}
-        </form>
       </div>
     </div>
   );

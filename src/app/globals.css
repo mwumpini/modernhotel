@@ -681,6 +681,12 @@ html[data-tiles="custom"] .bg-gray-100 {
 .work-pane *:has(> table) {
   overflow-x: auto;
 }
+/* HeroUI card bodies use overflow-y:auto, which also allows sideways overflow.
+   A wide table already scrolls in its own box. Pagination's negative margin
+   sticks out a couple of pixels and paints a second bar under that one. */
+.work-pane .overflow-y-auto:has(table) {
+  overflow-x: hidden;
+}
 .work-pane [data-slot="base"]:has(> [data-slot="tabList"]) {
   display: flex;
   width: 100%;

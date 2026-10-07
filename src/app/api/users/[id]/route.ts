@@ -7,6 +7,7 @@ import { passwordPolicyError } from '@/app/lib/settings/passwordPolicy'
 import { readTenantSecurity } from '@/app/lib/settings/securityPolicyDb'
 import { publicUser, withoutPinKeys } from '@/app/lib/auth/posPin'
 import { emailError, NEEDS_SIGN_IN_NAME, normalizeEmail, normalizeUsername, usernameError, usernameTaken } from '@/app/lib/auth/loginLookup'
+import { stripRecoverySecrets } from '@/app/lib/auth/recoveryQuestions'
 
 const USER_SELECT = {
   id: true,
@@ -119,11 +120,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (body.preferences && typeof body.preferences === 'object') {
       const existingPreferences = (target.preferences as Record<string, unknown>) || {}
       // POS PIN fields are only written by /api/users/:id/pos-pin (hashed, with lockout) — never through here.
-      data.preferences = { ...existingPreferences, ...withoutPinKeys(body.preferences as Record<string, unknown>) }
+      data.preferences = { ...existingPreferences, ...stripRecoverySecrets(withoutPinKeys(body.preferences as Record<string, unknown>)) }
     }
     if (typeof body.password === 'string' && body.password) {
       const existingPreferences = (data.preferences as Record<string, unknown>) || (target.preferences as Record<string, unknown>) || {}
-      data.preferences = { ...existingPreferences, passwordChangedAt: new Date().toISOString() }
+      const { recoveryFails: _failedAttempts, ...withoutLock } = existingPreferences
+      data.preferences = { ...withoutLock, passwordChangedAt: new Date().toISOString() }
     }
 
     // Reassigning away from 'admin' or deactivating could strip the tenant's

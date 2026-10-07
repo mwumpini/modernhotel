@@ -24,7 +24,7 @@ import * as invoiceHelpers from './helpers/invoice';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 import {
   isValidRateBreakdown,
-  quoteFromBreakdown,
+  quoteFromRateBreakdown,
   resolveNightlyGross,
   resolveNightlyNet,
   type ReservationQuote,
@@ -1453,7 +1453,7 @@ class FrontOfficeStore {
 
   private getTaxRates() { return folioHelpers.getTaxRates(this as any); }
 
-  addCharge(reservationId: string, description: string, amount: number, forceExempt?: boolean, taxCategory?: string) { folioHelpers.addCharge(this as any, reservationId, description, amount, forceExempt, taxCategory); }
+  addCharge(reservationId: string, description: string, amount: number, forceExempt?: boolean, taxCategory?: string, reference?: string) { folioHelpers.addCharge(this as any, reservationId, description, amount, forceExempt, taxCategory, reference); }
 
   addPayment(reservationId: string, method: 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check', amount: number, options?: { invoiceId?: string; creditApplied?: number; notes?: string; processedBy?: string; ref?: string; }) {
     const payment = folioHelpers.addPayment(this as any, reservationId, method, amount, options);
@@ -1572,11 +1572,10 @@ class FrontOfficeStore {
 
   /** Canonical quote for tables and billing screens — always returns computed rates. */
   getReservationQuote(reservation: Reservation): ReservationQuote {
-    if (isValidRateBreakdown(reservation.rateBreakdown)) {
-      return quoteFromBreakdown(reservation.rateBreakdown as any);
-    }
-    const breakdown = this.calculateRateBreakdownForReservation(reservation);
-    return quoteFromBreakdown(breakdown);
+    const breakdown = isValidRateBreakdown(reservation.rateBreakdown)
+      ? reservation.rateBreakdown
+      : this.calculateRateBreakdownForReservation(reservation);
+    return quoteFromRateBreakdown(breakdown as any, reservation.taxExempt);
   }
 
   /** Attach a rate breakdown when missing so tables and folio posting have amounts. */

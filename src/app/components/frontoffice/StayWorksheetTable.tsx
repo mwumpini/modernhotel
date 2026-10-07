@@ -7,7 +7,6 @@ import {
   deskStatus,
   money,
   shortDay,
-  stayClock,
   stayFigures,
   type StaySortKey,
 } from '../../lib/frontoffice/stayWorksheet';
@@ -133,18 +132,8 @@ export default function StayWorksheetTable({
             ) : (
               <span className="block truncate text-gray-400" title="Unassigned">Unassigned</span>
             ),
-            arrival: (
-              <>
-                <div>{shortDay(stay.arrival)}</div>
-                <div className="text-xs font-medium text-gray-700">{stayClock(stay, 'in')}</div>
-              </>
-            ),
-            departure: (
-              <>
-                <div>{shortDay(stay.departure)}</div>
-                <div className="text-xs font-medium text-gray-700">{stayClock(stay, 'out')}</div>
-              </>
-            ),
+            arrival: <span>{shortDay(stay.arrival)}</span>,
+            departure: <span>{shortDay(stay.departure)}</span>,
             nights: <span className="block text-center tabular-nums">{figures.nights}</span>,
             rate: <span className="block text-right tabular-nums">{money(figures.rate)}</span>,
             discount: (

@@ -30,7 +30,7 @@ import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { useSettingsStore } from '../../lib/settings/store';
 import { useCurrentUserName } from '../../lib/auth/useCurrentUserName';
 import { companyKeyOf, guestEarlierStays, lookupCompanyName } from '../../lib/frontoffice/companyAccount';
-import { stayFigures } from '../../lib/frontoffice/stayWorksheet';
+import { shortDay, stayClock, stayFigures } from '../../lib/frontoffice/stayWorksheet';
 import { postDueRoomCharges } from '../../lib/frontoffice/roomCharges';
 import { chargeGross, type FolioLineJson } from '../../lib/frontoffice/folioLedger';
 import { getFolioDisplayTotals } from '../../lib/frontoffice/helpers/folio';
@@ -367,9 +367,9 @@ export default function GuestFolioModal({
                       {` · Room ${roomLabel(stay.roomId)}`}
                     </p>
                     <p className="text-sm font-normal text-green-800">
-                      {stay.arrival ? new Date(stay.arrival).toLocaleDateString() : '—'}
+                      {stay.arrival ? `${shortDay(stay.arrival)} ${stayClock(stay, 'in')}` : '—'}
                       {' – '}
-                      {stay.departure ? new Date(stay.departure).toLocaleDateString() : '—'}
+                      {stay.departure ? `${shortDay(stay.departure)} ${stayClock(stay, 'out')}` : '—'}
                       {nights ? ` · ${nights} night${nights === 1 ? '' : 's'}` : ''}
                       {stay.taxExempt ? ' · Tax exempt' : ''}
                     </p>

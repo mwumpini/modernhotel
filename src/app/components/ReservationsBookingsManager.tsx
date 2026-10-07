@@ -49,7 +49,7 @@ import {
 } from '../lib/tax/engine';
 import { calculateStayNights, resolveNightlyGross } from '../lib/frontoffice/helpers/rates';
 import { canMarkNoShow } from '../lib/frontoffice/arrivals';
-import { localStayDay, sortStays, type StaySortKey } from '../lib/frontoffice/stayWorksheet';
+import { localStayDay, shortDay, sortStays, stayClock, type StaySortKey } from '../lib/frontoffice/stayWorksheet';
 import StayWorksheetTable from './frontoffice/StayWorksheetTable';
 import { findMainFolio, getFolioDisplayTotals } from '../lib/frontoffice/helpers/folio';
 import { DateFilterPills } from './fb/DateFilterPills';
@@ -116,98 +116,6 @@ interface ReservationsManagerProps {
   /** Called when the form closes. Ids are the stays just created, empty on cancel. */
   onFinished?: (reservationIds: string[]) => void;
 }
-
-// Audit Log Section Component
-const AuditLogSection = ({ reservationId }: { reservationId: string }) => {
-  const [auditLogs, setAuditLogs] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchAuditLogs = async () => {
-      try {
-        const response = await fetch(`/api/audit/reservation/${reservationId}`);
-        if (response.ok) {
-          const data = await response.json();
-          setAuditLogs(data.logs || []);
-        }
-      } catch (error) {
-        console.error('Error fetching audit logs:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchAuditLogs();
-  }, [reservationId]);
-
-  if (loading) {
-    return <div className="py-8 text-center text-gray-500">Loading audit logs...</div>;
-  }
-
-  if (auditLogs.length === 0) {
-    return <div className="py-8 text-center text-gray-500">No audit logs found for this reservation.</div>;
-  }
-
-  return (
-    <div className="space-y-4 pt-4">
-      <div className="text-sm text-gray-600 mb-4">
-        Showing {auditLogs.length} proforma-related activity logs
-      </div>
-      
-      <div className="space-y-3">
-        {auditLogs.map((log, index) => (
-          <Card key={log.id || index}>
-            <CardBody>
-              <div className="flex justify-between items-start">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge 
-                      color={
-                        log.action === 'proforma_sent' ? 'success' :
-                        log.action === 'proforma_generated' ? 'primary' :
-                        log.action === 'proforma_downloaded' ? 'warning' :
-                        log.action === 'proforma_printed' ? 'secondary' : 'default'
-                      }
-                      variant="flat"
-                    >
-                      {log.action.replace('proforma_', '').replace('_', ' ').toUpperCase()}
-                    </Badge>
-                    <span className="text-sm text-gray-500">
-                      {log.timestamp ? new Date(log.timestamp).toLocaleString() : 'Unknown time'}
-                    </span>
-                  </div>
-                  
-                  {log.details && (
-                    <div className="text-sm text-gray-700 space-y-1">
-                      {log.details.guestEmail && (
-                        <div>Guest: {log.details.guestEmail}</div>
-                      )}
-                      {log.details.guestName && (
-                        <div>Guest Name: {log.details.guestName}</div>
-                      )}
-                      {log.details.messageId && (
-                        <div>Email ID: {log.details.messageId}</div>
-                      )}
-                      {log.details.filename && (
-                        <div>File: {log.details.filename}</div>
-                      )}
-                      {log.details.pdfSize && (
-                        <div>PDF Size: {(log.details.pdfSize / 1024).toFixed(1)} KB</div>
-                      )}
-                      {log.details.fallbackToPrint && (
-                        <div className="text-orange-600">Fallback to print due to PDF generation error</div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </CardBody>
-          </Card>
-        ))}
-      </div>
-    </div>
-  );
-};
 
 const RESERVATIONS_DASHBOARD_SECTIONS = FO_RESERVATIONS_KPI_SECTIONS;
 
@@ -328,35 +236,16 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   };
 
   const getComputedTotalsForReservation = (reservation: Reservation) => {
-    if (reservation.rateBreakdown && reservation.rateBreakdown.length > 0) {
-      const nights = reservation.rateBreakdown.length;
-      const subtotal = reservation.rateBreakdown.reduce((s, d) => s + (d.base || 0), 0);
-      const grandTotal = reservation.rateBreakdown.reduce((s, d) => s + (d.total || 0), 0);
-      const tax = grandTotal - subtotal;
-      const nightly = reservation.rateBreakdown[0]?.total || 0;
-      const taxRate = subtotal > 0 ? tax / subtotal : effectiveSalesTaxRate();
-      return { nights, nightly, subtotal, taxRate, tax, grandTotal };
-    }
-    const settingsState = useSettingsStore.getState();
-    const plan = reservation.ratePlanId
-      ? (settingsState.roomManagement.ratePlans || []).find((r: any) => r.id === reservation.ratePlanId)
-      : undefined;
-    if (plan?.basePrice) {
-      const breakdown = frontOfficeStore.calculateRateBreakdown(
-        reservation.roomTypeId,
-        reservation.arrival,
-        reservation.departure,
-        plan.basePrice,
-        (plan as any).priceType || 'subtotal'
-      );
-      const nights = breakdown.length;
-      const subtotal = breakdown.reduce((s, d) => s + (d.base || 0), 0);
-      const grandTotal = breakdown.reduce((s, d) => s + (d.total || 0), 0);
-      const tax = grandTotal - subtotal;
-      const taxRate = subtotal > 0 ? tax / subtotal : effectiveSalesTaxRate();
-      return { nights, nightly: breakdown[0]?.total || 0, subtotal, taxRate, tax, grandTotal };
-    }
-    return getComputedTotals(reservation.arrival, reservation.departure, reservation.roomTypeId);
+    const quote = frontOfficeStore.getReservationQuote(reservation);
+    const taxRate = quote.subtotal > 0 ? quote.tax / quote.subtotal : effectiveSalesTaxRate();
+    return {
+      nights: quote.nights,
+      nightly: quote.nightlyGross,
+      subtotal: quote.subtotal,
+      taxRate,
+      tax: quote.tax,
+      grandTotal: quote.grandTotal,
+    };
   };
 
   // Reservation confirmation via the Document Templates engine (logo, granular
@@ -1704,107 +1593,99 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           <ModalBody className="overflow-y-auto pt-1">
             <Tabs aria-label="Reservation details" classNames={{ panel: "py-1" }} selectedKey={tabKey} onSelectionChange={(key)=> setTabKey(key as string)}>
               <Tab key="summary" title="🧾 Summary / Print">
-                {selectedReservation && !isCreatingNew ? (
-                  <div className="space-y-3 pt-1" id="reservation-summary">
-                    {/* Same coloured sections as the Guest & stay tab. */}
-                    <div className="bg-purple-50 p-3 rounded-lg border">
-                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                        <h4 className="font-medium text-purple-900">📋 Reservation Details</h4>
-                        <Chip size="sm" variant="flat" color={getStatusColor(selectedReservation.status) as any}>{selectedReservation.status}</Chip>
-                      </div>
-                      <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
-                        {[
-                          ['Reservation ID', selectedReservation.resId || selectedReservation.id],
-                          ['Guest', selectedReservation.guestName],
-                          ['Room Type', frontOfficeStore.roomTypes.find(rt => rt.id === selectedReservation.roomTypeId)?.name || 'Unknown'],
-                          ['Check-in', new Date(selectedReservation.arrival).toLocaleDateString()],
-                          ['Check-out', new Date(selectedReservation.departure).toLocaleDateString()],
-                          ['Nights', String(calculateNights(selectedReservation.arrival, selectedReservation.departure))],
-                        ].map(([label, value]) => (
-                          <div key={label} className="bg-white px-3 py-2 rounded-lg border border-purple-200">
-                            <div className="text-xs text-gray-600">{label}</div>
-                            <div className="truncate font-semibold text-ghana-black" title={value}>{value}</div>
-                          </div>
-                        ))}
-                      </div>
+                {selectedReservation && !isCreatingNew ? (() => {
+                  const stay = selectedReservation;
+                  const roomNumber = stay.roomId && stay.roomId !== 'TBD' ? stay.roomId : '';
+                  const namedType = (id?: string) =>
+                    (id && (getSelectedRoomType(id)?.name || frontOfficeStore.roomTypes.find((rt) => rt.id === id)?.name)) || '';
+                  const assignedTypeId = useSettingsStore.getState().roomManagement.rooms.find((room) => room.number === roomNumber)?.typeId;
+                  const roomType = namedType(stay.roomTypeId) || namedType(assignedTypeId);
+                  const cedis = (amount: number) => `₵${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                  const quote = getComputedTotalsForReservation(stay);
+                  const folio = findMainFolio(frontOfficeStore.folios, stay.id);
+                  const posted = folio ? getFolioDisplayTotals(folio) : null;
+                  const stayLines = [
+                    ['Check-in', `${shortDay(stay.arrival)} · ${stayClock(stay, 'in')}`],
+                    ['Check-out', `${shortDay(stay.departure)} · ${stayClock(stay, 'out')}`],
+                    ['Nights', String(calculateNights(stay.arrival, stay.departure))],
+                    ['Room', roomNumber || 'Not assigned'],
+                    ...(roomType ? [['Room type', roomType]] : []),
+                  ];
+                  const quoteLines = [
+                    ['Nightly', cedis(quote.nightly)],
+                    ['Subtotal', cedis(quote.subtotal)],
+                    [`Taxes (${Math.round(quote.taxRate * 100)}%)`, cedis(quote.tax)],
+                  ];
+                  const line = (label: string, value: string, strong = false, tone = '') => (
+                    <div key={label} className={`flex items-baseline justify-between gap-6 py-1.5 ${strong ? 'border-t border-gray-300' : ''}`}>
+                      <dt className={`text-sm ${strong ? 'font-semibold text-ghana-black' : 'text-gray-500'}`}>{label}</dt>
+                      <dd className={`text-right tabular-nums ${strong ? 'text-base font-semibold' : 'text-sm'} ${tone || 'text-ghana-black'}`}>{value}</dd>
                     </div>
-                    {(() => { const { nights, nightly, subtotal, taxRate, tax, grandTotal } = getComputedTotalsForReservation(selectedReservation); return (
-                      <div className="bg-blue-50 p-3 rounded-lg border">
-                        <h4 className="mb-2 font-medium text-blue-900">💰 Rate Quote <span className="text-xs font-normal text-blue-800">· contracted rate × nights, not the live folio</span></h4>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-                          {[
-                            ['Nightly', `₵${nightly.toFixed(2)}`],
-                            ['Nights', String(nights)],
-                            ['Subtotal', `₵${subtotal.toFixed(2)}`],
-                            [`Taxes (${Math.round(taxRate * 100)}%)`, `₵${tax.toFixed(2)}`],
-                            ['Quoted Total', `₵${grandTotal.toFixed(2)}`],
-                          ].map(([label, value]) => (
-                            <div key={label} className="bg-white px-3 py-2 rounded-lg border border-blue-200">
-                              <div className="text-xs text-gray-600">{label}</div>
-                              <div className="whitespace-nowrap text-base font-semibold tabular-nums">{value}</div>
-                            </div>
-                          ))}
-                        </div>
+                  );
+                  return (
+                  <div className="w-full" id="reservation-summary">
+                    <div className="flex items-start justify-between gap-4 rounded-lg border-l-4 border-ghana-green bg-green-50 px-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium uppercase tracking-wide text-green-800">Reservation</p>
+                        <p className="truncate text-xl font-semibold text-green-900">{stay.guestName}</p>
+                        <p className="text-sm text-green-800">{stay.resId || stay.id}</p>
                       </div>
-                    ); })()}
-
-                    {(() => {
-                      const folio = findMainFolio(frontOfficeStore.folios, selectedReservation.id);
-                      if (!folio) return null;
-                      const { totalCharges, totalPayments, outstandingBalance } = getFolioDisplayTotals(folio);
-                      return (
-                        <div className="bg-green-50 p-3 rounded-lg border">
-                          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                            <h4 className="font-medium text-green-900">🧾 Folio <span className="text-xs font-normal text-green-800">· actually posted to date</span></h4>
-                            <Button
-                              size="sm"
-                              color="success"
-                              variant="flat"
-                              onClick={() => { onClose(); router.push('/guest-services/client-services/invoices-payments'); }}
-                            >
-                              View Folio →
+                      <Chip size="sm" variant="flat" color={getStatusColor(stay.status) as any}>{stay.status}</Chip>
+                    </div>
+                    <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+                      {stayLines.map(([label, value]) => (
+                        <div key={label} className="min-w-0">
+                          <dt className="text-xs text-gray-500">{label}</dt>
+                          <dd className="truncate text-sm font-medium text-ghana-black" title={value}>{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                    <div className="mt-5 grid grid-cols-1 gap-x-10 sm:grid-cols-2">
+                      <div>
+                        <div className="flex items-baseline justify-between gap-3">
+                          <p className="text-sm font-semibold text-ghana-black">Rate quote</p>
+                          <p className="text-xs text-gray-500">Not the live folio</p>
+                        </div>
+                        <dl className="mt-1 border-t border-gray-200">
+                          {quoteLines.map(([label, value]) => line(label, value))}
+                          {line('Quoted total', cedis(quote.grandTotal), true)}
+                        </dl>
+                      </div>
+                      {posted && (
+                        <div>
+                          <div className="flex items-baseline justify-between gap-3">
+                            <p className="text-sm font-semibold text-ghana-black">Folio</p>
+                            <Button size="sm" variant="light" className="h-6 min-w-0 px-0" onClick={() => { onClose(); router.push('/guest-services/client-services/invoices-payments'); }}>
+                              View folio
                             </Button>
                           </div>
-                          <div className="grid grid-cols-3 gap-2">
-                            <div className="bg-white px-3 py-2 rounded-lg border border-green-200">
-                              <div className="text-xs text-gray-600">Charged</div>
-                              <div className="whitespace-nowrap text-base font-semibold tabular-nums">₵{totalCharges.toFixed(2)}</div>
-                            </div>
-                            <div className="bg-white px-3 py-2 rounded-lg border border-green-200">
-                              <div className="text-xs text-gray-600">Paid</div>
-                              <div className="whitespace-nowrap text-base font-semibold tabular-nums">₵{totalPayments.toFixed(2)}</div>
-                            </div>
-                            <div className="bg-white px-3 py-2 rounded-lg border border-green-200">
-                              <div className="text-xs text-gray-600">Balance</div>
-                              <div className={`whitespace-nowrap text-base font-semibold tabular-nums ${outstandingBalance > 0 ? 'text-orange-600' : 'text-green-600'}`}>₵{outstandingBalance.toFixed(2)}</div>
-                            </div>
+                          <dl className="mt-1 border-t border-gray-200">
+                            {line('Charged', cedis(posted.totalCharges))}
+                            {line('Paid', cedis(posted.totalPayments))}
+                            {line('Balance', cedis(posted.outstandingBalance), true, posted.outstandingBalance > 0 ? 'text-orange-600' : '')}
+                          </dl>
+                        </div>
+                      )}
+                    </div>
+                    {(stay.remarksToGuest || stay.internalNotes) && (
+                      <div className="mt-4 space-y-2 border-t border-gray-200 pt-3">
+                        {stay.remarksToGuest && (
+                          <div>
+                            <p className="text-xs text-gray-500">Remarks to guest</p>
+                            <p className="text-sm text-ghana-black">{stay.remarksToGuest}</p>
                           </div>
-                        </div>
-                      );
-                    })()}
-
-                    {(selectedReservation.remarksToGuest || selectedReservation.internalNotes) && (
-                      <div className="bg-amber-50 p-3 rounded-lg border">
-                        <h4 className="mb-2 font-medium text-amber-900">📝 Notes</h4>
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-                          {selectedReservation.remarksToGuest && (
-                            <div className="bg-white px-3 py-2 rounded-lg border border-amber-200">
-                              <div className="text-xs text-gray-600">Remarks to Guest</div>
-                              <div className="text-ghana-black">{selectedReservation.remarksToGuest}</div>
-                            </div>
-                          )}
-                          {selectedReservation.internalNotes && (
-                            <div className="bg-white px-3 py-2 rounded-lg border border-amber-200">
-                              <div className="text-xs text-gray-600">Internal Notes</div>
-                              <div className="text-ghana-black">{selectedReservation.internalNotes}</div>
-                            </div>
-                          )}
-                        </div>
+                        )}
+                        {stay.internalNotes && (
+                          <div>
+                            <p className="text-xs text-gray-500">Internal notes</p>
+                            <p className="text-sm text-ghana-black">{stay.internalNotes}</p>
+                          </div>
+                        )}
                       </div>
                     )}
 
                     {/* Print, PDF and Send to guest live here only (not in the footer). */}
-                    <div className="flex flex-wrap gap-2 justify-end">
+                    <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-gray-200 pt-3">
                       <Button size="sm" variant="flat" onClick={async () => {
                         let cleanup: (() => void) | undefined;
                         try {
@@ -1832,18 +1713,12 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       )}
                     </div>
                   </div>
-                ) : (
+                  );
+                })() : (
                   <div className="py-8 text-center text-gray-500">{isCreatingNew ? 'The summary appears here once the reservation is saved.' : 'Select a reservation to view'}</div>
                 )}
               </Tab>
-              
-              {/* Audit Log Tab - only show when viewing existing reservation */}
-              {!isCreatingNew && selectedReservation && (
-                <Tab key="audit" title="📋 Audit Log">
-                  <AuditLogSection reservationId={selectedReservation.id} />
-                </Tab>
-              )}
-              
+
               <Tab key="guest" title={isCreatingNew ? 'Guest & stay' : 'Reservation'}>
                 <div className="space-y-4 pt-2">
                   {!isCreatingNew && selectedReservation && (
