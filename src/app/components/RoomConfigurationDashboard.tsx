@@ -1543,9 +1543,21 @@ export default function RoomConfigurationDashboard() {
       >
         <Tab key="room-types" title="Room Types & Categories">
                      <Card className="mb-6">
-             <CardHeader>
-               <h3 className="text-xl font-semibold">Add New Room Type</h3>
-               <p className="text-sm text-gray-600">Fallback Rate is the nightly subtotal charged until a Rate Plan is set up for this room type, in the Rate Plans tab</p>
+             <CardHeader className="justify-between gap-2">
+               <div className="flex items-center gap-1.5">
+                 <h3 className="text-xl font-semibold">Add New Room Type</h3>
+                 <HeadingInfo label="About the fallback rate">
+                   Fallback Rate is the nightly subtotal charged until a Rate Plan is set up for this room type, in the Rate Plans tab.
+                 </HeadingInfo>
+               </div>
+               <Button
+                 color="primary"
+                 variant="flat"
+                 size="sm"
+                 onClick={() => setBulkModalOpen(true)}
+               >
+                 Bulk Add Rooms
+               </Button>
              </CardHeader>
              <CardBody>
                {roomTypeFormError && (
@@ -1948,16 +1960,8 @@ export default function RoomConfigurationDashboard() {
 
         <Tab key="rooms" title="Rooms">
           <Card className="mb-6">
-            <CardHeader className="justify-between gap-2">
+            <CardHeader>
               <h3 className="text-xl font-semibold">Add Single Room</h3>
-              <Button
-                color="primary"
-                variant="flat"
-                size="sm"
-                onClick={() => setBulkModalOpen(true)}
-              >
-                Bulk Add Rooms
-              </Button>
             </CardHeader>
             <CardBody>
                              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
