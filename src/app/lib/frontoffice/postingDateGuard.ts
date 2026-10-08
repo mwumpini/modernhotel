@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/app/lib/database/client';
-import { businessToday, calendarDay, isManualPosting, postingDateError } from '@/app/lib/frontoffice/backdate';
+import { arrivalFloor, businessToday, calendarDay, isManualPosting, postingDateError } from '@/app/lib/frontoffice/backdate';
 
 export { isManualPosting };
 import { getFrontOfficeBusinessDate } from '@/app/lib/frontoffice/folioServer';
@@ -80,8 +80,7 @@ export async function rejectIfArrivalBackdated(
 ): Promise<NextResponse | null> {
   if (arrival === undefined) return null;
   const businessDate = await getFrontOfficeBusinessDate(tenantId).catch(() => businessToday());
-  const today = businessDate < businessToday() ? businessDate : businessToday();
-  return rejectIfBackdated(tenantId, arrival, record ? { model: 'reservation', id: record.id } : undefined, today);
+  return rejectIfBackdated(tenantId, arrival, record ? { model: 'reservation', id: record.id } : undefined, arrivalFloor(businessDate));
 }
 
 /** An edit that moves a manual posting's date earlier than today (keeping its stored date is fine). */

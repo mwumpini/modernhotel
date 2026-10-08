@@ -176,9 +176,10 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
     const validateEmail = (val?: string) => !!val && emailRegex.test(val);
     const validatePhone = (val?: string) => !!val && phoneRegex.test(val);
     const validateCredit = (val?: string) => (val === '' || val === undefined) ? true : !Number.isNaN(Number(val));
+    // ID is optional. If a number is typed, it must look like one (4+ characters).
     const validateId = (type?: string, num?: string) => {
-        if (!type) return true;
-        return !!(num && num.trim().length >= 4);
+        if (!type || !num || !num.trim()) return true;
+        return num.trim().length >= 4;
     };
 
     const [newClient, setNewClient] = useState({
@@ -1716,7 +1717,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                             </div>
                                             <div>
                                                 <label className="block text-sm font-medium text-gray-700 mb-1">ID Number</label>
-                                                <Input placeholder="ID number" value={newClient.idNumber} onChange={(e)=>handleInputChange('idNumber', e.target.value)} isInvalid={!validateId(newClient.idType, newClient.idNumber)} errorMessage={!validateId(newClient.idType, newClient.idNumber) ? 'Provide ID number for selected type' : undefined} />
+                                                <Input placeholder="ID number" value={newClient.idNumber} onChange={(e)=>handleInputChange('idNumber', e.target.value)} isInvalid={!validateId(newClient.idType, newClient.idNumber)} errorMessage={!validateId(newClient.idType, newClient.idNumber) ? 'Enter at least 4 characters, or leave it empty' : undefined} />
                                             </div>
                                             <div>
                                                 <label className="block text-sm font-medium text-gray-700 mb-1">ID Expiry</label>

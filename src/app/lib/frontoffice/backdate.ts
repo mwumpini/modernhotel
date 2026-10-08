@@ -51,3 +51,17 @@ export function postingDateMin(allowBackdating: boolean, today = businessToday()
 export function isManualPosting(sourceModule: unknown): boolean {
   return String(sourceModule ?? '').trim().startsWith('manual');
 }
+
+/**
+ * Earliest arrival a booking may have while backdating is off. The front desk's business date
+ * lags the calendar until night audit, so a late walk-in may still arrive on it, but never
+ * more than one day back however far behind the audit is.
+ */
+export function arrivalFloor(businessDate: string | undefined, today = businessToday()): string {
+  const d = new Date(`${today}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  const yesterday = d.toISOString().slice(0, 10);
+  const business = calendarDay(businessDate) || today;
+  if (business >= today) return today;
+  return business > yesterday ? business : yesterday;
+}

@@ -56,7 +56,7 @@ import { DateFilterPills } from './fb/DateFilterPills';
 import { openPrintPreview, renderPrint } from '../lib/print/engine';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
 import { notifyError, notifySuccess } from '../lib/notifications/notify';
-import { BACKDATE_MESSAGE, businessToday, calendarDay } from '../lib/frontoffice/backdate';
+import { BACKDATE_MESSAGE, arrivalFloor, calendarDay } from '../lib/frontoffice/backdate';
 
 interface ReservationFormData {
   guestName: string;
@@ -1107,11 +1107,13 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   /** Backdating lock: no arrival before the front desk's business date (it lags the calendar until night audit). */
   const arrivalBackdateError = (arrivals: Array<string | undefined>): string | null => {
     if (useSettingsStore.getState().roomManagement.allowBackdating === true) return null;
-    const today = businessToday();
-    const business = frontOfficeStore.getBusinessDate() || today;
-    const floor = business < today ? business : today;
+    const floor = arrivalFloor(frontOfficeStore.getBusinessDate());
     return arrivals.some((a) => calendarDay(a) !== '' && calendarDay(a) < floor) ? BACKDATE_MESSAGE : null;
   };
+  // The date boxes refuse an earlier arrival straight away, not only when saving.
+  const backdatingOn = useSettingsStore((s) => s.roomManagement.allowBackdating === true);
+  const minArrival = backdatingOn ? undefined : arrivalFloor(frontOfficeStore.getBusinessDate());
+  const arrivalTooEarly = (value?: string) => !!minArrival && calendarDay(value) !== '' && calendarDay(value) < minArrival;
 
   const handleSaveReservation = async () => {
     if (isCreatingNew) {
@@ -1946,7 +1948,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       <div className="bg-blue-50 p-3 rounded-lg border">
                         <h4 className="mb-2 font-medium text-blue-900">📅 Stay</h4>
                         <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                          <Input label="Arrival" type="date" value={formData.arrival} onChange={(e) => setFormData({...formData, arrival: e.target.value})} />
+                          <Input label="Arrival" type="date" min={(selectedReservation?.status === 'confirmed' || selectedReservation?.status === 'pending') ? minArrival : undefined} isInvalid={(selectedReservation?.status === 'confirmed' || selectedReservation?.status === 'pending') && arrivalTooEarly(formData.arrival)} errorMessage={(selectedReservation?.status === 'confirmed' || selectedReservation?.status === 'pending') && arrivalTooEarly(formData.arrival) ? BACKDATE_MESSAGE : undefined} value={formData.arrival} onChange={(e) => setFormData({...formData, arrival: e.target.value})} />
                           <Input label="Departure" type="date" value={formData.departure} onChange={(e) => setFormData({...formData, departure: e.target.value})} />
                           <Input label="Nights" value={String(calculateNights(formData.arrival, formData.departure))} isReadOnly />
                           <Input label="Adults" type="number" value={String(formData.adults)} onChange={(e) => setFormData({...formData, adults: parseInt(e.target.value) || 1})} />
@@ -2289,6 +2291,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                         <Input
                                     label="Arrival Date"
                                     type="date"
+                                    min={minArrival}
+                                    isInvalid={arrivalTooEarly(bulkGuest.arrival)}
+                                    errorMessage={arrivalTooEarly(bulkGuest.arrival) ? BACKDATE_MESSAGE : undefined}
                                     value={bulkGuest.arrival}
                                     onChange={(e) => {
                                       updateBulkGuest(bulkGuest.id, 'arrival', e.target.value);
