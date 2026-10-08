@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { updateInvoice, deleteInvoice } from '@/app/lib/accounting/repository'
+import { rejectIfManualBackdatedEdit } from '@/app/lib/frontoffice/postingDateGuard'
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -15,6 +16,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const { id } = await params
     const body = await request.json()
+    const backdated = await rejectIfManualBackdatedEdit(ctx.tenantId, body, 'accountingInvoice', id)
+    if (backdated) return backdated
 
     // Client always voids via persistInvoicePatch(id, {status:'Void', ...}) —
     // gate specifically on that transition rather than every edit.

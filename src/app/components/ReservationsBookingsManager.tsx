@@ -55,7 +55,8 @@ import { findMainFolio, getFolioDisplayTotals } from '../lib/frontoffice/helpers
 import { DateFilterPills } from './fb/DateFilterPills';
 import { openPrintPreview, renderPrint } from '../lib/print/engine';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
-import { notifySuccess } from '../lib/notifications/notify';
+import { notifyError, notifySuccess } from '../lib/notifications/notify';
+import { BACKDATE_MESSAGE, businessToday, calendarDay } from '../lib/frontoffice/backdate';
 
 interface ReservationFormData {
   guestName: string;
@@ -1103,11 +1104,25 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     setShowNewBillingPersonModal(false);
   };
 
+  /** Backdating lock: no arrival before the front desk's business date (it lags the calendar until night audit). */
+  const arrivalBackdateError = (arrivals: Array<string | undefined>): string | null => {
+    if (useSettingsStore.getState().roomManagement.allowBackdating === true) return null;
+    const today = businessToday();
+    const business = frontOfficeStore.getBusinessDate() || today;
+    const floor = business < today ? business : today;
+    return arrivals.some((a) => calendarDay(a) !== '' && calendarDay(a) < floor) ? BACKDATE_MESSAGE : null;
+  };
+
   const handleSaveReservation = async () => {
     if (isCreatingNew) {
       // Handle reservation (single or multiple guests)
       if (bulkGuests.length === 0) {
         alert('Please add at least one guest to the reservation');
+        return;
+      }
+      const backdated = arrivalBackdateError(bulkGuests.map((g) => g.arrival || formData.arrival));
+      if (backdated) {
+        notifyError(backdated, 'Arrival date not allowed');
         return;
       }
       
@@ -1244,6 +1259,14 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         alert(`Successfully created ${createdReservations.length} reservation${createdReservations.length !== 1 ? 's' : ''}${formData.companyName ? ` for ${formData.companyName}` : ''}`);
         }
     } else if (selectedReservation) {
+      // Moving an upcoming stay to an earlier arrival is a backdated posting too.
+      const movedEarlier = calendarDay(formData.arrival) !== calendarDay(selectedReservation.arrival);
+      const upcoming = selectedReservation.status === 'confirmed' || selectedReservation.status === 'pending';
+      const backdated = movedEarlier && upcoming ? arrivalBackdateError([formData.arrival]) : null;
+      if (backdated) {
+        notifyError(backdated, 'Arrival date not allowed');
+        return;
+      }
       // Update existing reservation + recompute rate breakdown for folio/check-in
       const selectedPlan = formData.ratePlanId && formData.ratePlanId !== 'custom'
         ? (useSettingsStore.getState().roomManagement.ratePlans || []).find((r: any) => r.id === formData.ratePlanId)

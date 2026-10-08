@@ -4,6 +4,7 @@ import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { updatePayment, deletePayment } from '@/app/lib/accounting/repository'
 import { prisma } from '@/app/lib/database/client'
 import { getApprovalRequirement } from '@/app/lib/api/approvalThresholds'
+import { rejectIfManualBackdatedEdit } from '@/app/lib/frontoffice/postingDateGuard'
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -17,6 +18,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const { id } = await params
     const body = await request.json()
+    const backdated = await rejectIfManualBackdatedEdit(ctx.tenantId, body, 'accountingPayment', id)
+    if (backdated) return backdated
 
     // Client always voids via persistPaymentPatch(id, {status:'Void', ...}) —
     // gate specifically on that transition rather than every edit.

@@ -8,6 +8,7 @@ import {
   listHrStaffDebtRepayments,
   upsertHrStaffDebtRepayment,
 } from '@/app/lib/hr/repository'
+import { rejectIfBackdated } from '@/app/lib/frontoffice/postingDateGuard'
 
 async function resolveTenant(req: NextRequest) {
   const subdomain = getTenantFromRequest(req)
@@ -49,6 +50,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ repayment })
     }
 
+    const backdated = await rejectIfBackdated(ctx.tenantId, body.issuedDate, { model: 'hrStaffDebt', id: body.id })
+    if (backdated) return backdated
     const debt = await upsertHrStaffDebt(ctx.tenantId, body.id, body)
     await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'HR_STAFF_DEBT_SAVED', 'HrStaffDebt', body.id, undefined, { employeeId: debt.employeeId, type: debt.type }, request)
     return NextResponse.json({ debt })

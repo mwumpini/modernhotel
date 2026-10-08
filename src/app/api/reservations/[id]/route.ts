@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { updateReservationRow, deleteReservationRow, isRoomAvailable, GuestNotInHotelError } from '@/app/lib/frontoffice/repository'
+import { prisma } from '@/app/lib/database/client'
+import { rejectIfArrivalBackdated } from '@/app/lib/frontoffice/postingDateGuard'
+import { calendarDay } from '@/app/lib/frontoffice/backdate'
 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -39,6 +42,18 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const { id } = await params
     const body = await request.json()
+
+    // Backdating lock: only when an upcoming stay is moved to an earlier arrival. Check-in,
+    // check-out and other edits resend the stored arrival and are never blocked.
+    if (body.arrival !== undefined) {
+      const row = await prisma.reservation.findFirst({ where: { id, tenantId: ctx.tenantId }, select: { checkInDate: true, status: true } })
+      const moved = !row || calendarDay(row.checkInDate) !== calendarDay(body.arrival)
+      const upcoming = ['confirmed', 'pending'].includes(String(body.status ?? row?.status ?? 'confirmed'))
+      if (moved && upcoming) {
+        const backdated = await rejectIfArrivalBackdated(ctx.tenantId, body.arrival)
+        if (backdated) return backdated
+      }
+    }
 
     // Re-check availability when (re)assigning a room for given dates
     if (body.roomId && body.arrival && body.departure) {

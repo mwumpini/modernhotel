@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth } from '@/app/lib/api/auth-guard'
 import { listInvoices, createInvoice } from '@/app/lib/accounting/repository'
+import { rejectIfManualBackdated } from '@/app/lib/frontoffice/postingDateGuard'
 
 export async function GET(request: NextRequest) {
   try {
@@ -32,6 +33,8 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     if (!body.invoiceNumber) return NextResponse.json({ error: 'invoiceNumber is required' }, { status: 400 })
+    const backdated = await rejectIfManualBackdated(ctx.tenantId, body)
+    if (backdated) return backdated
 
     const invoice = await createInvoice(ctx.tenantId, body)
     await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'INVOICE_CREATED', 'Invoice', invoice.id, undefined, { invoiceNumber: invoice.invoiceNumber, type: invoice.type, total: invoice.total, sourceModule: invoice.sourceModule }, request)

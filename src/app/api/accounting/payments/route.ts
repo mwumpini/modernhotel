@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth } from '@/app/lib/api/auth-guard'
 import { listPayments, createPayment } from '@/app/lib/accounting/repository'
+import { rejectIfManualBackdated } from '@/app/lib/frontoffice/postingDateGuard'
 
 export async function GET(request: NextRequest) {
   try {
@@ -31,6 +32,8 @@ export async function POST(request: NextRequest) {
     if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
 
     const body = await request.json()
+    const backdated = await rejectIfManualBackdated(ctx.tenantId, body)
+    if (backdated) return backdated
     if (!body.paymentNumber) return NextResponse.json({ error: 'paymentNumber is required' }, { status: 400 })
 
     const payment = await createPayment(ctx.tenantId, body)

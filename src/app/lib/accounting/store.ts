@@ -63,6 +63,8 @@ import { isPettyCashAccount, resolveBankGlAccountCode } from './bankCoaLink';
 import { syncBankOpeningBalanceToLedger } from './bankOpeningBalance';
 import { mirrorGlCashToCashbook } from './cashbookMirror';
 import { GL_ACCOUNTS, PAYMENT_GL_MAP } from './glAccounts';
+import { notifyError } from '../notifications/notify';
+import { isManualPosting, postingDateError } from '../frontoffice/backdate';
 import {
   createManualBankTransaction,
   reverseManualBankTransaction,
@@ -94,6 +96,15 @@ function keepServerOrFresh<T extends { id: string; createdAt?: string }>(merged:
   const onServer = new Set(serverRecords.map((r) => r.id));
   const cutoff = Date.now() - 2 * 60 * 1000;
   return merged.filter((r) => onServer.has(r.id) || Date.parse(r.createdAt || '') > cutoff);
+}
+
+/** Backdating lock for a posting typed in by a person; system postings keep their own dates. */
+function blockedByBackdateLock(record: { date?: unknown; sourceModule?: unknown }): boolean {
+  if (!isManualPosting(record.sourceModule)) return false;
+  const allow = useSettingsStore.getState().roomManagement?.allowBackdating === true;
+  const error = postingDateError(record.date, allow);
+  if (error) notifyError(error, 'Date not allowed');
+  return Boolean(error);
 }
 
 let ledgerRefreshInFlight: Promise<void> | null = null;
@@ -524,6 +535,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   setJournalEntries: (entries) => set({ journalEntries: entries }),
   
   addJournalEntry: (entry) => set((state) => {
+    if (blockedByBackdateLock(entry as { date?: unknown; sourceModule?: unknown })) return state;
     if (state.journalEntries.some((e) => e.id === entry.id)) {
       console.warn(`[Accounting] Journal entry ${entry.id} already exists — skipping duplicate post`);
       return state;
@@ -1255,6 +1267,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   setInvoices: (invoices) => set({ invoices: invoices }),
   
   addInvoice: (invoice) => {
+    if (blockedByBackdateLock(invoice as { date?: unknown; sourceModule?: unknown })) return;
     if (get().invoices.some((i) => i.id === invoice.id)) {
       console.warn(`[Accounting] Invoice ${invoice.id} already exists — skipping duplicate`);
       return;
@@ -1475,6 +1488,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   setPayments: (payments) => set({ payments: payments }),
   
   addPayment: (payment) => {
+    if (blockedByBackdateLock(payment as { date?: unknown; sourceModule?: unknown })) return;
     if (get().payments.some((p) => p.id === payment.id)) {
       console.warn(`[Accounting] Payment ${payment.id} already exists — skipping duplicate`);
       return;

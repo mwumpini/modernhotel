@@ -42,3 +42,12 @@ export function postingDateError(
 export function postingDateMin(allowBackdating: boolean, today = businessToday()): string | undefined {
   return allowBackdating ? undefined : today;
 }
+
+/**
+ * Postings typed in by a person: the Receivable, Payable and Journal forms mark them
+ * "manual…". Every system posting (checkout, restaurant, night-audit catch-up, payroll,
+ * reversals…) names its own module and is never locked.
+ */
+export function isManualPosting(sourceModule: unknown): boolean {
+  return String(sourceModule ?? '').trim().startsWith('manual');
+}

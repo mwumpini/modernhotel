@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth } from '@/app/lib/api/auth-guard'
 import { listReservations, createReservationRow, isRoomAvailable } from '@/app/lib/frontoffice/repository'
+import { rejectIfArrivalBackdated } from '@/app/lib/frontoffice/postingDateGuard'
 
 export async function GET(request: NextRequest) {
   try {
@@ -32,6 +33,8 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     if (!body.guestId) return NextResponse.json({ error: 'guestId is required' }, { status: 400 })
+    const backdated = await rejectIfArrivalBackdated(ctx.tenantId, body.arrival)
+    if (backdated) return backdated
     if (!body.arrival || !body.departure) {
       return NextResponse.json({ error: 'arrival and departure are required' }, { status: 400 })
     }
