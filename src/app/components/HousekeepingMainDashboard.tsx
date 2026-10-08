@@ -10,6 +10,7 @@ import {
   Tab, 
 } from "@heroui/react";
 import { housekeepingStore } from '../lib/housekeeping/store';
+import { useSettingsStore } from '../lib/settings/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import OfflineIndicator from './OfflineIndicator';
 import DeptNotices from './DeptNotices';
@@ -43,6 +44,7 @@ import MaintenancePanel from './housekeeping/MaintenancePanel';
 import RoomInspectionPanel from './housekeeping/RoomInspectionPanel';
 import HousekeepingInventoryPanel from './housekeeping/HousekeepingInventoryPanel';
 import HousekeepingRequisitionsPanel from './housekeeping/HousekeepingRequisitionsPanel';
+import { CleaningKitsPanel, ExtraSupplyRequestsPanel } from './housekeeping/CleaningStockPanels';
 import DepartmentStockCountPanel from './inventory/DepartmentStockCountPanel';
 import {
   STOCK_KPI_SECTIONS,
@@ -62,7 +64,7 @@ type HkPrimary = (typeof HK_PRIMARY)[number];
 
 type FloorView = 'rooms' | 'spaces' | 'inspections';
 type WorkView = 'tasks' | 'maintenance' | 'areas';
-type SuppliesView = 'inventory' | 'stock-count' | 'requisitions';
+type SuppliesView = 'inventory' | 'stock-count' | 'requisitions' | 'kits' | 'extras';
 
 const FLOOR_VIEWS: { key: FloorView; label: string }[] = [
   { key: 'rooms', label: '🏠 Rooms' },
@@ -76,6 +78,8 @@ const WORK_VIEWS: { key: WorkView; label: string }[] = [
 ];
 const SUPPLIES_VIEWS: { key: SuppliesView; label: string }[] = [
   { key: 'inventory', label: '📦 Inventory' },
+  { key: 'kits', label: '🧴 Room kits' },
+  { key: 'extras', label: '➕ Extra supplies' },
   { key: 'stock-count', label: '🔍 Stock Count' },
   { key: 'requisitions', label: '📝 Requisitions' },
 ];
@@ -120,6 +124,11 @@ function resolveHkNav(value: string | null | undefined): {
       return { primary: 'supplies', supplies: 'stock-count' };
     case 'requisitions':
       return { primary: 'supplies', supplies: 'requisitions' };
+    case 'kits':
+    case 'room-kits':
+      return { primary: 'supplies', supplies: 'kits' };
+    case 'extras':
+      return { primary: 'supplies', supplies: 'extras' };
     case 'staff':
       return { primary: 'staff' };
     case 'reports':
@@ -153,6 +162,12 @@ export default function HousekeepingMainDashboard({
   const customizeSections = onInventoryKpis ? STOCK_KPI_SECTIONS : HOUSEKEEPING_DASHBOARD_SECTIONS;
   const customizeApi = onInventoryKpis ? stockVisibility : { isHidden, toggle: toggleSection, showAll, hiddenCount };
 
+  const roleReady = useSettingsStore((s) => !!s.sessionRoleId);
+  const housekeepingDesk = useSettingsStore((s) =>
+    s.hasPermission('housekeeping.assign-task')
+    || s.hasPermission('housekeeping.manage-supplies')
+    || s.hasPermission('housekeeping.manage-staff'),
+  );
   const reservations = frontOfficeStore.reservations;
 
   const applyNav = (raw: string) => {
@@ -211,6 +226,22 @@ export default function HousekeepingMainDashboard({
     (r) => r.status === 'checked-in' && (r.departure || '').slice(0, 10) < deskPeriod.todayISO,
   ).length;
 
+
+  if (!roleReady) {
+    return <div className="p-6 text-sm text-gray-600">Loading housekeeping…</div>;
+  }
+
+  if (!housekeepingDesk) {
+    return (
+      <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
+        <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black mb-1`}>Your rooms</h2>
+        <p className="mb-4 text-sm text-gray-600">
+          Press Start when you go in. Done asks what will come off stock before it finishes. Undo is there for 10 minutes and puts the room back. Stock stays out until a supervisor returns it.
+        </p>
+        <RoomStatusGrid attendant />
+      </div>
+    );
+  }
 
   return (
     <SummaryCollapsedProvider collapsed={!fullPage && summaryCollapsed}>
@@ -451,6 +482,8 @@ export default function HousekeepingMainDashboard({
                   ariaLabel="Supplies views"
                 />
                 {suppliesView === 'inventory' && <HousekeepingInventoryPanel />}
+                {suppliesView === 'kits' && <CleaningKitsPanel />}
+                {suppliesView === 'extras' && <ExtraSupplyRequestsPanel />}
                 {suppliesView === 'stock-count' && (
                   <DepartmentStockCountPanel department="housekeeping" />
                 )}

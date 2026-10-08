@@ -1800,6 +1800,15 @@ const defaultRoles: UserRole[] = [
     updatedAt: new Date().toISOString(),
   },
   {
+    id: 'housekeeper',
+    name: 'Housekeeper',
+    description: 'Sees only the rooms assigned to them, and finishes those cleans',
+    permissions: ['housekeeping.view', 'housekeeping.update-room-status'],
+    isActive: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
     id: 'night_manager',
     name: 'Night Manager',
     description: 'Night audit and end-of-day front office operations',
@@ -3887,7 +3896,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const roleId = state.sessionRoleId ?? state.currentUser?.roleId;
     if (!roleId) return false;
 
-    const userRole = state.roles.find(role => role.id === roleId);
+    const userRole = state.roles.find(role => role.id === roleId) || defaultRoles.find(role => role.id === roleId);
     if (!userRole || !userRole.isActive) return false;
 
     const accepted = permissionIdsFor(permission);
@@ -3908,7 +3917,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const roleId = state.sessionRoleId ?? state.currentUser?.roleId;
     if (!roleId) return false;
 
-    const userRole = state.roles.find(role => role.id === roleId);
+    const userRole = state.roles.find(role => role.id === roleId) || defaultRoles.find(role => role.id === roleId);
     if (!userRole || !userRole.isActive) return false;
 
     return userRole.permissions.some((p) => {

@@ -1066,8 +1066,8 @@ export default function RoomConfigurationDashboard() {
           bValue = getRoomTypeName(b.roomTypeId);
           break;
         case 'price':
-          aValue = a.basePrice;
-          bValue = b.basePrice;
+          aValue = subtotalFromPlanPrice(a.basePrice, a.priceType);
+          bValue = subtotalFromPlanPrice(b.basePrice, b.priceType);
           break;
         case 'priceType':
           aValue = a.priceType;
@@ -1232,88 +1232,86 @@ export default function RoomConfigurationDashboard() {
     }
   };
 
-  // Enhanced Rate Plans CSV download with seasonal pricing
+  const ratePlanExportRows = () => settingsStore.roomManagement.ratePlans.map(plan => {
+    const transformedPlan = transformRatePlanData(plan);
+    const subtotal = subtotalFromPlanPrice(transformedPlan.basePrice, transformedPlan.priceType);
+    const tax = computeTaxBreakdown(subtotal);
+    const nhil = Number(tax.nhil) || 0;
+    const getfund = Number(tax.getfund) || 0;
+    const vat = Number(tax.vat) || 0;
+    const tourism = Number(tax.tourism) || 0;
+    const finalBill = subtotal + (Number(tax.totalTax) || nhil + getfund + vat + tourism);
+    const updated = new Date(transformedPlan.lastUpdated || new Date().toISOString());
+    return {
+      name: transformedPlan.name,
+      roomType: getRoomTypeName(transformedPlan.roomTypeId),
+      subtotal,
+      nhil,
+      getfund,
+      vat,
+      tourism,
+      finalBill,
+      priceType: transformedPlan.priceType === 'subtotal' ? 'Subtotal' : 'Final bill',
+      seasons: transformedPlan.seasonalRates.length > 0 ? String(transformedPlan.seasonalRates.length) : 'None',
+      updated: updated.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+      status: transformedPlan.isActive ? 'Active' : 'Inactive',
+      seasonalRates: transformedPlan.seasonalRates,
+    };
+  });
+
+  const money = (amount: number) => amount.toFixed(2);
+
+  /** Helvetica cannot draw the cedi sign or an em dash, so printed text uses plain characters. */
+  const printText = (value: unknown) => String(value ?? '').replace(/\u2014/g, ' - ').replace(/\u2013/g, ' - ').replace(/\u20B5/g, 'GHS ');
+
   const handleDownloadRatePlansCSV = () => {
     if (settingsStore.roomManagement.ratePlans.length === 0) return;
-    
+
     setIsCsvLoading(true);
     try {
-      // Main rate plans data
-      const mainData = settingsStore.roomManagement.ratePlans.map(plan => {
-        const transformedPlan = transformRatePlanData(plan);
-        // Calculate tax breakdown for CSV export
-        // Only "subtotal" and "gross_total" are valid values for priceType
-        const subtotal = subtotalFromPlanPrice(transformedPlan.basePrice, transformedPlan.priceType);
-        const { nhil, getfund, vat, tourism, totalTax } = computeTaxBreakdown(subtotal);
-        const finalBill = subtotal + totalTax;
-        
-        return [
-          transformedPlan.name,
-          getRoomTypeName(transformedPlan.roomTypeId),
-          `₵${transformedPlan.basePrice.toFixed(2)}`,
-          `₵${finalBill.toFixed(2)}`,
-          transformedPlan.priceType === 'subtotal' ? 'Subtotal' : 'Gross Total',
-          transformedPlan.seasonalRates.length > 0 ? `${transformedPlan.seasonalRates.length} seasonal periods` : 'No seasonal rates',
-          new Date(transformedPlan.lastUpdated || new Date().toISOString()).toLocaleDateString('en-GB', {
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-          }),
-          transformedPlan.isActive ? 'Active' : 'Inactive'
-        ];
-      });
-      
-      const mainHeaders = ['Rate Plan', 'Room Type', 'Subtotal', 'Final Bill (Tax Inclusive)', 'Price Type', 'Seasonal Rates', 'Last Updated', 'Status'];
-      
-      // Seasonal rates detailed data
-      const seasonalData: any[] = [];
-      settingsStore.roomManagement.ratePlans.forEach(plan => {
-        const transformedPlan = transformRatePlanData(plan);
-        if (transformedPlan.seasonalRates.length > 0) {
-          transformedPlan.seasonalRates.forEach(seasonal => {
-            seasonalData.push([
-              transformedPlan.name,
-              seasonal.name,
-              new Date(seasonal.startDate).toLocaleDateString('en-GB'),
-              new Date(seasonal.endDate).toLocaleDateString('en-GB'),
-              seasonal.multiplier,
-              seasonal.description || ''
-            ]);
-          });
-        }
-      });
-      
-      const seasonalHeaders = ['Rate Plan', 'Season Name', 'Start Date', 'End Date', 'Multiplier', 'Description'];
-      
-      // Combine all data
-      const csvContent = [
-        '=== MAIN RATE PLANS ===',
-        mainHeaders.join(','),
-        ...mainData.map(row => row.map(cell => `"${cell}"`).join(','))
+      const rows = ratePlanExportRows();
+      const csvCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+      const csvLine = (cells: unknown[]) => cells.map(csvCell).join(',');
+      const lines = [
+        csvLine(['Rate plan', 'Room type', 'Subtotal GHS', 'NHIL GHS', 'GETFund GHS', 'VAT GHS', 'Tourism levy GHS', 'Final bill GHS', 'Price type', 'Seasonal rates', 'Last updated', 'Status']),
+        ...rows.map(row => csvLine([
+          row.name,
+          row.roomType,
+          money(row.subtotal),
+          money(row.nhil),
+          money(row.getfund),
+          money(row.vat),
+          money(row.tourism),
+          money(row.finalBill),
+          row.priceType,
+          row.seasons,
+          row.updated,
+          row.status,
+        ])),
       ];
-      
-      if (seasonalData.length > 0) {
-        csvContent.push(
-          '',
-          '=== SEASONAL RATES DETAILS ===',
-          seasonalHeaders.join(','),
-          ...seasonalData.map(row => row.map((cell: any) => `"${cell}"`).join(','))
-        );
+      const seasonal = rows.flatMap(row => row.seasonalRates.map(seasonalRate => [
+        row.name,
+        seasonalRate.name,
+        new Date(seasonalRate.startDate).toLocaleDateString('en-GB'),
+        new Date(seasonalRate.endDate).toLocaleDateString('en-GB'),
+        seasonalRate.multiplier,
+        seasonalRate.description || '',
+      ]));
+      if (seasonal.length > 0) {
+        lines.push('', csvLine(['Seasonal rates']), csvLine(['Rate plan', 'Season', 'Start', 'End', 'Multiplier', 'Description']));
+        seasonal.forEach(cells => lines.push(csvLine(cells)));
       }
-      
-      const blob = new Blob([csvContent.join('\n')], { type: 'text/csv;charset=utf-8;' });
+      const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
       link.setAttribute('href', url);
-      link.setAttribute('download', 'rate-plans-comprehensive.csv');
+      link.setAttribute('download', 'rate-plans.csv');
       link.style.visibility = 'hidden';
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      
-      logAction('DOWNLOAD_RATE_PLANS_CSV', { totalPlans: settingsStore.roomManagement.ratePlans.length, includesSeasonal: seasonalData.length > 0 });
+      URL.revokeObjectURL(url);
+      logAction('DOWNLOAD_RATE_PLANS_CSV', { totalPlans: rows.length, includesSeasonal: seasonal.length > 0 });
     } catch (error) {
       console.error('Error generating Rate Plans CSV:', error);
       alert('Error generating CSV. Please try again.');
@@ -1322,136 +1320,74 @@ export default function RoomConfigurationDashboard() {
     }
   };
 
-  // Basic Rate Plans CSV download (simple format)
-  const handleDownloadBasicRatePlansCSV = () => {
-    if (settingsStore.roomManagement.ratePlans.length === 0) return;
-    
-    try {
-      const data = settingsStore.roomManagement.ratePlans.map(plan => {
-        const transformedPlan = transformRatePlanData(plan);
-        return [
-          transformedPlan.name,
-          getRoomTypeName(transformedPlan.roomTypeId),
-          `₵${transformedPlan.basePrice}`,
-          transformedPlan.priceType === 'subtotal' ? 'Subtotal' : 'Gross Total',
-          new Date(transformedPlan.lastUpdated || new Date().toISOString()).toLocaleDateString('en-GB', {
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-          }),
-          transformedPlan.isActive ? 'Active' : 'Inactive'
-        ];
-      });
-      
-      const headers = ['Name', 'Room Type', 'Base Price', 'Price Type', 'Last Updated', 'Status'];
-      const csvContent = [
-        headers.join(','),
-        ...data.map(row => row.map((cell: any) => `"${cell}"`).join(','))
-      ].join('\n');
-      
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', 'rate-plans-basic.csv');
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      
-      logAction('DOWNLOAD_BASIC_RATE_PLANS_CSV', { totalPlans: settingsStore.roomManagement.ratePlans.length });
-    } catch (error) {
-      console.error('Error generating Basic Rate Plans CSV:', error);
-      alert('Error generating CSV. Please try again.');
-    }
-  };
-
-  // Enhanced Rate Plans PDF download with seasonal pricing
   const handleDownloadRatePlansPDF = async () => {
     setIsPdfLoading(true);
     try {
       const jsPDF = (await import('jspdf')).default;
       const autoTable = (await import('jspdf-autotable')).default;
-      
-      const data = settingsStore.roomManagement.ratePlans.map(plan => {
-        const transformedPlan = transformRatePlanData(plan);
-        const roomType = getRoomTypeName(transformedPlan.roomTypeId);
-        const seasonalInfo = transformedPlan.seasonalRates.length > 0 
-          ? `${transformedPlan.seasonalRates.length} seasonal periods`
-          : 'No seasonal rates';
-        
-        return [
-          transformedPlan.name,
-          roomType,
-          `₵${transformedPlan.basePrice}`,
-          transformedPlan.priceType === 'subtotal' ? 'Subtotal' : 'Gross Total',
-          seasonalInfo,
-          new Date(transformedPlan.lastUpdated || new Date().toISOString()).toLocaleDateString('en-GB', {
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric'
-          }),
-          transformedPlan.isActive ? 'Active' : 'Inactive'
-        ];
-      });
-      
-      const headers = ['Rate Plan', 'Room Type', 'Base Price', 'Price Type', 'Seasonal Rates', 'Last Updated', 'Status'];
-      
-      const doc = new jsPDF();
-      (autoTable as any)(doc, { 
-        head: [headers], 
-        body: data,
-        startY: 20,
-        styles: {
-          fontSize: 8,
-          cellPadding: 2
+      const rows = ratePlanExportRows();
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }) as any;
+      const printedOn = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+      doc.setFontSize(16);
+      doc.text('Rate plans', 14, 16);
+      doc.setFontSize(10);
+      doc.setTextColor(80);
+      doc.text(`Amounts in Ghana cedis. Printed ${printedOn}.`, 14, 22);
+      doc.setTextColor(0);
+
+      (autoTable as any)(doc, {
+        head: [['Rate plan', 'Room type', 'Subtotal', 'NHIL', 'GETFund', 'VAT', 'Tourism', 'Final bill', 'Price type', 'Updated', 'Status']],
+        body: rows.map(row => [
+          printText(row.name),
+          printText(row.roomType),
+          money(row.subtotal),
+          money(row.nhil),
+          money(row.getfund),
+          money(row.vat),
+          money(row.tourism),
+          money(row.finalBill),
+          row.priceType,
+          row.updated,
+          row.status,
+        ]),
+        startY: 28,
+        margin: { left: 14, right: 14 },
+        styles: { fontSize: 9, cellPadding: 2, overflow: 'linebreak', valign: 'middle' },
+        headStyles: { fillColor: [6, 95, 70], textColor: 255, fontStyle: 'bold' },
+        columnStyles: {
+          2: { halign: 'right' },
+          3: { halign: 'right' },
+          4: { halign: 'right' },
+          5: { halign: 'right' },
+          6: { halign: 'right' },
+          7: { halign: 'right' },
         },
-        headStyles: {
-          fillColor: [41, 128, 185],
-          textColor: 255
-        }
+        alternateRowStyles: { fillColor: [245, 247, 246] },
       });
-      
-      // Add seasonal rates details on a new page if any exist
-      const plansWithSeasonalRates = settingsStore.roomManagement.ratePlans.filter(plan => plan.seasonalRates.length > 0);
-      if (plansWithSeasonalRates.length > 0) {
-        (doc as any).addPage();
-        (doc as any).text('Seasonal Rates Details', 20, 20);
-        
-        const seasonalData: any[] = [];
-        plansWithSeasonalRates.forEach(plan => {
-          const transformedPlan = transformRatePlanData(plan);
-          transformedPlan.seasonalRates.forEach(seasonal => {
-            seasonalData.push([
-              transformedPlan.name,
-              seasonal.name,
-              new Date(seasonal.startDate).toLocaleDateString('en-GB'),
-              new Date(seasonal.endDate).toLocaleDateString('en-GB'),
-              `${seasonal.multiplier}x`,
-              seasonal.description || ''
-            ]);
-          });
-        });
-        
-        const seasonalHeaders = ['Rate Plan', 'Season Name', 'Start Date', 'End Date', 'Multiplier', 'Description'];
-        (autoTable as any)(doc, { 
-          head: [seasonalHeaders], 
-          body: seasonalData,
-          startY: 30,
-          styles: {
-            fontSize: 8,
-            cellPadding: 2
-          },
-          headStyles: {
-            fillColor: [255, 165, 0],
-            fixedTextColor: 0
-          }
+
+      const seasonal = rows.flatMap(row => row.seasonalRates.map(seasonalRate => [
+        printText(row.name),
+        printText(seasonalRate.name),
+        new Date(seasonalRate.startDate).toLocaleDateString('en-GB'),
+        new Date(seasonalRate.endDate).toLocaleDateString('en-GB'),
+        `${seasonalRate.multiplier}x`,
+        printText(seasonalRate.description || ''),
+      ]));
+      if (seasonal.length > 0) {
+        doc.addPage();
+        doc.setFontSize(16);
+        doc.text('Seasonal rates', 14, 16);
+        (autoTable as any)(doc, {
+          head: [['Rate plan', 'Season', 'Start', 'End', 'Multiplier', 'Description']],
+          body: seasonal,
+          startY: 24,
+          margin: { left: 14, right: 14 },
+          styles: { fontSize: 9, cellPadding: 2, overflow: 'linebreak' },
+          headStyles: { fillColor: [6, 95, 70], textColor: 255, fontStyle: 'bold' },
         });
       }
-      
-      doc.save('rate-plans-comprehensive.pdf');
+
+      doc.save('rate-plans.pdf');
       logAction('DOWNLOAD_RATE_PLANS_PDF', { totalPlans: settingsStore.roomManagement.ratePlans.length });
     } catch (error) {
       console.error('Error generating Rate Plans PDF:', error);
@@ -2450,10 +2386,10 @@ export default function RoomConfigurationDashboard() {
                         taxes are added on top. Guest pays Base Rate + Taxes — e.g. ₵{exampleBase.toFixed(2)} + ₵{exampleTax.toFixed(2)} = ₵{exampleGross.toFixed(2)}.
                       </div>
                       <div>
-                        <strong className="text-blue-700">Gross Total (Including Tax):</strong> you set the final guest price,
+                        <strong className="text-blue-700">Final Bill (Including Tax):</strong> you set the final guest price,
                         taxes are already included in it. Guest pays exactly ₵{exampleGross.toFixed(2)}.
                       </div>
-                      <div className="text-gray-600">💡 Use Subtotal to control base revenue, Gross Total to control the final guest price.</div>
+                      <div className="text-gray-600">💡 Use Subtotal to control base revenue, Final Bill to control the final guest price.</div>
                     </div>
                   );
                 })()}
@@ -2496,18 +2432,22 @@ export default function RoomConfigurationDashboard() {
                 <Select
                   label="Price Type"
                   placeholder="Select price type"
-                  value={newRatePlan.priceType}
-                  onChange={(e) => setNewRatePlan({...newRatePlan, priceType: e.target.value as 'subtotal' | 'gross_total'})}
+                  selectedKeys={[newRatePlan.priceType]}
+                  onSelectionChange={(keys) => {
+                    const priceType = Array.from(keys)[0] as 'subtotal' | 'gross_total' | undefined;
+                    if (!priceType) return;
+                    setNewRatePlan({ ...newRatePlan, priceType });
+                  }}
                 >
                   <SelectItem key="subtotal">
                     Subtotal (Before Tax)
                   </SelectItem>
                   <SelectItem key="gross_total">
-                    Gross Total (Including Tax)
+                    Final Bill (Including Tax)
                   </SelectItem>
                 </Select>
                 <Input
-                  label={`Price (₵) - ${newRatePlan.priceType === 'subtotal' ? 'Subtotal' : 'Gross Total'}`}
+                  label={`Price (₵) - ${newRatePlan.priceType === 'subtotal' ? 'Subtotal' : 'Final Bill'}`}
                   type="number"
                   placeholder="750"
                   value={newRatePlan.price}
@@ -2580,7 +2520,7 @@ export default function RoomConfigurationDashboard() {
                     </div>
                   </div>
                   <div className="text-xs text-gray-500 self-end">
-                    Changes respond instantly to price and price type. Switch between Subtotal and Gross Total anytime.
+                    Changes respond instantly to price and price type. Switch between Subtotal and Final Bill anytime.
                   </div>
                 </div>
                 );
@@ -2657,7 +2597,7 @@ export default function RoomConfigurationDashboard() {
                     <TableRow key={plan.id}>
                       <TableCell className="font-medium">{plan.name}</TableCell>
                       <TableCell>{getRoomTypeName(plan.roomTypeId)}</TableCell>
-                      <TableCell>₵{plan.basePrice}</TableCell>
+                      <TableCell>₵{subtotalFromPlanPrice(plan.basePrice, plan.priceType).toFixed(2)}</TableCell>
                       <TableCell className="text-center">
                         {(() => {
                           const subtotal = subtotalFromPlanPrice(plan.basePrice, plan.priceType || 'subtotal');
@@ -2672,7 +2612,7 @@ export default function RoomConfigurationDashboard() {
                            color={(plan.priceType || 'subtotal') === 'subtotal' ? 'primary' : 'success'} 
                            variant="flat"
                          >
-                           {(plan.priceType || 'subtotal') === 'subtotal' ? 'Subtotal' : 'Gross Total'}
+                           {(plan.priceType || 'subtotal') === 'subtotal' ? 'Subtotal' : 'Final Bill'}
                          </Chip>
                        </TableCell>
                        <TableCell>
@@ -2771,20 +2711,13 @@ export default function RoomConfigurationDashboard() {
                {settingsStore.roomManagement.ratePlans.length > 0 && (
                  <div className="mt-4 flex justify-end gap-2">
                    <Button 
-                     color="primary" 
-                     variant="flat" 
-                     onClick={handleDownloadBasicRatePlansCSV}
-                   >
-                     📊 Download Basic CSV
-                   </Button>
-                   <Button 
                      color="success" 
                      variant="flat" 
                      onClick={handleDownloadRatePlansCSV}
                      isLoading={isCsvLoading}
                      disabled={isCsvLoading}
                    >
-                     {isCsvLoading ? 'Generating CSV...' : '📊 Download Comprehensive CSV'}
+                     {isCsvLoading ? 'Generating CSV...' : '📊 Download CSV'}
                    </Button>
                    <Button 
                      color="warning" 
@@ -2793,7 +2726,7 @@ export default function RoomConfigurationDashboard() {
                      isLoading={isPdfLoading}
                      disabled={isPdfLoading}
                    >
-                     {isPdfLoading ? 'Generating PDF...' : '📄 Download Comprehensive PDF'}
+                     {isPdfLoading ? 'Generating PDF...' : '📄 Download PDF'}
                    </Button>
                  </div>
                )}
@@ -2852,14 +2785,14 @@ export default function RoomConfigurationDashboard() {
                         <div className="flex justify-between items-start mb-3">
                           <div>
                             <h4 className="font-semibold text-lg">{transformedPlan.name}</h4>
-                            <p className="text-sm text-gray-600">{roomType.name} • {transformedPlan.priceType === 'subtotal' ? 'Subtotal Rate' : 'Gross Rate'}</p>
+                            <p className="text-sm text-gray-600">{roomType.name} • {transformedPlan.priceType === 'subtotal' ? 'Subtotal Rate' : 'Final Bill'}</p>
                           </div>
                           <Chip
                             size="sm"
                             color={transformedPlan.priceType === 'subtotal' ? 'primary' : 'success'}
                             variant="flat"
                           >
-                            {transformedPlan.priceType === 'subtotal' ? 'Subtotal' : 'Gross Total'}
+                            {transformedPlan.priceType === 'subtotal' ? 'Subtotal' : 'Final Bill'}
                           </Chip>
                         </div>
 
@@ -3123,17 +3056,21 @@ export default function RoomConfigurationDashboard() {
                 label="Price Type"
                 placeholder="Select price type"
                 selectedKeys={[editRatePlanForm.priceType]}
-                onChange={(e) => setEditRatePlanForm({ ...editRatePlanForm, priceType: e.target.value as 'subtotal' | 'gross_total' })}
+                onSelectionChange={(keys) => {
+                  const priceType = Array.from(keys)[0] as 'subtotal' | 'gross_total' | undefined;
+                  if (!priceType) return;
+                  setEditRatePlanForm({ ...editRatePlanForm, priceType });
+                }}
               >
                 <SelectItem key="subtotal">
                   Subtotal (Before Tax)
                 </SelectItem>
                 <SelectItem key="gross_total">
-                  Gross Total (Including Tax)
+                  Final Bill (Including Tax)
                 </SelectItem>
               </Select>
               <Input
-                label={`Price (₵) - ${editRatePlanForm.priceType === 'subtotal' ? 'Subtotal' : 'Gross Total'}`}
+                label={`Price (₵) - ${editRatePlanForm.priceType === 'subtotal' ? 'Subtotal' : 'Final Bill'}`}
                 type="number"
                 min={0.01}
                 step="0.01"

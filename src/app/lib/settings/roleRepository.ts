@@ -40,6 +40,12 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
     permissions: ['dashboard.view', 'frontdesk.checkin', 'frontdesk.checkout', 'housekeeping.view', 'restaurant.pos'],
   },
   {
+    code: 'housekeeper',
+    name: 'Housekeeper',
+    description: 'Sees only the rooms assigned to them, and finishes those cleans',
+    permissions: ['housekeeping.view', 'housekeeping.update-room-status'],
+  },
+  {
     code: 'night_manager',
     name: 'Night Manager',
     description: 'Night audit and end-of-day front office operations',

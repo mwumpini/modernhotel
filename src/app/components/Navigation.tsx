@@ -348,11 +348,15 @@ export default function Navigation({ onLogout }: NavigationProps) {
       icon: '🛏️',
       items: [
         { title: '🏠 Floor', href: '#' },
-        { title: '🧹 Work', href: '#' },
-        { title: '📦 Supplies', href: '#' },
-        { title: '👥 Staff', href: '#' },
-        { title: '📈 Reports & Analysis', href: '#' },
-        { title: '👁️ View Activities', href: '#' },
+        ...(hasPermission('housekeeping.assign-task') || hasPermission('housekeeping.manage-supplies') || hasPermission('housekeeping.manage-staff')
+          ? [
+              { title: '🧹 Work', href: '#' },
+              { title: '📦 Supplies', href: '#' },
+              { title: '👥 Staff', href: '#' },
+              { title: '📈 Reports & Analysis', href: '#' },
+              { title: '👁️ View Activities', href: '#' },
+            ]
+          : []),
       ]
     },
     {
@@ -441,6 +445,13 @@ export default function Navigation({ onLogout }: NavigationProps) {
     if (!settingsHydrated) return;
     const activeModuleKey = sectionToModuleKey(activeSection);
     const allowed = hasModuleAccess(activeModuleKey) && moduleEnabled(activeModuleKey, moduleSettings);
+    const desk = useSettingsStore.getState().hasPermission('housekeeping.assign-task')
+      || useSettingsStore.getState().hasPermission('housekeeping.manage-supplies')
+      || useSettingsStore.getState().hasPermission('housekeeping.manage-staff');
+    if (hasModuleAccess('housekeeping') && !desk && (activeModuleKey === 'dashboard' || !allowed)) {
+      setActiveSection('housekeeping');
+      return;
+    }
     if (activeModuleKey !== 'dashboard' && !allowed) {
       setActiveSection('dashboard');
     }

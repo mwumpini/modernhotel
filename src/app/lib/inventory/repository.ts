@@ -693,6 +693,54 @@ export async function issueDepartmentStock(params: {
 	return { error: null as null, warnings, issued };
 }
 
+/** Put department stock back. One receipt per item and reference, so a second return does not add the same lines again. */
+export async function returnDepartmentStock(params: {
+	tenantId: string;
+	department: string;
+	items: { itemId: string; quantity: number }[];
+	referenceType: string;
+	referenceId: string;
+	performedBy?: string;
+	notes?: string;
+}) {
+	if (!DEPARTMENT_LOCATIONS[params.department]) return { error: 'unknown_department' as const };
+	const locationId = await getDepartmentLocationId(params.tenantId, params.department);
+	if (!locationId) return { error: 'no_location' as const };
+
+	const returned: { itemId: string; quantity: number }[] = [];
+	for (const item of params.items) {
+		const qty = Math.floor(Number(item.quantity));
+		if (!item.itemId || !Number.isFinite(qty) || qty <= 0) continue;
+		const already = await prisma.inventoryTransaction.findFirst({
+			where: {
+				tenantId: params.tenantId,
+				itemId: item.itemId,
+				locationId,
+				type: 'receipt',
+				referenceType: params.referenceType,
+				referenceId: params.referenceId,
+			},
+		});
+		if (already) {
+			returned.push({ itemId: item.itemId, quantity: Math.abs(Number(already.quantity || qty)) });
+			continue;
+		}
+		await recordStockTransaction({
+			tenantId: params.tenantId,
+			itemId: item.itemId,
+			locationId,
+			type: 'receipt',
+			quantity: qty,
+			referenceType: params.referenceType,
+			referenceId: params.referenceId,
+			notes: params.notes,
+			performedBy: params.performedBy,
+		});
+		returned.push({ itemId: item.itemId, quantity: qty });
+	}
+	return { error: null as null, returned };
+}
+
 export async function getStockLevelsAtLocation(tenantId: string, locationId: string) {
 	const [items, sums] = await Promise.all([
 		prisma.inventoryItem.findMany({

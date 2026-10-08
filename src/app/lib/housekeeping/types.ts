@@ -14,6 +14,8 @@ export type TaskStatus = 'pending' | 'in-progress' | 'completed' | 'verified' | 
 
 export interface HousekeepingTask {
   id: string;
+  /** Number from Settings → numbering. Legacy rows keep their database id. */
+  ticketNumber?: string;
   roomNumber: string;
   roomTypeId: string;
   taskType: 'daily' | 'turnover' | 'deep-clean' | 'maintenance' | 'inspection';
@@ -35,8 +37,19 @@ export interface HousekeepingTask {
   photos?: string[];
   /** Supplies taken from housekeeping stock when the task was finished. */
   suppliesUsed?: { itemId: string; itemName: string; quantity: number }[];
-  /** True once those supplies have been issued, so finishing again does not deduct twice. */
+  /** True once the room kit has been issued, so finishing again does not deduct twice. */
   suppliesIssued?: boolean;
+  /** Who opened the task. Only a supervisor's own task can take a kit without a real stay. */
+  openedBy?: 'supervisor' | 'attendant';
+  /** Supplies asked for above the room kit. Stock moves only after a supervisor approves. */
+  extraRequest?: {
+    status: 'pending' | 'approved' | 'rejected';
+    items: { itemId: string; itemName: string; quantity: number }[];
+    requestedAt?: string;
+    requestedBy?: string;
+    reviewedAt?: string;
+    reviewedBy?: string;
+  } | null;
 }
 
 export interface RoomInspection {

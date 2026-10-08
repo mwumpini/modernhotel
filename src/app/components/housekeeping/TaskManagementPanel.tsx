@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { HideCardButton } from '../dashboard/CustomizeViewControl';
 import { 
   Card, 
@@ -23,15 +23,26 @@ import {
   TableBody,
   TableRow,
   TableCell,
-  Progress,
-  Avatar,
   Pagination,
 } from "@heroui/react";
 import { housekeepingStore } from '../../lib/housekeeping/store';
+import { sequenceOf, useSettingsStore } from '../../lib/settings/store';
 import { getClientTenantSubdomain } from '../../lib/api/clientTenant';
 
 function hkHeaders() {
   return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
+}
+
+function jobLabel(type: string) {
+  const text = type.replace(/[_-]/g, ' ');
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function ticketOf(task: HousekeepingTask): string {
+  if (task.ticketNumber) return task.ticketNumber;
+  const pattern = useSettingsStore.getState().moduleNumbering?.frontOffice?.housekeepingTicket;
+  if (pattern && sequenceOf(task.id, pattern) != null) return task.id;
+  return '';
 }
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
@@ -179,22 +190,24 @@ export default function TaskManagementPanel({
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
-  const [sort, setSort] = useState<ColumnSort>({ column: 'id', direction: 'desc' });
+  const [taskLayout, setTaskLayout] = useState<'cards' | 'table'>('table');
+  const [sort, setSort] = useState<ColumnSort>({ column: 'number', direction: 'desc' });
   const [page, setPage] = useState(1);
   const cols = useResizableColumns({
-    id: 120,
+    number: 120,
     room: 80,
-    type: 110,
-    priority: 90,
+    job: 120,
     status: 120,
-    assigned: 140,
-    progress: 140,
-    time: 90,
+    assigned: 150,
+    action: 90,
   });
-  const [usageTask, setUsageTask] = useState<HousekeepingTask | null>(null);
-  const [usageRows, setUsageRows] = useState<{ itemId: string; itemName: string; unit: string; onHand: number; quantity: string }[]>([]);
-  const [usageError, setUsageError] = useState('');
-  const [usageSaving, setUsageSaving] = useState(false);
+  const [finishTask, setFinishTask] = useState<HousekeepingTask | null>(null);
+  const [finishPreview, setFinishPreview] = useState<{ label: string; lines: { itemId: string; itemName: string; quantity: number }[] } | null>(null);
+  const [finishItems, setFinishItems] = useState<{ id: string; name: string }[]>([]);
+  const [finishExtras, setFinishExtras] = useState<{ itemId: string; quantity: string }[]>([]);
+  const [finishError, setFinishError] = useState('');
+  const [finishWarnings, setFinishWarnings] = useState<string[]>([]);
+  const [finishSaving, setFinishSaving] = useState(false);
   const [responsibilities, setResponsibilities] = useState<RoomResponsibility[]>([]);
   const [cleaningAreas, setCleaningAreas] = useState<CleaningArea[]>([]);
   const [responsibleHint, setResponsibleHint] = useState<{ name: string; shift: string; matchedStaffId?: string } | null>(null);
@@ -269,6 +282,18 @@ export default function TaskManagementPanel({
     setStaff(housekeepingStore.getAllStaff());
     setRooms(housekeepingStore.getAllRooms());
   };
+
+  const numberedTickets = useRef(new Set<string>());
+  useEffect(() => {
+    const pattern = useSettingsStore.getState().moduleNumbering?.frontOffice?.housekeepingTicket;
+    if (!pattern) return;
+    for (const task of tasks) {
+      if (task.ticketNumber || sequenceOf(task.id, pattern) != null || numberedTickets.current.has(task.id)) continue;
+      numberedTickets.current.add(task.id);
+      const ticketNumber = useSettingsStore.getState().getNextModuleNumber('frontOffice', 'housekeepingTicket');
+      housekeepingStore.updateTask(task.id, { ticketNumber });
+    }
+  }, [tasks]);
 
   // Quick task creation from template
   const handleQuickTask = (templateKey: string, roomNumber?: string) => {
@@ -488,22 +513,24 @@ export default function TaskManagementPanel({
     if (status === 'completed') {
       const task = tasks.find((t) => t.id === taskId);
       if (task && !task.suppliesIssued) {
-        setUsageError('');
-        setUsageRows([]);
-        setUsageTask(task);
-        fetch('/api/inventory/stock-levels?department=housekeeping', { headers: hkHeaders() })
+        setFinishError('');
+        setFinishWarnings([]);
+        setFinishExtras([]);
+        setFinishPreview(null);
+        setFinishTask(task);
+        fetch(`/api/housekeeping/tasks/${encodeURIComponent(taskId)}/finish`, { headers: hkHeaders() })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => {
+            if (!data) {
+              setFinishError('Could not check the room kit.');
+              return;
+            }
+            setFinishPreview({ label: data.label, lines: data.lines || [] });
+          })
+          .catch(() => setFinishError('Could not check the room kit.'));
+        fetch('/api/housekeeping/cleaning-kits', { headers: hkHeaders() })
           .then((r) => (r.ok ? r.json() : { items: [] }))
-          .then((data) => setUsageRows(
-            (data.items || [])
-              .map((item: any) => ({
-                itemId: item.id,
-                itemName: item.name,
-                unit: item.unit || '',
-                onHand: Number(item.onHand || 0),
-                quantity: '',
-              }))
-              .filter((item: { onHand: number }) => item.onHand > 0),
-          ));
+          .then((data) => setFinishItems(data.items || []));
         return;
       }
     }
@@ -512,45 +539,36 @@ export default function TaskManagementPanel({
     loadData();
   };
 
-  const finishTaskWithSupplies = async () => {
-    if (!usageTask) return;
-    const used = usageRows
-      .map((row) => ({ itemId: row.itemId, itemName: row.itemName, quantity: Number(row.quantity) || 0 }))
-      .filter((row) => row.quantity > 0);
-    for (const row of used) {
-      const stock = usageRows.find((item) => item.itemId === row.itemId);
-      if (stock && row.quantity > stock.onHand) {
-        setUsageError(`Only ${stock.onHand} ${stock.itemName} on hand.`);
+  const finishTaskWithKit = async () => {
+    if (!finishTask) return;
+    const extras = finishExtras
+      .map((row) => ({ itemId: row.itemId, quantity: Math.floor(Number(row.quantity) || 0) }))
+      .filter((row) => row.itemId && row.quantity > 0);
+    setFinishSaving(true);
+    setFinishError('');
+    try {
+      const res = await fetch(`/api/housekeeping/tasks/${encodeURIComponent(finishTask.id)}/finish`, {
+        method: 'POST',
+        headers: hkHeaders(),
+        body: JSON.stringify({ extras }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setFinishError(data.error || 'Could not finish the task.');
         return;
       }
-    }
-    setUsageSaving(true);
-    setUsageError('');
-    try {
-      if (used.length > 0) {
-        const res = await fetch('/api/inventory/department-issue', {
-          method: 'POST',
-          headers: hkHeaders(),
-          body: JSON.stringify({
-            department: 'housekeeping',
-            referenceType: 'housekeeping-task',
-            referenceId: usageTask.id,
-            notes: `Used on room ${usageTask.roomNumber}`,
-            items: used,
-          }),
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          setUsageError(data.error || 'Could not update inventory');
-          return;
-        }
+      await housekeepingStore.hydrateFromApi();
+      trackEvent('HK.Task.StatusUpdated', { taskId: finishTask.id, status: 'completed', kit: true });
+      const warnings = (data.warnings || []).map((row: { itemName: string; needed: number; onHand: number }) =>
+        `${row.itemName}: kit asks for ${row.needed}, only ${row.onHand} on hand.`);
+      if (warnings.length > 0) {
+        setFinishWarnings(warnings);
+        return;
       }
-      housekeepingStore.updateTaskStatus(usageTask.id, 'completed', undefined, used);
-      trackEvent('HK.Task.StatusUpdated', { taskId: usageTask.id, status: 'completed', supplies: used.length });
-      setUsageTask(null);
+      setFinishTask(null);
       loadData();
     } finally {
-      setUsageSaving(false);
+      setFinishSaving(false);
     }
   };
 
@@ -559,6 +577,12 @@ export default function TaskManagementPanel({
     trackEvent('HK.Task.ChecklistUpdated', { taskId, completedItems });
     loadData();
   };
+
+  const statusLabel = (status: TaskStatus) =>
+    status === 'in-progress' ? 'In Progress' :
+    status === 'completed' ? 'Completed' :
+    status === 'verified' ? 'Verified' :
+    status === 'cancelled' ? 'Cancelled' : 'Pending';
 
   const getStatusColor = (status: TaskStatus) => {
     switch (status) {
@@ -571,34 +595,12 @@ export default function TaskManagementPanel({
     }
   };
 
-  const getPriorityColor = (priority: TaskPriority) => {
-    switch (priority) {
-      case 'urgent': return 'danger';
-      case 'high': return 'warning';
-      case 'medium': return 'primary';
-      case 'low': return 'default';
-      default: return 'default';
-    }
-  };
-
-  const getTaskTypeColor = (type: string) => {
-    switch (type) {
-      case 'daily': return 'primary';
-      case 'turnover': return 'secondary';
-      case 'deep-clean': return 'success';
-      case 'maintenance': return 'warning';
-      case 'inspection': return 'default';
-      default: return 'default';
-    }
-  };
-
-  const getProgressPercentage = (task: HousekeepingTask) => {
-    if (task.checklist.length === 0) return 0;
-    return (task.completedItems.length / task.checklist.length) * 100;
-  };
-
   const filteredTasks = tasks.filter(task => {
-    if (searchTerm && !task.roomNumber.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+    if (searchTerm) {
+      const needle = searchTerm.toLowerCase();
+      const hay = `${task.roomNumber} ${ticketOf(task)} ${jobLabel(task.taskType)}`.toLowerCase();
+      if (!hay.includes(needle)) return false;
+    }
     if (statusFilter === 'all') {
       if (task.status === 'cancelled') return false;
     } else if (task.status !== statusFilter) {
@@ -614,21 +616,15 @@ export default function TaskManagementPanel({
       switch (sort.column) {
         case 'room':
           return a.roomNumber.localeCompare(b.roomNumber, undefined, { numeric: true }) * dir;
-        case 'type':
-          return a.taskType.localeCompare(b.taskType) * dir;
-        case 'priority':
-          return a.priority.localeCompare(b.priority) * dir;
+        case 'job':
+          return jobLabel(a.taskType).localeCompare(jobLabel(b.taskType)) * dir;
         case 'status':
           return a.status.localeCompare(b.status) * dir;
         case 'assigned':
-          return (a.assignedTo || '').localeCompare(b.assignedTo || '') * dir;
-        case 'progress':
-          return (getProgressPercentage(a) - getProgressPercentage(b)) * dir;
-        case 'time':
-          return (a.estimatedMinutes - b.estimatedMinutes) * dir;
-        case 'id':
+          return (a.assignedName || a.assignedTo || '').localeCompare(b.assignedName || b.assignedTo || '') * dir;
+        case 'number':
         default:
-          return a.id.localeCompare(b.id) * dir;
+          return (ticketOf(a) || a.id).localeCompare(ticketOf(b) || b.id, undefined, { numeric: true }) * dir;
       }
     });
   }, [filteredTasks, sort]);
@@ -751,22 +747,86 @@ export default function TaskManagementPanel({
           <span className="text-sm text-gray-600">Total:</span>
           <Badge color="primary" variant="flat">{filteredTasks.length}</Badge>
         </div>
+        <div className="ml-auto flex shrink-0 rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+          <button
+            type="button"
+            className={`rounded-md px-3 min-h-8 text-sm ${taskLayout === 'cards' ? 'bg-white font-semibold text-ghana-black shadow-sm' : 'text-gray-600'}`}
+            onClick={() => setTaskLayout('cards')}
+          >
+            Cards
+          </button>
+          <button
+            type="button"
+            className={`rounded-md px-3 min-h-8 text-sm ${taskLayout === 'table' ? 'bg-white font-semibold text-ghana-black shadow-sm' : 'text-gray-600'}`}
+            onClick={() => setTaskLayout('table')}
+          >
+            Table
+          </button>
+        </div>
       </div>
 
-      {/* Tasks Table */}
+      {/* Tasks */}
       <Card className={deskTableCardClassName}>
         <CardBody className={deskTableCardBodyClassName}>
+          {taskLayout === 'cards' ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
+              {pagedTasks.length === 0 && <p className="text-sm text-gray-500 col-span-full text-center py-8">No tasks match.</p>}
+              {pagedTasks.map((task) => {
+                const number = ticketOf(task);
+                const open = task.status === 'pending' || task.status === 'in-progress';
+                return (
+                <div
+                  key={task.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleEditTask(task)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleEditTask(task); }}
+                  className={`cursor-pointer rounded-xl border bg-white p-3 text-left shadow-none transition-colors hover:border-ghana-gold ${
+                    task.status === 'in-progress' ? 'border-blue-200' :
+                    task.status === 'completed' || task.status === 'verified' ? 'border-green-200' :
+                    'border-gray-200'
+                  }`}
+                >
+                  <div className="flex flex-col gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-[15px] font-semibold leading-tight text-ghana-black">{task.roomNumber}</p>
+                      <p className="truncate text-xs leading-tight text-gray-500">
+                        {jobLabel(task.taskType)}{number ? ` · ${number}` : ''}
+                      </p>
+                    </div>
+                    <Chip size="sm" variant="flat" color={getStatusColor(task.status) as any} className="h-6 max-w-full">
+                      {statusLabel(task.status)}
+                    </Chip>
+                    <p className="truncate text-xs text-blue-700">
+                      {task.assignedName || (task.assignedTo ? getStaffName(task.assignedTo) : 'Unassigned')}
+                    </p>
+                    {open && (
+                      <button
+                        type="button"
+                        className="mt-auto min-h-10 cursor-pointer rounded-lg bg-green-100 text-[11px] font-medium text-green-900"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleUpdateTaskStatus(task.id, 'completed');
+                        }}
+                      >
+                        Finish
+                      </button>
+                    )}
+                  </div>
+                </div>
+                );
+              })}
+            </div>
+          ) : (
           <div ref={cols.frameRef} style={cols.frameStyle}>
           <Table aria-label="Tasks table" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
             <TableHeader>
-              <TableColumn className="relative" style={cols.style('id')}>{<SortHeader label="ID" column="id" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('id', 'ID')}</TableColumn>
-              <TableColumn className="relative" style={cols.style('room')}>{<SortHeader label="Location" column="room" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('room', 'Location')}</TableColumn>
-              <TableColumn className="relative" style={cols.style('type')}>{<SortHeader label="Type" column="type" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('type', 'Type')}</TableColumn>
-              <TableColumn className="relative" style={cols.style('priority')}>{<SortHeader label="Priority" column="priority" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('priority', 'Priority')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('number')}>{<SortHeader label="Number" column="number" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('number', 'Number')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('room')}>{<SortHeader label="Room" column="room" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('room', 'Room')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('job')}>{<SortHeader label="Job" column="job" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('job', 'Job')}</TableColumn>
               <TableColumn className="relative" style={cols.style('status')}>{<SortHeader label="Status" column="status" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('status', 'Status')}</TableColumn>
               <TableColumn className="relative" style={cols.style('assigned')}>{<SortHeader label="Assigned" column="assigned" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('assigned', 'Assigned')}</TableColumn>
-              <TableColumn className="relative" style={cols.style('progress')}>{<SortHeader label="Progress" column="progress" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('progress', 'Progress')}</TableColumn>
-              <TableColumn className="relative" style={cols.style('time')}>{<SortHeader label="Time" column="time" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('time', 'Time')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('action')}>Action{cols.sizer('action', 'Action')}</TableColumn>
             </TableHeader>
             <TableBody emptyContent="No tasks match.">
               {pagedTasks.map((task) => (
@@ -776,67 +836,44 @@ export default function TaskManagementPanel({
                   onClick={() => handleEditTask(task)}
                 >
                   <TableCell>
-                    <span className="font-semibold text-ghana-black">{task.id}</span>
+                    <span className="font-medium tabular-nums text-ghana-black">{ticketOf(task) || '—'}</span>
                   </TableCell>
                   <TableCell>
-                    <Chip size="sm" variant="flat" color="secondary">
-                      {task.roomNumber}
-                    </Chip>
+                    <span className="font-semibold text-ghana-black">{task.roomNumber}</span>
                   </TableCell>
                   <TableCell>
-                    <Chip size="sm" variant="flat" color={getTaskTypeColor(task.taskType) as any}>
-                      {task.taskType.replace('-', ' ').charAt(0).toUpperCase() + task.taskType.replace('-', ' ').slice(1)}
-                    </Chip>
-                  </TableCell>
-                  <TableCell>
-                    <Chip size="sm" variant="flat" color={getPriorityColor(task.priority) as any}>
-                      {task.priority}
-                    </Chip>
+                    <span className="text-sm text-gray-700">{jobLabel(task.taskType)}</span>
                   </TableCell>
                   <TableCell>
                     <Chip size="sm" variant="flat" color={getStatusColor(task.status) as any}>
-                      {task.status === 'in-progress' ? 'In Progress' : 
-                       task.status === 'completed' ? 'Completed' :
-                       task.status === 'verified' ? 'Verified' :
-                       task.status === 'cancelled' ? 'Cancelled' : 'Pending'}
+                      {statusLabel(task.status)}
                     </Chip>
                   </TableCell>
                   <TableCell>
-                    {task.assignedTo ? (
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Avatar size="sm" name={getStaffName(task.assignedTo)} />
-                        <span className="text-sm truncate" title={getStaffName(task.assignedTo)}>{getStaffName(task.assignedTo)}</span>
-                      </div>
-                    ) : (
-                      <Chip size="sm" variant="flat" color="default">Unassigned</Chip>
+                    <span className="truncate text-sm text-gray-700">
+                      {task.assignedName || (task.assignedTo ? getStaffName(task.assignedTo) : 'Unassigned')}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    {(task.status === 'pending' || task.status === 'in-progress') && (
+                      <button
+                        type="button"
+                        className="min-h-8 cursor-pointer rounded-lg bg-green-100 px-2 text-[11px] font-medium text-green-900"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleUpdateTaskStatus(task.id, 'completed');
+                        }}
+                      >
+                        Finish
+                      </button>
                     )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Progress 
-                        value={getProgressPercentage(task)} 
-                        size="sm" 
-                        color={getProgressPercentage(task) === 100 ? 'success' : 'primary'}
-                        className="flex-1"
-                      />
-                      <span className="text-xs text-gray-600 tabular-nums shrink-0">
-                        {task.completedItems.length}/{task.checklist.length}
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-sm">
-                      <div className="font-medium tabular-nums">{task.estimatedMinutes}m</div>
-                      {task.actualMinutes && (
-                        <div className="text-xs text-gray-500 tabular-nums">Actual: {task.actualMinutes}m</div>
-                      )}
-                    </div>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
           </div>
+          )}
           <div className="mt-3 flex justify-end">
             <Pagination page={pageSafe} total={pages} onChange={setPage} showControls size="sm" />
           </div>
@@ -858,7 +895,7 @@ export default function TaskManagementPanel({
           <ModalHeader className="flex flex-col gap-0.5 py-3">
             <span>{isCreatingTask ? 'Create cleaning task' : 'Edit cleaning task'}</span>
             <span className="text-xs font-normal text-gray-500">
-              Rooms or public areas. Checklist is for the attendant; supplies used on complete come off inventory.
+              Rooms or public areas. Finishing a real clean takes the room kit, not a quantity the attendant types.
             </span>
           </ModalHeader>
           <ModalBody>
@@ -1193,6 +1230,19 @@ export default function TaskManagementPanel({
             <Button variant="flat" onPress={() => setTaskModalOpen(false)}>
               Cancel
             </Button>
+            {!isCreatingTask && selectedTask && (selectedTask.status === 'pending' || selectedTask.status === 'in-progress') && (
+              <button
+                type="button"
+                className="cursor-pointer rounded-lg bg-green-700 px-3 py-2 text-sm font-medium text-white"
+                onClick={() => {
+                  const id = selectedTask.id;
+                  setTaskModalOpen(false);
+                  handleUpdateTaskStatus(id, 'completed');
+                }}
+              >
+                Finish
+              </button>
+            )}
             <Button color="primary" onPress={handleSaveTask}>
               {isCreatingTask ? 'Create task' : 'Save task'}
             </Button>
@@ -1414,40 +1464,76 @@ export default function TaskManagementPanel({
         </ModalContent>
       </Modal>
 
-      <Modal isOpen={!!usageTask} onClose={() => setUsageTask(null)} size="lg">
+      <Modal
+        isOpen={!!finishTask}
+        onClose={() => setFinishTask(null)}
+        size="lg"
+        placement="center"
+        scrollBehavior="inside"
+        classNames={{ base: 'dialog-fit' }}
+      >
         <ModalContent>
-          <ModalHeader>Supplies used — room {usageTask?.roomNumber}</ModalHeader>
+          <ModalHeader>Finish clean — room {finishTask?.roomNumber}</ModalHeader>
           <ModalBody>
-            <p className="text-sm text-gray-600">
-              Enter what this task used. Those quantities come off Housekeeping inventory. Leave a row blank if it was not used.
-            </p>
-            {usageRows.length === 0 ? (
-              <p className="text-sm text-gray-500">Nothing is on hand, so this task will not change inventory.</p>
-            ) : (
-              <div className="space-y-2">
-                {usageRows.map((row) => (
-                  <div key={row.itemId} className="grid grid-cols-[1fr,120px] gap-3 items-center">
-                    <div>
-                      <p className="font-medium text-ghana-black">{row.itemName}</p>
-                      <p className="text-xs text-gray-500">{row.onHand}{row.unit ? ` ${row.unit}` : ''} on hand</p>
-                    </div>
-                    <Input
-                      type="number"
-                      size="sm"
-                      label="Used"
-                      min={0}
-                      value={row.quantity}
-                      onChange={(e) => setUsageRows((rows) => rows.map((item) => item.itemId === row.itemId ? { ...item, quantity: e.target.value } : item))}
-                    />
+            <p className="text-sm text-gray-600">{finishPreview?.label || 'Checking the room kit…'}</p>
+            {finishPreview && finishPreview.lines.length > 0 && (
+              <div className="space-y-1">
+                {finishPreview.lines.map((line) => (
+                  <div key={line.itemId} className="flex justify-between text-sm">
+                    <span>{line.itemName}</span>
+                    <span className="font-mono">{line.quantity}</span>
                   </div>
                 ))}
               </div>
             )}
-            {usageError && <p className="text-sm text-danger">{usageError}</p>}
+            {finishPreview && finishPreview.lines.length === 0 && (
+              <p className="text-sm text-gray-500">Nothing will come off stock for this clean.</p>
+            )}
+            <div className="space-y-2 pt-2">
+              <p className="text-sm text-gray-600">Need more than the kit? Request it. Stock stays put until a supervisor approves.</p>
+              {finishExtras.map((row, index) => (
+                <div key={index} className="keep-cols grid grid-cols-[1fr_88px_auto] gap-2 items-center">
+                  <Select
+                    aria-label="Extra supply"
+                    size="sm"
+                    selectedKeys={row.itemId ? [row.itemId] : []}
+                    onSelectionChange={(keys) => {
+                      const itemId = String(Array.from(keys)[0] || '');
+                      setFinishExtras((rows) => rows.map((item, i) => (i === index ? { ...item, itemId } : item)));
+                    }}
+                  >
+                    {finishItems.map((item) => (
+                      <SelectItem key={item.id}>{item.name}</SelectItem>
+                    ))}
+                  </Select>
+                  <Input
+                    aria-label="Extra quantity"
+                    type="number"
+                    size="sm"
+                    min={1}
+                    value={row.quantity}
+                    onChange={(e) => setFinishExtras((rows) => rows.map((item, i) => (i === index ? { ...item, quantity: e.target.value } : item)))}
+                  />
+                  <Button size="sm" variant="light" onPress={() => setFinishExtras((rows) => rows.filter((_, i) => i !== index))}>Remove</Button>
+                </div>
+              ))}
+              <Button size="sm" variant="flat" onPress={() => setFinishExtras((rows) => [...rows, { itemId: '', quantity: '1' }])}>
+                Request extra
+              </Button>
+            </div>
+            {finishWarnings.length > 0 && (
+              <div className="text-sm text-warning space-y-1">
+                {finishWarnings.map((warning) => <p key={warning}>{warning}</p>)}
+                <p>The task is finished. Only what was on hand was taken.</p>
+              </div>
+            )}
+            {finishError && <p className="text-sm text-danger">{finishError}</p>}
           </ModalBody>
           <ModalFooter>
-            <Button variant="flat" onPress={() => setUsageTask(null)}>Cancel</Button>
-            <Button color="primary" onPress={finishTaskWithSupplies} isLoading={usageSaving}>Finish task</Button>
+            <Button variant="flat" onPress={() => setFinishTask(null)}>{finishWarnings.length > 0 ? 'Close' : 'Cancel'}</Button>
+            {finishWarnings.length === 0 && (
+              <Button color="primary" onPress={finishTaskWithKit} isLoading={finishSaving}>Finish task</Button>
+            )}
           </ModalFooter>
         </ModalContent>
       </Modal>

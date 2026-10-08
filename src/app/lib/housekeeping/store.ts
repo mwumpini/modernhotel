@@ -30,6 +30,9 @@ function taskDetailsPayload(task: HousekeepingTask) {
     issues: task.issues,
     suppliesUsed: task.suppliesUsed || [],
     suppliesIssued: !!task.suppliesIssued,
+    openedBy: task.openedBy,
+    extraRequest: task.extraRequest || null,
+    ticketNumber: task.ticketNumber,
   };
 }
 
@@ -210,6 +213,9 @@ class HousekeepingStore {
             photos: details.photos || [],
             suppliesUsed: details.suppliesUsed || [],
             suppliesIssued: !!details.suppliesIssued,
+            openedBy: details.openedBy === 'supervisor' ? 'supervisor' : 'attendant',
+            extraRequest: details.extraRequest || null,
+            ticketNumber: typeof details.ticketNumber === 'string' ? details.ticketNumber : undefined,
           };
         });
         this.collapseDuplicateOpenCleaningTasks();

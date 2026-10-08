@@ -822,6 +822,18 @@ html[data-tiles="custom"] .bg-gray-100 {
     max-height: 100dvh;
     border-radius: 0;
   }
+  /* Opt out: a short dialog stays a card, with space around it. */
+  [data-slot="wrapper"]:has(> [role="dialog"].dialog-fit) {
+    align-items: center;
+    justify-content: center;
+    overflow-y: auto;
+  }
+  [data-slot="wrapper"] > [role="dialog"].dialog-fit {
+    margin-block: 0.75rem;
+    height: auto;
+    max-height: calc(100dvh - 1.5rem);
+    border-radius: var(--heroui-radius-large, 14px);
+  }
 }
 
 /* Accounting desks on touch screens, phones and 200% zoom: every control is

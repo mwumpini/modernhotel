@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
+import { Prisma } from '@prisma/client'
+import { canManageHousekeepingSupplies } from '@/app/lib/housekeeping/issueCleaningKit'
 
 export async function GET(request: NextRequest) {
   try {
@@ -73,6 +75,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const incoming = body.details && typeof body.details === 'object' && !Array.isArray(body.details)
+      ? { ...(body.details as Record<string, unknown>) }
+      : {}
+    delete incoming.openedBy
+    delete incoming.suppliesIssued
+    delete incoming.suppliesUsed
+    delete incoming.extraRequest
+    const role = String((auth.session as { user?: { role?: string } }).user?.role || '')
+    incoming.openedBy = (await canManageHousekeepingSupplies(ctx.tenantId, role)) ? 'supervisor' : 'attendant'
+    incoming.suppliesIssued = false
+
     const task = await prisma.housekeepingTask.create({
       data: {
         ...(body.id ? { id: body.id } : {}),
@@ -86,7 +99,7 @@ export async function POST(request: NextRequest) {
         assignedName: body.assignedName,
         notes: body.notes,
         scheduledFor: body.scheduledFor ? new Date(body.scheduledFor) : undefined,
-        details: body.details ?? undefined,
+        details: incoming as Prisma.InputJsonValue,
       },
     })
 
