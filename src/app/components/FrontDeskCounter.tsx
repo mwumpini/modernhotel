@@ -38,6 +38,8 @@ import {
   dayOf,
   deskStatus,
   isRoomLine,
+  billingPersonLabel,
+  isThirdPartyBilled,
   money,
   shortDay,
   sortStays,
@@ -66,6 +68,7 @@ type DeskFocus = StaySortKey | 'purpose' | 'billing' | 'centre' | 'staff';
 const SORT_CHOICES: { key: DeskFocus; label: string }[] = [
   { key: 'arrival', label: 'Check-in' },
   { key: 'departure', label: 'Check-out' },
+  { key: 'billingPerson', label: 'Billing person' },
   { key: 'purpose', label: 'Purpose' },
   { key: 'billing', label: 'Billing' },
   { key: 'centre', label: 'Centre' },
@@ -284,7 +287,7 @@ export default function FrontDeskCounter() {
     const q = query.trim().toLowerCase();
     if (!q) return base;
     return base.filter((stay) => {
-      const blob = [stay.guestName, stay.resId, stay.roomId, stay.guestPhone, centreOf(stay), stay.stayReason].join(' ').toLowerCase();
+      const blob = [stay.guestName, billingPersonLabel(stay), stay.resId, stay.roomId, stay.guestPhone, centreOf(stay), stay.stayReason].join(' ').toLowerCase();
       return blob.includes(q);
     });
   }, [query, view, everyone, arrivals, checkedOut, inHouse]);
@@ -350,7 +353,7 @@ export default function FrontDeskCounter() {
     }
     if (from && to && !stayTouches(stay, from, to)) return false;
     if (focus === 'purpose' && narrow !== 'all' && stay.stayReason !== narrow) return false;
-    const billedOut = !!(stay.billingPersonId || stay.billingPersonName || stay.companyName);
+    const billedOut = isThirdPartyBilled(stay);
     if (focus === 'billing' && narrow === 'third_party' && !billedOut) return false;
     if (focus === 'billing' && narrow === 'guest' && billedOut) return false;
     if (focus === 'centre' && narrow !== 'all' && centreOf(stay) !== narrow) return false;
@@ -364,7 +367,7 @@ export default function FrontDeskCounter() {
     : [...filtered].sort((a, b) => {
         const label = (stay: Reservation) => {
           if (focus === 'purpose') return stay.stayReason || '';
-          if (focus === 'billing') return (stay.billingPersonId || stay.billingPersonName || stay.companyName) ? 'Company pays' : 'Guest pays';
+          if (focus === 'billing') return isThirdPartyBilled(stay) ? 'Company pays' : 'Guest pays';
           if (focus === 'centre') return centreOf(stay);
           return clerksOf(stay).join(', ');
         };

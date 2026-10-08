@@ -49,7 +49,7 @@ import {
 } from '../lib/tax/engine';
 import { calculateStayNights, resolveNightlyGross } from '../lib/frontoffice/helpers/rates';
 import { canMarkNoShow } from '../lib/frontoffice/arrivals';
-import { localStayDay, shortDay, sortStays, stayClock, type StaySortKey } from '../lib/frontoffice/stayWorksheet';
+import { isThirdPartyBilled, localStayDay, payerDisplayName, shortDay, sortStays, stayClock, type StaySortKey } from '../lib/frontoffice/stayWorksheet';
 import StayWorksheetTable from './frontoffice/StayWorksheetTable';
 import { findMainFolio, getFolioDisplayTotals } from '../lib/frontoffice/helpers/folio';
 import { DateFilterPills } from './fb/DateFilterPills';
@@ -467,6 +467,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   
   // New state for billing person selection
   const [useBillingPerson, setUseBillingPerson] = useState(false);
+  const [billingCleared, setBillingCleared] = useState(false);
   const [billingPersonSearchTerm, setBillingPersonSearchTerm] = useState('');
   const [filteredBillingPersons, setFilteredBillingPersons] = useState<GuestProfile[]>([]);
   const [selectedBillingPerson, setSelectedBillingPerson] = useState<GuestProfile | null>(null);
@@ -683,8 +684,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
             // Ensure guest has required fields
             if (!g || !g.id || g.isActive === false) return false;
             
-            const name = g.name || `${g.firstName || ''} ${g.lastName || ''}`.trim();
+            const name = payerDisplayName(g);
             const company = g.employerCompany || g.companyName || '';
+            const contact = g.billingContactName || g.corporateMeta?.contactPerson?.name || '';
             const email = g.email || '';
             const phone = g.phone || '';
             const jobTitle = g.jobTitle || '';
@@ -693,6 +695,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
             // Enhanced search criteria for billing persons
         return (
           (name && String(name).toLowerCase().includes(term)) ||
+          (contact && String(contact).toLowerCase().includes(term)) ||
           (company && String(company).toLowerCase().includes(term)) ||
           (email && String(email).toLowerCase().includes(term)) ||
               (phone && String(phone).replace(/\s+/g, '').includes(term.replace(/\s+/g, ''))) ||
@@ -792,9 +795,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     // Billing
     if (billingFilter !== 'all') {
       if (billingFilter === 'third_party') {
-        filtered = filtered.filter(r => !!(r as any).billingPersonId);
+        filtered = filtered.filter(r => isThirdPartyBilled(r));
       } else if (billingFilter === 'guest') {
-        filtered = filtered.filter(r => !(r as any).billingPersonId);
+        filtered = filtered.filter(r => !isThirdPartyBilled(r));
       }
     }
 
@@ -823,6 +826,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     setSelectedGuest(null);
     setGuestSearchTerm('');
     setUseBillingPerson(false); // Let user choose billing person
+    setBillingCleared(false);
     setSelectedBillingPerson(null);
     setBillingPersonSearchTerm('');
     setBulkGuests([]);
@@ -963,7 +967,13 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         taxExemptionDocuments: reservation.taxExemptionDocuments || [],
         taxExemptionNotes: reservation.taxExemptionNotes || ''
       });
-    
+
+    const payerGuest = reservation.billingPersonId
+      ? frontOfficeStore.guests.find((guest) => guest.id === reservation.billingPersonId) || null
+      : null;
+    setSelectedBillingPerson(payerGuest);
+    setUseBillingPerson(!!payerGuest);
+    setBillingCleared(false);
     setAssignReservation(reservation);
     setEditRateInput(reservation.ratePlanId ? '' : frontOfficeStore.getReservationQuote(reservation).nightlyGross.toFixed(2));
     setAssignRoomId(reservation.roomId && reservation.roomId !== 'TBD' ? reservation.roomId : '');
@@ -1007,16 +1017,46 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     setGuestSearchTerm('');
   };
 
+  const setThirdPartyPays = (on: boolean) => {
+    setUseBillingPerson(on);
+    if (!on) {
+      setBillingCleared(true);
+      setSelectedBillingPerson(null);
+      setFormData(prev => ({ ...prev, billingPersonId: undefined }));
+    }
+  };
+
+  const billingOnSave = () => {
+    if (useBillingPerson && selectedBillingPerson) {
+      const company = String((selectedBillingPerson as any).companyName || (selectedBillingPerson as any).employerCompany || '').trim();
+      return {
+        billingPersonId: selectedBillingPerson.id,
+        billingPersonName: payerDisplayName(selectedBillingPerson),
+        companyName: company || formData.companyName || '',
+      };
+    }
+    if (billingCleared && !isCreatingNew) {
+      return {
+        billingPersonId: null as unknown as string | undefined,
+        billingPersonName: null as unknown as string | undefined,
+        companyName: formData.companyName || '',
+      };
+    }
+    return {
+      billingPersonId: undefined,
+      billingPersonName: undefined,
+      companyName: formData.companyName || '',
+    };
+  };
+
   const handleBillingPersonSelection = (billingPerson: GuestProfile) => {
+    setBillingCleared(false);
     setSelectedBillingPerson(billingPerson);
+    const company = String((billingPerson as any).companyName || (billingPerson as any).employerCompany || '').trim();
     setFormData(prev => ({
       ...prev,
       billingPersonId: billingPerson.id,
-      companyName: (billingPerson as any).employerCompany || prev.companyName || '',
-      // Store a display name for downstream UI like Check-in/Check-out BILLED TO
-      // without changing existing companyName usage
-      // @ts-ignore
-      billingPersonName: (billingPerson as any).name || `${(billingPerson as any).firstName || ''} ${(billingPerson as any).lastName || ''}`.trim()
+      companyName: company || prev.companyName || '',
     }));
     setShowBillingPersonSearch(false);
     setBillingPersonSearchTerm('');
@@ -1148,11 +1188,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         status: 'confirmed',
         stayReason: formData.stayReason,
         stayReasonDetails: formData.stayReasonDetails,
-        billingPersonId: formData.billingPersonId,
-        billingPersonName: (useBillingPerson && selectedBillingPerson)
-          ? ((selectedBillingPerson as any).name || `${(selectedBillingPerson as any).firstName || ''} ${(selectedBillingPerson as any).lastName || ''}`.trim())
-          : undefined,
-        companyName: formData.companyName,
+        ...billingOnSave(),
         projectCode: formData.projectCode,
             costCenter: formData.costCenter,
             taxExempt: formData.taxExempt,
@@ -1238,11 +1274,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         marketCodes: formData.marketCodes,
         stayReason: formData.stayReason,
         stayReasonDetails: formData.stayReasonDetails,
-        billingPersonId: formData.billingPersonId,
-        billingPersonName: (useBillingPerson && selectedBillingPerson)
-          ? ((selectedBillingPerson as any).name || `${(selectedBillingPerson as any).firstName || ''} ${(selectedBillingPerson as any).lastName || ''}`.trim())
-          : undefined,
-        companyName: formData.companyName,
+        ...billingOnSave(),
         projectCode: formData.projectCode,
         costCenter: formData.costCenter,
         taxExempt: formData.taxExempt,
@@ -2094,17 +2126,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                             type="checkbox"
                             id="useBillingPerson"
                             checked={useBillingPerson}
-                            onChange={(e) => {
-                              setUseBillingPerson(e.target.checked);
-                              if (e.target.checked) {
-                                setSelectedBillingPerson(null);
-                                setFormData(prev => ({
-                                  ...prev,
-                                  billingPersonId: undefined,
-                                  companyName: ''
-                                }));
-                              }
-                            }}
+                            onChange={(e) => setThirdPartyPays(e.target.checked)}
                             className="rounded border-gray-300"
                           />
                           <span className="text-sm text-gray-600 whitespace-nowrap">Third Party Pays</span>
@@ -2561,10 +2583,10 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                       onClick={() => handleBillingPersonSelection(bp)}
                                     >
                                       <div className="font-medium text-gray-900">
-                                        {bp.name || `${bp.firstName || ''} ${bp.lastName || ''}`}
+                                        {payerDisplayName(bp)}
                                       </div>
                                       <div className="text-sm text-gray-600">
-                                        {bp.employerCompany && `🏢 ${bp.employerCompany}`}
+                                        {(bp.companyName || bp.employerCompany) && `🏢 ${bp.companyName || bp.employerCompany}`}
                                         {bp.jobTitle && ` 👤 ${bp.jobTitle}`}
                                         {bp.phone && ` 📱 ${bp.phone}`}
                                         {bp.email && ` 📧 ${bp.email}`}
@@ -2591,7 +2613,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                               <div>
                                 <div className="font-medium text-green-900">✅ Billing Person Selected</div>
                                 <div className="text-sm text-green-700">
-                                  {(selectedBillingPerson as any).name || `${(selectedBillingPerson as any).firstName || ''} ${(selectedBillingPerson as any).lastName || ''}`.trim()}
+                                  {payerDisplayName(selectedBillingPerson)}
                                 </div>
                                 <div className="text-xs text-green-700">
                                   {(selectedBillingPerson as any).employerCompany || formData.companyName || '—'}
@@ -2607,11 +2629,11 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                 color="danger"
                                 variant="light"
                                 onClick={() => {
+                                  setBillingCleared(true);
                                   setSelectedBillingPerson(null);
                                   setFormData(prev => ({
                                     ...prev,
                                     billingPersonId: undefined,
-                                    companyName: ''
                                   }));
                                 }}
                               >
@@ -2705,17 +2727,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           type="checkbox"
                           id="useBillingPerson"
                           checked={useBillingPerson}
-                          onChange={(e) => {
-                            setUseBillingPerson(e.target.checked);
-                            if (e.target.checked) {
-                              setSelectedBillingPerson(null);
-                              setFormData(prev => ({
-                                ...prev,
-                                billingPersonId: undefined,
-                                companyName: ''
-                              }));
-                            }
-                          }}
+                          onChange={(e) => setThirdPartyPays(e.target.checked)}
                           className="rounded border-gray-300"
                         />
                         <span className="text-sm text-gray-600 whitespace-nowrap">Third Party Pays</span>

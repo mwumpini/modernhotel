@@ -5,6 +5,7 @@ import { Chip, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow }
 import type { Reservation } from '../../lib/frontoffice/types';
 import {
   deskStatus,
+  billingPersonLabel,
   money,
   shortDay,
   stayFigures,
@@ -23,6 +24,7 @@ const defaultColumnWidths: Record<StaySortKey, number> = {
   room: 108,
   arrival: 100,
   departure: 100,
+  billingPerson: 144,
   nights: 72,
   rate: 88,
   discount: 96,
@@ -41,11 +43,12 @@ const withStaffWidths: Record<SheetColumn, number> = {
 
 const BASE_COLUMNS: { key: StaySortKey; label: string; align?: 'left' | 'right' | 'center' }[] = [
   { key: 'id', label: 'ID' },
-  { key: 'guest', label: 'Guest' },
+  { key: 'billingPerson', label: 'Billing person' },
   { key: 'status', label: 'Status' },
   { key: 'room', label: 'Room' },
   { key: 'arrival', label: 'Check-in' },
   { key: 'departure', label: 'Check-out' },
+  { key: 'guest', label: 'Guest' },
   { key: 'nights', label: 'Nights', align: 'center' },
   { key: 'rate', label: 'Rate', align: 'right' },
   { key: 'discount', label: 'Discount', align: 'right' },
@@ -121,6 +124,7 @@ export default function StayWorksheetTable({
           const owed = stay.status === 'checked-in' && figures.balance > 0;
           const room = stay.roomId && stay.roomId !== 'TBD' ? stay.roomId : '';
           const staff = staffOf?.(stay) || '';
+          const billedTo = billingPersonLabel(stay);
           const cells: Record<SheetColumn, React.ReactNode> = {
             id: <span className="text-gray-600">{stay.resId || stay.id}</span>,
             guest: (
@@ -134,6 +138,9 @@ export default function StayWorksheetTable({
             ),
             arrival: <span>{shortDay(stay.arrival)}</span>,
             departure: <span>{shortDay(stay.departure)}</span>,
+            billingPerson: (
+              <span className="block truncate" title={billedTo || undefined}>{billedTo || '—'}</span>
+            ),
             nights: <span className="block text-center tabular-nums">{figures.nights}</span>,
             rate: <span className="block text-right tabular-nums">{money(figures.rate)}</span>,
             discount: (

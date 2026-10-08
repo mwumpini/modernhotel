@@ -13,6 +13,7 @@ export type StaySortKey =
   | 'room'
   | 'arrival'
   | 'departure'
+  | 'billingPerson'
   | 'nights'
   | 'rate'
   | 'discount'
@@ -85,6 +86,48 @@ export function isRoomLine(charge: { description?: string; category?: string }) 
   return description.includes('room');
 }
 
+/** Name to show for a client chosen as the billing person. A company uses its contact, then its name. */
+export function payerDisplayName(guest: {
+  name?: string;
+  firstName?: string;
+  lastName?: string;
+  companyName?: string;
+  employerCompany?: string;
+  billingContactName?: string;
+  isCorporate?: boolean;
+  corporateMeta?: { contactPerson?: { name?: string } };
+}): string {
+  const personal = String(guest.name || `${guest.firstName || ''} ${guest.lastName || ''}`).trim();
+  const company = String(guest.companyName || guest.employerCompany || '').trim();
+  const contact = String(guest.billingContactName || guest.corporateMeta?.contactPerson?.name || '').trim();
+  const corporate = guest.isCorporate === true || !!guest.companyName;
+  if (corporate) return contact || company || personal;
+  return personal || contact || company;
+}
+
+/** Someone other than the guest pays: the Billing person column shows another name. Used by every payer filter. */
+export function isThirdPartyBilled(stay: Reservation): boolean {
+  const payer = billingPersonLabel(stay).trim().toLowerCase();
+  return payer.length > 0 && payer !== (stay.guestName || '').trim().toLowerCase();
+}
+
+/** Who the bill is addressed to: the person chosen at check-in, otherwise the company, otherwise the guest. */
+export function billingPersonLabel(stay: Reservation): string {
+  const linked = stay.billingPersonId
+    ? frontOfficeStore.guests.find((guest) => guest.id === stay.billingPersonId)
+    : undefined;
+  if (linked) {
+    const named = payerDisplayName(linked);
+    if (named) return named;
+  }
+  const guest = (stay.guestName || '').trim().toLowerCase();
+  const person = (stay.billingPersonName || stay.billingPerson || '').trim();
+  if (person && person.toLowerCase() !== guest) return person;
+  const company = (stay.companyName || '').trim();
+  if (company && company.toLowerCase() !== guest) return company;
+  return (stay.guestName || person || company || '').trim();
+}
+
 export function stayFigures(stay: Reservation) {
   const quote = frontOfficeStore.getReservationQuote(stay);
   const nights = quote.nights || calculateStayNights(stay.arrival, stay.departure) || 1;
@@ -124,6 +167,7 @@ function sortValue(stay: Reservation, sortKey: StaySortKey, today: string): stri
   if (sortKey === 'room') return stay.roomId && stay.roomId !== 'TBD' ? stay.roomId : '';
   if (sortKey === 'arrival') return dayOf(stay.arrival);
   if (sortKey === 'departure') return dayOf(stay.departure);
+  if (sortKey === 'billingPerson') return billingPersonLabel(stay);
   const figures = stayFigures(stay);
   if (sortKey === 'nights') return figures.nights;
   if (sortKey === 'rate') return figures.rate;

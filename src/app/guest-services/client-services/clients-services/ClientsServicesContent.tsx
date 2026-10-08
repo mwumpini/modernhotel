@@ -16,8 +16,6 @@ import { Autocomplete, AutocompleteItem } from '@heroui/react';
 import { GuestProfile, Reservation, Nationality } from '../../../lib/frontoffice/types';
 import { isCorporateGuest } from '../../../lib/frontoffice/helpers/guests';
 import { trackEvent } from '../../../lib/analytics/trackEvent';
-import { InformationCircleIcon } from '@heroicons/react/24/outline';
-
 interface ClientRow {
 	id: string;
 	serialNumber: string;
@@ -365,15 +363,6 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 			setRows(rowsData);
     }, [clientServices]);
 
-    // Keep billing contact name in sync with company name when linked - Optimized
-    useEffect(() => {
-        if (newClient.type === 'corporate' && newClient.billingSameAsCompany) {
-            if (newClient.billingContactName !== newClient.companyName) {
-                setNewClient(prev => ({ ...prev, billingContactName: prev.companyName }));
-            }
-        }
-    }, [newClient.companyName, newClient.billingSameAsCompany, newClient.type]);
-
     // Subscribe to store changes and update table immediately
     useEffect(() => {
         computeRows();
@@ -605,10 +594,10 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
         if (newClient.type === 'corporate' ? !canManageCompanies : !canManageGuests) {
             return;
         }
-        if (newClient.type === 'individual' && (!newClient.firstName || !newClient.lastName)) {
+        if (newClient.type === 'individual' && (!newClient.firstName.trim() || !newClient.lastName.trim() || !validatePhone(newClient.phone))) {
             return;
         }
-        if (newClient.type === 'corporate' && !newClient.companyName) {
+        if (newClient.type === 'corporate' && (!newClient.companyName.trim() || !validatePhone(newClient.companyPhone) || !newClient.contactPersonName.trim() || !validatePhone(newClient.contactPersonPhone))) {
             return;
         }
         
@@ -625,7 +614,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                 ? ''
                 : newClient.lastName,
             middleName: newClient.middleName || undefined,
-            phone: newClient.phone || undefined,
+            phone: (newClient.type === 'corporate' ? newClient.companyPhone : newClient.phone) || undefined,
             secondaryPhone: newClient.secondaryPhone || undefined,
             email: newClient.email || undefined,
             nationality,
@@ -652,6 +641,9 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
         if (newClient.type === 'corporate') {
             (newGuest as any).companyName = newClient.companyName;
             (newGuest as any).companyEmail = newClient.companyEmail;
+            (newGuest as any).billingContactName = newClient.billingContactName || undefined;
+            (newGuest as any).billingContactEmail = newClient.billingContactEmail || undefined;
+            (newGuest as any).billingContactPhone = newClient.billingContactPhone || undefined;
             (newGuest as any).corporateMeta = {
                 industry: newClient.industry,
                 registrationNumber: newClient.registrationNumber,
@@ -1663,6 +1655,9 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 
                                 {newClient.type === 'individual' && (
                                     <>
+                                        <div className="md:col-span-3 border-b border-gray-200 pb-1">
+                                            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Bio</h4>
+                                        </div>
                                         <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
                                             <div>
                                                 <label className="block text-sm font-medium text-gray-700 mb-1">First Name *</label>
@@ -1703,6 +1698,9 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                                 <Input type="date" value={newClient.dateOfBirth} onChange={(e)=>handleInputChange('dateOfBirth', e.target.value)} />
                                             </div>
                                         </div>
+                                        <div className="md:col-span-3 mt-2 border-b border-gray-200 pb-1">
+                                            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Identity</h4>
+                                        </div>
                                         <div className="md:col-span-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                                             <div>
                                                 <label className="block text-sm font-medium text-gray-700 mb-1">ID Type</label>
@@ -1728,6 +1726,26 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                                 <label className="block text-sm font-medium text-gray-700 mb-1">Issuing Authority</label>
                                                 <Input placeholder="e.g., NIA, DVLA" value={newClient.idIssuingAuthority} onChange={(e)=>handleInputChange('idIssuingAuthority', e.target.value)} />
                                             </div>
+                                        </div>
+                                        <div className="md:col-span-3 mt-2 border-b border-gray-200 pb-1">
+                                            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Contact</h4>
+                                        </div>
+                                        <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Mobile *</label>
+                                                <Input placeholder="Mobile number" value={newClient.phone} onChange={(e)=>handleInputChange('phone', e.target.value)} isInvalid={!validatePhone(newClient.phone)} errorMessage={!newClient.phone ? 'Mobile is required' : !validatePhone(newClient.phone) ? 'Enter a valid phone number' : undefined} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                                                <Input type="email" placeholder="email@example.com" value={newClient.email} onChange={(e)=>handleInputChange('email', e.target.value)} isInvalid={!!newClient.email && !validateEmail(newClient.email)} errorMessage={!!newClient.email && !validateEmail(newClient.email) ? 'Enter a valid email' : undefined} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Phone 2</label>
+                                                <Input placeholder="Alternate phone" value={newClient.secondaryPhone} onChange={(e)=>handleInputChange('secondaryPhone', e.target.value)} isInvalid={!!newClient.secondaryPhone && !validatePhone(newClient.secondaryPhone)} errorMessage={!!newClient.secondaryPhone && !validatePhone(newClient.secondaryPhone) ? 'Enter a valid phone number' : undefined} />
+                                            </div>
+                                        </div>
+                                        <div className="md:col-span-3 mt-2 border-b border-gray-200 pb-1">
+                                            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Work</h4>
                                         </div>
                                         <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
                                             <div>
@@ -1761,19 +1779,8 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                                 </Autocomplete>
                                             </div>
                                         </div>
-                                        <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                                                <Input type="email" placeholder="email@example.com" value={newClient.email} onChange={(e)=>handleInputChange('email', e.target.value)} isInvalid={!!newClient.email && !validateEmail(newClient.email)} errorMessage={!!newClient.email && !validateEmail(newClient.email) ? 'Enter a valid email' : undefined} />
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-                                                <Input placeholder="Phone number" value={newClient.phone} onChange={(e)=>handleInputChange('phone', e.target.value)} isInvalid={!!newClient.phone && !validatePhone(newClient.phone)} errorMessage={!!newClient.phone && !validatePhone(newClient.phone) ? 'Enter a valid phone number' : undefined} />
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">Phone 2</label>
-                                                <Input placeholder="Alternate phone" value={newClient.secondaryPhone} onChange={(e)=>handleInputChange('secondaryPhone', e.target.value)} isInvalid={!!newClient.secondaryPhone && !validatePhone(newClient.secondaryPhone)} errorMessage={!!newClient.secondaryPhone && !validatePhone(newClient.secondaryPhone) ? 'Enter a valid phone number' : undefined} />
-                                            </div>
+                                        <div className="md:col-span-3 mt-2 border-b border-gray-200 pb-1">
+                                            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Address</h4>
                                         </div>
                                         <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
                                 <div>
@@ -1797,6 +1804,9 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                                 <Input placeholder="Postal code" value={newClient.postalCode} onChange={(e)=>handleInputChange('postalCode', e.target.value)} />
                                             </div>
                                         </div>
+                                        <div className="md:col-span-3 mt-2 border-b border-gray-200 pb-1">
+                                            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Other</h4>
+                                        </div>
                                         <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-4">
                                             <div>
                                                 <label className="block text-sm font-medium text-gray-700 mb-1">Disability / Accessibility Needs</label>
@@ -1813,11 +1823,39 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                                 })} />
                                             </div>
                                         </div>
+                                        <div className="md:col-span-3 mt-2 border-b border-gray-200 pb-1">
+                                            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Emergency</h4>
+                                        </div>
+                                        <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                                                <Input placeholder="Full name" value={newClient.emergencyName} onChange={(e)=>setNewClient({...newClient, emergencyName: e.target.value})} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Relationship</label>
+                                                <Select selectedKeys={[newClient.emergencyRelationship]} onSelectionChange={(k)=>setNewClient({...newClient, emergencyRelationship: Array.from(k as Set<string>)[0] as any})}>
+                                                    <SelectItem key="spouse">Spouse</SelectItem>
+                                                    <SelectItem key="parent">Parent</SelectItem>
+                                                    <SelectItem key="child">Child</SelectItem>
+                                                    <SelectItem key="sibling">Sibling</SelectItem>
+                                                    <SelectItem key="friend">Friend</SelectItem>
+                                                    <SelectItem key="colleague">Colleague</SelectItem>
+                                                    <SelectItem key="other">Other</SelectItem>
+                                                </Select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                                                <Input placeholder="Emergency phone" value={newClient.emergencyPhone} onChange={(e)=>setNewClient({...newClient, emergencyPhone: e.target.value})} />
+                                            </div>
+                                        </div>
                                     </>
                                 )}
 
                             {newClient.type === 'corporate' && (
                                     <>
+                                    <div className="md:col-span-3 border-b border-gray-200 pb-1">
+                                        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Company</h4>
+                                    </div>
                                     <div className="md:col-span-3">
                                         <label className="block text-sm font-medium text-gray-700 mb-1">Company Name *</label>
                                     <Input placeholder="Company name" value={newClient.companyName} onChange={(e)=>handleInputChange('companyName', e.target.value)} />
@@ -1856,17 +1894,31 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                         <label className="block text-sm font-medium text-gray-700 mb-1">Tax ID / VAT</label>
                                         <Input placeholder="TIN / VAT Number" value={newClient.taxId} onChange={(e)=>handleInputChange('taxId', e.target.value)} />
                                     </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Company Phone</label>
-                                        <Input placeholder="Company phone" value={newClient.companyPhone} onChange={(e)=>handleInputChange('companyPhone', e.target.value)} />
+                                    <div className="md:col-span-3 mt-2 border-b border-gray-200 pb-1">
+                                        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Contact</h4>
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Company Email</label>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Phone *</label>
+                                        <Input placeholder="Company phone" value={newClient.companyPhone} onChange={(e)=>handleInputChange('companyPhone', e.target.value)} isInvalid={!validatePhone(newClient.companyPhone)} errorMessage={!newClient.companyPhone ? 'Phone is required' : !validatePhone(newClient.companyPhone) ? 'Enter a valid phone number' : undefined} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Contact person *</label>
+                                        <Input placeholder="Full name" value={newClient.contactPersonName} onChange={(e)=>setNewClient({...newClient, contactPersonName: e.target.value})} isInvalid={!newClient.contactPersonName.trim()} errorMessage={!newClient.contactPersonName.trim() ? 'Contact person is required' : undefined} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Contact phone *</label>
+                                        <Input placeholder="Contact phone" value={newClient.contactPersonPhone} onChange={(e)=>setNewClient({...newClient, contactPersonPhone: e.target.value})} isInvalid={!validatePhone(newClient.contactPersonPhone)} errorMessage={!newClient.contactPersonPhone ? 'Contact phone is required' : !validatePhone(newClient.contactPersonPhone) ? 'Enter a valid phone number' : undefined} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
                                         <Input type="email" placeholder="company@email.com" value={newClient.companyEmail} onChange={(e)=>handleInputChange('companyEmail', e.target.value)} />
                                     </div>
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">Website</label>
                                         <Input placeholder="https://" value={newClient.website} onChange={(e)=>handleInputChange('website', e.target.value)} />
+                                    </div>
+                                    <div className="md:col-span-3 mt-2 border-b border-gray-200 pb-1">
+                                        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Address</h4>
                                     </div>
                                     <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
                                         <div>
@@ -1901,71 +1953,16 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                             </Autocomplete>
                                         </div>
                                     </div>
-                                    <div className="md:col-span-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Contact Person</label>
-                                            <Input placeholder="Full name" value={newClient.contactPersonName} onChange={(e)=>setNewClient({...newClient, contactPersonName: e.target.value})} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Position</label>
-                                            <Input placeholder="e.g., Procurement Manager" value={newClient.contactPersonPosition} onChange={(e)=>setNewClient({...newClient, contactPersonPosition: e.target.value})} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-                                            <Input placeholder="Contact phone" value={newClient.contactPersonPhone} onChange={(e)=>setNewClient({...newClient, contactPersonPhone: e.target.value})} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                                            <Input type="email" placeholder="contact@email.com" value={newClient.contactPersonEmail} onChange={(e)=>setNewClient({...newClient, contactPersonEmail: e.target.value})} />
-                                        </div>
-                                    </div>
-                                    <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Payment Terms</label>
-                                            <Input placeholder="e.g., Net 30" value={newClient.paymentTerms} onChange={(e)=>setNewClient({...newClient, paymentTerms: e.target.value})} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Credit Limit</label>
-                                            <Input type="number" placeholder="0.00" value={newClient.creditLimit} onChange={(e)=>setNewClient({...newClient, creditLimit: e.target.value})} isInvalid={!validateCredit(newClient.creditLimit)} errorMessage={!validateCredit(newClient.creditLimit) ? 'Enter a valid number' : undefined} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Corporate Account #</label>
-                                            <Input placeholder="Account identifier" value={newClient.corporateAccountNumber} onChange={(e)=>setNewClient({...newClient, corporateAccountNumber: e.target.value})} />
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-2 md:col-span-3">
-                                        <Switch isSelected={newClient.billingSameAsCompany} onValueChange={(v)=>setNewClient({...newClient, billingSameAsCompany: v})}>
-                                            Billing person same as company
-                                        </Switch>
+                                    <div className="md:col-span-3 mt-2 border-b border-gray-200 pb-1">
+                                        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Billing</h4>
                                     </div>
                                     <div>
-                                        <div className="flex items-center gap-1">
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Billing Contact Name</label>
-                                            <Tooltip content="Who invoices should be addressed to (e.g., Finance Manager). Leave linked to company, or specify a person.">
-                                                <InformationCircleIcon className="w-5 h-5 text-gray-600 cursor-help" aria-label="Billing contact info" />
-                                            </Tooltip>
-                                        </div>
-                                        <Input placeholder="Full name" value={newClient.billingContactName} onChange={(e)=>setNewClient({...newClient, billingContactName: e.target.value})} isDisabled={newClient.billingSameAsCompany} />
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Payment Terms</label>
+                                        <Input placeholder="e.g., Net 30" value={newClient.paymentTerms} onChange={(e)=>setNewClient({...newClient, paymentTerms: e.target.value})} />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Billing Contact Email</label>
-                                        <Input type="email" placeholder="billing@company.com" value={newClient.billingContactEmail} onChange={(e)=>setNewClient({...newClient, billingContactEmail: e.target.value})} />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Billing Contact Phone</label>
-                                        <Input placeholder="Phone" value={newClient.billingContactPhone} onChange={(e)=>setNewClient({...newClient, billingContactPhone: e.target.value})} />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Accounts Email</label>
-                                        <Input type="email" placeholder="accounts@company.com" value={newClient.accountsEmail} onChange={(e)=>setNewClient({...newClient, accountsEmail: e.target.value})} />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Invoice Delivery</label>
-                                        <Select selectedKeys={[newClient.invoiceDelivery]} onSelectionChange={(k)=>setNewClient({...newClient, invoiceDelivery: Array.from(k as Set<string>)[0] as any})}>
-                                            <SelectItem key="email">Email</SelectItem>
-                                            <SelectItem key="paper">Paper</SelectItem>
-                                            <SelectItem key="portal">Portal</SelectItem>
-                                        </Select>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Credit Limit</label>
+                                        <Input type="number" placeholder="0.00" value={newClient.creditLimit} onChange={(e)=>setNewClient({...newClient, creditLimit: e.target.value})} isInvalid={!validateCredit(newClient.creditLimit)} errorMessage={!validateCredit(newClient.creditLimit) ? 'Enter a valid number' : undefined} />
                                     </div>
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">Invoice Currency</label>
@@ -1978,6 +1975,21 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                             <SelectItem key="XOF">XOF</SelectItem>
                                             <SelectItem key="XAF">XAF</SelectItem>
                                         </Select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Billing Contact</label>
+                                        <Input placeholder="Who invoices are addressed to" value={newClient.billingContactName} onChange={(e)=>setNewClient({...newClient, billingContactName: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Billing Email</label>
+                                        <Input type="email" placeholder="billing@company.com" value={newClient.billingContactEmail} onChange={(e)=>setNewClient({...newClient, billingContactEmail: e.target.value})} />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Billing Phone</label>
+                                        <Input placeholder="Phone" value={newClient.billingContactPhone} onChange={(e)=>setNewClient({...newClient, billingContactPhone: e.target.value})} />
+                                    </div>
+                                    <div className="md:col-span-3 mt-2 border-b border-gray-200 pb-1">
+                                        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Purchase order</h4>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <div className="flex items-center gap-1">
@@ -1996,8 +2008,8 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                             <SelectItem key="attachment">Attachment</SelectItem>
                                         </Select>
                                     </div>
-                                    <div className="md:col-span-3">
-                                        <h4 className="font-semibold text-gray-800">Contract Details</h4>
+                                    <div className="md:col-span-3 mt-2 border-b border-gray-200 pb-1">
+                                        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Contract</h4>
                                     </div>
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
@@ -2174,15 +2186,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                 } as ClientPreferences
                             });
                         }}>Cancel</Button>
-                        {newClientStep === 'basic' && (
-                            <Button color="secondary" onPress={() => { setNewClientStep('secondary'); try { trackEvent('client_create_step' as any, { step: 'secondary', type: newClient.type, mode: editClientId ? 'edit':'create' }); } catch(e) {} }} isDisabled={newClient.type==='individual' ? (!newClient.firstName || !newClient.lastName) : (!newClient.companyName)}>Next</Button>
-                        )}
-                        {newClientStep === 'secondary' && (
-                            <>
-                                <Button variant="light" onPress={() => setNewClientStep('basic')}>Back</Button>
-                                <Button color="primary" onPress={handleCreateClient} isDisabled={newClient.type==='individual' ? (!newClient.firstName || !newClient.lastName) : (!newClient.companyName)}>{editClientId ? 'Save Changes' : 'Create Client'}</Button>
-                            </>
-                        )}
+                        <Button color="primary" onPress={handleCreateClient} isDisabled={newClient.type==='individual' ? (!newClient.firstName.trim() || !newClient.lastName.trim() || !validatePhone(newClient.phone)) : (!newClient.companyName.trim() || !validatePhone(newClient.companyPhone) || !newClient.contactPersonName.trim() || !validatePhone(newClient.contactPersonPhone))}>{editClientId ? 'Save Changes' : 'Create Client'}</Button>
                     </ModalFooter>
                 </ModalContent>
             </Modal>
