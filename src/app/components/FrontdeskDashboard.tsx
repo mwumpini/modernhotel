@@ -323,8 +323,8 @@ export default function FrontdeskDashboard({
             <Tab key="billing" title="💳 Invoices & Payments" />
             <Tab key="cashiering" title="💵 Cashiering" />
             <Tab key="clients" title="👥 Clients" />
-            <Tab key="night-audit" title="🌙 Night Audit" />
             <Tab key="reports" title="📈 Reports & Analysis" />
+            <Tab key="night-audit" title="🌙 Night Audit" />
           </Tabs>
           <div className={deskBookTabPanelClassName}>
             {selectedTab === 'reservations' && (

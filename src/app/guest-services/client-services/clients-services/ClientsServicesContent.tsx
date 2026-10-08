@@ -1663,110 +1663,118 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 
                                 {newClient.type === 'individual' && (
                                     <>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">First Name *</label>
-                                <Input placeholder="First name" value={newClient.firstName} onChange={(e)=>handleInputChange('firstName', e.target.value)} />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Last Name *</label>
-                                <Input placeholder="Last name" value={newClient.lastName} onChange={(e)=>handleInputChange('lastName', e.target.value)} />
-                            </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Middle Name</label>
-                                            <Input placeholder="Other name(s)" value={newClient.middleName} onChange={(e)=>handleInputChange('middleName', e.target.value)} />
-                            </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
-                                            <Select selectedKeys={[newClient.gender]} onSelectionChange={(k)=>handleSelectChange('gender', k)}>
-                                                <SelectItem key="male">Male</SelectItem>
-                                                <SelectItem key="female">Female</SelectItem>
-                                                <SelectItem key="other">Other</SelectItem>
-                                                <SelectItem key="prefer_not_to_say">Prefer not to say</SelectItem>
-                                            </Select>
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Marital Status</label>
-                                            <Select selectedKeys={[newClient.maritalStatus]} onSelectionChange={(k)=>handleSelectChange('maritalStatus', k)}>
-                                                <SelectItem key="single">Single</SelectItem>
-                                                <SelectItem key="married">Married</SelectItem>
-                                                <SelectItem key="divorced">Divorced</SelectItem>
-                                                <SelectItem key="widowed">Widowed</SelectItem>
-                                                <SelectItem key="separated">Separated</SelectItem>
-                                                <SelectItem key="other">Other</SelectItem>
-                                            </Select>
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Date of Birth</label>
-                                            <Input type="date" value={newClient.dateOfBirth} onChange={(e)=>handleInputChange('dateOfBirth', e.target.value)} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">ID Type</label>
-                                            <Select selectedKeys={[newClient.idType]} onSelectionChange={(k)=>handleSelectChange('idType', k)}>
-                                                <SelectItem key="ghana_card">Ghana Card</SelectItem>
-                                                <SelectItem key="passport">Passport</SelectItem>
-                                                <SelectItem key="drivers_license">Driver's License</SelectItem>
-                                                <SelectItem key="national_id">National ID</SelectItem>
-                                                <SelectItem key="voters_id">Voter's ID</SelectItem>
-                                                <SelectItem key="nhis_card">NHIS Card</SelectItem>
-                                                <SelectItem key="other">Other</SelectItem>
-                                            </Select>
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">ID Number</label>
-                                            <Input placeholder="ID number" value={newClient.idNumber} onChange={(e)=>handleInputChange('idNumber', e.target.value)} isInvalid={!validateId(newClient.idType, newClient.idNumber)} errorMessage={!validateId(newClient.idType, newClient.idNumber) ? 'Provide ID number for selected type' : undefined} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">ID Expiry</label>
-                                            <Input type="date" value={newClient.idExpiry} onChange={(e)=>handleInputChange('idExpiry', e.target.value)} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Issuing Authority</label>
-                                            <Input placeholder="e.g., NIA, DVLA" value={newClient.idIssuingAuthority} onChange={(e)=>handleInputChange('idIssuingAuthority', e.target.value)} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Employer Company</label>
-                                            <Input placeholder="Company (if applicable)" value={(newClient as any).employerCompany || ''} onChange={(e)=>handleInputChange('employerCompany', e.target.value)} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Job Title</label>
-                                            <Input placeholder="e.g., Manager" value={(newClient as any).jobTitle || ''} onChange={(e)=>handleInputChange('jobTitle', e.target.value)} />
-                                        </div>
-                                        <div className="md:col-span-1">
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Nationality</label>
-                                            <Autocomplete
-                                                className="max-w-xs"
-                                                defaultSelectedKey={defaultCountryCode}
-                                                selectedKey={newClient.countryCode}
-                                                onSelectionChange={(key)=>{
-                                                    const selectedKey = (key as string) || defaultCountryCode;
-                                                    setNewClient({...newClient, countryCode: selectedKey});
-                                                }}
-                                                allowsCustomValue
-                                                placeholder="Nationality"
-                                            >
-                                                {COUNTRIES.concat([{ code: 'OT', name: 'Other' }]).map(c => (
-                                                    <AutocompleteItem key={c.code}>
-                                                        {c.name}
-                                                    </AutocompleteItem>
-                                                ))}
-                                            </Autocomplete>
-                                            <div className="mt-1">
-                                                <Badge size="sm" variant="flat" color={isForeigner ? 'warning' : 'success'}>{isForeigner ? 'Foreigner' : 'Local'}</Badge>
+                                        <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">First Name *</label>
+                                                <Input placeholder="First name" value={newClient.firstName} onChange={(e)=>handleInputChange('firstName', e.target.value)} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Last Name *</label>
+                                                <Input placeholder="Last name" value={newClient.lastName} onChange={(e)=>handleInputChange('lastName', e.target.value)} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Middle Name</label>
+                                                <Input placeholder="Other name(s)" value={newClient.middleName} onChange={(e)=>handleInputChange('middleName', e.target.value)} />
                                             </div>
                                         </div>
-                                        {/* Contact details before address */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                                            <Input type="email" placeholder="email@example.com" value={newClient.email} onChange={(e)=>handleInputChange('email', e.target.value)} isInvalid={!!newClient.email && !validateEmail(newClient.email)} errorMessage={!!newClient.email && !validateEmail(newClient.email) ? 'Enter a valid email' : undefined} />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-                                            <Input placeholder="Phone number" value={newClient.phone} onChange={(e)=>handleInputChange('phone', e.target.value)} isInvalid={!!newClient.phone && !validatePhone(newClient.phone)} errorMessage={!!newClient.phone && !validatePhone(newClient.phone) ? 'Enter a valid phone number' : undefined} />
-                            </div>
-                            <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Phone 2</label>
-                                            <Input placeholder="Alternate phone" value={newClient.secondaryPhone} onChange={(e)=>handleInputChange('secondaryPhone', e.target.value)} isInvalid={!!newClient.secondaryPhone && !validatePhone(newClient.secondaryPhone)} errorMessage={!!newClient.secondaryPhone && !validatePhone(newClient.secondaryPhone) ? 'Enter a valid phone number' : undefined} />
-                            </div>
+                                        <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
+                                                <Select selectedKeys={[newClient.gender]} onSelectionChange={(k)=>handleSelectChange('gender', k)}>
+                                                    <SelectItem key="male">Male</SelectItem>
+                                                    <SelectItem key="female">Female</SelectItem>
+                                                    <SelectItem key="other">Other</SelectItem>
+                                                    <SelectItem key="prefer_not_to_say">Prefer not to say</SelectItem>
+                                                </Select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Marital Status</label>
+                                                <Select selectedKeys={[newClient.maritalStatus]} onSelectionChange={(k)=>handleSelectChange('maritalStatus', k)}>
+                                                    <SelectItem key="single">Single</SelectItem>
+                                                    <SelectItem key="married">Married</SelectItem>
+                                                    <SelectItem key="divorced">Divorced</SelectItem>
+                                                    <SelectItem key="widowed">Widowed</SelectItem>
+                                                    <SelectItem key="separated">Separated</SelectItem>
+                                                    <SelectItem key="other">Other</SelectItem>
+                                                </Select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Date of Birth</label>
+                                                <Input type="date" value={newClient.dateOfBirth} onChange={(e)=>handleInputChange('dateOfBirth', e.target.value)} />
+                                            </div>
+                                        </div>
+                                        <div className="md:col-span-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">ID Type</label>
+                                                <Select selectedKeys={[newClient.idType]} onSelectionChange={(k)=>handleSelectChange('idType', k)}>
+                                                    <SelectItem key="ghana_card">Ghana Card</SelectItem>
+                                                    <SelectItem key="passport">Passport</SelectItem>
+                                                    <SelectItem key="drivers_license">Driver's License</SelectItem>
+                                                    <SelectItem key="national_id">National ID</SelectItem>
+                                                    <SelectItem key="voters_id">Voter's ID</SelectItem>
+                                                    <SelectItem key="nhis_card">NHIS Card</SelectItem>
+                                                    <SelectItem key="other">Other</SelectItem>
+                                                </Select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">ID Number</label>
+                                                <Input placeholder="ID number" value={newClient.idNumber} onChange={(e)=>handleInputChange('idNumber', e.target.value)} isInvalid={!validateId(newClient.idType, newClient.idNumber)} errorMessage={!validateId(newClient.idType, newClient.idNumber) ? 'Provide ID number for selected type' : undefined} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">ID Expiry</label>
+                                                <Input type="date" value={newClient.idExpiry} onChange={(e)=>handleInputChange('idExpiry', e.target.value)} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Issuing Authority</label>
+                                                <Input placeholder="e.g., NIA, DVLA" value={newClient.idIssuingAuthority} onChange={(e)=>handleInputChange('idIssuingAuthority', e.target.value)} />
+                                            </div>
+                                        </div>
+                                        <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Employer Company</label>
+                                                <Input placeholder="Company (if applicable)" value={(newClient as any).employerCompany || ''} onChange={(e)=>handleInputChange('employerCompany', e.target.value)} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Job Title</label>
+                                                <Input placeholder="e.g., Manager" value={(newClient as any).jobTitle || ''} onChange={(e)=>handleInputChange('jobTitle', e.target.value)} />
+                                            </div>
+                                            <div>
+                                                <div className="mb-1 flex items-center justify-between gap-2">
+                                                    <label className="block text-sm font-medium text-gray-700">Nationality</label>
+                                                    <Badge size="sm" variant="flat" color={isForeigner ? 'warning' : 'success'}>{isForeigner ? 'Foreigner' : 'Local'}</Badge>
+                                                </div>
+                                                <Autocomplete
+                                                    defaultSelectedKey={defaultCountryCode}
+                                                    selectedKey={newClient.countryCode}
+                                                    onSelectionChange={(key)=>{
+                                                        const selectedKey = (key as string) || defaultCountryCode;
+                                                        setNewClient({...newClient, countryCode: selectedKey});
+                                                    }}
+                                                    allowsCustomValue
+                                                    placeholder="Nationality"
+                                                >
+                                                    {COUNTRIES.concat([{ code: 'OT', name: 'Other' }]).map(c => (
+                                                        <AutocompleteItem key={c.code}>
+                                                            {c.name}
+                                                        </AutocompleteItem>
+                                                    ))}
+                                                </Autocomplete>
+                                            </div>
+                                        </div>
+                                        <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                                                <Input type="email" placeholder="email@example.com" value={newClient.email} onChange={(e)=>handleInputChange('email', e.target.value)} isInvalid={!!newClient.email && !validateEmail(newClient.email)} errorMessage={!!newClient.email && !validateEmail(newClient.email) ? 'Enter a valid email' : undefined} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                                                <Input placeholder="Phone number" value={newClient.phone} onChange={(e)=>handleInputChange('phone', e.target.value)} isInvalid={!!newClient.phone && !validatePhone(newClient.phone)} errorMessage={!!newClient.phone && !validatePhone(newClient.phone) ? 'Enter a valid phone number' : undefined} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Phone 2</label>
+                                                <Input placeholder="Alternate phone" value={newClient.secondaryPhone} onChange={(e)=>handleInputChange('secondaryPhone', e.target.value)} isInvalid={!!newClient.secondaryPhone && !validatePhone(newClient.secondaryPhone)} errorMessage={!!newClient.secondaryPhone && !validatePhone(newClient.secondaryPhone) ? 'Enter a valid phone number' : undefined} />
+                                            </div>
+                                        </div>
                                         <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
                                 <div>
                                                 <label className="block text-sm font-medium text-gray-700 mb-1">Address Line 1</label>
@@ -1788,7 +1796,6 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                                 <label className="block text-sm font-medium text-gray-700 mb-1">Postal Code</label>
                                                 <Input placeholder="Postal code" value={newClient.postalCode} onChange={(e)=>handleInputChange('postalCode', e.target.value)} />
                                             </div>
-                                            <div className="hidden md:block"></div>
                                         </div>
                                         <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-4">
                                             <div>
@@ -1884,7 +1891,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                         </div>
                                         <div>
                                             <label className="block text-sm font-medium text-gray-700 mb-1">Country</label>
-                                            <Autocomplete className="max-w-xs" defaultSelectedKey={defaultCountryCode} selectedKey={newClient.companyCountryCode} onSelectionChange={(key)=>{
+                                            <Autocomplete defaultSelectedKey={defaultCountryCode} selectedKey={newClient.companyCountryCode} onSelectionChange={(key)=>{
                                                 const selectedKey = (key as string) || defaultCountryCode;
                                                 setNewClient({...newClient, companyCountryCode: selectedKey});
                                             }} allowsCustomValue placeholder="Country">
@@ -1894,7 +1901,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                             </Autocomplete>
                                         </div>
                                     </div>
-                                    <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <div className="md:col-span-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                                         <div>
                                             <label className="block text-sm font-medium text-gray-700 mb-1">Contact Person</label>
                                             <Input placeholder="Full name" value={newClient.contactPersonName} onChange={(e)=>setNewClient({...newClient, contactPersonName: e.target.value})} />
@@ -2022,27 +2029,6 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                 {newClient.type === 'corporate' ? null : (
                                     <>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Blood Group</label>
-                                            <Select selectedKeys={[newClient.preferences?.bloodGroup || '']} onSelectionChange={(k)=>setNewClient({...newClient, preferences: {...newClient.preferences, bloodGroup: Array.from(k as Set<string>)[0] as any}})}>
-                                                <SelectItem key="A+">A+</SelectItem>
-                                                <SelectItem key="A-">A-</SelectItem>
-                                                <SelectItem key="B+">B+</SelectItem>
-                                                <SelectItem key="B-">B-</SelectItem>
-                                                <SelectItem key="AB+">AB+</SelectItem>
-                                                <SelectItem key="AB-">AB-</SelectItem>
-                                                <SelectItem key="O+">O+</SelectItem>
-                                                <SelectItem key="O-">O-</SelectItem>
-                                            </Select>
-                                        </div>
-                                        <div className="md:col-span-2">
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Special Medications</label>
-                                            <Textarea rows={2} placeholder="List medications or notes" value={newClient.preferences?.medications || ''} onChange={(e)=>setNewClient({...newClient, preferences: {...newClient.preferences, medications: e.target.value}})} />
-                                        </div>
-                                        <div className="md:col-span-3">
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Family/Companion Details</label>
-                                            <Textarea rows={2} placeholder="Names, relationships, contact details" value={newClient.preferences?.familyCompanions || ''} onChange={(e)=>setNewClient({...newClient, preferences: {...newClient.preferences, familyCompanions: e.target.value}})} />
-                                        </div>
                                         <div className="md:col-span-3">
                                             <h4 className="font-semibold text-gray-800">Emergency Contact</h4>
                                         </div>
