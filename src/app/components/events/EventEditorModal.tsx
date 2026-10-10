@@ -6,6 +6,7 @@ import { EVENT_DOC_TYPE } from './eventShared';
 import type { SimpleEventStatus } from './eventTypes';
 import { paymentMethodLabel } from '../../lib/accounting/receiptPrint';
 import { useEventsScreen } from './eventsScreenContext';
+import { stayNightDates } from '../../lib/frontoffice/folioLedger';
 
 function guestPersonName(guest: any) {
   return String(guest?.name || `${guest?.firstName || ''} ${guest?.lastName || ''}`).trim();
@@ -330,7 +331,7 @@ export function EventEditorModal() {
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <Input
                     size="sm"
-                    label="Start Date"
+                    label="Check-in Date"
                     type="date"
                     value={eventsScreen.startDate}
                     onChange={(e) => eventsScreen.setStartDate(e.target.value)}
@@ -339,7 +340,7 @@ export function EventEditorModal() {
                   />
                   <Input
                     size="sm"
-                    label="End Date"
+                    label="Check-out Date"
                     type="date"
                     value={eventsScreen.endDate}
                     onChange={(e) => eventsScreen.setEndDate(e.target.value)}
@@ -479,11 +480,12 @@ export function EventEditorModal() {
                         </Popover>
                         <div className="shrink-0 rounded-md border border-gray-200 bg-white px-3 py-2 text-xs font-semibold tabular-nums text-gray-800">
                           {(() => {
+                            if (eventsScreen.isResidential) {
+                              const nights = stayNightDates(eventsScreen.startDate, eventsScreen.endDate).length;
+                              return `${nights} ${nights === 1 ? 'night' : 'nights'}`;
+                            }
                             const spanCount = eventsScreen.computeEventDurationDays({ arrivalDate: eventsScreen.startDate, departureDate: eventsScreen.endDate });
-                            const unit = eventsScreen.isResidential
-                              ? (spanCount === 1 ? 'night' : 'nights')
-                              : (spanCount === 1 ? 'day' : 'days');
-                            return `${spanCount} ${unit}`;
+                            return `${spanCount} ${spanCount === 1 ? 'day' : 'days'}`;
                           })()}
                         </div>
                         </div>
@@ -537,7 +539,7 @@ export function EventEditorModal() {
                     /* Empty state - no dates selected */
                     <div className="py-12 text-center text-gray-500 bg-gray-50">
                       <span className="text-5xl">📅</span>
-                      <p className="mt-3 text-lg">Please select Start and End dates to generate daily schedule</p>
+                      <p className="mt-3 text-lg">Please select check-in and check-out dates to generate the daily schedule</p>
                     </div>
                   ) : !eventsScreen.ratesByParticulars ? (
                     /* Package Mode Table */

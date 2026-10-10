@@ -2214,6 +2214,12 @@ model CashierShift {
   totalCard        Float?
   totalMobileMoney Float?
   totalOther       Float?
+  /** Amount the cashier reads on the MoMo device for this shift. */
+  momoDeclared     Float?
+  /** momoDeclared minus recorded MoMo sales. Negative means the wallet is short. */
+  momoVariance     Float?
+  /** Petty cash taken from this till. Active rows reduce expected cash and post an expense. */
+  paidOuts         Json?
   status           String    @default("open")
   notes            String?
   /** accounts | cashier — cash drop / till handover after close */

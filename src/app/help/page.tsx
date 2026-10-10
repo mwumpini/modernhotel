@@ -56,7 +56,7 @@ function TopicCard({
   pathname: string;
 }) {
   return (
-    <li className="rounded-lg border border-slate-200/80 bg-white p-4 shadow-sm">
+    <li className="rounded-lg border border-slate-200/80 bg-[var(--card-background)] p-4 shadow-sm">
       <p className="font-medium text-slate-900">{topic.title}</p>
       <p className="mt-1 text-sm text-slate-600">{topic.description}</p>
 
@@ -77,7 +77,7 @@ function TopicCard({
       )}
 
       {topic.notHere && (
-        <p className="mt-3 text-sm text-amber-900/90 rounded-md bg-amber-50 border border-amber-100 px-3 py-2">
+        <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-300/40 dark:bg-[color-mix(in_srgb,#f59e0b_18%,var(--card-background))] dark:text-amber-100">
           <span className="font-medium">Not here: </span>
           {topic.notHere}
         </p>
@@ -150,7 +150,7 @@ export default function HelpPage() {
   }, [router]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 px-4 py-10">
+    <div className="min-h-screen bg-[var(--background)] px-4 py-10 text-[var(--text-primary)]">
       <div className="mx-auto max-w-4xl space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -180,7 +180,7 @@ export default function HelpPage() {
           value={query}
           onValueChange={setQuery}
           variant="bordered"
-          classNames={{ inputWrapper: 'bg-white shadow-sm' }}
+          classNames={{ inputWrapper: 'bg-[var(--input-background)] shadow-sm' }}
         />
 
         {!normalized && (
@@ -191,7 +191,7 @@ export default function HelpPage() {
             </CardHeader>
             <CardBody className="space-y-4 px-6 pb-6">
               {configurationGuide.areas.map((area) => (
-                <div key={area.name} className="rounded-lg border border-slate-200 bg-slate-50/80 p-4">
+                <div key={area.name} className="rounded-lg border border-[var(--card-border)] bg-[var(--surface)] p-4">
                   <p className="font-medium text-slate-900">{area.name}</p>
                   <p className="mt-1 text-sm text-slate-700">
                     <span className="font-medium text-slate-800">Use for: </span>
@@ -261,11 +261,11 @@ export default function HelpPage() {
           </CardBody>
         </Card>
 
-        <Card shadow="sm" className="border border-slate-200/80 bg-slate-50/50">
+        <Card shadow="sm" className="border border-slate-200/80 bg-[var(--surface)]">
           <CardHeader className="flex flex-col items-start gap-1 px-6 pt-6 pb-2">
             <p className="text-lg font-medium text-slate-900">{helpMaintainerGuide.title}</p>
             <p className="text-sm text-slate-500">
-              Edit <code className="text-xs bg-white px-1 py-0.5 rounded border">{helpMaintainerGuide.file}</code>{' '}
+              Edit <code className="rounded border border-[var(--card-border)] bg-[var(--card-background)] px-1 py-0.5 text-xs">{helpMaintainerGuide.file}</code>{' '}
               when screens move or new features ship.
             </p>
           </CardHeader>
@@ -278,12 +278,12 @@ export default function HelpPage() {
           </CardBody>
         </Card>
 
-        <Card shadow="sm" className="border border-amber-200/80 bg-amber-50/40">
-          <CardBody className="px-6 py-5 text-sm text-amber-950">
-            <p className="font-medium text-amber-900">Developers</p>
-            <p className="mt-2 text-amber-900/90">
+        <Card shadow="sm" className="border border-amber-200/80 bg-amber-50/40 dark:border-amber-300/40 dark:bg-[color-mix(in_srgb,#f59e0b_18%,var(--card-background))]">
+          <CardBody className="px-6 py-5 text-sm text-amber-950 dark:text-amber-100">
+            <p className="font-medium text-amber-900 dark:text-amber-100">Developers</p>
+            <p className="mt-2 text-amber-900/90 dark:text-amber-100">
               On a desk, F1 and F12 open Ask Mamani, so the browser may not use those keys for DevTools. Use{' '}
-              <kbd className="rounded border border-amber-300 bg-white px-1.5 py-0.5 font-mono text-xs">Ctrl+Shift+I</kbd>{' '}
+              <kbd className="rounded border border-amber-300 bg-[var(--card-background)] px-1.5 py-0.5 font-mono text-xs">Ctrl+Shift+I</kbd>{' '}
               or the browser menu instead.
             </p>
           </CardBody>

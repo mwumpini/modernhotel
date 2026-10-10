@@ -112,6 +112,8 @@ export function generateAccountingInvoiceForReservation(self: StoreLike, reserva
   };
 
   invoice.lines = invoice.lines.map((l: any) => ({ ...l, invoiceId: newId }));
+  (reservation as any).invoiceNumber = invNumber;
+  (reservation as any).invoiceGeneratedDate = invoice.date;
   try { accounting.addInvoice(invoice); } catch (e) { console.warn('FO: addInvoice failed', e); }
 
   const paymentRows: Array<{ amount: number; method: string; date: string; paymentId: string }> = [];
@@ -234,6 +236,8 @@ export function retryPendingGlPost(self: StoreLike, reservationId: string): bool
     try {
       self.persistReservationPatch(reservationId, {
         invoiceGenerated: true,
+        invoiceGeneratedDate: (reservation as any).invoiceGeneratedDate,
+        invoiceNumber: (reservation as any).invoiceNumber,
         invoiceStatus: (reservation as any).invoiceStatus,
         pendingGlPost: null,
       });

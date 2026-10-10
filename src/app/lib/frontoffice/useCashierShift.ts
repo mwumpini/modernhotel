@@ -13,6 +13,7 @@ export type ShiftPreview = {
   totalCard: number;
   totalMobileMoney: number;
   totalOther: number;
+  totalPaidOut: number;
   expectedCash: number;
 };
 
@@ -55,11 +56,36 @@ export function useCashierShift(currentUserId?: string, outlet: CashierOutlet = 
     return { ok: res.ok, error: data?.error, shift: data?.shift as CashierShiftDTO | undefined };
   }, [refresh, outlet]);
 
-  const closeShift = React.useCallback(async (id: string, closingCount: number, notes?: string) => {
+  const recordPaidOut = React.useCallback(async (
+    id: string,
+    paidOut: { amount: number; expenseCode: string; description: string },
+  ) => {
     const res = await fetch(`/api/frontoffice/cashier-shifts/${id}`, {
       method: 'PATCH',
       headers: headers(),
-      body: JSON.stringify({ action: 'close', closingCount, notes }),
+      body: JSON.stringify({ action: 'paid-out', ...paidOut }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok) await refresh();
+    return { ok: res.ok, error: data?.error as string | undefined, shift: data?.shift as CashierShiftDTO | undefined };
+  }, [refresh]);
+
+  const voidPaidOut = React.useCallback(async (id: string, paidOutId: string) => {
+    const res = await fetch(`/api/frontoffice/cashier-shifts/${id}`, {
+      method: 'PATCH',
+      headers: headers(),
+      body: JSON.stringify({ action: 'void-paid-out', paidOutId }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok) await refresh();
+    return { ok: res.ok, error: data?.error as string | undefined, shift: data?.shift as CashierShiftDTO | undefined };
+  }, [refresh]);
+
+  const closeShift = React.useCallback(async (id: string, closingCount: number, notes?: string, momoDeclared?: number) => {
+    const res = await fetch(`/api/frontoffice/cashier-shifts/${id}`, {
+      method: 'PATCH',
+      headers: headers(),
+      body: JSON.stringify({ action: 'close', closingCount, notes, momoDeclared }),
     });
     const data = await res.json().catch(() => null);
     if (res.ok) await refresh();
@@ -72,6 +98,7 @@ export function useCashierShift(currentUserId?: string, outlet: CashierOutlet = 
       businessDate?: string;
       openingFloat?: number;
       closingCount?: number;
+      momoDeclared?: number | null;
       notes?: string | null;
       recompute?: boolean;
       transferTo?: 'accounts' | 'cashier' | null;
@@ -111,5 +138,5 @@ export function useCashierShift(currentUserId?: string, outlet: CashierOutlet = 
     }
   }, []);
 
-  return { shifts, myOpenShift, loading, openShift, closeShift, updateShift, deleteShift, fetchPreview, refresh };
+  return { shifts, myOpenShift, loading, openShift, closeShift, recordPaidOut, voidPaidOut, updateShift, deleteShift, fetchPreview, refresh };
 }

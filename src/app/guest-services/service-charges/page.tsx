@@ -155,6 +155,10 @@ interface ServiceCharge {
   /** Folio line this charge was posted to, so the table and the room bill stay the same charge. */
   folioChargeId?: string;
   reservationId?: string;
+  paidAt?: string;
+  paidAmount?: number;
+  paymentMethod?: string;
+  paymentRef?: string;
 }
 
 function folioSettledStatus(row: ServiceCharge): ServiceCharge {
@@ -724,10 +728,18 @@ export default function ServiceChargesPage() {
 
     const due = serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId, selectedCharge.taxExempt, taxCategoryForCharge(selectedCharge));
     const settled = paymentData.amount + 0.009 >= due;
+    const paidAt = new Date().toISOString();
     setServiceCharges(prev =>
       prev.map(charge =>
         charge.id === selectedCharge.id
-          ? { ...charge, status: settled ? 'paid' as const : charge.status }
+          ? {
+              ...charge,
+              status: settled ? 'paid' as const : charge.status,
+              paidAt,
+              paidAmount: paymentData.amount,
+              paymentMethod: paymentData.paymentMethod,
+              paymentRef: paymentData.reference.trim() || charge.id,
+            }
           : charge
       )
     );

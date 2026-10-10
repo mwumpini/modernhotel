@@ -15,6 +15,8 @@ import { useReportingStore } from '../lib/frontoffice/reportingStore';
 import { isPercentKey, formatPercent } from '../lib/frontoffice/reportExportFormat';
 import { useSettingsStore } from '../lib/settings/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
+import { getClientTenantSubdomain } from '../lib/api/clientTenant';
+import type { CashierShiftSnapshot } from '../lib/frontoffice/reportingStore';
 import { useNightAuditLog } from '../lib/frontoffice/useNightAuditLog';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
 import DailyTransactionReportView, { type TransactionRow } from './DailyTransactionReportView';
@@ -25,9 +27,12 @@ function labelize(key: string): string {
   return key.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
 }
 
-function formatReportValue(value: unknown): React.ReactNode {
+function formatReportValue(value: unknown, key?: string): React.ReactNode {
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'number' && key && /(cash|card|mobile|balance|variance|adjustment|amount)/i.test(key)) {
+    return `₵${value.toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
   if (typeof value === 'number') return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
   return shortDate(String(value));
 }
@@ -49,7 +54,7 @@ function ReportMiniTable({ rows }: { rows: Record<string, unknown>[] }) {
       ariaLabel="Report detail"
       columns={columns}
       rows={rows}
-      renderCell={(row, column) => formatReportValue(row[column.key])}
+      renderCell={(row, column) => formatReportValue(row[column.key], column.key)}
     />
   );
 }
@@ -73,7 +78,7 @@ function ReportSummarySection({ data }: { data: Record<string, unknown> }) {
           {primitives.map(([key, value]) => (
             <div key={key} className="p-3 bg-gray-50 rounded-lg border">
               <div className="text-xs text-gray-500">{labelize(key)}</div>
-              <div className="text-lg font-semibold text-ghana-black">{formatReportValue(value)}</div>
+              <div className="text-lg font-semibold text-ghana-black">{formatReportValue(value, key)}</div>
             </div>
           ))}
         </div>
@@ -433,7 +438,21 @@ export default function FrontOfficeReportsAnalysis({ embedded = false }: { embed
   // value once hydrated — a hydration mismatch. Defer the table itself
   // (not the surrounding page chrome) until after mount.
   const [mounted, setMounted] = useState(false);
+  const [cashierShifts, setCashierShifts] = useState<CashierShiftSnapshot[]>([]);
   useEffect(() => { setMounted(true); }, []);
+  useEffect(() => {
+    let cancel = false;
+    const headers = { 'x-tenant-subdomain': getClientTenantSubdomain() };
+    Promise.all([
+      fetch('/api/frontoffice/cashier-shifts?outlet=frontoffice', { headers }).then((res) => res.ok ? res.json() : null),
+      fetch('/api/frontoffice/cashier-shifts?outlet=restaurant', { headers }).then((res) => res.ok ? res.json() : null),
+    ]).then(([desk, restaurant]) => {
+      if (cancel) return;
+      const rows = [...(desk?.shifts || []), ...(restaurant?.shifts || [])];
+      setCashierShifts(rows);
+    }).catch(() => { /* the report still totals folio payments if the shift list cannot load */ });
+    return () => { cancel = true; };
+  }, [refreshVersion]);
 
   useEffect(() => {
     try {
@@ -448,6 +467,24 @@ export default function FrontOfficeReportsAnalysis({ embedded = false }: { embed
 
   const settings = useSettingsStore();
   const reportingStore = useReportingStore();
+  const cashierChoices = useMemo(() => {
+    const names = new Set<string>();
+    for (const user of settings.users) {
+      const name = `${user.firstName} ${user.lastName}`.trim();
+      if (name) names.add(name);
+    }
+    for (const shift of cashierShifts) {
+      const name = (shift.cashierName || '').trim();
+      if (name) names.add(name);
+    }
+    for (const folio of frontOfficeStore.folios) {
+      for (const payment of folio.payments || []) {
+        const name = (payment.processedBy || '').trim();
+        if (name) names.add(name);
+      }
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [settings.users, cashierShifts, refreshVersion]);
   const { logs: nightAuditLogs } = useNightAuditLog({ startDate, endDate });
   const orgProfile = buildOrgProfile(settings);
 
@@ -561,7 +598,7 @@ export default function FrontOfficeReportsAnalysis({ embedded = false }: { embed
       case 'daily-transactions':
         return reportingStore.generateDailyTransactionReport(startDate, endDate);
       case 'cashier-report':
-        return reportingStore.generateCashierReport(startDate, cashierId, endDate);
+        return reportingStore.generateCashierReport(startDate, cashierId, endDate, cashierShifts);
       case 'credit-card-reconciliation':
         return reportingStore.generateCreditCardReconciliationReport(startDate, endDate);
       case 'guest-ledger':
@@ -1028,10 +1065,7 @@ export default function FrontOfficeReportsAnalysis({ embedded = false }: { embed
                     onSelectionChange={(keys) => setCashierId((Array.from(keys)[0] as string) || '')}
                     placeholder="Select a cashier"
                   >
-                    {settings.users.map((user) => {
-                      const name = `${user.firstName} ${user.lastName}`.trim();
-                      return <SelectItem key={name}>{name}</SelectItem>;
-                    })}
+                    {cashierChoices.map((name) => <SelectItem key={name}>{name}</SelectItem>)}
                   </Select>
                 ) : (
                   <Select

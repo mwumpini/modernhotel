@@ -1,6 +1,51 @@
 import { prisma } from '../database/client'
+import { pettyExpenseName } from './pettyExpenses'
+import { postTillPaidOut, reverseTillPaidOut } from './tillPaidOutPost'
 
 export type CashierOutlet = 'frontoffice' | 'restaurant'
+
+export type TillPaidOut = {
+  id: string
+  amount: number
+  expenseCode: string
+  expenseName: string
+  description: string
+  journalEntryId?: string
+  voidedAt?: string
+  createdAt: string
+}
+
+function round2(n: number) {
+  return Math.round(n * 100) / 100
+}
+
+export function readPaidOuts(raw: unknown): TillPaidOut[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((row) => {
+    if (!row || typeof row !== 'object') return []
+    const item = row as TillPaidOut
+    const amount = Number(item.amount)
+    if (!item.id || !Number.isFinite(amount)) return []
+    return [{
+      id: String(item.id),
+      amount,
+      expenseCode: String(item.expenseCode || ''),
+      expenseName: String(item.expenseName || ''),
+      description: String(item.description || ''),
+      journalEntryId: item.journalEntryId ? String(item.journalEntryId) : undefined,
+      voidedAt: item.voidedAt ? String(item.voidedAt) : undefined,
+      createdAt: String(item.createdAt || ''),
+    }]
+  })
+}
+
+export function activePaidOutTotal(raw: unknown): number {
+  return round2(readPaidOuts(raw).filter((row) => !row.voidedAt).reduce((sum, row) => sum + row.amount, 0))
+}
+
+function tillExpected(openingFloat: number, cashSales: number, paidOuts: unknown) {
+  return round2(openingFloat + cashSales - activePaidOutTotal(paidOuts))
+}
 
 export interface CashierShiftDTO {
   id: string
@@ -18,6 +63,13 @@ export interface CashierShiftDTO {
   totalCard?: number
   totalMobileMoney?: number
   totalOther?: number
+  /** What the cashier read on the MoMo device at close. */
+  momoDeclared?: number
+  /** momoDeclared minus recorded MoMo sales. */
+  momoVariance?: number
+  paidOuts: TillPaidOut[]
+  /** Active petty paid-outs. Already subtracted from expected cash once the shift is closed. */
+  totalPaidOut: number
   status: 'open' | 'closed'
   notes?: string
   transferTo?: 'accounts' | 'cashier'
@@ -43,6 +95,10 @@ function toDTO(row: any): CashierShiftDTO {
     totalCard: row.totalCard != null ? Number(row.totalCard) : undefined,
     totalMobileMoney: row.totalMobileMoney != null ? Number(row.totalMobileMoney) : undefined,
     totalOther: row.totalOther != null ? Number(row.totalOther) : undefined,
+    momoDeclared: row.momoDeclared != null ? Number(row.momoDeclared) : undefined,
+    momoVariance: row.momoVariance != null ? Number(row.momoVariance) : undefined,
+    paidOuts: readPaidOuts(row.paidOuts),
+    totalPaidOut: activePaidOutTotal(row.paidOuts),
     status: row.status,
     notes: row.notes ?? undefined,
     transferTo: row.transferTo === 'cashier' ? 'cashier' : row.transferTo === 'accounts' ? 'accounts' : undefined,
@@ -56,6 +112,7 @@ export async function listCashierShifts(
   tenantId: string,
   outlet: CashierOutlet = 'frontoffice',
 ): Promise<CashierShiftDTO[]> {
+  await ensureWalletColumns()
   const rows = await prisma.cashierShift.findMany({
     where: { tenantId, outlet },
     orderBy: { openedAt: 'desc' },
@@ -68,6 +125,7 @@ export async function findOpenShiftForCashier(
   cashierUserId: string,
   outlet: CashierOutlet = 'frontoffice',
 ): Promise<CashierShiftDTO | null> {
+  await ensureWalletColumns()
   const row = await prisma.cashierShift.findFirst({
     where: { tenantId, cashierUserId, status: 'open', outlet },
   })
@@ -83,6 +141,7 @@ export async function openCashierShift(
   outlet: CashierOutlet = 'frontoffice',
   businessDate?: string,
 ): Promise<CashierShiftDTO> {
+  await ensureWalletColumns()
   const day = (businessDate || new Date().toISOString().slice(0, 10)).slice(0, 10)
   const row = await prisma.cashierShift.create({
     data: {
@@ -97,6 +156,28 @@ export async function openCashierShift(
     },
   })
   return toDTO(row)
+}
+
+let walletColumnsReady: Promise<void> | null = null
+
+/** Older hotel databases predate the MoMo declaration columns. */
+function ensureWalletColumns(): Promise<void> {
+  if (!walletColumnsReady) {
+    walletColumnsReady = (async () => {
+      for (const sql of [
+        'ALTER TABLE cashier_shifts ADD COLUMN momoDeclared REAL',
+        'ALTER TABLE cashier_shifts ADD COLUMN momoVariance REAL',
+        'ALTER TABLE cashier_shifts ADD COLUMN paidOuts TEXT',
+      ]) {
+        try {
+          await prisma.$executeRawUnsafe(sql)
+        } catch {
+          // The column is already there.
+        }
+      }
+    })()
+  }
+  return walletColumnsReady
 }
 
 type MethodTotals = { cash: number; card: number; mobileMoney: number; other: number }
@@ -206,7 +287,8 @@ async function sumPaymentsForShift(
 export async function previewOpenShiftTotals(
   tenantId: string,
   shiftId: string,
-): Promise<{ totalCash: number; totalCard: number; totalMobileMoney: number; totalOther: number; expectedCash: number } | null> {
+): Promise<{ totalCash: number; totalCard: number; totalMobileMoney: number; totalOther: number; totalPaidOut: number; expectedCash: number } | null> {
+  await ensureWalletColumns()
   const existing = await prisma.cashierShift.findFirst({ where: { id: shiftId, tenantId } })
   if (!existing || existing.status !== 'open') return null
   const outlet = (existing.outlet === 'restaurant' ? 'restaurant' : 'frontoffice') as CashierOutlet
@@ -223,7 +305,8 @@ export async function previewOpenShiftTotals(
     totalCard: totals.card,
     totalMobileMoney: totals.mobileMoney,
     totalOther: totals.other,
-    expectedCash: Number(existing.openingFloat || 0) + totals.cash,
+    totalPaidOut: activePaidOutTotal(existing.paidOuts),
+    expectedCash: tillExpected(Number(existing.openingFloat || 0), totals.cash, existing.paidOuts),
   }
 }
 
@@ -232,7 +315,9 @@ export async function closeCashierShift(
   id: string,
   closingCount: number,
   notes?: string,
+  momoDeclared?: number,
 ): Promise<CashierShiftDTO | null> {
+  await ensureWalletColumns()
   const existing = await prisma.cashierShift.findFirst({ where: { id, tenantId } })
   if (!existing || existing.status !== 'open') return null
 
@@ -247,8 +332,9 @@ export async function closeCashierShift(
     closedAt,
   )
 
-  const expectedCash = Number(existing.openingFloat || 0) + totals.cash
+  const expectedCash = tillExpected(Number(existing.openingFloat || 0), totals.cash, existing.paidOuts)
   const variance = closingCount - expectedCash
+  const declaredMomo = momoDeclared != null && Number.isFinite(momoDeclared) ? momoDeclared : null
 
   const row = await prisma.cashierShift.update({
     where: { id },
@@ -261,6 +347,8 @@ export async function closeCashierShift(
       totalCard: totals.card,
       totalMobileMoney: totals.mobileMoney,
       totalOther: totals.other,
+      momoDeclared: declaredMomo,
+      momoVariance: declaredMomo == null ? null : declaredMomo - totals.mobileMoney,
       status: 'closed',
       notes: notes !== undefined ? notes : existing.notes,
     },
@@ -272,6 +360,8 @@ export type CashierShiftPatch = {
   businessDate?: string
   openingFloat?: number
   closingCount?: number
+  /** What the MoMo device received this shift. Null clears a saved declaration. */
+  momoDeclared?: number | null
   notes?: string | null
   /** Re-sum sales and recompute expected/variance (closed shifts). */
   recompute?: boolean
@@ -289,6 +379,7 @@ export async function updateCashierShift(
   id: string,
   patch: CashierShiftPatch,
 ): Promise<CashierShiftDTO | null> {
+  await ensureWalletColumns()
   const existing = await prisma.cashierShift.findFirst({ where: { id, tenantId } })
   if (!existing) return null
 
@@ -310,6 +401,12 @@ export async function updateCashierShift(
       throw new Error('closingCount must be zero or a positive number')
     }
     data.closingCount = patch.closingCount
+  }
+  if (patch.momoDeclared !== undefined) {
+    if (patch.momoDeclared !== null && (!Number.isFinite(patch.momoDeclared) || patch.momoDeclared < 0)) {
+      throw new Error('momoDeclared must be zero or a positive number')
+    }
+    data.momoDeclared = patch.momoDeclared
   }
 
   if (patch.transferTo !== undefined) {
@@ -382,7 +479,7 @@ export async function updateCashierShift(
       existing.openedAt,
       to,
     )
-    const expectedCash = openingFloat + totals.cash
+    const expectedCash = tillExpected(openingFloat, totals.cash, existing.paidOuts)
     data.totalCash = totals.cash
     data.totalCard = totals.card
     data.totalMobileMoney = totals.mobileMoney
@@ -392,9 +489,26 @@ export async function updateCashierShift(
   } else if (existing.status === 'closed' && closingCount != null && existing.expectedCash != null) {
     if (patch.openingFloat !== undefined || patch.closingCount !== undefined) {
       const cashSales = Number(existing.totalCash || 0)
-      const expectedCash = openingFloat + cashSales
+      const expectedCash = tillExpected(openingFloat, cashSales, existing.paidOuts)
       data.expectedCash = expectedCash
       data.variance = closingCount - expectedCash
+    }
+  }
+
+  if (patch.momoDeclared !== undefined || data.totalMobileMoney !== undefined) {
+    const declared =
+      patch.momoDeclared !== undefined
+        ? patch.momoDeclared
+        : existing.momoDeclared != null
+          ? Number(existing.momoDeclared)
+          : null
+    const recorded = Number(
+      data.totalMobileMoney !== undefined ? data.totalMobileMoney : existing.totalMobileMoney || 0,
+    )
+    if (declared == null) {
+      if (patch.momoDeclared !== undefined) data.momoVariance = null
+    } else {
+      data.momoVariance = declared - recorded
     }
   }
 
@@ -402,7 +516,87 @@ export async function updateCashierShift(
   return toDTO(row)
 }
 
+export async function recordTillPaidOut(
+  tenantId: string,
+  shiftId: string,
+  input: { amount: number; expenseCode: string; description: string },
+  postedBy: string,
+): Promise<CashierShiftDTO> {
+  await ensureWalletColumns()
+  const existing = await prisma.cashierShift.findFirst({ where: { id: shiftId, tenantId } })
+  if (!existing || existing.status !== 'open') throw new Error('Shift is not open')
+  const expenseName = pettyExpenseName(input.expenseCode)
+  if (!expenseName) throw new Error('Choose an expense')
+  const description = String(input.description || '').trim()
+  if (!description) throw new Error('Say what the cash was for')
+  if (description.length > 160) throw new Error('Keep the note under 160 characters')
+  const amount = round2(Number(input.amount))
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('Amount must be greater than zero')
+
+  const outlet = (existing.outlet === 'restaurant' ? 'restaurant' : 'frontoffice') as CashierOutlet
+  const totals = await sumPaymentsForShift(
+    tenantId,
+    outlet,
+    existing.cashierUserId,
+    existing.cashierName,
+    existing.openedAt,
+    new Date(),
+  )
+  const available = tillExpected(Number(existing.openingFloat || 0), totals.cash, existing.paidOuts)
+  if (amount - available > 0.009) throw new Error('That is more cash than the till has')
+
+  const paid: TillPaidOut = {
+    id: crypto.randomUUID(),
+    amount,
+    expenseCode: input.expenseCode,
+    expenseName,
+    description,
+    createdAt: new Date().toISOString(),
+  }
+  paid.journalEntryId = await postTillPaidOut({
+    tenantId,
+    paidOutId: paid.id,
+    amount,
+    expenseCode: paid.expenseCode,
+    expenseName,
+    description,
+    businessDate: String(existing.businessDate || '').slice(0, 10) || new Date().toISOString().slice(0, 10),
+    postedBy,
+  })
+  const paidOuts = [...readPaidOuts(existing.paidOuts), paid]
+  const row = await prisma.cashierShift.update({ where: { id: shiftId }, data: { paidOuts } })
+  return toDTO(row)
+}
+
+export async function voidTillPaidOut(
+  tenantId: string,
+  shiftId: string,
+  paidOutId: string,
+  postedBy: string,
+): Promise<CashierShiftDTO> {
+  await ensureWalletColumns()
+  const existing = await prisma.cashierShift.findFirst({ where: { id: shiftId, tenantId } })
+  if (!existing || existing.status !== 'open') throw new Error('Shift is not open')
+  const paidOuts = readPaidOuts(existing.paidOuts)
+  const item = paidOuts.find((row) => row.id === paidOutId)
+  if (!item || item.voidedAt) throw new Error('Paid-out not found')
+  await reverseTillPaidOut({
+    tenantId,
+    paidOutId: item.id,
+    amount: item.amount,
+    expenseCode: item.expenseCode,
+    expenseName: item.expenseName,
+    description: item.description,
+    businessDate: String(existing.businessDate || '').slice(0, 10) || new Date().toISOString().slice(0, 10),
+    postedBy,
+  })
+  item.voidedAt = new Date().toISOString()
+  const row = await prisma.cashierShift.update({ where: { id: shiftId }, data: { paidOuts } })
+  return toDTO(row)
+}
+
 export async function deleteCashierShift(tenantId: string, id: string): Promise<boolean> {
+  await ensureWalletColumns()
   const existing = await prisma.cashierShift.findFirst({ where: { id, tenantId } })
   if (!existing) return false
   await prisma.cashierShift.delete({ where: { id } })

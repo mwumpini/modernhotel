@@ -1439,7 +1439,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     excludeReservationId?: string, // the booking being assigned, so its own room still counts as free
     readyNow = false, // checking in now: the room must also be empty today (same rule as the Desk)
   ) => {
-    if (roomTypeId === '' || !arrival || !departure || departure <= arrival) return [] as string[];
+    if (roomTypeId === '' || !arrival || !departure || departure < arrival) return [] as string[];
     const vacantNow = readyNow ? new Set(housekeepingStore.getRoomsReadyToAssign().map((r) => r.roomNumber)) : null;
     const start = new Date(arrival).getTime();
     const end = new Date(departure).getTime();
@@ -2198,7 +2198,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                       <PopoverContent>
                                         {(() => {
                                           // Same layout as the Assign Room tab: Match type switch, room search, Assign.
-                                          const hasDates = !!bulkGuest.arrival && !!bulkGuest.departure && bulkGuest.departure > bulkGuest.arrival;
+                                          const hasDates = !!bulkGuest.arrival && !!bulkGuest.departure && bulkGuest.departure >= bulkGuest.arrival;
                                           const free = getRoomsFreeForStay(
                                             roomPickerMatchType ? bulkGuest.roomTypeId : null,
                                             bulkGuest.arrival,

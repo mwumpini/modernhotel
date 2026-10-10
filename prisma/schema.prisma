@@ -2243,7 +2243,11 @@ model HrAttendance {
 // A front-desk agent's till session: declared opening float, real payments
 // attributed to them (Payment.processedBy on GuestFolio.payments) while the
 // shift is open, and a counted closing balance reconciled against the
-// system-expected cash total when closed. See /api/frontoffice/cashier-shifts.
+// system-expected cash total when closed. Mobile money is reconciled on its
+// own: the cashier declares what the MoMo device received (momoDeclared) and
+// momoVariance is that figure minus recorded MoMo sales. Card and other
+// methods are stored with the shift and are not added into the cash count.
+// See /api/frontoffice/cashier-shifts.
 model CashierShift {
   id               String    @id @default(cuid())
   tenantId         String
@@ -2263,6 +2267,12 @@ model CashierShift {
   totalCard        Float?
   totalMobileMoney Float?
   totalOther       Float?
+  /** Amount the cashier reads on the MoMo device for this shift. */
+  momoDeclared     Float?
+  /** momoDeclared minus recorded MoMo sales. Negative means the wallet is short. */
+  momoVariance     Float?
+  /** Petty cash taken from this till. Active rows reduce expected cash and post an expense. */
+  paidOuts         Json?
   status           String    @default("open")
   notes            String?
   /** accounts | cashier — cash drop / till handover after close */

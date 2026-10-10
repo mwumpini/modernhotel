@@ -38,8 +38,8 @@ export async function POST(request: NextRequest) {
     if (!body.arrival || !body.departure) {
       return NextResponse.json({ error: 'arrival and departure are required' }, { status: 400 })
     }
-    if (new Date(body.arrival) >= new Date(body.departure)) {
-      return NextResponse.json({ error: 'Departure must be after arrival' }, { status: 400 })
+    if (String(body.arrival).slice(0, 10) > String(body.departure).slice(0, 10)) {
+      return NextResponse.json({ error: 'Departure cannot be before arrival' }, { status: 400 })
     }
 
     // Double-booking guard when a specific room is requested

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 // Restored Invoices & Payments component for embedding inside consolidated tab
 import React, { useState, useMemo, useEffect } from 'react';
@@ -28,11 +28,7 @@ import {
   Badge,
   Chip,
   Divider,
-  Popover,
-  PopoverTrigger,
-  PopoverContent
 } from '@heroui/react';
-import { InformationCircleIcon } from '@heroicons/react/24/outline';
 import { usePathname } from 'next/navigation';
 import FrontOfficeBackButton from '../../../components/FrontOfficeBackButton';
 import { HideCardButton } from '../../../components/dashboard/CustomizeViewControl';
@@ -40,6 +36,9 @@ import { FoDeskKpiCustomize, FO_INVOICES_KPI_SECTIONS, useFrontOfficeDeskVisibil
 import { useHostSummaryCollapsed } from '../../../lib/dashboard/useSummaryCollapsed';
 import { periodToDateFilter } from '../../../lib/dashboard/useDashboardPeriod';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
+import { computeChargeTax, stayFolio } from '../../../lib/frontoffice/helpers/folio';
+import { loadRecords } from '../../../lib/api/tenantRecords';
+import { useAccountingStore } from '../../../lib/accounting/store';
 import { useFrontOfficeLiveRefresh } from '../../../lib/frontoffice/useLiveRefresh';
 import { useSettingsStore } from '../../../lib/settings/store';
 import { useCurrentUserName } from '../../../lib/auth/useCurrentUserName';
@@ -49,12 +48,39 @@ import { trackEvent } from '../../../lib/analytics/trackEvent';
 import { logAudit } from '../../../lib/analytics/auditLogStore';
 import { computeSalesTaxTotal, effectiveSalesTaxRate } from '../../../lib/tax/engine';
 import { formatMoney } from '../../../lib/format/currency';
-import { localStayDay, shortDay, sortStays, stayFigures, type StaySortKey } from '../../../lib/frontoffice/stayWorksheet';
+import { billingPersonLabel, localStayDay, shortDay, sortStays, stayFigures, type StaySortKey } from '../../../lib/frontoffice/stayWorksheet';
 import StayWorksheetTable, { worksheetTableClassNames } from '../../../components/frontoffice/StayWorksheetTable';
+
+// The shared worksheet table locks every column to an equal slice of the card.
+// These ledgers have fewer columns, so that squeeze makes the cedi amounts and
+// dates paint on top of the next column. Size to the words and scroll instead.
+const ledgerTableClassNames = {
+  ...worksheetTableClassNames,
+  base: 'w-full max-w-full overflow-x-auto',
+  table: 'w-max min-w-full !table-auto border-collapse',
+  th: 'border-b border-gray-200 bg-gray-50 px-3 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500 whitespace-nowrap',
+  td: 'border-b border-gray-100 px-3 py-3 align-middle whitespace-nowrap',
+};
 import { DateFilterPills } from '../../../components/fb/DateFilterPills';
-import CompanyAccounts, { CompanyStatement } from '../../../components/frontoffice/CompanyAccounts';
-import { companyAccounts } from '../../../lib/frontoffice/companyAccount';
 import GuestFolioModal from '../../../components/frontoffice/GuestFolioModal';
+
+interface ServiceBill {
+  id: string;
+  guestId?: string;
+  guestName: string;
+  roomNumber: string;
+  description: string;
+  amount: number;
+  date: string;
+  status: string;
+  taxExempt?: boolean;
+  taxCategory?: string;
+  reservationId?: string;
+  paidAt?: string;
+  paidAmount?: number;
+  paymentMethod?: string;
+  paymentRef?: string;
+}
 
 interface InvoiceItem {
   id: string;
@@ -114,6 +140,17 @@ interface Invoice {
 
 const INVOICES_PAYMENTS_DASHBOARD_SECTIONS = FO_INVOICES_KPI_SECTIONS;
 
+function servicePayMethod(method?: string): Payment['paymentMethod'] {
+  const key = (method || '').toLowerCase();
+  if (key.includes('card')) return 'credit_card';
+  if (key.includes('mobile')) return 'mobile_money';
+  if (key.includes('bank')) return 'bank_transfer';
+  if (key.includes('check') || key.includes('cheque')) return 'check';
+  if (key.includes('corporate')) return 'corporate_account';
+  if (key.includes('credit')) return 'credit';
+  return 'cash';
+}
+
 export default function InvoicesPaymentsPage() {
   useFrontOfficeLiveRefresh();
   const pathname = usePathname();
@@ -131,7 +168,6 @@ export default function InvoicesPaymentsPage() {
   const summaryCollapsed = useHostSummaryCollapsed();
   const { period: kpiPeriod, todayISO: kpiToday } = useFrontOfficeDeskPeriod();
   const [activeTab, setActiveTab] = useState('folios');
-  const [companyFocus, setCompanyFocus] = useState<{ key: string; name: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [dateFilterMode, setDateFilterMode] = useState<'all' | 'today' | 'specific' | 'range'>('all');
@@ -149,7 +185,6 @@ export default function InvoicesPaymentsPage() {
   const [sortBy, setSortBy] = useState('createdAt');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const settings = useSettingsStore();
-  const canSeeCompanies = useSettingsStore((s) => s.hasPermission('frontdesk.view-company-ledger') || s.hasPermission('frontdesk.post-company-payment'));
   const invoicePrintTemplates = useMemo(
     () => listAllTemplates('invoice', settings.docBuilder?.templates),
     [settings.docBuilder?.templates],
@@ -171,17 +206,14 @@ export default function InvoicesPaymentsPage() {
   const [folioDateFrom, setFolioDateFrom] = useState<string>('');
   const [folioDateTo, setFolioDateTo] = useState<string>('');
 
+  const [paymentSearchTerm, setPaymentSearchTerm] = useState('');
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState('all');
   // Payment Ledger date filter
   const [paymentDateFilterMode, setPaymentDateFilterMode] = useState<'all' | 'today' | 'specific' | 'range'>('all');
   const [paymentDateSingle, setPaymentDateSingle] = useState('');
   const [paymentDateFrom, setPaymentDateFrom] = useState('');
   const [paymentDateTo, setPaymentDateTo] = useState('');
-  const [companyDateFilterMode, setCompanyDateFilterMode] = useState<'all' | 'today' | 'specific' | 'range'>('all');
-  const [companyDateSingle, setCompanyDateSingle] = useState('');
-  const [companyDateFrom, setCompanyDateFrom] = useState('');
-  const [companyDateTo, setCompanyDateTo] = useState('');
-  const [companySearch, setCompanySearch] = useState('');
-  const [companyStatus, setCompanyStatus] = useState('all');
+  const serviceBillsRef = React.useRef<ServiceBill[]>([]);
   const { isOpen: isFolioModalOpen, onOpen: onFolioModalOpen, onClose: onFolioModalClose } = useDisclosure();
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
@@ -250,9 +282,9 @@ export default function InvoicesPaymentsPage() {
   const matchesFolioFilters = React.useCallback((reservation: any) => {
     const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
     const guestName = guest?.name || reservation.guestName || 'Unknown';
-    const matchesSearch = guestName.toLowerCase().includes(folioSearchTerm.toLowerCase()) ||
-                          (reservation.guestPhone?.includes(folioSearchTerm) ?? false) ||
-                          (reservation.guestEmail?.includes(folioSearchTerm) ?? false);
+    const needle = folioSearchTerm.trim().toLowerCase();
+    const matchesSearch = !needle || [guestName, reservation.guestPhone, reservation.guestEmail, reservation.roomId, reservation.resId, billingPersonLabel(reservation)]
+      .some((value) => String(value || '').toLowerCase().includes(needle));
     const matchesStatus = folioStatusFilter === 'all' || reservation.status === folioStatusFilter;
     // Payer filter: company if billing/company present
     const isCompany = !!(reservation.billingPersonName || reservation.companyName);
@@ -300,14 +332,21 @@ export default function InvoicesPaymentsPage() {
     console.log('[INVOICE-PAYMENT] Recomputing billing from store...');
     console.log('[INVOICE-PAYMENT] Total reservations:', frontOfficeStore.reservations.length);
     
+    const accountingInvoices = useAccountingStore.getState().invoices || [];
     frontOfficeStore.reservations.forEach(res => {
+      const issuedInvoice = accountingInvoices.find((inv) =>
+        inv.type === 'Sales' &&
+        inv.status !== 'Void' &&
+        [res.resId, res.id].filter(Boolean).map(String).includes(String(inv.reference || ''))
+      );
+      const issued = !!issuedInvoice || (!!res.invoiceGenerated && res.invoiceStatus !== 'none') || res.invoiceStatus === 'gl_pending' || res.invoiceStatus === 'sent' || res.invoiceStatus === 'paid';
+      if (!issued) return;
       frontOfficeStore.ensureReservationRates(res);
       if (res.status === 'checked-in') {
         try { frontOfficeStore.ensureFolioRoomCharges(res.id); } catch {}
       }
       const folio = frontOfficeStore.getOrCreateFolio(res.id);
-      const guest = frontOfficeStore.guests.find(g => g.id === res.guestId);
-      
+
       // Update folio balances
       frontOfficeStore.updateFolioBalances(folio);
       
@@ -348,9 +387,10 @@ export default function InvoicesPaymentsPage() {
         reference: p.ref
       }));
       
+      const invoicedAt = issuedInvoice?.date || res.invoiceGeneratedDate || res.checkedOutAt || res.updatedAt || new Date().toISOString();
       invs.push({
         id: res.id,
-        invoiceNumber: `INV-${res.id}`,
+        invoiceNumber: issuedInvoice?.invoiceNumber || res.invoiceNumber || res.resId || res.id,
         guestName: res.guestName,
         guestEmail: res.guestEmail || '',
         guestPhone: res.guestPhone || '',
@@ -365,8 +405,8 @@ export default function InvoicesPaymentsPage() {
         totalAmount,
         status: balance <= 0 ? 'paid' : (paid > 0 ? 'partially_paid' : 'pending'),
         paymentMethod: res.paymentMethod,
-        dueDate: res.departure,
-        createdAt: res.createdAt || new Date().toISOString(),
+        dueDate: issuedInvoice?.dueDate || res.departure,
+        createdAt: invoicedAt,
         updatedAt: res.updatedAt || new Date().toISOString(),
         notes: res.remarksToGuest,
         items: folio.charges.map(c => ({ 
@@ -382,24 +422,94 @@ export default function InvoicesPaymentsPage() {
         payments: invoicePayments,
         balance
       });
-      
-      // Add payments to the payments array
-      folio.payments.forEach(p => {
-        const payment: Payment = {
+    });
+
+    frontOfficeStore.reservations.forEach(res => {
+      const folio = stayFolio(frontOfficeStore.folios, res.id);
+      if (!folio) return;
+      const mapPaymentMethod = (method: string): string => {
+        switch (method) {
+          case 'Cash': return 'cash';
+          case 'Card': return 'credit_card';
+          case 'Mobile Money': return 'mobile_money';
+          case 'Credit': return 'credit';
+          case 'Corporate Account': return 'corporate_account';
+          case 'Bank Transfer': return 'bank_transfer';
+          case 'Check': return 'check';
+          default: return 'cash';
+        }
+      };
+      (folio.payments || []).forEach(p => {
+        pmts.push({
           id: p.id,
           invoiceId: res.id,
           amount: p.amount,
-          paymentMethod: mapPaymentMethod(p.method) as any,
+          paymentMethod: mapPaymentMethod(p.method) as Payment['paymentMethod'],
           transactionId: p.id,
           status: p.status || 'completed',
           processedAt: p.date,
           processedBy: p.processedBy || 'Front Desk',
           creditApplied: p.creditApplied || 0,
           notes: p.notes,
-          reference: p.ref
-        };
-        pmts.push(payment);
-        console.log(`[INVOICE-PAYMENT] Added payment: ${payment.id} for invoice ${payment.invoiceId}, amount: ₵${payment.amount}`);
+          reference: p.ref,
+          billedTo: res.guestName,
+        });
+      });
+    });
+
+    serviceBillsRef.current.forEach((bill) => {
+      if (bill.status === 'void') return;
+      const external = bill.roomNumber === 'External' || String(bill.guestId || '').startsWith('EXT-');
+      if (!external) return;
+      const tax = computeChargeTax(bill.amount, bill.description, bill.taxCategory, bill.taxExempt);
+      const total = Math.round((bill.amount + tax) * 100) / 100;
+      const paid = bill.status === 'paid';
+      const collected = paid ? (bill.paidAmount ?? total) : 0;
+      invs.push({
+        id: bill.id,
+        invoiceNumber: bill.id,
+        guestName: bill.guestName,
+        guestEmail: '',
+        guestPhone: '',
+        roomNumber: 'External',
+        roomType: 'Service',
+        checkInDate: '',
+        checkOutDate: '',
+        nights: 0,
+        subtotal: bill.amount,
+        taxAmount: tax,
+        discountAmount: 0,
+        totalAmount: total,
+        status: paid ? 'paid' : 'pending',
+        dueDate: bill.date,
+        createdAt: bill.date,
+        updatedAt: bill.paidAt || bill.date,
+        notes: bill.description,
+        items: [{
+          id: bill.id,
+          description: bill.description,
+          quantity: 1,
+          unitPrice: bill.amount,
+          totalPrice: bill.amount,
+          category: 'service',
+          isTaxable: tax > 0,
+        }],
+        payments: [],
+        balance: Math.max(0, total - collected),
+      });
+      if (!paid || !(collected > 0)) return;
+      pmts.push({
+        id: `SC-PAY-${bill.id}`,
+        invoiceId: bill.id,
+        amount: collected,
+        paymentMethod: servicePayMethod(bill.paymentMethod),
+        transactionId: bill.paymentRef || bill.id,
+        status: 'completed',
+        processedAt: bill.paidAt || bill.date,
+        processedBy: 'Front Desk',
+        reference: bill.paymentRef,
+        notes: bill.description,
+        billedTo: bill.guestName,
       });
     });
     
@@ -412,6 +522,12 @@ export default function InvoicesPaymentsPage() {
 
   useEffect(() => {
     console.log('[INVOICE-PAYMENT] Component mounted, initializing...');
+    let cancel = false;
+    void loadRecords<ServiceBill>('fo.serviceCharge').then((saved) => {
+      if (cancel) return;
+      serviceBillsRef.current = saved || [];
+      recomputeBillingFromStore();
+    });
     recomputeBillingFromStore();
     const unsub = frontOfficeStore.subscribe(() => {
       console.log('[INVOICE-PAYMENT] Store changed, recomputing...');
@@ -419,6 +535,7 @@ export default function InvoicesPaymentsPage() {
       setStoreVersion(v => v + 1);
     });
     return () => {
+      cancel = true;
       console.log('[INVOICE-PAYMENT] Component unmounting, unsubscribing...');
       unsub();
     };
@@ -448,7 +565,9 @@ export default function InvoicesPaymentsPage() {
 
   const filteredPayments = useMemo(() => {
     const today = localStayDay();
+    const needle = paymentSearchTerm.trim().toLowerCase();
     return [...payments]
+      .filter(p => paymentMethodFilter === 'all' || p.paymentMethod === paymentMethodFilter)
       .filter(p => {
         const d = (p.processedAt || '').slice(0, 10);
         if (paymentDateFilterMode === 'today') return d === today;
@@ -459,23 +578,17 @@ export default function InvoicesPaymentsPage() {
         }
         return true;
       })
+      .filter(p => {
+        if (!needle) return true;
+        const stay = frontOfficeStore.reservations.find(r => r.id === p.invoiceId);
+        const bill = serviceBillsRef.current.find(item => item.id === p.invoiceId);
+        const guest = stay?.guestName || bill?.guestName || p.billedTo || '';
+        const billing = stay ? billingPersonLabel(stay) : guest;
+        const id = stay?.resId || bill?.id || '';
+        return `${guest} ${billing} ${id}`.toLowerCase().includes(needle);
+      })
       .sort((a, b) => new Date(b.processedAt).getTime() - new Date(a.processedAt).getTime());
-  }, [payments, paymentDateFilterMode, paymentDateSingle, paymentDateFrom, paymentDateTo]);
-
-  const companyStayMatches = useMemo(() => {
-    if (companyDateFilterMode === 'all') return undefined;
-    return (reservation: { arrival?: string }) => {
-      const day = (reservation.arrival || '').slice(0, 10);
-      if (companyDateFilterMode === 'today') return day === localStayDay();
-      if (companyDateFilterMode === 'specific' && companyDateSingle) return day === companyDateSingle;
-      if (companyDateFilterMode === 'range') {
-        if (companyDateFrom && day < companyDateFrom) return false;
-        if (companyDateTo && day > companyDateTo) return false;
-      }
-      return true;
-    };
-  }, [companyDateFilterMode, companyDateSingle, companyDateFrom, companyDateTo]);
-  const companyStanding = companyStatus === 'pending' || companyStatus === 'paid' ? companyStatus : 'all';
+  }, [payments, paymentSearchTerm, paymentMethodFilter, paymentDateFilterMode, paymentDateSingle, paymentDateFrom, paymentDateTo, storeVersion]);
 
   // Stats always reflect the filtered list so KPI cards match the table rows
   const stats = useMemo(() => {
@@ -609,7 +722,7 @@ export default function InvoicesPaymentsPage() {
 
   const handleViewPayment = (payment: Payment) => {
     const res = frontOfficeStore.reservations.find(r => r.id === payment.invoiceId);
-    const billedTo = res ? (res.companyName || res.billingPersonName || res.guestName || '—') : '—';
+    const billedTo = res ? (res.companyName || res.billingPersonName || res.guestName || '—') : (payment.billedTo || '—');
     const balance = res ? stayFigures(res).balance : 0;
     setSelectedPayment({ ...payment, billedTo, balance });
     onPaymentOpen();
@@ -856,8 +969,7 @@ export default function InvoicesPaymentsPage() {
               ['folios', 'Folios', frontOfficeStore.reservations.length],
               ['invoices', 'Invoices', invoices.length],
               ['payments', 'Payments', payments.length],
-              ['companies', 'Companies', companyAccounts().length],
-            ] as const).filter(([key]) => key !== 'companies' || canSeeCompanies).map(([key, label, count]) => (
+            ] as const).map(([key, label, count]) => (
               <Button
                 key={key}
                 size="sm"
@@ -912,12 +1024,10 @@ export default function InvoicesPaymentsPage() {
                 />
               </div>
             </div>
-            <p className="mb-2 text-xs text-gray-500">Same amounts as the folio. Open a row to view, pay, or print.</p>
-            <Table aria-label="Invoices table" removeWrapper classNames={worksheetTableClassNames}>
+            <Table aria-label="Invoices table" removeWrapper classNames={ledgerTableClassNames}>
               <TableHeader>
-                <TableColumn>STAY</TableColumn>
-                <TableColumn>GUEST</TableColumn>
-                <TableColumn>ROOM</TableColumn>
+                <TableColumn>ID</TableColumn>
+                <TableColumn>Billing person</TableColumn>
                 <TableColumn>
                   <button
                     className="font-semibold"
@@ -926,22 +1036,19 @@ export default function InvoicesPaymentsPage() {
                       setSortOrder(prev => (sortBy === 'createdAt' && prev === 'desc') ? 'asc' : (sortBy === 'createdAt' && prev === 'asc') ? 'desc' : 'desc');
                     }}
                   >
-                    CHECK-IN {sortBy === 'createdAt' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
+                    Invoiced {sortBy === 'createdAt' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
                   </button>
                 </TableColumn>
-                <TableColumn>CHECK-OUT</TableColumn>
-                <TableColumn>AMOUNT</TableColumn>
-                <TableColumn>BALANCE</TableColumn>
-                <TableColumn>STATUS</TableColumn>
+                <TableColumn>Status</TableColumn>
+                <TableColumn>Room</TableColumn>
+                <TableColumn>Guest</TableColumn>
+                <TableColumn>Amount</TableColumn>
+                <TableColumn>Balance</TableColumn>
               </TableHeader>
               <TableBody emptyContent="No invoice matches these filters.">
                 {[...filteredInvoices]
                   .sort((a, b) => {
-                    const stayA = frontOfficeStore.reservations.find(r => r.id === a.id);
-                    const stayB = frontOfficeStore.reservations.find(r => r.id === b.id);
-                    const keyA = stayA?.arrival || a.checkInDate || a.createdAt;
-                    const keyB = stayB?.arrival || b.checkInDate || b.createdAt;
-                    const order = keyA.localeCompare(keyB);
+                    const order = (a.createdAt || '').localeCompare(b.createdAt || '');
                     return sortOrder === 'asc' ? order : -order;
                   })
                   .slice((invoicePage - 1) * itemsPerPage, invoicePage * itemsPerPage)
@@ -952,21 +1059,24 @@ export default function InvoicesPaymentsPage() {
                     const balance = figures ? figures.balance : invoice.balance;
                     const paid = figures ? figures.paid : Math.max(0, invoice.totalAmount - invoice.balance);
                     const standing = balance <= 0.005 ? 'paid' : paid > 0.005 ? 'partially_paid' : 'pending';
-                    const room = stay?.roomId && stay.roomId !== 'TBD' ? stay.roomId : (invoice.roomNumber && invoice.roomNumber !== 'TBD' ? invoice.roomNumber : '—');
+                    const room = invoice.roomNumber === 'External'
+                      ? 'External'
+                      : (stay?.roomId && stay.roomId !== 'TBD' ? stay.roomId : (invoice.roomNumber && invoice.roomNumber !== 'TBD' ? invoice.roomNumber : '—'));
+                    const billingPerson = stay ? (billingPersonLabel(stay) || invoice.guestName) : (invoice.guestName || '—');
                     return (
                   <TableRow key={invoice.id} className="cursor-pointer" onClick={() => handleViewInvoice(invoice)}>
-                    <TableCell>{stay?.resId || invoice.invoiceNumber}</TableCell>
-                    <TableCell><span className="font-semibold">{invoice.guestName}</span></TableCell>
-                    <TableCell>{room}</TableCell>
-                    <TableCell>{shortDay(stay?.arrival || invoice.checkInDate)}</TableCell>
-                    <TableCell>{shortDay(stay?.departure || invoice.checkOutDate)}</TableCell>
-                    <TableCell><span className="tabular-nums">₵{formatMoney(amount)}</span></TableCell>
-                    <TableCell><span className={`tabular-nums font-semibold ${balance > 0.005 ? 'text-orange-700' : 'text-green-700'}`}>₵{formatMoney(balance)}</span></TableCell>
+                    <TableCell>{invoice.invoiceNumber}</TableCell>
+                    <TableCell><span className="font-semibold">{billingPerson}</span></TableCell>
+                    <TableCell>{shortDay(invoice.createdAt)}</TableCell>
                     <TableCell>
                       <Chip size="sm" variant="flat" color={standing === 'paid' ? 'success' : standing === 'partially_paid' ? 'primary' : 'warning'}>
                         {standing === 'paid' ? 'Paid' : standing === 'partially_paid' ? 'Part paid' : 'Unpaid'}
                       </Chip>
                     </TableCell>
+                    <TableCell>{room}</TableCell>
+                    <TableCell>{invoice.guestName || '—'}</TableCell>
+                    <TableCell><span className="tabular-nums">₵{formatMoney(amount)}</span></TableCell>
+                    <TableCell><span className={`tabular-nums font-semibold ${balance > 0.005 ? 'text-orange-700' : 'text-green-700'}`}>₵{formatMoney(balance)}</span></TableCell>
                   </TableRow>
                     );
                   })}
@@ -984,13 +1094,34 @@ export default function InvoicesPaymentsPage() {
             </>
           ) : activeTab === 'payments' ? (
             <>
-            {/* Payment Ledger filters */}
-            <div className="mb-4 p-4 bg-gray-50 rounded-lg space-y-3">
-              <div>
-                <h3 className="text-base font-semibold text-gray-800">Payment Ledger</h3>
-                <p className="text-sm text-gray-500">All recorded payment transactions across guest folios</p>
-              </div>
-              <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="mb-[18px] flex flex-wrap items-center gap-2">
+              <Input
+                size="sm"
+                aria-label="Search payments"
+                placeholder="Search guest or stay..."
+                value={paymentSearchTerm}
+                onChange={(e) => { setPaymentSearchTerm(e.target.value); setPaymentPage(1); }}
+                className="w-full max-w-full sm:w-64 sm:max-w-[16rem] shrink-0"
+                startContent={<span>🔎</span>}
+              />
+              <Select
+                size="sm"
+                selectedKeys={new Set([paymentMethodFilter])}
+                onSelectionChange={(keys) => { setPaymentMethodFilter(Array.from(keys as Set<string>)[0] || 'all'); setPaymentPage(1); }}
+                className="w-full max-w-full sm:w-44 sm:max-w-[11rem] shrink-0"
+                aria-label="Filter method"
+              >
+                <SelectItem key="all">All methods</SelectItem>
+                <SelectItem key="cash">Cash</SelectItem>
+                <SelectItem key="credit_card">Credit Card</SelectItem>
+                <SelectItem key="debit_card">Debit Card</SelectItem>
+                <SelectItem key="mobile_money">Mobile Money</SelectItem>
+                <SelectItem key="bank_transfer">Bank Transfer</SelectItem>
+                <SelectItem key="check">Check</SelectItem>
+                <SelectItem key="corporate_account">Corporate Account</SelectItem>
+                <SelectItem key="credit">Credit</SelectItem>
+              </Select>
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                 <DateFilterPills
                   mode={paymentDateFilterMode}
                   onMode={(mode) => { setPaymentDateFilterMode(mode); setPaymentPage(1); }}
@@ -1003,16 +1134,14 @@ export default function InvoicesPaymentsPage() {
                 />
               </div>
             </div>
-            <p className="mb-2 text-xs text-gray-500">Same stay columns as invoices. Open a row to see who the payment was for.</p>
-            <Table aria-label="Payments table" removeWrapper classNames={worksheetTableClassNames}>
+            <Table aria-label="Payments table" removeWrapper classNames={ledgerTableClassNames}>
               <TableHeader>
-                <TableColumn>Stay</TableColumn>
-                <TableColumn>Guest</TableColumn>
-                <TableColumn>Room</TableColumn>
-                <TableColumn>Date</TableColumn>
+                <TableColumn>ID</TableColumn>
+                <TableColumn>Billing person</TableColumn>
+                <TableColumn>Paid on</TableColumn>
                 <TableColumn>Method</TableColumn>
+                <TableColumn>Guest</TableColumn>
                 <TableColumn>Paid</TableColumn>
-                <TableColumn>Balance</TableColumn>
                 <TableColumn>Status</TableColumn>
               </TableHeader>
               <TableBody emptyContent="No payment matches these dates.">
@@ -1020,18 +1149,19 @@ export default function InvoicesPaymentsPage() {
                   .slice((paymentPage - 1) * itemsPerPage, paymentPage * itemsPerPage)
                   .map((payment) => {
                     const stay = frontOfficeStore.reservations.find(r => r.id === payment.invoiceId);
-                    const figures = stay ? stayFigures(stay) : null;
-                    const room = stay?.roomId && stay.roomId !== 'TBD' ? stay.roomId : '—';
-                    const balance = figures ? figures.balance : (payment.balance || 0);
+                    const serviceBill = serviceBillsRef.current.find(bill => bill.id === payment.invoiceId);
+                    const guestName = stay?.guestName || serviceBill?.guestName || payment.billedTo || '—';
+                    const billingPerson = stay ? (billingPersonLabel(stay) || guestName) : guestName;
+                    const paymentId = stay?.resId || serviceBill?.id || '—';
                     const statusLabel = payment.status === 'completed' ? 'Paid' : payment.status === 'refunded' ? 'Refund' : payment.status.charAt(0).toUpperCase() + payment.status.slice(1);
                     const statusColor = payment.status === 'completed' ? 'success' : payment.status === 'failed' ? 'danger' : payment.status === 'refunded' ? 'secondary' : payment.status === 'pending' ? 'warning' : 'default';
                     return (
                       <TableRow key={payment.id} className="cursor-pointer" onClick={() => handleViewPayment(payment)}>
-                        <TableCell>{stay?.resId || payment.invoiceId}</TableCell>
-                        <TableCell><span className="font-semibold">{stay?.guestName || '—'}</span></TableCell>
-                        <TableCell>{room}</TableCell>
+                        <TableCell>{paymentId}</TableCell>
+                        <TableCell><span className="font-semibold">{billingPerson}</span></TableCell>
                         <TableCell>{shortDay(payment.processedAt)}</TableCell>
                         <TableCell>{getPaymentMethodLabel(payment.paymentMethod)}</TableCell>
+                        <TableCell>{guestName}</TableCell>
                         <TableCell>
                           {payment.status === 'completed' ? (
                             <span className={`tabular-nums font-semibold ${payment.amount < 0 ? 'text-purple-700' : 'text-ghana-black'}`}>
@@ -1043,11 +1173,6 @@ export default function InvoicesPaymentsPage() {
                               <div className="text-[11px] tabular-nums text-slate-500 line-through">void ₵{formatMoney(Math.abs(payment.amount))}</div>
                             </div>
                           )}
-                        </TableCell>
-                        <TableCell>
-                          <span className={`tabular-nums font-semibold ${balance > 0.005 ? 'text-orange-700' : 'text-green-700'}`}>
-                            ₵{formatMoney(balance)}
-                          </span>
                         </TableCell>
                         <TableCell>
                           <Chip size="sm" variant="flat" color={statusColor}>{statusLabel}</Chip>
@@ -1067,132 +1192,53 @@ export default function InvoicesPaymentsPage() {
               />
             </div>
             </>
-          ) : activeTab === 'companies' && canSeeCompanies ? (
-            <>
-            <div className="space-y-3 mb-3">
-              <div className="flex items-center gap-1.5">
-                <h3 className="text-sm font-semibold text-ghana-black">Companies</h3>
-                <Popover placement="right">
-                  <PopoverTrigger>
-                    <button type="button" className="inline-flex text-gray-400 hover:text-gray-600" aria-label="About company ledgers">
-                      <InformationCircleIcon className="h-4 w-4" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent>
-                    <p className="max-w-xs px-1 py-1 text-xs text-gray-600">Open a company ledger to see what was billed, what a payment covered, and what is still outstanding.</p>
-                  </PopoverContent>
-                </Popover>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Input
-                  size="sm"
-                  aria-label="Search company accounts"
-                  placeholder="Search company or guest..."
-                  value={companySearch}
-                  onChange={(e) => setCompanySearch(e.target.value)}
-                  className="w-full max-w-full sm:w-64 sm:max-w-[16rem] shrink-0"
-                  startContent={<span>🔎</span>}
-                />
-                <Select
-                  size="sm"
-                  selectedKeys={new Set([companyStanding])}
-                  onSelectionChange={(keys) => setCompanyStatus(Array.from(keys as Set<string>)[0] || 'all')}
-                  className="w-full max-w-full sm:w-40 sm:max-w-[10rem] shrink-0"
-                  aria-label="Filter company status"
-                >
-                  <SelectItem key="all">All statuses</SelectItem>
-                  <SelectItem key="pending">Pending</SelectItem>
-                  <SelectItem key="paid">Paid</SelectItem>
-                </Select>
-              <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-                <DateFilterPills
-                  mode={companyDateFilterMode}
-                  onMode={setCompanyDateFilterMode}
-                  single={companyDateSingle}
-                  onSingle={setCompanyDateSingle}
-                  from={companyDateFrom}
-                  onFrom={setCompanyDateFrom}
-                  to={companyDateTo}
-                  onTo={setCompanyDateTo}
-                />
-              </div>
-              </div>
-            </div>
-            <CompanyAccounts
-              filtered={companyDateFilterMode !== 'all' || companyStanding !== 'all' || companySearch.trim() !== ''}
-              query={companySearch}
-              status={companyStanding}
-              matches={companyStayMatches}
-              onOpen={(key, name) => setCompanyFocus({ key, name })}
-            />
-            <Modal isOpen={!!companyFocus} onClose={() => setCompanyFocus(null)} size="3xl" scrollBehavior="inside" classNames={{ base: 'sm:!max-w-3xl' }}>
-              <ModalContent>
-                <ModalHeader>{companyFocus?.name} ledger</ModalHeader>
-                <ModalBody>
-                  {companyFocus && <CompanyStatement companyKey={companyFocus.key} matches={companyStayMatches} />}
-                </ModalBody>
-                <ModalFooter>
-                  <Button variant="light" onPress={() => setCompanyFocus(null)}>Close</Button>
-                </ModalFooter>
-              </ModalContent>
-            </Modal>
-            </>
           ) : activeTab === 'folios' ? (
             <>
-            <div className="mb-3 space-y-2">
-              {/* Row 1: title + subtitle left, filters right */}
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div>
-                  <h3 className="text-sm font-semibold text-ghana-black">Folios</h3>
-                  <p className="text-xs text-gray-500">Open a row to take payment, print, or adjust.</p>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap justify-end">
-                  <Input
-                    placeholder="Search guest, room..."
-                    value={folioSearchTerm}
-                    onChange={(e) => setFolioSearchTerm(e.target.value)}
-                    className="w-48"
-                    startContent={<span className="text-gray-400 text-sm">🔍</span>}
-                    size="sm"
-                  />
-                  <Select
-                    placeholder="Status"
-                    selectedKeys={new Set([folioStatusFilter])}
-                    onSelectionChange={(keys) => setFolioStatusFilter(Array.from(keys as Set<string>)[0] || 'all')}
-                    className="w-36"
-                    size="sm"
-                  >
-                    <SelectItem key="all">All Status</SelectItem>
-                    <SelectItem key="checked-in">Checked In</SelectItem>
-                    <SelectItem key="checked-out">Checked Out</SelectItem>
-                    <SelectItem key="confirmed">Confirmed</SelectItem>
-                  </Select>
-                  <Select
-                    placeholder="Payer"
-                    selectedKeys={new Set([payerFilter])}
-                    onSelectionChange={(keys) => setPayerFilter((Array.from(keys as Set<string>)[0] as any) || 'all')}
-                    className="w-32"
-                    size="sm"
-                  >
-                    <SelectItem key="all">All Payers</SelectItem>
-                    <SelectItem key="guest">Guest</SelectItem>
-                    <SelectItem key="company">Company</SelectItem>
-                  </Select>
-                  <Select
-                    placeholder="Balance"
-                    selectedKeys={new Set([balanceFilter])}
-                    onSelectionChange={(keys) => setBalanceFilter((Array.from(keys as Set<string>)[0] as any) || 'all')}
-                    className="w-32"
-                    size="sm"
-                  >
-                    <SelectItem key="all">All Balances</SelectItem>
-                    <SelectItem key="positive">Outstanding</SelectItem>
-                    <SelectItem key="zero">Zero</SelectItem>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+            <div className="mb-[18px] flex flex-wrap items-center gap-2">
+              <Input
+                size="sm"
+                aria-label="Search folios"
+                placeholder="Search guest or room..."
+                value={folioSearchTerm}
+                onChange={(e) => setFolioSearchTerm(e.target.value)}
+                className="w-full max-w-full sm:w-52 sm:max-w-[13rem] shrink-0"
+                startContent={<span>🔎</span>}
+              />
+              <Select
+                size="sm"
+                aria-label="Filter stay status"
+                selectedKeys={new Set([folioStatusFilter])}
+                onSelectionChange={(keys) => setFolioStatusFilter(Array.from(keys as Set<string>)[0] || 'all')}
+                className="w-full max-w-full sm:w-36 shrink-0"
+              >
+                <SelectItem key="all">All statuses</SelectItem>
+                <SelectItem key="checked-in">Checked In</SelectItem>
+                <SelectItem key="checked-out">Checked Out</SelectItem>
+                <SelectItem key="confirmed">Confirmed</SelectItem>
+              </Select>
+              <Select
+                size="sm"
+                aria-label="Filter payer"
+                selectedKeys={new Set([payerFilter])}
+                onSelectionChange={(keys) => setPayerFilter((Array.from(keys as Set<string>)[0] as 'all' | 'guest' | 'company') || 'all')}
+                className="w-full max-w-full sm:w-32 shrink-0"
+              >
+                <SelectItem key="all">All payers</SelectItem>
+                <SelectItem key="guest">Guest</SelectItem>
+                <SelectItem key="company">Company</SelectItem>
+              </Select>
+              <Select
+                size="sm"
+                aria-label="Filter balance"
+                selectedKeys={new Set([balanceFilter])}
+                onSelectionChange={(keys) => setBalanceFilter((Array.from(keys as Set<string>)[0] as 'all' | 'zero' | 'positive') || 'all')}
+                className="w-full max-w-full sm:w-36 shrink-0"
+              >
+                <SelectItem key="all">All balances</SelectItem>
+                <SelectItem key="positive">Outstanding</SelectItem>
+                <SelectItem key="zero">Zero</SelectItem>
+              </Select>
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                 <DateFilterPills
                   mode={folioDateFilterMode}
                   onMode={setFolioDateFilterMode}

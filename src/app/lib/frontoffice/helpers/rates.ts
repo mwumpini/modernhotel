@@ -1,7 +1,7 @@
 'use client';
 
 import { useComplianceStore } from '../../compliance/store';
-import { nextCalendarDate } from '../folioLedger';
+import { stayNightDates } from '../folioLedger';
 
 export type PriceType = 'subtotal' | 'gross_total';
 
@@ -42,14 +42,9 @@ function exclusiveFromGross(gross: number): number {
   return Math.round(reverseToSubtotalFromGross(gross) * 100) / 100;
 }
 
-/** Nights between arrival and departure (departure day is not charged). Calendar dates, not browser timezone. */
+/** Nights owed for a stay. Same-day check-out is 1 night; the next morning is still 1 night. */
 export function calculateStayNights(arrival: string, departure: string): number {
-  const start = String(arrival || '').slice(0, 10);
-  const end = String(departure || '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || end <= start) return 0;
-  let nights = 0;
-  for (let cursor = start; cursor < end && nights < 3660; cursor = nextCalendarDate(cursor)) nights += 1;
-  return nights;
+  return stayNightDates(arrival, departure).length;
 }
 
 /** Tax-exclusive nightly from a rate-plan price and its priceType. */

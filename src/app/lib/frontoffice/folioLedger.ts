@@ -206,6 +206,25 @@ export function nextCalendarDate(isoDate: string): string {
   return d.toISOString().slice(0, 10)
 }
 
+const CALENDAR_DAY = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * Nights a stay is charged, one date per night.
+ * Checking in starts the count, so arrival and departure on the same date is 1 night.
+ * Departure the next morning is still 1 night (the night of arrival).
+ */
+export function stayNightDates(arrival: string, departure: string): string[] {
+  const start = String(arrival || '').slice(0, 10)
+  const end = String(departure || '').slice(0, 10)
+  if (!CALENDAR_DAY.test(start) || !CALENDAR_DAY.test(end) || end < start) return []
+  const until = end === start ? nextCalendarDate(start) : end
+  const dates: string[] = []
+  for (let cursor = start; cursor < until && dates.length < 3660; cursor = nextCalendarDate(cursor)) {
+    dates.push(cursor)
+  }
+  return dates
+}
+
 /** Open hotel days strictly before the property calendar date. Today stays open. */
 export function elapsedBusinessDates(openDate: string, today: string, maxDays = 366): string[] {
   const dates: string[] = []

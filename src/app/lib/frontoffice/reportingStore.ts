@@ -88,7 +88,7 @@ interface ReportingStore {
   generateHighBalanceReport: (date: string, endDate?: string) => any[];
   generateWakeUpCallReport: (date: string, endDate?: string) => any[];
   generateDailyTransactionReport: (date: string, endDate?: string) => any[];
-  generateCashierReport: (date: string, cashierId: string, endDate?: string) => any;
+  generateCashierReport: (date: string, cashierId: string, endDate?: string, shifts?: CashierShiftSnapshot[]) => any;
   generateCreditCardReconciliationReport: (date: string, endDate?: string) => any[];
   generateGuestLedgerReport: (date: string, endDate?: string) => any[];
   generateDailyFlashReport: (date: string) => any;
@@ -347,6 +347,108 @@ function dateInRange(value: string | undefined, start: string, end: string): boo
   if (!value) return false;
   const d = value.slice(0, 10);
   return d >= start && d <= end;
+}
+
+export type CashierShiftSnapshot = {
+  outlet?: string;
+  businessDate?: string;
+  cashierName?: string;
+  openingFloat?: number;
+  openedAt?: string;
+  closedAt?: string | null;
+  closingCount?: number | null;
+  variance?: number | null;
+  totalCash?: number | null;
+  totalCard?: number | null;
+  totalMobileMoney?: number | null;
+  totalOther?: number | null;
+  momoDeclared?: number | null;
+  momoVariance?: number | null;
+  totalPaidOut?: number | null;
+  status?: string;
+};
+
+function sameCashier(a?: string, b?: string) {
+  return (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase();
+}
+
+/** Closed till sessions win. Folio payments fill in only when this person has no shift in the range. */
+export function summarizeCashierReport(
+  cashierName: string,
+  start: string,
+  end: string,
+  transactions: { cashier?: string; paymentMethod?: string; amount?: number; transactionType?: string; timestamp?: string }[],
+  shifts: CashierShiftSnapshot[] = [],
+) {
+  const mine = shifts.filter((shift) =>
+    sameCashier(shift.cashierName, cashierName) && dateInRange(shift.businessDate || shift.openedAt, start, end),
+  );
+  const namedPayments = transactions.filter((row) =>
+    row.transactionType === 'payment' && sameCashier(row.cashier, cashierName) && dateInRange(row.timestamp, start, end),
+  );
+
+  if (mine.length > 0) {
+    const ordered = [...mine].sort((a, b) => String(a.openedAt || '').localeCompare(String(b.openedAt || '')));
+    const first = ordered[0];
+    const last = ordered[ordered.length - 1];
+    const stillOpen = ordered.some((shift) => shift.status === 'open' || !shift.closedAt);
+    const closed = ordered.filter((shift) => shift.variance != null && shift.status !== 'open');
+    const sum = (pick: (shift: CashierShiftSnapshot) => number | null | undefined) =>
+      ordered.reduce((total, shift) => total + Number(pick(shift) || 0), 0);
+    const declaredMomo = ordered.filter((shift) => shift.momoDeclared != null);
+    let transactionsCounted = namedPayments.length;
+    if (transactionsCounted === 0) {
+      const days = new Set(ordered.filter((shift) => shift.outlet !== 'restaurant').map((shift) => (shift.businessDate || '').slice(0, 10)));
+      for (const day of days) {
+        const deskThatDay = shifts.filter((shift) => shift.outlet !== 'restaurant' && (shift.businessDate || '').slice(0, 10) === day);
+        if (deskThatDay.length === 1 && sameCashier(deskThatDay[0].cashierName, cashierName)) {
+          transactionsCounted += transactions.filter((row) =>
+            row.transactionType === 'payment' && (row.timestamp || '').slice(0, 10) === day,
+          ).length;
+        }
+      }
+    }
+    return {
+      cashierName,
+      shiftStart: first.openedAt || null,
+      shiftEnd: stillOpen ? null : (last.closedAt || null),
+      totalTransactions: transactionsCounted,
+      totalCash: sum((shift) => shift.totalCash),
+      pettyCash: sum((shift) => shift.totalPaidOut),
+      totalCard: sum((shift) => shift.totalCard),
+      totalMobileMoney: sum((shift) => shift.totalMobileMoney),
+      mobileMoneyDeclared: declaredMomo.length
+        ? declaredMomo.reduce((total, shift) => total + Number(shift.momoDeclared || 0), 0)
+        : null,
+      mobileMoneyVariance: declaredMomo.length
+        ? declaredMomo.reduce((total, shift) => total + Number(shift.momoVariance || 0), 0)
+        : null,
+      totalAdjustments: sum((shift) => shift.totalOther),
+      openingBalance: Number(first.openingFloat || 0),
+      closingBalance: stillOpen || last.closingCount == null ? null : Number(last.closingCount),
+      variance: closed.length ? closed.reduce((total, shift) => total + Number(shift.variance || 0), 0) : null,
+    };
+  }
+
+  const sumMethod = (method: string) => namedPayments
+    .filter((row) => row.paymentMethod === method)
+    .reduce((total, row) => total + Number(row.amount || 0), 0);
+  return {
+    cashierName,
+    shiftStart: null,
+    shiftEnd: null,
+    totalTransactions: namedPayments.length,
+    totalCash: sumMethod('Cash'),
+    pettyCash: null,
+    totalCard: sumMethod('Card'),
+    totalMobileMoney: sumMethod('Mobile Money'),
+    mobileMoneyDeclared: null,
+    mobileMoneyVariance: null,
+    totalAdjustments: 0,
+    openingBalance: null,
+    closingBalance: null,
+    variance: null,
+  };
 }
 // True if the reservation's actual stay (check-in through check-out, or
 // through now if still in-house) overlaps the [startDate, endDate] window at
@@ -915,42 +1017,10 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     return transactions;
   },
 
-  generateCashierReport: (date, cashierId, endDate = date) => {
+  generateCashierReport: (date, cashierId, endDate = date, shifts: CashierShiftSnapshot[] = []) => {
     console.log(`[REPORTS] Generating cashier report for ${date}${endDate !== date ? ` to ${endDate}` : ''} and cashier ${cashierId}`);
-
     const transactions = get().generateDailyTransactionReport(date, endDate);
-    const cashierTransactions = transactions.filter(t => t.cashier === cashierId);
-    
-    const totalCash = cashierTransactions
-      .filter(t => t.paymentMethod === 'Cash')
-      .reduce((sum, t) => sum + t.amount, 0);
-    
-    const totalCard = cashierTransactions
-      .filter(t => t.paymentMethod === 'Card')
-      .reduce((sum, t) => sum + t.amount, 0);
-    
-    const totalMobileMoney = cashierTransactions
-      .filter(t => t.paymentMethod === 'Mobile Money')
-      .reduce((sum, t) => sum + t.amount, 0);
-    
-    // Shift start/end and a declared opening float aren't tracked anywhere in this
-    // system (no clock-in/till-declaration feature exists) — reporting a fabricated
-    // shift window or balance would be actively misleading for a cash reconciliation
-    // report, so those fields are omitted (null) rather than invented. The renderer
-    // filters null fields out of the summary rather than showing a false "0"/"08:00".
-    return {
-      cashierName: cashierId,
-      shiftStart: null,
-      shiftEnd: null,
-      totalTransactions: cashierTransactions.length,
-      totalCash,
-      totalCard,
-      totalMobileMoney,
-      totalAdjustments: 0,
-      openingBalance: null,
-      closingBalance: null,
-      variance: null
-    };
+    return summarizeCashierReport(cashierId, date, endDate, transactions, shifts);
   },
 
   generateCreditCardReconciliationReport: (date, endDate = date) => {

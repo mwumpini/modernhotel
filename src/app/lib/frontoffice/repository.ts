@@ -1,7 +1,7 @@
 import { prisma } from '../database/client'
 import { Reservation, GuestProfile, Folio } from './types'
 import { loadFolioRounding, mergedFolioWrite } from './folioServer'
-import { asLineArray } from './folioLedger'
+import { asLineArray, nextCalendarDate, stayNightDates } from './folioLedger'
 
 function stripUndefined<T extends Record<string, any>>(obj: T): Partial<T> {
   const out: Record<string, any> = {}
@@ -66,6 +66,8 @@ export function toStoreReservation(row: any): Reservation {
     isSelfReservation: details.isSelfReservation,
     selfReservationToken: details.selfReservationToken,
     invoiceGenerated: details.invoiceGenerated,
+    invoiceGeneratedDate: details.invoiceGeneratedDate,
+    invoiceNumber: details.invoiceNumber,
     invoiceStatus: details.invoiceStatus,
     pendingGlPost: details.pendingGlPost,
     taxExempt: details.taxExempt,
@@ -104,6 +106,8 @@ export function toDbReservationData(r: Partial<Reservation>) {
     isSelfReservation: r.isSelfReservation,
     selfReservationToken: r.selfReservationToken,
     invoiceGenerated: r.invoiceGenerated,
+    invoiceGeneratedDate: r.invoiceGeneratedDate,
+    invoiceNumber: r.invoiceNumber,
     invoiceStatus: r.invoiceStatus,
     taxExempt: r.taxExempt,
     taxExemptionType: r.taxExemptionType,
@@ -241,17 +245,24 @@ export async function isRoomAvailable(
   departure: string,
   excludeReservationId?: string,
 ): Promise<boolean> {
-  const overlap = await prisma.reservation.findFirst({
+  const requested = stayNightDates(arrival, departure)
+  if (requested.length === 0) return false
+  const first = requested[0]
+  const exclusiveEnd = nextCalendarDate(requested[requested.length - 1])
+  const rows = await prisma.reservation.findMany({
     where: {
       tenantId,
       roomId,
       ...(excludeReservationId ? { id: { not: excludeReservationId } } : {}),
       status: { in: ['pending', 'confirmed', 'checked-in'] },
-      checkInDate: { lt: new Date(departure) },
-      checkOutDate: { gt: new Date(arrival) },
+      checkInDate: { lt: new Date(`${exclusiveEnd}T00:00:00.000Z`) },
+      checkOutDate: { gte: new Date(`${first}T00:00:00.000Z`) },
     },
+    select: { checkInDate: true, checkOutDate: true },
   })
-  return !overlap
+  const held = new Set(requested)
+  const day = (value: Date | string) => value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10)
+  return !rows.some((row) => stayNightDates(day(row.checkInDate), day(row.checkOutDate)).some((night) => held.has(night)))
 }
 
 // ---------------------------------------------------------------------------

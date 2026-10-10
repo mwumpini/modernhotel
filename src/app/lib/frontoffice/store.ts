@@ -31,7 +31,7 @@ import {
 } from './helpers/rates';
 import { isCorporateGuest } from './helpers/guests';
 import { postFirstNightAtCheckIn } from './roomCharges';
-import { nextCalendarDate, previousCalendarDate, roundCents } from './folioLedger';
+import { nextCalendarDate, previousCalendarDate, roundCents, stayNightDates } from './folioLedger';
 import { isLateCheckoutNow } from './lateCheckout';
 import { depositBlocksConfirm, planEarlyCheckout, requiredDeposit } from './operationalPolicies';
 import { type NightAuditResult } from './nightAudit';
@@ -1145,15 +1145,14 @@ class FrontOfficeStore {
   // the server-authoritative check so the UI never assigns a room that already
   // has an overlapping active booking (the API guard is the backstop).
   isRoomFreeForRange(roomNumber: string, arrival: string, departure: string, excludeId?: string): boolean {
-    const start = new Date(arrival).getTime();
-    const end = new Date(departure).getTime();
+    const requested = new Set(stayNightDates(arrival, departure));
+    if (requested.size === 0) return true;
     return !this.reservations.some(r =>
       r.id !== excludeId &&
       r.roomId === roomNumber &&
       // Same statuses the server treats as holding a room (isRoomAvailable).
       (r.status === 'pending' || r.status === 'confirmed' || r.status === 'checked-in') &&
-      new Date(r.arrival).getTime() < end &&
-      new Date(r.departure).getTime() > start
+      stayNightDates(r.arrival, r.departure).some((night) => requested.has(night))
     );
   }
 
@@ -1319,6 +1318,8 @@ class FrontOfficeStore {
       status: 'checked-out',
       checkedOutAt,
       invoiceGenerated: res.invoiceGenerated,
+      invoiceGeneratedDate: res.invoiceGeneratedDate,
+      invoiceNumber: res.invoiceNumber,
       invoiceStatus: res.invoiceStatus,
       pendingGlPost: (res as any).pendingGlPost ?? null,
     });
@@ -1658,10 +1659,7 @@ class FrontOfficeStore {
       return season ? season.multiplier : 1;
     };
 
-    const startDate = String(arrival || '').slice(0, 10);
-    const endDate = String(departure || '').slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return nightly;
-    for (let dateStr = startDate; dateStr < endDate && nightly.length < 3660; dateStr = nextCalendarDate(dateStr)) {
+    for (const dateStr of stayNightDates(arrival, departure)) {
       const seasonMult = seasonalMultiplierFor(dateStr);
       const rawBase = hasExplicitBase
         ? (base as number)

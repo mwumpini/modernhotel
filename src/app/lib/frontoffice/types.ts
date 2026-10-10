@@ -456,6 +456,7 @@ export interface Reservation {
   // Invoice properties
   invoiceGenerated?: boolean;
   invoiceGeneratedDate?: string;
+  invoiceNumber?: string;
   invoiceStatus?: 'draft' | 'sent' | 'paid' | 'overdue' | 'none' | 'gl_pending';
   invoiceSentDate?: string;
   /** Set when a checkout's GL post failed; carries the exact payload retryPendingGlPost

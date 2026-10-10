@@ -75,7 +75,7 @@ function ToggleTile({
       onClick={() => { if (!disabled) onChange(!selected); }}
       className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left transition-colors ${
         disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
-      } ${selected ? 'border-ghana-green bg-green-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+      } ${selected ? 'border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_16%,var(--card-background))]' : 'border-[var(--card-border)] bg-[var(--card-background)] hover:border-[var(--text-muted)]'}`}
     >
       <span>
         <span className="block text-sm font-semibold text-ghana-black">{title}</span>
@@ -166,7 +166,7 @@ export default function SecurityPolicyPanel({
 
   return (
     <div className="mt-3 space-y-4">
-      <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white px-4 py-3">
+      <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-background)] px-4 py-3">
         <p className="text-sm font-semibold text-ghana-black">Staff sign-in rules</p>
         <p className="mt-1 text-xs leading-relaxed text-slate-600">
           Password, session, and PIN rules apply to every staff account. Company name, country, and currency are in{' '}
@@ -181,7 +181,7 @@ export default function SecurityPolicyPanel({
         </p>
       </div>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <section className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-background)] p-4 shadow-sm">
         <h3 className="text-sm font-semibold text-ghana-black">Sign-in</h3>
         <div className="mt-3 grid gap-3 lg:grid-cols-2">
           <ToggleTile
@@ -191,7 +191,7 @@ export default function SecurityPolicyPanel({
             disabled={!canManage2fa}
             onChange={(v) => updateNestedSetting('security.twoFactorAuth', v)}
           />
-          <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--card-border)] bg-[var(--surface)] px-3 py-3">
             <div>
               <p className="text-sm font-semibold text-ghana-black">Session timeout</p>
               <p className="mt-0.5 text-xs text-slate-500">Minutes with no activity before sign-out. 0 keeps the session open.</p>
@@ -208,7 +208,7 @@ export default function SecurityPolicyPanel({
         </div>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <section className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-background)] p-4 shadow-sm">
         <h3 className="text-sm font-semibold text-ghana-black">Password</h3>
         <div className="mt-3 flex flex-wrap gap-3">
           <NumberField
@@ -234,10 +234,10 @@ export default function SecurityPolicyPanel({
           <ToggleTile title="Number" hint="At least one digit." selected={policy.requireNumbers} disabled={!canManage} onChange={(v) => updateNestedSetting('security.passwordPolicy.requireNumbers', v)} />
           <ToggleTile title="Special character" hint="At least one symbol, such as ! or @." selected={policy.requireSpecialChars} disabled={!canManage} onChange={(v) => updateNestedSetting('security.passwordPolicy.requireSpecialChars', v)} />
         </div>
-        <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">{passwordSummary(policy)}</p>
+        <p className="mt-3 rounded-xl bg-[var(--surface)] px-3 py-2 text-xs leading-relaxed text-slate-600">{passwordSummary(policy)}</p>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <section className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-background)] p-4 shadow-sm">
         <h3 className="text-sm font-semibold text-ghana-black">PIN</h3>
         <p className="mt-1 text-xs text-slate-500">
           Staff PINs are digits. Each person&apos;s PIN is set under Users → Edit. The manager PIN is what the POS asks before an order is deleted.

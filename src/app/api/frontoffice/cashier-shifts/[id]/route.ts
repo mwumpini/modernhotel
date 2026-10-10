@@ -6,7 +6,9 @@ import {
   closeCashierShift,
   deleteCashierShift,
   previewOpenShiftTotals,
+  recordTillPaidOut,
   updateCashierShift,
+  voidTillPaidOut,
 } from '@/app/lib/frontoffice/cashierShiftRepository'
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -40,14 +42,47 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const { id } = await params
     const body = await request.json()
     const sessionUserId = (auth.session as any).user?.id
-    const action = body.action === 'update' ? 'update' : 'close'
+    const action = ['update', 'paid-out', 'void-paid-out', 'close'].includes(body.action) ? body.action : 'close'
+    const postedBy = (auth.session as any).user?.name || (auth.session as any).user?.email || 'Front Desk'
+
+    if (action === 'paid-out' || action === 'void-paid-out') {
+      try {
+        const shift = action === 'paid-out'
+          ? await recordTillPaidOut(ctx.tenantId, id, {
+            amount: Number(body.amount),
+            expenseCode: String(body.expenseCode || ''),
+            description: String(body.description || ''),
+          }, postedBy)
+          : await voidTillPaidOut(ctx.tenantId, id, String(body.paidOutId || ''), postedBy)
+        await createAuditLog(
+          ctx.tenantId,
+          sessionUserId ?? null,
+          action === 'paid-out' ? 'TILL_PAID_OUT' : 'TILL_PAID_OUT_VOID',
+          'CashierShift',
+          shift.id,
+          undefined,
+          body,
+          request,
+        )
+        return NextResponse.json({ shift })
+      } catch (e: any) {
+        return NextResponse.json({ error: e?.message || 'Could not record the paid-out' }, { status: 400 })
+      }
+    }
 
     if (action === 'close') {
       const closingCount = Number(body.closingCount)
       if (!Number.isFinite(closingCount) || closingCount < 0) {
         return NextResponse.json({ error: 'closingCount must be zero or a positive number' }, { status: 400 })
       }
-      const shift = await closeCashierShift(ctx.tenantId, id, closingCount, body.notes)
+      const momoDeclared =
+        body.momoDeclared === undefined || body.momoDeclared === null || body.momoDeclared === ''
+          ? undefined
+          : Number(body.momoDeclared)
+      if (momoDeclared !== undefined && (!Number.isFinite(momoDeclared) || momoDeclared < 0)) {
+        return NextResponse.json({ error: 'momoDeclared must be zero or a positive number' }, { status: 400 })
+      }
+      const shift = await closeCashierShift(ctx.tenantId, id, closingCount, body.notes, momoDeclared)
       if (!shift) return NextResponse.json({ error: 'Shift not found, or already closed' }, { status: 404 })
       await createAuditLog(
         ctx.tenantId,
@@ -56,7 +91,14 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         'CashierShift',
         shift.id,
         undefined,
-        { closingCount, expectedCash: shift.expectedCash, variance: shift.variance },
+        {
+          closingCount,
+          expectedCash: shift.expectedCash,
+          variance: shift.variance,
+          totalMobileMoney: shift.totalMobileMoney,
+          momoDeclared: shift.momoDeclared,
+          momoVariance: shift.momoVariance,
+        },
         request,
       )
       return NextResponse.json({ shift })
@@ -71,6 +113,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         businessDate: body.businessDate,
         openingFloat: body.openingFloat !== undefined ? Number(body.openingFloat) : undefined,
         closingCount: body.closingCount !== undefined ? Number(body.closingCount) : undefined,
+        momoDeclared: body.momoDeclared !== undefined ? (body.momoDeclared === null ? null : Number(body.momoDeclared)) : undefined,
         notes: body.notes,
         recompute: Boolean(body.recompute),
         transferTo: body.transferTo,
