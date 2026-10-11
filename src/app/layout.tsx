@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono, Literata, Nunito_Sans, Source_Sans_3 } from "next/font/google";
+import { Geist, Geist_Mono, Literata, Noto_Color_Emoji, Nunito_Sans, Source_Sans_3 } from "next/font/google";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/lib/auth/auth";
 import Providers from "./components/Providers";
@@ -28,6 +28,15 @@ const nunitoSans = Nunito_Sans({
 const literata = Literata({
   variable: "--font-literata",
   subsets: ["latin"],
+});
+
+// Older systems (Windows 7/8) lack newer emoji such as 🍽️ 🛏️ 🧾 and showed empty boxes. This font is only
+// fetched when the device's own emoji font is missing a character (see the body font stacks in globals.css).
+const notoEmoji = Noto_Color_Emoji({
+  variable: "--font-noto-emoji",
+  weight: "400",
+  subsets: ["emoji"],
+  preload: false,
 });
 
 // Link previews (WhatsApp, Facebook, X) need full addresses. Vercel provides the production
@@ -89,7 +98,7 @@ export default async function RootLayout({
         />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${sourceSans.variable} ${nunitoSans.variable} ${literata.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} ${sourceSans.variable} ${nunitoSans.variable} ${literata.variable} ${notoEmoji.variable} antialiased`}
       >
         <Providers session={session}>
           {children}
