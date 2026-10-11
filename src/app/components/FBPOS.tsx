@@ -42,7 +42,7 @@ import { verifyManagerPin } from '../lib/settings/managerPin';
 import { notifyError } from '../lib/notifications/notify';
 import { isOnReadyBoard } from '../lib/fb/readyBoard';
 import { confirmDelete, confirmVoid } from './DangerConfirm';
-import { issueOrderIdentity, lineTicket, parseTicketTag } from '../lib/fb/ticketTag';
+import { issueOrderIdentity, issueReceiptNumber, lineTicket, parseTicketTag, withReceiptTag } from '../lib/fb/ticketTag';
 import { useSession } from 'next-auth/react';
 import { menuImageSrc } from './fb/MenuPhotoPicker';
 import { useLiveChanges, pollInterval } from '@/app/lib/realtime/useLiveChanges';
@@ -650,7 +650,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     openReceiptPreview({
       hotelName,
       contact: 'Accra, Ghana',
-      code: o.orderNumber || o.id,
+      code: parseTicketTag(o.notes).rct || o.orderNumber || o.id,
       datetime: new Date().toLocaleString(),
       items: o.items.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
       subtotal: Number(o.subtotal) || linesSubtotal,
@@ -999,11 +999,16 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
       const STATUS_SEQUENCE: FbOrderStatus[] = ['pending', 'preparing', 'ready', 'served', 'billed'];
       let stockWarnings: FbStockWarning[] | undefined;
       let billCogsAmount = 0;
+      // Settings → Document Numbering → F&B → Receipt. Saved on the order (beside its KOT/BOT)
+      // so a reprint shows the same number.
+      const receiptNo = issueReceiptNumber();
       if (apiOrder?.id) {
         let currentStatus: string = 'pending';
+        let currentNotes: string | null | undefined = apiOrder.notes;
         if (sentOrderData) {
           const liveOrder = await fetchFbOrderById(apiOrder.id);
           currentStatus = liveOrder.status;
+          currentNotes = liveOrder.notes;
         }
         if (currentStatus === 'cancelled' || currentStatus === 'billed' || currentStatus === 'refunded') {
           throw new Error(`Order is already '${currentStatus}' and cannot be billed`);
@@ -1019,6 +1024,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                   paymentMethod,
                   staffId: waiterId,
                   staffName: waiters.find(w => w.id === waiterId)?.name || waiterId,
+                  notes: withReceiptTag(currentNotes, receiptNo),
                 }
               : undefined,
           );
@@ -1107,7 +1113,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
       openReceiptPreview({
         hotelName,
         contact: 'Accra, Ghana',
-        code: `RCPT-${newId}`,
+        code: receiptNo,
         datetime: new Date().toLocaleString(),
         items: cart.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
         subtotal: finalSubtotal,
@@ -2476,15 +2482,18 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                 promptOpenTill();
                 return;
               }
+              const receiptNo = issueReceiptNumber();
               if (orderId) {
                 try {
                   await patchFbOrderStatus(orderId, 'preparing');
                   await patchFbOrderStatus(orderId, 'ready');
                   await patchFbOrderStatus(orderId, 'served');
+                  const liveOrder = await fetchFbOrderById(orderId);
                   const billed = await patchFbOrderStatus(orderId, 'billed', {
                     paymentMethod: primaryTender,
                     staffId: waiterId,
                     staffName: waiters.find(w => w.id === waiterId)?.name || waiterId,
+                    notes: withReceiptTag(liveOrder.notes, receiptNo),
                   });
                   alertStockWarnings(`Order ${orderId}`, billed.stockWarnings);
                   if (billed.cogs?.amount) billCogsAmount = Number(billed.cogs.amount);
@@ -2501,7 +2510,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
               openReceiptPreview({
                 hotelName,
                 contact: 'Accra, Ghana',
-                code: `RCPT-${orderId ?? Date.now().toString().slice(-6)}`,
+                code: receiptNo,
                 datetime: new Date().toLocaleString(),
                 items: cart.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
                 subtotal: finalSubtotal,

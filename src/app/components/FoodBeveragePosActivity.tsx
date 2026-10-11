@@ -7,6 +7,10 @@ import { sizedTableClassNames, useResizableColumns } from './frontoffice/columnR
 import { ordersStore, type FBOrder, type OrderItem } from '../lib/fb/ordersStore';
 import { lineTicket, parseTicketTag } from '../lib/fb/ticketTag';
 import { DateFilterPills, type DateMode } from './fb/DateFilterPills';
+import { Printer } from 'lucide-react';
+import { printReceipt } from '../lib/print/print';
+import { computeSalesTaxTotal } from '../lib/tax/engine';
+import { useSettingsStore } from '../lib/settings/store';
 
 const deskTableClassNames = {
   ...worksheetTableClassNames,
@@ -131,8 +135,8 @@ function mopLabel(order: FBOrder) {
 function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-xs text-gray-500">{label}</div>
-      <div className="font-semibold text-ghana-black">{value}</div>
+      <div className="text-[11px] leading-tight text-gray-500">{label}</div>
+      <div className="truncate text-sm font-semibold text-ghana-black" title={value}>{value}</div>
     </div>
   );
 }
@@ -443,6 +447,27 @@ function TransactionDialog({
     }
   };
 
+  /** Reprint the whole ticket with the restaurant receipt template, under its receipt number once paid. */
+  const printTicket = () => {
+    if (!order) return;
+    const linesSubtotal = order.items.reduce((sum, line) => sum + (Number(line.price) || 0) * (Number(line.qty) || 0), 0);
+    const storedTotal = Number(order.total) || 0;
+    printReceipt({
+      hotelName: useSettingsStore.getState().companySettings?.tradingName || useSettingsStore.getState().companySettings?.legalName || '',
+      code: parseTicketTag(order.notes).rct || order.orderNumber || order.id,
+      datetime: new Date(order.createdAt || order.timestamp || Date.now()).toLocaleString(),
+      items: order.items.map((line) => ({ name: line.name, qty: line.qty, price: line.price })),
+      subtotal: Number(order.subtotal) || linesSubtotal,
+      discount: Number(order.discountAmount) || 0,
+      total: storedTotal > 0 ? storedTotal : linesSubtotal + computeSalesTaxTotal(linesSubtotal),
+      table: order.table,
+      waiter: order.waiterId,
+      guestName: order.guestName,
+      roomNumber: order.roomNumber,
+      paymentMethod: isBilled ? order.paymentMethod : undefined,
+    });
+  };
+
   const startEditInPos = () => {
     if (!order || isVoided || isBilled) return;
     onClose();
@@ -526,8 +551,8 @@ function TransactionDialog({
                   <CardHeader className="pb-0">
                     <h4 className="text-base font-semibold text-ghana-black">Transaction</h4>
                   </CardHeader>
-                  <CardBody>
-                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                  <CardBody className="px-3 py-2">
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
                       <Fact label="Status" value={statusLabel(lineState)} />
                       <Fact label="Customer" value={order.guestName || order.customerType || '—'} />
                       <Fact label="Staff" value={order.waiterId || '—'} />
@@ -540,7 +565,7 @@ function TransactionDialog({
                       <Fact label="Amount paid" value={paid == null ? '—' : money(paid)} />
                       <Fact label="Ticket" value={ticket || '—'} />
                     </div>
-                    {notes && <p className="mt-3 text-sm text-gray-600">{notes}</p>}
+                    {notes && <p className="mt-2 text-sm text-gray-600">{notes}</p>}
                   </CardBody>
                 </Card>
                 <Card shadow="sm" className="shrink-0">
@@ -580,8 +605,8 @@ function TransactionDialog({
                   </CardBody>
                 </Card>
               </ModalBody>
-              <ModalFooter>
-                <Button color="danger" variant="flat" onPress={askDelete}>
+              <ModalFooter className="flex-wrap">
+                <Button color="danger" variant="flat" className="mr-auto" onPress={askDelete}>
                   Delete
                 </Button>
                 <Button color="warning" variant="flat" isDisabled={isVoided} onPress={askVoid}>
@@ -594,6 +619,9 @@ function TransactionDialog({
                   onPress={startEditInPos}
                 >
                   Edit in POS
+                </Button>
+                <Button variant="flat" startContent={<Printer size={16} />} onPress={printTicket}>
+                  Print
                 </Button>
                 <Button variant="light" onPress={onClose}>
                   Close

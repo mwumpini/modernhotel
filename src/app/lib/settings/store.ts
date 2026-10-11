@@ -556,6 +556,8 @@ export interface ModuleNumberingSettings {
     order: NumberingPattern;
     kitchenOrderTicket: NumberingPattern;
     barOrderTicket: NumberingPattern;
+    /** Restaurant & bar receipt, issued when the bill is paid. */
+    receipt: NumberingPattern;
   };
   inventory: {
     stockItem: NumberingPattern;
@@ -2313,6 +2315,7 @@ const defaultSettings: SystemSettings = {
       order: simpleSeries('ORD'),
       kitchenOrderTicket: simpleSeries('KOT'),
       barOrderTicket: simpleSeries('BOT'),
+      receipt: simpleSeries('RCT'),
     },
     inventory: {
       stockItem: simpleSeries('ITM'),

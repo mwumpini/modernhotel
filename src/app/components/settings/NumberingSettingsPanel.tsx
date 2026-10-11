@@ -46,6 +46,7 @@ const DEFAULT_MODULE_NUMBERING = {
     order: simpleSeries('ORD'),
     kitchenOrderTicket: simpleSeries('KOT'),
     barOrderTicket: simpleSeries('BOT'),
+    receipt: simpleSeries('RCT'),
   },
   inventory: {
     stockItem: simpleSeries('ITM'),
@@ -496,6 +497,7 @@ export default function NumberingSettingsPanel() {
               {modRow('Order', 'foodBeverage', 'order')}
               {modRow('KOT', 'foodBeverage', 'kitchenOrderTicket')}
               {modRow('BOT', 'foodBeverage', 'barOrderTicket')}
+              {modRow('Receipt', 'foodBeverage', 'receipt')}
             </SeriesGrid>
           )}
 

@@ -241,11 +241,13 @@ class OrdersStore {
       // Orders sent from this screen in the last two minutes that the server has not returned yet stay visible.
       this.orders = [...pendingLocal, ...fromServer];
       this.listeners.forEach((l) => l());
-      const ticket = (notes: string | undefined, key: 'KOT' | 'BOT') => notes?.match(new RegExp(`${key}=([^;\\]]+)`))?.[1];
+      const ticket = (notes: string | undefined, key: 'KOT' | 'BOT' | 'RCT') => notes?.match(new RegExp(`${key}=([^;\\]]+)`))?.[1];
       const settings = useSettingsStore.getState();
       settings.raiseModuleNumberFloor('foodBeverage', 'order', this.orders.map((o) => o.orderNumber));
       settings.raiseModuleNumberFloor('foodBeverage', 'kitchenOrderTicket', this.orders.map((o) => ticket(o.notes, 'KOT')));
       settings.raiseModuleNumberFloor('foodBeverage', 'barOrderTicket', this.orders.map((o) => ticket(o.notes, 'BOT')));
+      // Receipt numbers already used on any till, so this one never repeats them.
+      settings.raiseModuleNumberFloor('foodBeverage', 'receipt', this.orders.map((o) => ticket(o.notes, 'RCT')));
     } catch (e) {
       console.warn('[FB] ordersStore hydrateFromApi failed:', e);
     }

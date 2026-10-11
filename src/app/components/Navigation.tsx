@@ -322,6 +322,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
       icon: '🍽️',
       items: [
         { title: '💳 POS Terminal', href: '#' },
+        { title: '🧾 Transactions', href: '#' },
         { title: '🪑 Service', href: '#' },
         { title: '🍽️ Menu', href: '#' },
         { title: '💵 Cash', href: '#' },
@@ -510,7 +511,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
     // Handle Restaurant & Bar sub-items
     } else if (sectionKey === 'restaurant' && itemTitle) {
       const fbTab =
-        itemTitle === '🪑 Service' ? 'tables'
+        itemTitle === '🧾 Transactions' ? 'activity'
+        : itemTitle === '🪑 Service' ? 'tables'
         : itemTitle === '🍽️ Menu' ? 'menu'
         : itemTitle === '💵 Cash' ? 'cashiering'
         : itemTitle === '📦 Supplies' ? 'supplies'
