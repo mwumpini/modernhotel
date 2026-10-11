@@ -2606,7 +2606,7 @@ const DEFAULT_PRINTING: SettingsStore['printing'] = {
   'event-invoice': 'builtin-event-invoice-standard',
   'event-receipt': 'builtin-event-receipt-standard',
   'registration-card': 'builtin-registration-card-standard',
-  'fb-receipt': 'builtin-fb-receipt-thermal',
+  'fb-receipt': 'builtin-fb-receipt-retail',
   payslip: 'builtin-payslip-grid',
   'event-contract': 'builtin-event-contract-classic',
 };
@@ -2749,7 +2749,27 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         // before the accommodation-*/event-* document types existed would resolve
         // those keys to undefined instead of falling back to a working built-in.
         if (parsed.printing) {
-          set(state => ({ printing: { ...DEFAULT_PRINTING, ...state.printing } }));
+          set(state => {
+            const printing = { ...DEFAULT_PRINTING, ...state.printing };
+            // The previous restaurant default was the looser till slip. Move a
+            // hotel that never picked a different receipt onto the retail slip
+            // once, and remember that so a later choice of Till slip stays.
+            try {
+              if (!localStorage.getItem('fb.receipt.layout.v1')) {
+                if (printing['fb-receipt'] === 'builtin-fb-receipt-thermal') {
+                  printing['fb-receipt'] = 'builtin-fb-receipt-retail';
+                  const raw = localStorage.getItem('system.settings');
+                  if (raw) {
+                    const blob = JSON.parse(raw);
+                    if (blob.printing) blob.printing['fb-receipt'] = 'builtin-fb-receipt-retail';
+                    localStorage.setItem('system.settings', JSON.stringify(blob));
+                  }
+                }
+                localStorage.setItem('fb.receipt.layout.v1', '1');
+              }
+            } catch { /* storage can be blocked; the in-memory default still applies */ }
+            return { printing };
+          });
         }
       }
 

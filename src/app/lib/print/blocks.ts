@@ -50,6 +50,10 @@ export type BlockType =
   | 'payslip-earnings-table'
   | 'payslip-deductions-table'
   | 'payslip-summary'
+  // Whole 80mm restaurant slip. The renderer prints the paper itself.
+  | 'retail-slip'
+  // Full-page Noda restaurant bill. The renderer prints the paper itself.
+  | 'noda-bill'
   // Structural — holds other blocks (including other containers, for arbitrary
   // nesting depth) laid out as a row or column, independent of the top-level
   // "Share a row" pairing. See BlockConfig.children/direction/gap.
@@ -69,7 +73,7 @@ export interface BlockConfig {
    *  plain text line with a dotted leader to the amount, e.g. "Room x 2 nights .... ₵500".
    *  'simple' drops both the table grid and the leader dots — just "Description" left,
    *  amount right, on one plain line (matches a manually-typed bill format). */
-  lineItemsDisplay?: 'table' | 'list' | 'simple';
+  lineItemsDisplay?: 'table' | 'list' | 'simple' | 'slip';
   /** stay-details: 'lines' (default) — "Room: X • Type: Y" / "Arrival: … • Departure: … •
    *  Nights: N" as two stacked lines. 'grid' — a 2-column x 3-row grid inside the box:
    *  Room No / Room Type / Nights on the left, Room Rate / Arrival / Departure on the right. */
@@ -90,7 +94,7 @@ export interface BlockConfig {
    *  combined into one "Sales Taxes Incl." line, Total Taxes Inclusive.
    *  On a single totals line (taxes, subtotal, grand total), 'grid' draws a
    *  right-hand table with a border around each cell. */
-  totalsDisplay?: 'table' | 'numbered-list' | 'compact-taxes' | 'grid';
+  totalsDisplay?: 'table' | 'numbered-list' | 'compact-taxes' | 'grid' | 'slip';
   /** totals-summary / payslip-summary: append "Ghana Cedis Five Hundred only" under
    *  the grand total / net pay. */
   showAmountInWords?: boolean;
@@ -114,6 +118,10 @@ export interface BlockConfig {
   recipientDisplay?: 'box' | 'letter';
   /** doc-meta: relabel the document-number badge, e.g. "CheckOut No." instead of "No." */
   docNumberLabel?: string;
+  /** doc-date: 'slip' prints weekday, date, time, and the document number on one till line. */
+  dateFormat?: 'date' | 'slip';
+  /** Draw this block's text in capitals, as on a till slip. */
+  uppercase?: boolean;
   /** terms-conditions: named sections, each rendered as a bold heading + paragraph. */
   termsSections?: Array<{ heading: string; body: string }>;
   /** Horizontal text alignment — applies to any block, not just text ones. */

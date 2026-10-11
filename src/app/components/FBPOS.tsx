@@ -28,7 +28,7 @@ import { trackEvent } from '../lib/analytics/trackEvent';
 import { logAudit } from '../lib/analytics/auditLogStore';
 import { ordersStore, FBOrder } from '../lib/fb/ordersStore';
 import { openHtmlPrintWindow } from '../lib/print/engine';
-import { printReceipt, buildKOTHtml, printHtml, renderFbReceipt, previewReceipt } from '../lib/print/print';
+import { renderFbReceipt, buildKOTHtml, printHtml, slipPreviewDocument } from '../lib/print/print';
 import { storesIssueBus } from '../lib/fb/stores';
 import { kitchenOpsStore } from '../lib/fb/kitchenOpsStore';
 import { storesStore } from '../lib/stores/store';
@@ -48,7 +48,7 @@ import { menuImageSrc } from './fb/MenuPhotoPicker';
 import { useLiveChanges, pollInterval } from '@/app/lib/realtime/useLiveChanges';
 import {
   ChefHat, ChevronDown, ChevronUp, ClipboardList, CreditCard, Minus, MoreHorizontal, Plus, Printer,
-  Receipt, Search, Send, Trash2, UserRound, UtensilsCrossed, Wine,
+  Search, Send, Trash2, UserRound, UtensilsCrossed, Wine,
 } from 'lucide-react';
 
 type CustomerType = 'In-house' | 'Walk-in';
@@ -211,13 +211,15 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
   const orderDetailModal = useDisclosure();
   const managerPinModal = useDisclosure();
   const printPreviewModal = useDisclosure();
-  const [printPreview, setPrintPreview] = useState<{ title: string; html: string } | null>(null);
+  const [printPreview, setPrintPreview] = useState<{ title: string; html: string; canPrint: boolean } | null>(null);
   const [pinValue, setPinValue] = useState<string>('');
   const [pinError, setPinError] = useState<string>('');
   const [pendingManagerAction, setPendingManagerAction] = useState<{ type: 'delete'; orderId: string } | null>(null);
   const [orders, setOrders] = useState<FBOrder[]>([]);
   const [splitPayments, setSplitPayments] = useState<Array<{ method: PaymentMethod; amount: number }>>([]);
   const [tipAmount, setTipAmount] = useState<number>(0);
+  const [cardBrand, setCardBrand] = useState('Visa Debit');
+  const [momoBrand, setMomoBrand] = useState('MTN');
   const [settleRoomSearch, setSettleRoomSearch] = useState<string>('');
   const [settleSelectedRoom, setSettleSelectedRoom] = useState<{ roomId: string; guestId: string; guestName: string } | null>(null);
   const [orderMode, setOrderMode] = useState<'Dine-in' | 'Takeaway'>('Dine-in');
@@ -631,21 +633,34 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     paymentModal.onOpen();
   };
 
-  const activityReceipt = () => {
+  function openReceiptPreview(args: Parameters<typeof renderFbReceipt>[0], canPrint: boolean) {
+    const html = renderFbReceipt(args).replace(/<script>\s*window\.print\(\)\s*<\/script>/gi, '');
+    setPrintPreview({ title: canPrint ? 'Receipt' : 'Bill preview', html, canPrint });
+    printPreviewModal.onOpen();
+  }
+
+  const previewActivityBill = () => {
     if (!activitySelected) return;
-    const { order: o, item: it } = activitySelected;
-    previewReceipt({
+    const o = activitySelected.order;
+    const paid = o.status === 'billed' || o.status === 'paid';
+    const linesSubtotal = o.items.reduce((sum, i) => sum + (Number(i.price) || 0) * (Number(i.qty) || 0), 0);
+    const storedTotal = Number(o.total) || 0;
+    const ticketTotal = storedTotal > 0 ? storedTotal : linesSubtotal + computeSalesTaxTotal(linesSubtotal);
+    openReceiptPreview({
       hotelName,
-      code: `${o.id}-${it.id}`,
+      contact: 'Accra, Ghana',
+      code: o.orderNumber || o.id,
       datetime: new Date().toLocaleString(),
-      items: [{ name: it.name, qty: it.qty, price: it.price }],
-      subtotal: it.qty * it.price,
-      discount: ((it as any).discountPerUnit || 0) * it.qty,
-      total: (it.price * it.qty) - (((it as any).discountPerUnit || 0) * it.qty),
+      items: o.items.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
+      subtotal: Number(o.subtotal) || linesSubtotal,
+      discount: Number(o.discountAmount) || 0,
+      total: ticketTotal,
       table: o.table,
       waiter: waiters.find(w => w.id === o.waiterId)?.name || o.waiterId,
-    });
-    logAudit({ area: 'f&b', action: 'print', entity: 'Receipt', entityId: `${o.id}-${it.id}`, details: `Printed receipt for ${it.name}`, meta: { table: o.table, waiter: o.waiterId }});
+      guestName: o.guestName,
+      roomNumber: o.roomNumber,
+      paymentMethod: paid ? o.paymentMethod : undefined,
+    }, paid);
   };
 
   const activityEdit = async () => {
@@ -875,6 +890,10 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
 
   const openPayment = () => paymentModal.onOpen();
 
+  const paymentBrand = (method: PaymentMethod) => (
+    method === 'Card' ? cardBrand : method === 'Mobile Money' ? momoBrand : undefined
+  );
+
   const handlePayment = async (paymentMethod: PaymentMethod, amount: number) => {
     if (cart.length === 0 && !sentOrderData) return;
     if (isProcessingPayment) return; // guard against double-click double-charging the guest
@@ -1079,24 +1098,24 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
       setDiscountPercent(0);
       setOrderNotes('');
       
-      // Print receipt for immediate payments
-      if (paymentMethod !== 'Room Charge') {
-        printReceipt({
-          hotelName,
-          contact: 'Accra, Ghana',
-          code: `RCPT-${newId}`,
-          datetime: new Date().toLocaleString(),
-          items: cart.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
-          subtotal: finalSubtotal,
-          discount: orderDiscountAmount,
-          total,
-          table: tableNumber,
-          waiter: waiters.find(w => w.id === waiterId)?.name,
-        });
-      }
-
-      // Close payment modal
       paymentModal.onClose();
+      openReceiptPreview({
+        hotelName,
+        contact: 'Accra, Ghana',
+        code: `RCPT-${newId}`,
+        datetime: new Date().toLocaleString(),
+        items: cart.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
+        subtotal: finalSubtotal,
+        discount: orderDiscountAmount,
+        total,
+        table: tableNumber,
+        waiter: waiters.find(w => w.id === waiterId)?.name,
+        guestName: guestDisplayName,
+        roomNumber: customerType === 'In-house' ? roomNumber : undefined,
+        paymentMethod,
+        paymentBrand: paymentBrand(paymentMethod),
+      }, true);
+
       alertStockWarnings(`Order ${newId}`, stockWarnings);
 
     } catch (error) {
@@ -1130,7 +1149,12 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
       urgent: priority === 'urgent',
       items: items.map(i => ({ name: i.name, qty: i.qty })),
     };
-    setPrintPreview({ title: kind === 'bot' ? 'BOT Preview' : 'KOT Preview', html: buildKOTHtml(args) });
+    const previewTitle = kind === 'bot' ? 'BOT Preview' : 'KOT Preview';
+    setPrintPreview({
+      title: previewTitle,
+      html: slipPreviewDocument(buildKOTHtml({ ...args, hotelName }), previewTitle),
+      canPrint: true,
+    });
     printPreviewModal.onOpen();
   };
 
@@ -1427,6 +1451,26 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     ? (roomNumber ? `Room ${roomNumber}${guestName ? ` · ${guestName}` : ''}` : 'In-house · pick a room')
     : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : 'Walk-in');
   const taxAmount = computeSalesTaxTotal(total);
+  const previewCurrentBill = () => {
+    if (cart.length === 0) return;
+    const guestDisplayName = customerType === 'In-house'
+      ? guestName
+      : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : (walkInSearchTerm.trim() || 'Walk-in Customer'));
+    openReceiptPreview({
+      hotelName,
+      contact: 'Accra, Ghana',
+      code: sentOrderData?.id ? String(sentOrderData.id) : 'BILL',
+      datetime: new Date().toLocaleString(),
+      items: cart.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
+      subtotal,
+      discount: itemDiscountAmount + orderDiscountAmount,
+      total: total + taxAmount,
+      table: tableNumber,
+      waiter: waiters.find(w => w.id === waiterId)?.name,
+      guestName: guestDisplayName,
+      roomNumber: customerType === 'In-house' ? roomNumber : undefined,
+    }, false);
+  };
   const cartCount = cart.reduce((n, ci) => n + ci.qty, 0);
   const drinksOnly = cart.length > 0 && !editingOrderId && cart.every((item) => item.route === 'bar');
   const showStationSend = kitchenTerminalOn && !drinksOnly;
@@ -1478,26 +1522,6 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
       return;
     }
     sendOrder();
-  };
-
-  const previewCartReceipt = () => {
-    const html = renderFbReceipt({
-      hotelName,
-      contact: 'Accra, Ghana',
-      code: `RCPT-${Date.now().toString().slice(-6)}`,
-      datetime: new Date().toLocaleString(),
-      guestName: customerType === 'In-house'
-        ? guestName
-        : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : (walkInSearchTerm.trim() || 'Walk-in')),
-      items: cart.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
-      subtotal,
-      discount: orderDiscountAmount,
-      total: total + taxAmount,
-      table: tableNumber,
-      waiter: waiters.find(w => w.id === waiterId)?.name,
-    });
-    setPrintPreview({ title: 'Receipt Preview', html });
-    printPreviewModal.onOpen();
   };
 
   // The one full transactions list lives on the Restaurant & Bar dashboard's Transactions tab.
@@ -1850,27 +1874,26 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                     </div>
                   )}
                   {cart.map(ci => (
-                    <div key={ci.id} className="border-b border-slate-100 py-2.5">
-                      <div className="flex items-center gap-3">
-                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${ci.route === 'bar' ? 'bg-sky-50 text-sky-500' : 'bg-amber-50 text-amber-600'}`}>
-                          {itemIcon(ci.route, 18)}
+                    <div key={ci.id} className="border-b border-slate-100 py-1">
+                      <div className="flex min-h-[31px] items-center gap-2">
+                        <div className={`flex h-[31px] w-[31px] shrink-0 items-center justify-center rounded-md ${ci.route === 'bar' ? 'bg-sky-50 text-sky-500' : 'bg-amber-50 text-amber-600'}`}>
+                          {itemIcon(ci.route, 16)}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="line-clamp-2 break-words font-medium leading-snug text-ghana-black" title={ci.name}>{ci.name}</div>
-                          <div className="text-xs text-slate-500">GH₵ {ci.price.toFixed(2)} each</div>
+                          <div className="truncate text-sm font-medium leading-tight text-ghana-black" title={ci.name}>{ci.name}</div>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <Button isIconOnly size="sm" variant="bordered" className="min-w-9 border-slate-200" aria-label={`One less ${ci.name}`} onClick={() => updateQty(ci.id, -1)}><Minus size={14} /></Button>
-                          <span className="w-6 text-center text-sm font-semibold" aria-live="polite">{ci.qty}</span>
-                          <Button isIconOnly size="sm" variant="bordered" className="min-w-9 border-slate-200" aria-label={`One more ${ci.name}`} onClick={() => updateQty(ci.id, 1)}><Plus size={14} /></Button>
+                        <div className="flex items-center gap-0.5">
+                          <Button isIconOnly size="sm" variant="bordered" className="h-[31px] w-[31px] min-w-[31px] border-slate-200" aria-label={`One less ${ci.name}`} onClick={() => updateQty(ci.id, -1)}><Minus size={14} /></Button>
+                          <span className="w-5 text-center text-sm font-semibold" aria-live="polite">{ci.qty}</span>
+                          <Button isIconOnly size="sm" variant="bordered" className="h-[31px] w-[31px] min-w-[31px] border-slate-200" aria-label={`One more ${ci.name}`} onClick={() => updateQty(ci.id, 1)}><Plus size={14} /></Button>
                         </div>
-                        <div className="hidden min-w-[5.5rem] shrink-0 whitespace-nowrap text-right text-sm font-semibold sm:block">
+                        <div className="hidden min-w-[4.5rem] shrink-0 whitespace-nowrap text-right text-sm font-semibold sm:block">
                           GH₵ {((ci.price - (ci.discountPerUnit || 0) + (ci.serviceChargePerUnit || 0)) * ci.qty).toFixed(2)}
                         </div>
-                        <Button isIconOnly size="sm" variant="light" color="danger" aria-label={`Remove ${ci.name}`} onClick={() => updateQty(ci.id, -ci.qty)}><Trash2 size={16} /></Button>
+                        <Button isIconOnly size="sm" variant="light" color="danger" className="h-[31px] w-[31px] min-w-[31px]" aria-label={`Remove ${ci.name}`} onClick={() => updateQty(ci.id, -ci.qty)}><Trash2 size={15} /></Button>
                       </div>
                       {showItemDiscounts && (
-                        <div className="mt-2 pl-[3.25rem]">
+                        <div className="mt-1 pl-9">
                           <Input
                             size="sm"
                             type="number"
@@ -1927,6 +1950,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
 
                 <div className="mt-3 shrink-0 space-y-2">
                   {showStationSend ? (
+                  <>
                   <div className="grid grid-cols-[1fr_auto] gap-2">
                     <Button
                       size="lg"
@@ -1947,26 +1971,27 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                       </DropdownTrigger>
                       <DropdownMenu
                         aria-label="More order actions"
-                        disabledKeys={cart.length === 0 ? ['preview', 'discounts', 'clear'] : []}
+                        disabledKeys={cart.length === 0 ? ['discounts'] : []}
                         onAction={(key) => {
-                          if (key === 'preview') previewCartReceipt();
                           if (key === 'kot') previewStationTicket('kot');
                           if (key === 'bot') previewStationTicket('bot');
                           if (key === 'discounts') setShowItemDiscounts(v => !v);
-                          if (key === 'clear') clearCart();
                         }}
                       >
-                        <DropdownItem key="preview" startContent={<Receipt size={16} />}>Preview receipt</DropdownItem>
                         <DropdownItem key="kot" startContent={<Printer size={16} />}>Print KOT</DropdownItem>
                         <DropdownItem key="bot" startContent={<Printer size={16} />}>Print BOT</DropdownItem>
                         <DropdownItem key="discounts">{showItemDiscounts ? 'Hide item discounts' : 'Item discounts'}</DropdownItem>
-                        <DropdownItem key="clear" className="text-danger" color="danger" startContent={<Trash2 size={16} />}>Clear order</DropdownItem>
                       </DropdownMenu>
                     </Dropdown>
                   </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button size="sm" variant="flat" className="h-10 border border-slate-200 bg-white font-semibold text-ghana-black" startContent={<Printer size={16} />} isDisabled={cart.length === 0} onPress={previewCurrentBill}>Preview bill</Button>
+                    <Button size="sm" variant="flat" color="danger" className="h-10" startContent={<Trash2 size={16} />} isDisabled={cart.length === 0} onPress={() => clearCart()}>Clear order</Button>
+                  </div>
+                  </>
                   ) : (
                   <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
-                    <Button size="sm" variant="flat" className="h-10 bg-slate-100" startContent={<Receipt size={16} />} isDisabled={cart.length === 0} onPress={previewCartReceipt}>Preview receipt</Button>
+                    <Button size="sm" variant="flat" className="h-10 border border-slate-200 bg-white font-semibold text-ghana-black" startContent={<Printer size={16} />} isDisabled={cart.length === 0} onPress={previewCurrentBill}>Preview bill</Button>
                     <Button size="sm" variant="flat" color="danger" className="h-10" startContent={<Trash2 size={16} />} isDisabled={cart.length === 0} onPress={() => clearCart()}>Clear order</Button>
                     <Dropdown placement="top-end">
                       <DropdownTrigger>
@@ -2211,6 +2236,38 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
               <Button variant="flat" className="bg-yellow-500 text-white" isLoading={isProcessingPayment} isDisabled={isProcessingPayment || amountDue <= 0} onClick={() => handlePayment('Mobile Money', amountDue)}>Mobile Money</Button>
               <Button variant="flat" className="bg-purple-600 text-white" isLoading={isProcessingPayment} isDisabled={isProcessingPayment || amountDue <= 0} onClick={() => handlePayment('Room Charge', amountDue)}>Bill to Room</Button>
             </div>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <div className="mb-1 text-xs font-medium text-gray-500">Card</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {['Visa', 'Visa Debit', 'Mastercard'].map((brand) => (
+                    <button
+                      key={brand}
+                      type="button"
+                      onClick={() => setCardBrand(brand)}
+                      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${cardBrand === brand ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700'}`}
+                    >
+                      {brand}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-medium text-gray-500">Mobile money</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {['MTN', 'Telecel', 'AirtelTigo'].map((brand) => (
+                    <button
+                      key={brand}
+                      type="button"
+                      onClick={() => setMomoBrand(brand)}
+                      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${momoBrand === brand ? 'bg-yellow-500 text-white' : 'bg-slate-100 text-slate-700'}`}
+                    >
+                      {brand}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
             <div className="mt-4">
               <div className="flex items-center justify-between mb-2">
                 <div className="font-medium text-ghana-black">Split Payments</div>
@@ -2433,8 +2490,8 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                 console.log(`[F&B POS] Server COGS on split bill: GH₵${billCogsAmount.toFixed(2)}`);
               }
 
-              // Print combined receipt
-              printReceipt({
+              paymentModal.onClose();
+              openReceiptPreview({
                 hotelName,
                 contact: 'Accra, Ghana',
                 code: `RCPT-${orderId ?? Date.now().toString().slice(-6)}`,
@@ -2445,7 +2502,11 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                 total: finalTotal + (tipAmount || 0),
                 table: tableNumber,
                 waiter: waiters.find(w => w.id === waiterId)?.name,
-              });
+                guestName: guestDisplayName,
+                roomNumber: customerType === 'In-house' ? roomNumber : undefined,
+                paymentMethod: primaryTender,
+                paymentBrand: paymentBrand(primaryTender),
+              }, true);
 
               trackEvent('Payment.Received', { orderId, venue, customerType, total: finalTotal, splits: splitPayments.length }, { sourceModule: 'F&B' });
               setSentOrderData(null);
@@ -2530,23 +2591,25 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
       {/* Split bill and tips modals removed */}
 
       {/* Print Preview Modal */}
-      <Modal isOpen={printPreviewModal.isOpen} onClose={() => { setPrintPreview(null); printPreviewModal.onClose(); }} size="lg">
+      <Modal isOpen={printPreviewModal.isOpen} onClose={() => { setPrintPreview(null); printPreviewModal.onClose(); }} size="md" classNames={{ base: 'max-w-[28rem]' }}>
         <ModalContent>
-          <ModalHeader className="text-ghana-black">{printPreview?.title || 'Preview'}</ModalHeader>
-          <ModalBody>
+          <ModalHeader className="justify-center border-b border-gray-200 px-12 py-3 text-center text-base text-ghana-black">{printPreview?.title || 'Preview'}</ModalHeader>
+          <ModalBody className="bg-stone-200 p-0">
             {printPreview?.html ? (
-              <iframe title={printPreview.title || 'Preview'} srcDoc={printPreview.html} className="h-[60vh] w-full border-0 bg-white" />
+              <iframe title={printPreview.title || 'Preview'} srcDoc={printPreview.html} className="h-[70vh] w-full border-0 bg-stone-200" />
             ) : (
-              <div className="text-sm text-gray-500">Nothing to preview.</div>
+              <div className="p-6 text-sm text-gray-500">Nothing to preview.</div>
             )}
           </ModalBody>
           <ModalFooter>
+            {printPreview && !printPreview.canPrint ? (
+              <span className="mr-auto text-xs text-slate-500">Pay this bill before printing.</span>
+            ) : null}
             <Button variant="flat" className="bg-gray-200" onClick={() => { setPrintPreview(null); printPreviewModal.onClose(); }}>Close</Button>
-            <Button variant="flat" className="bg-ghana-green text-white" onClick={() => {
-              if (printPreview?.html) {
-                if (/^\s*<!doctype/i.test(printPreview.html)) openHtmlPrintWindow(printPreview.html);
-                else printHtml(printPreview.title || 'Preview', printPreview.html);
-              }
+            <Button variant="flat" className="bg-ghana-green text-white" isDisabled={!printPreview?.canPrint} onClick={() => {
+              if (!printPreview?.canPrint || !printPreview.html) return;
+              if (/^\s*<!doctype/i.test(printPreview.html)) openHtmlPrintWindow(printPreview.html);
+              else printHtml(printPreview.title || 'Preview', printPreview.html);
             }}>Print</Button>
           </ModalFooter>
         </ModalContent>
@@ -2611,6 +2674,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                 </ModalBody>
                 <ModalFooter className="flex-wrap justify-between gap-2">
                   <div className="flex flex-wrap gap-1">
+                    <Button size="sm" variant="light" startContent={<Printer size={14} />} onClick={previewActivityBill}>Preview bill</Button>
                     <Button size="sm" variant="light" onClick={() => {
                       loadOrderIntoCart({
                         id: o.id,

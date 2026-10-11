@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import HeadingInfo from './HeadingInfo';
-import { chooseDanger, confirmDanger, confirmDelete, confirmVoid } from './DangerConfirm';
+import { chooseDanger, confirmChoice, confirmDanger, confirmDelete, confirmVoid } from './DangerConfirm';
 import { 
   Card, 
   CardBody, 
@@ -1134,11 +1134,33 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         return;
       }
 
-      // Walk-in with no room: ask before anything is saved, so "Assign room"
-      // can go back to the form and open that guest's room pop-up.
+      // Ask once the form is complete, before anything is saved.
+      // A walk-in with no room uses the assign-room question instead of a second prompt.
+      const guestNames = bulkGuests.map((g) => guestDisplayName(g.guest) || 'Guest');
+      const stayDate = (value?: string) => {
+        const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value || '');
+        if (!match) return value || '';
+        return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])).toLocaleDateString();
+      };
+      const bookingLine = (g: typeof bulkGuests[number], name: string, verb: string) => {
+        const room = g.roomId ? ` for room ${g.roomId}` : '';
+        const from = stayDate(g.arrival);
+        const to = stayDate(g.departure);
+        const dates = from && to ? ` from ${from} to ${to}` : '';
+        return `${name} will be ${verb}${room}${dates}.`;
+      };
+      const leadName = guestNames.length === 1 ? guestNames[0] : '';
       let walkInLeaveOpen = false;
       if (mode === 'checkin') {
         const roomless = bulkGuests.filter((g) => !g.roomId);
+        if (roomless.length === 0) {
+          const ok = await confirmChoice(
+            leadName ? `Check in ${leadName}?` : `Check in ${bulkGuests.length} guests?`,
+            bulkGuests.map((g, i) => bookingLine(g, guestNames[i], 'checked in')).join(' '),
+            'Check in',
+          );
+          if (!ok) return;
+        }
         if (roomless.length > 0) {
           const who = roomless.map((g) => guestDisplayName(g.guest)).filter(Boolean).join(', ') || 'This guest';
           const choice = await chooseDanger({
@@ -1155,8 +1177,16 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
             setRoomPickerFor(roomless[0].id);
             return;
           }
-          walkInLeaveOpen = choice === 'confirm';
+          if (choice !== 'confirm') return;
+          walkInLeaveOpen = true;
         }
+      } else {
+        const ok = await confirmChoice(
+          leadName ? `Create reservation for ${leadName}?` : `Create ${bulkGuests.length} reservations?`,
+          bulkGuests.map((g, i) => bookingLine(g, guestNames[i], 'booked')).join(' '),
+          'Create reservation',
+        );
+        if (!ok) return;
       }
 
         // Create reservations for each guest

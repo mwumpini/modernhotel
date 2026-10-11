@@ -3,6 +3,8 @@ import { money } from './templates';
 import type { BlockConfig, BlockTemplate, BlockType, TemplateStyle } from './blocks';
 import { amountInWords } from './amountInWords';
 import { computeTotalsBreakdown } from './taxBreakdown';
+import { renderRetailSlipDocument } from './retailSlip';
+import { renderNodaBillDocument } from './nodaBill';
 
 const ROMAN_LOWER = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x', 'xi', 'xii', 'xiii', 'xiv', 'xv'];
 function roman(n: number): string {
@@ -285,6 +287,14 @@ function renderLineItemsTable(block: BlockConfig, data: PrintData, currency: str
   const showUnit = cols.includes('unit');
   const showRate = cols.includes('unitPrice');
 
+  if (block.lineItemsDisplay === 'slip') {
+    const lines = items.map((it) => {
+      const qty = it.qty != null && it.qty !== 1 ? `${it.qty} ` : '';
+      return `<div style="display:flex; justify-content:space-between; gap:12px; margin:3px 0; text-transform:uppercase;"><span>${qty}${it.description}</span><span>${money(it.amount, currency)}</span></div>`;
+    }).join('');
+    return `<div>${lines}<div style="border-top:1px dashed #888; margin-top:8px;"></div></div>`;
+  }
+
   if (block.lineItemsDisplay === 'simple') {
     const lines = items.map((it) => {
       const headingHtml = it.heading ? `<div style="font-weight:700; text-decoration:underline; margin-top:10px;">${it.heading}</div>` : '';
@@ -449,6 +459,44 @@ function totalsTable(rows: Array<[string, number | undefined]>, currency: string
   return `<table class="totals"><tbody>${rows.map(([label, val]) => `<tr><td class="label">${label}</td><td class="value">${money(val, currency)}</td></tr>`).join('')}</tbody></table>`;
 }
 
+function slipRow(label: string, value: string, bold = false): string {
+  const weight = bold ? 'font-weight:800; font-size:1.15em;' : '';
+  return `<div style="display:flex; justify-content:space-between; gap:12px; margin:2px 0; text-transform:uppercase; ${weight}"><span>${label}</span><span>${value}</span></div>`;
+}
+
+function renderSlipTender(data: PrintData, currency: string): string {
+  const tender = data.tender;
+  if (!tender) return '';
+  const method = tender.method.toLowerCase();
+  const brand = tender.brand ? `<div style="margin-top:2px; text-transform:uppercase;">${tender.brand}</div>` : '';
+  if (method === 'cash') {
+    const tendered = tender.tendered ?? tender.amount;
+    const change = tender.change ?? Math.max(0, tendered - tender.amount);
+    return slipRow('Cash', money(tendered, currency)) + (change > 0.004 ? slipRow('Change', money(change, currency)) : '');
+  }
+  if (method === 'card') return slipRow('Card Payment', money(tender.amount, currency)) + brand;
+  if (method.includes('mobile')) return slipRow(tender.brand || 'Mobile Money', money(tender.amount, currency));
+  if (method.includes('room')) return slipRow('Room Charge', money(tender.amount, currency));
+  return slipRow(tender.method, money(tender.amount, currency)) + brand;
+}
+
+function renderSlipTotals(
+  data: PrintData,
+  currency: string,
+  preTaxLines: Array<[string, number | undefined]>,
+  taxLines: Array<[string, number]>,
+  grand: number,
+): string {
+  const rows = [
+    ...preTaxLines.map(([label, value]) => slipRow(label === 'Sub Total' ? 'Sub-total' : label, money(value, currency))),
+    ...taxLines.map(([label, value]) => slipRow(label, money(value, currency))),
+    slipRow('Total', money(grand, currency), true),
+  ].join('');
+  const tender = renderSlipTender(data, currency);
+  const rule = `<div style="border-top:1px dashed #888; margin:8px 0;"></div>`;
+  return `<div>${rows}${tender ? `${rule}${tender}` : ''}</div>`;
+}
+
 function renderTotalsSummary(block: BlockConfig, data: PrintData, currency: string): string {
   if (data.debitCreditLines && data.debitCreditLines.length) {
     const totalDebit = data.debitCreditLines.reduce((s, l) => s + (l.debit || 0), 0);
@@ -474,6 +522,10 @@ function renderTotalsSummary(block: BlockConfig, data: PrintData, currency: stri
   // 3 lines only — subtotal, every tax collapsed into one combined line, grand
   // total — instead of breaking each tax out separately. Matches how some
   // hotels summarize the tax breakdown at a glance rather than itemizing it.
+  if (block.totalsDisplay === 'slip') {
+    return renderSlipTotals(data, currency, preTaxLines, taxLines, grand);
+  }
+
   if (block.totalsDisplay === 'compact-taxes') {
     return `${boxedGridTable([
       { label: preTaxLines[0][0], value: money(preTaxLines[0][1], currency), bold: true },
@@ -520,7 +572,17 @@ function renderDocNumber(block: BlockConfig, data: PrintData): string {
 // — instead of the bare date (used by letter-style templates; the Checkout Bill
 // preset leaves it unset and gets today's existing bare-date behavior).
 function renderDocDate(block: BlockConfig, data: PrintData): string {
-  return data.docDate ? `<div>${block.heading ? `${block.heading} ` : ''}${new Date(data.docDate).toLocaleDateString()}</div>` : '';
+  if (!data.docDate) return '';
+  const when = new Date(data.docDate);
+  if (Number.isNaN(when.getTime())) return '';
+  if (block.dateFormat === 'slip') {
+    const day = when.toLocaleDateString('en-GB', { weekday: 'short' }).replace(/\./g, '').toUpperCase();
+    const date = when.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase();
+    const time = when.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+    const ref = data.docNumber ? `&nbsp;&nbsp;${data.docNumber}` : '';
+    return `<div>${day} ${date}&nbsp;&nbsp;${time}${ref}</div><div style="border-top:1px dashed #888; margin-top:8px;"></div>`;
+  }
+  return `<div>${block.heading ? `${block.heading} ` : ''}${when.toLocaleDateString()}</div>`;
 }
 
 function renderCompanyName(_block: BlockConfig, data: PrintData): string {
@@ -850,6 +912,8 @@ function renderBlock(block: BlockConfig, data: PrintData, currency: string): str
     case 'payslip-earnings-table': return renderPayslipEarningsTable(block, data, currency);
     case 'payslip-deductions-table': return renderPayslipDeductionsTable(block, data, currency);
     case 'payslip-summary': return renderPayslipSummary(block, data, currency);
+    case 'retail-slip': return '';
+    case 'noda-bill': return '';
     default: return '';
   }
 }
@@ -920,6 +984,7 @@ function wrapBlock(html: string, block: BlockConfig): string {
   if (block.style?.fontSize === 'sm') styles.push('font-size:0.85em');
   if (block.style?.fontSize === 'lg') styles.push('font-size:1.25em');
   if (block.style?.bold) styles.push('font-weight:700');
+  if (block.uppercase) styles.push('text-transform:uppercase', 'letter-spacing:0.03em');
   const cls = NO_BREAK_TYPES.includes(block.type) ? ' class="avoid-break"' : '';
   return (styles.length || cls) ? `<div${cls} style="${styles.join('; ')};">${html}</div>` : html;
 }
@@ -965,6 +1030,12 @@ function composeBodyHtml(blocks: BlockConfig[], data: PrintData, currency: strin
  *  into a full HTML document, in the same shape the legacy hand-written templates
  *  (templates.ts) produce — a drop-in replacement wherever those are used. */
 export function renderBlockTemplate(template: BlockTemplate, data: PrintData): string {
+  if (template.blocks.some(b => b.visible && b.type === 'retail-slip')) {
+    return renderRetailSlipDocument(data);
+  }
+  if (template.blocks.some(b => b.visible && b.type === 'noda-bill')) {
+    return renderNodaBillDocument(data);
+  }
   const currency = data.currency || '₵';
   const style = template.style;
   const visible = template.blocks.filter(b => b.visible).sort((a, b) => a.order - b.order);

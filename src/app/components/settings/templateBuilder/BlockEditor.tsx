@@ -40,6 +40,8 @@ const BLOCK_LABELS: Record<BlockType, string> = {
   'payslip-earnings-table': 'Earnings Table',
   'payslip-deductions-table': 'Deductions Table',
   'payslip-summary': 'Pay Summary (Net Pay)',
+  'retail-slip': 'Retail till slip',
+  'noda-bill': 'Noda restaurant bill',
 };
 
 /** Shown on the field row and on add-chips. The long label stays in the tooltip. */
@@ -59,11 +61,13 @@ const BLOCK_ZONE: Record<BlockType, 'header' | 'body' | 'footer'> = {
   'custom-text': 'footer', 'terms-conditions': 'footer',
   'container': 'body',
   'employee-details': 'body', 'payslip-earnings-table': 'body', 'payslip-deductions-table': 'body', 'payslip-summary': 'body',
+  'retail-slip': 'body',
+  'noda-bill': 'body',
 };
 const ZONE_LABELS: Record<'header' | 'body' | 'footer', string> = { header: 'Header', body: 'Body', footer: 'Footer' };
 
 const ADDABLE_BLOCK_TYPES: BlockType[] = (Object.keys(BLOCK_LABELS) as BlockType[])
-  .filter(t => !(['company-info', 'doc-meta', 'recipient-info', 'totals-summary'] as BlockType[]).includes(t));
+  .filter(t => !(['company-info', 'doc-meta', 'recipient-info', 'totals-summary', 'retail-slip', 'noda-bill'] as BlockType[]).includes(t));
 
 const REPEATABLE_BLOCK_TYPES: BlockType[] = ['container', 'custom-text'];
 
@@ -815,6 +819,7 @@ function BlockSettings({ block, onChange, hasLegacyHeaderBlock, parentDirection 
                 <option value="table">Table</option>
                 <option value="list">Itemized list with a dotted leader</option>
                 <option value="simple">Plain lines (description and amount)</option>
+                <option value="slip">Till slip (name and price)</option>
               </select>
             </div>
             <div>
@@ -1013,6 +1018,7 @@ function BlockSettings({ block, onChange, hasLegacyHeaderBlock, parentDirection 
                 <option value="table">Table</option>
                 <option value="numbered-list">Numbered list — (i) Tax exclusive value…</option>
                 <option value="compact-taxes">Compact — exclusive, taxes included, total</option>
+                <option value="slip">Till slip — sub-total, tax, total, payment</option>
               </select>
             </div>
             <div className="flex items-center justify-between">

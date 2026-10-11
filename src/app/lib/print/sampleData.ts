@@ -1,11 +1,15 @@
 import type { PrintData, PrintOrgInfo, PrintType } from './templates';
 
+/** Shown on template samples when the hotel has not uploaded its own logo. */
+export const SAMPLE_LOGO_URL = '/brand/agm-sync-icon.svg';
+
 const placeholderOrg: PrintOrgInfo = {
   name: 'Golden Palm Hotel',
   address: '12 Independence Ave, Accra, Ghana',
   phone: '+233 20 123 4567',
   email: 'frontdesk@goldenpalmhotel.com',
   taxId: 'C0012345678',
+  logoUrl: SAMPLE_LOGO_URL,
 };
 
 const sampleBankDetails = {
@@ -37,7 +41,8 @@ const BANK_SAMPLE_TYPES = new Set<PrintType>([
  * including the uploaded logo — matches what actually prints.
  */
 export function getSampleData(docType: PrintType, org: PrintOrgInfo = placeholderOrg): PrintData {
-  const data = sampleDocument(docType, org);
+  const branded: PrintOrgInfo = { ...org, logoUrl: org.logoUrl || SAMPLE_LOGO_URL };
+  const data = sampleDocument(docType, branded);
   if (BANK_SAMPLE_TYPES.has(docType) && !data.bankDetails) {
     return { ...data, bankDetails: { ...sampleBankDetails, accountName: org.name || sampleBankDetails.accountName } };
   }
@@ -253,24 +258,33 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
     case 'fb-receipt':
       return {
         org: sampleOrg,
-        guest: { name: 'Efua Mensah' },
-        docNumber: 'RCPT-100214',
+        guest: { name: 'Joshua', company: 'World Vision', roomNumber: '1401' },
+        docNumber: '11872',
         docDate: new Date().toISOString(),
-        title: 'Receipt',
+        title: 'Restaurant Bill',
+        tableNumber: '01',
         items: [
-          { description: 'Jollof Rice & Chicken', qty: 1, unit: 'plate', unitPrice: 85, amount: 85 },
-          { description: 'Star Beer (Bottle)', qty: 2, unit: 'bottle', unitPrice: 25, amount: 50 },
+          { description: 'Noda Spe Ass. Fried Rice', qty: 5, unitPrice: 50, amount: 250 },
         ],
         totals: {
-          subTotal: 135,
-          taxes: { nhil: 3.38, gefl: 3.38, levy: 1.35, vat: 20.25 },
-          grandTotal: 163.36,
-          payments: 163.36,
+          subTotal: 250,
+          taxes: { nhil: 0, gefl: 0, levy: 0, vat: 0 },
+          grandTotal: 250,
+          payments: 250,
           balance: 0,
         },
-        footerNotes: ['Table 4 · Server Abena', 'Thank you for dining with us.'],
+        footerNotes: ['Table 01 · Attendant Joshua'],
         currency: '₵',
-        attendantName: 'Abena Serwaa',
+        attendantName: 'Joshua',
+        tender: {
+          method: 'Card',
+          brand: 'Visa Debit',
+          amount: 250,
+          aid: 'A0000000031010',
+          authCode: '036782',
+          terminalId: '282901',
+          verification: 'No Cardholder Verification',
+        },
       };
     case 'registration-card':
       return {

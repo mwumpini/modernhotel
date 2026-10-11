@@ -2,8 +2,21 @@
 
 import { renderPrint, openHtmlPrintWindow } from './engine';
 import { buildOrgProfile } from './buildOrgProfile';
+import { SAMPLE_LOGO_URL } from './sampleData';
 import { useSettingsStore } from '../settings/store';
 import { salesTaxBreakdown } from '../tax/engine';
+
+function esc(value: string) {
+  return value.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch] || ch));
+}
+
+function slipLogoUrl() {
+  try {
+    return useSettingsStore.getState().companySettings?.logoUrl || SAMPLE_LOGO_URL;
+  } catch {
+    return SAMPLE_LOGO_URL;
+  }
+}
 
 export function printHtml(title: string, bodyHtml: string) {
   const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=480');
@@ -90,21 +103,44 @@ export function buildReceiptHtml(args: {
 }
 
 export function buildKOTHtml(args: {
-  code: string; table: string; waiter: string; notes?: string; urgent?: boolean; title?: string; items: Array<{ name: string; qty: number }>;
+  code: string; table: string; waiter: string; notes?: string; urgent?: boolean; title?: string; hotelName?: string; items: Array<{ name: string; qty: number }>;
 }) {
-  const itemsRows = args.items.map(i => `<tr><td>${i.qty} x ${i.name}</td></tr>`).join('');
+  const itemsRows = args.items.map((item) => `
+    <div class="item"><span class="qty">${esc(String(item.qty))}</span><span>${esc(item.name)}</span></div>
+  `).join('');
   return `
-  <div class="receipt">
-    <div class="center">
-      <h2>${args.title || 'Kitchen Order Ticket'}</h2>
-      <div class="muted">Order: ${args.code}</div>
-      <div class="muted">Table ${args.table} • ${args.waiter}</div>
-      ${args.urgent ? '<div style="color:#b91c1c;font-weight:700;margin-top:4px">URGENT</div>' : ''}
-    </div>
-    <div class="line"></div>
-    <table>${itemsRows}</table>
-    ${args.notes ? `<div class="line"></div><div><strong>Notes:</strong> ${args.notes}</div>` : ''}
+  <div class="slip">
+    <div class="center"><img class="logo" src="${esc(slipLogoUrl())}" alt="AGM Sync" /></div>
+    <h2 class="center brand">${esc(args.hotelName || 'Restaurant')}</h2>
+    <div class="center ticket">${esc(args.title || 'Kitchen Order Ticket')}</div>
+    <div class="center meta">${esc(args.code)}</div>
+    <div class="center meta">Table ${esc(args.table || '—')} · ${esc(args.waiter || '—')}</div>
+    ${args.urgent ? '<div class="center urgent">Urgent</div>' : ''}
+    <div class="rule"></div>
+    ${itemsRows}
+    ${args.notes ? `<div class="rule"></div><div class="notes"><strong>Notes</strong><br>${esc(args.notes)}</div>` : ''}
   </div>`;
+}
+
+const SLIP_PREVIEW_CSS = `
+  body { margin:0; background:#e7e5e4; font-family: "Segoe UI", Arial, sans-serif; color:#111; }
+  .slip { width:320px; margin:16px auto; background:#fff; padding:18px 16px 22px; box-shadow:0 8px 24px rgba(0,0,0,.12); }
+  .center { text-align:center; }
+  .logo { width:56px; height:56px; object-fit:contain; }
+  h2 { margin:8px 0 0; font-size:22px; letter-spacing:.04em; text-transform:uppercase; }
+  .ticket { margin-top:4px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; }
+  .meta { margin-top:2px; font-size:12px; color:#444; }
+  .urgent { margin-top:6px; color:#b91c1c; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+  .rule { border-top:1px dashed #888; margin:10px 0; }
+  .item { display:flex; gap:12px; margin:4px 0; text-transform:uppercase; }
+  .qty { width:1.6rem; text-align:right; font-variant-numeric:tabular-nums; }
+  .notes { font-size:13px; }
+  @media print { body { background:#fff; } .slip { margin:0; box-shadow:none; } }
+`;
+
+/** Full page for the preview window, so the slip sits centered instead of stretching. */
+export function slipPreviewDocument(innerHtml: string, title: string) {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${SLIP_PREVIEW_CSS}</style></head><body>${innerHtml}</body></html>`;
 }
 
 // Printing integration: browser window (default) or local bridge (HTTP)
@@ -146,14 +182,31 @@ function escposHeader(text: string) { return `\x1B@\x1B!\x38${text}\n\x1B!\x00`;
 function escposLine() { return `\n------------------------------------------\n`; }
 
 /** POS receipt, using the Restaurant & Bar template set in Document Templates. */
-export function renderFbReceipt(args: Parameters<typeof buildReceiptHtml>[0] & { guestName?: string }): string {
+export function renderFbReceipt(args: Parameters<typeof buildReceiptHtml>[0] & {
+  guestName?: string;
+  guestCompany?: string;
+  roomNumber?: string;
+  paymentMethod?: string;
+  paymentBrand?: string;
+  tendered?: number;
+  change?: number;
+  aid?: string;
+  authCode?: string;
+  terminalId?: string;
+  verification?: string;
+}): string {
   const settings = useSettingsStore.getState();
   const taxable = Math.max(0, args.subtotal - args.discount);
   const tax = salesTaxBreakdown(taxable);
   const where = [args.table ? `Table ${args.table}` : '', args.waiter ? `Server ${args.waiter}` : ''].filter(Boolean).join(' · ');
   return renderPrint('fb-receipt', settings.printing['fb-receipt'], {
     org: buildOrgProfile(settings),
-    guest: { name: args.guestName || 'Walk-in' },
+    guest: {
+      name: args.guestName || 'Walk-in',
+      company: args.guestCompany,
+      roomNumber: args.roomNumber,
+    },
+    tableNumber: args.table,
     docNumber: args.code,
     docDate: new Date().toISOString(),
     title: 'Receipt',
@@ -174,10 +227,21 @@ export function renderFbReceipt(args: Parameters<typeof buildReceiptHtml>[0] & {
     footerNotes: [where, 'Thank you for dining with us.'].filter(Boolean),
     currency: '₵',
     attendantName: args.waiter,
+    tender: args.paymentMethod ? {
+      method: args.paymentMethod,
+      brand: args.paymentBrand,
+      amount: args.total,
+      tendered: args.tendered,
+      change: args.change,
+      aid: args.aid,
+      authCode: args.authCode,
+      terminalId: args.terminalId,
+      verification: args.verification,
+    } : undefined,
   });
 }
 
-export function printReceipt(args: Parameters<typeof buildReceiptHtml>[0] & { guestName?: string }) {
+export function printReceipt(args: Parameters<typeof renderFbReceipt>[0]) {
   const html = renderFbReceipt(args);
   const { method, routeReceipt } = getPrintSettings();
   const effective = routeReceipt || method;
@@ -196,12 +260,12 @@ export function previewReceipt(args: Parameters<typeof renderFbReceipt>[0]) {
   w.document.close();
 }
 
-export function printKOTDoc(args: { code: string; table: string; waiter: string; notes?: string; urgent?: boolean; title?: string; items: Array<{ name: string; qty: number }>; }) {
-  const html = buildKOTHtml(args);
+export function printKOTDoc(args: { code: string; table: string; waiter: string; notes?: string; urgent?: boolean; title?: string; hotelName?: string; items: Array<{ name: string; qty: number }>; }) {
+  const heading = args.title || 'KOT';
+  const html = slipPreviewDocument(buildKOTHtml(args), heading);
   const { method, routeKOT } = getPrintSettings();
   const effective = routeKOT || method;
-  const heading = args.title || 'KOT';
-  if (effective === 'browser') return printHtml(heading, html);
+  if (effective === 'browser') return openHtmlPrintWindow(html);
   const items = args.items.map(i => `${i.qty} x ${i.name}`.slice(0,42)).join('\n');
   const esc = `${escposHeader(heading)}${args.code}\nTable ${args.table} • ${args.waiter}\n${args.urgent ? 'URGENT\n' : ''}${escposLine()}${items}${args.notes ? '\nNotes: '+args.notes : ''}\n\x1DVA\x00`;
   return sendToBridge('kot', html, esc);

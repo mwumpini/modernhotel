@@ -847,6 +847,33 @@ function taxInvoiceBlocks(recipientHeading: string): BlockConfig[] {
   ];
 }
 
+/** Fixed 80mm grocery-style slip. The paper is drawn by renderRetailSlipDocument. */
+function retailTillBlocks(): BlockConfig[] {
+  return [block({ id: 'retail-slip', type: 'retail-slip', order: 0 })];
+}
+
+/** Noda Hotel restaurant bill. The paper is drawn by renderNodaBillDocument. */
+function nodaBillBlocks(): BlockConfig[] {
+  return [block({ id: 'noda-bill', type: 'noda-bill', order: 0 })];
+}
+
+/** Till slip: logo, store lines, items, tax, total, then the way it was paid. */
+function restaurantTillBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'logo', type: 'logo', order: 0, align: 'center', spacing: 'none' }),
+    block({ id: 'company-name', type: 'company-name', order: 1, align: 'center', uppercase: true, style: { fontSize: 'lg', bold: true }, spacing: 'small' }),
+    block({ id: 'company-address', type: 'company-address', order: 2, align: 'center', uppercase: true, style: { fontSize: 'sm' }, spacing: 'none' }),
+    block({ id: 'company-contact', type: 'company-contact', order: 3, align: 'center', style: { fontSize: 'sm' }, spacing: 'none' }),
+    block({ id: 'slip-when', type: 'doc-date', order: 4, align: 'center', dateFormat: 'slip', style: { fontSize: 'sm' }, spacing: 'small' }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 5, lineItemsDisplay: 'slip', spacing: 'small' }),
+    block({ id: 'totals-summary', type: 'totals-summary', order: 6, totalsDisplay: 'slip', spacing: 'none' }),
+    block({
+      id: 'thank-you', type: 'custom-text', order: 7, align: 'center', uppercase: true, style: { bold: true }, spacing: 'medium',
+      text: 'A big thank you\nfor dining with us',
+    }),
+  ];
+}
+
 /**
  * 80mm thermal/POS-printer format (see TemplateStyle.pageWidth) — narrow,
  * monospace, minimal, no logo — matches a front-desk receipt printer instead
@@ -1370,7 +1397,9 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-registration-card-formal', 'registration-card', 'Formal (with policy terms)', formalRegistrationCardBlocks(), { fontFamily: 'serif', borderWidth: 'thick' }),
   ],
   'fb-receipt': [
-    template('builtin-fb-receipt-thermal', 'fb-receipt', 'Thermal / POS Slip (80mm)', thermalReceiptBlocks('Guest'), { fontFamily: 'mono', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm' }),
+    template('builtin-fb-receipt-noda', 'fb-receipt', 'Noda', nodaBillBlocks(), { fontFamily: 'sans', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm', corners: 'square', primaryColor: '#111111', borderColor: '#111111' }),
+    template('builtin-fb-receipt-retail', 'fb-receipt', 'Retail till', retailTillBlocks(), { fontFamily: 'sans', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm', corners: 'square' }),
+    template('builtin-fb-receipt-thermal', 'fb-receipt', 'Till slip', restaurantTillBlocks(), { fontFamily: 'sans', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm', corners: 'square', logoSize: 'sm' }),
     template('builtin-fb-receipt-thermal-banner', 'fb-receipt', 'Thermal · Banner', thermalBannerBlocks(), { fontFamily: 'sans', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm', primaryColor: '#006B3F', borderColor: '#006B3F' }),
     template('builtin-fb-receipt-thermal-total', 'fb-receipt', 'Thermal · Big total', thermalBigTotalBlocks(), { fontFamily: 'sans', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'md', primaryColor: '#111111', borderColor: '#111111', corners: 'square' }),
     template('builtin-fb-receipt-thermal-itemized', 'fb-receipt', 'Thermal · Itemized', thermalItemizedBlocks(), { fontFamily: 'sans', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm', corners: 'square', borderWidth: 'thin' }),

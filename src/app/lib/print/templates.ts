@@ -99,6 +99,22 @@ export interface PrintTotals {
   grandTotal?: number;
 }
 
+/** How the guest paid, printed under the total on a till slip. */
+export interface PrintTender {
+  method: string;
+  /** Card or wallet brand, such as Visa Debit or MTN. */
+  brand?: string;
+  amount: number;
+  tendered?: number;
+  change?: number;
+  /** Card application id, printed only when a terminal supplied it. */
+  aid?: string;
+  authCode?: string;
+  terminalId?: string;
+  /** For example "No Cardholder Verification" on a contactless payment. */
+  verification?: string;
+}
+
 export interface PrintSignature {
   label: string;
   role?: string;
@@ -223,6 +239,10 @@ export interface PrintData {
    *  payslip-deductions-table / payslip-summary. */
   earningsItems?: PrintLineItem[];
   deductionsItems?: PrintLineItem[];
+  /** Till slip: cash, card brand, mobile money, or room charge under the total. */
+  tender?: PrintTender;
+  /** Restaurant table on a Noda bill, such as "01" or "T01". */
+  tableNumber?: string;
 }
 
 function cssBase() {
