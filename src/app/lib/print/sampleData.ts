@@ -93,7 +93,7 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
         org: sampleOrg,
         guest: {
           name: 'Kwame Mensah',
-          company: 'World Vision Ghana',
+          company: 'Sample Company Ltd',
           roomNumber: '101',
           roomType: 'Deluxe',
           roomRate: 500,
@@ -150,7 +150,7 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
     case 'event-proforma':
       return {
         org: sampleOrg,
-        guest: { name: 'Evans Aboagye', company: 'World Vision Ghana', address: 'Effiduase ADP\nAshanti Region' },
+        guest: { name: 'Kwame Asante', company: 'Sample Company Ltd', address: 'P.O. Box 123\nAccra' },
         docNumber: 'PRO-2026-0032-CE',
         docDate: new Date().toISOString(),
         title: 'Quotation — Conference & Events',
@@ -212,7 +212,7 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
     case 'event-invoice':
       return {
         org: sampleOrg,
-        guest: { name: 'Evans Aboagye', company: 'World Vision Ghana', address: 'Effiduase ADP\nAshanti Region' },
+        guest: { name: 'Kwame Asante', company: 'Sample Company Ltd', address: 'P.O. Box 123\nAccra' },
         docNumber: 'INV-2026-0108-CE',
         docDate: new Date().toISOString(),
         title: 'Invoice — Conference & Events',
@@ -258,28 +258,29 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
     case 'fb-receipt':
       return {
         org: sampleOrg,
-        guest: { name: 'Joshua', company: 'World Vision', roomNumber: '1401' },
-        docNumber: '11872',
+        guest: { name: 'Kofi Mensah', company: 'Sample Company Ltd', roomNumber: '204' },
+        docNumber: 'RB-10021',
         docDate: new Date().toISOString(),
         title: 'Restaurant Bill',
-        tableNumber: '01',
+        tableNumber: '04',
         items: [
-          { description: 'Noda Spe Ass. Fried Rice', qty: 5, unitPrice: 50, amount: 250 },
+          { description: 'Special Fried Rice', qty: 2, unitPrice: 60, amount: 120 },
+          { description: 'Pineapple Juice', qty: 1, unitPrice: 25, amount: 25 },
         ],
         totals: {
-          subTotal: 250,
-          taxes: { nhil: 0, gefl: 0, levy: 0, vat: 0 },
-          grandTotal: 250,
-          payments: 250,
+          subTotal: 145,
+          taxes: { nhil: 3.63, gefl: 3.63, levy: 1.45, vat: 21.75 },
+          grandTotal: 175.46,
+          payments: 175.46,
           balance: 0,
         },
-        footerNotes: ['Table 01 · Attendant Joshua'],
+        footerNotes: ['Table 04 · Attendant Abena'],
         currency: '₵',
-        attendantName: 'Joshua',
+        attendantName: 'Abena',
         tender: {
           method: 'Card',
           brand: 'Visa Debit',
-          amount: 250,
+          amount: 175.46,
           aid: 'A0000000031010',
           authCode: '036782',
           terminalId: '282901',
@@ -291,8 +292,8 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
         org: sampleOrg,
         guest: {
           name: 'Kwame Mensah',
-          company: 'World Vision Ghana',
-          address: 'Effiduase ADP\nAshanti Region',
+          company: 'Sample Company Ltd',
+          address: 'P.O. Box 123\nAccra',
           roomNumber: '101',
           roomType: 'Deluxe',
           roomRate: 500,
@@ -344,7 +345,7 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
         org: sampleOrg,
         guest: {
           name: 'Kwame Mensah',
-          company: 'World Vision Ghana',
+          company: 'Sample Company Ltd',
           roomNumber: '101',
           roomType: 'Deluxe',
           roomRate: 500,

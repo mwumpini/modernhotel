@@ -218,8 +218,9 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
   const [orders, setOrders] = useState<FBOrder[]>([]);
   const [splitPayments, setSplitPayments] = useState<Array<{ method: PaymentMethod; amount: number }>>([]);
   const [tipAmount, setTipAmount] = useState<number>(0);
-  const [cardBrand, setCardBrand] = useState('Visa Debit');
-  const [momoBrand, setMomoBrand] = useState('MTN');
+  // No brand until the cashier taps one, so a receipt never names the wrong card or network.
+  const [cardBrand, setCardBrand] = useState('');
+  const [momoBrand, setMomoBrand] = useState('');
   const [settleRoomSearch, setSettleRoomSearch] = useState<string>('');
   const [settleSelectedRoom, setSettleSelectedRoom] = useState<{ roomId: string; guestId: string; guestName: string } | null>(null);
   const [orderMode, setOrderMode] = useState<'Dine-in' | 'Takeaway'>('Dine-in');
@@ -888,10 +889,14 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
     setIsSending(false);
   };
 
-  const openPayment = () => paymentModal.onOpen();
+  const openPayment = () => {
+    setCardBrand('');
+    setMomoBrand('');
+    paymentModal.onOpen();
+  };
 
   const paymentBrand = (method: PaymentMethod) => (
-    method === 'Card' ? cardBrand : method === 'Mobile Money' ? momoBrand : undefined
+    (method === 'Card' ? cardBrand : method === 'Mobile Money' ? momoBrand : '') || undefined
   );
 
   const handlePayment = async (paymentMethod: PaymentMethod, amount: number) => {
@@ -2244,7 +2249,8 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                     <button
                       key={brand}
                       type="button"
-                      onClick={() => setCardBrand(brand)}
+                      aria-pressed={cardBrand === brand}
+                      onClick={() => setCardBrand((current) => (current === brand ? '' : brand))}
                       className={`rounded-full px-2.5 py-1 text-xs font-semibold ${cardBrand === brand ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700'}`}
                     >
                       {brand}
@@ -2259,7 +2265,8 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                     <button
                       key={brand}
                       type="button"
-                      onClick={() => setMomoBrand(brand)}
+                      aria-pressed={momoBrand === brand}
+                      onClick={() => setMomoBrand((current) => (current === brand ? '' : brand))}
                       className={`rounded-full px-2.5 py-1 text-xs font-semibold ${momoBrand === brand ? 'bg-yellow-500 text-white' : 'bg-slate-100 text-slate-700'}`}
                     >
                       {brand}

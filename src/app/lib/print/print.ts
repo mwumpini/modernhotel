@@ -2,7 +2,6 @@
 
 import { renderPrint, openHtmlPrintWindow } from './engine';
 import { buildOrgProfile } from './buildOrgProfile';
-import { SAMPLE_LOGO_URL } from './sampleData';
 import { useSettingsStore } from '../settings/store';
 import { salesTaxBreakdown } from '../tax/engine';
 
@@ -12,9 +11,9 @@ function esc(value: string) {
 
 function slipLogoUrl() {
   try {
-    return useSettingsStore.getState().companySettings?.logoUrl || SAMPLE_LOGO_URL;
+    return useSettingsStore.getState().companySettings?.logoUrl || '';
   } catch {
-    return SAMPLE_LOGO_URL;
+    return '';
   }
 }
 
@@ -110,7 +109,7 @@ export function buildKOTHtml(args: {
   `).join('');
   return `
   <div class="slip">
-    <div class="center"><img class="logo" src="${esc(slipLogoUrl())}" alt="AGM Sync" /></div>
+    ${slipLogoUrl() ? `<div class="center"><img class="logo" src="${esc(slipLogoUrl())}" alt="" /></div>` : ''}
     <h2 class="center brand">${esc(args.hotelName || 'Restaurant')}</h2>
     <div class="center ticket">${esc(args.title || 'Kitchen Order Ticket')}</div>
     <div class="center meta">${esc(args.code)}</div>

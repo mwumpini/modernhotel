@@ -1,13 +1,12 @@
-import type { PrintData, PrintLineItem } from './templates';
+import type { PrintData, PrintLineItem, PrintTaxes } from './templates';
 import { amountInWords } from './amountInWords';
-import { SAMPLE_LOGO_URL } from './sampleData';
 import { computeTotalsBreakdown } from './taxBreakdown';
 
 /**
  * Restaurant bill in the Noda Hotel form: TIN and logo on the left, the hotel
  * name centered, guest and bill details in two columns, a tall ruled item
- * table (Qty, Description, Acqty., Rate, Total), then the fixed Ghana tax
- * lines, the amount in words, and a sign line.
+ * table (Qty, Description, Rate, Total), then the Ghana tax lines on the bill,
+ * the amount in words, and a sign line. A hotel with no logo prints none.
  */
 export function renderNodaBillDocument(data: PrintData): string {
   const org = data.org;
@@ -15,18 +14,17 @@ export function renderNodaBillDocument(data: PrintData): string {
   const names = hotelNameLines(org.name || '');
   const address = addressLines(org.address);
   const phones = phoneLines(org.phone);
-  const logo = org.logoUrl || SAMPLE_LOGO_URL;
+  const logo = org.logoUrl || '';
   const guest = (data.guest.company || data.guest.name || '').trim();
   const room = (data.guest.roomNumber || '').trim();
   const table = tableLabel(data.tableNumber);
   const attendant = (data.attendantName || '').trim();
   const billNo = (data.docNumber || '').trim();
   const { grand } = computeTotalsBreakdown(data);
-  const taxes = data.totals.taxes;
-  const nhilGroup = (taxes?.nhil || 0) + (taxes?.gefl || 0);
-  const vat = taxes?.vat || 0;
-  const gtb = (taxes?.levy || 0) + (taxes?.gtal || 0);
   const discount = data.totals.discount || 0;
+  const taxRows = nodaTaxLines(data.totals.taxes, Math.max(0, (data.totals.subTotal || 0) - discount))
+    .map(([label, amount]) => totalRow(label, gh(amount), false))
+    .join('');
   const items = data.items || [];
 
   const addressHtml = address.map(line => `<div class="addr">${esc(line)}</div>`).join('');
@@ -123,7 +121,6 @@ export function renderNodaBillDocument(data: PrintData): string {
     font-weight: 700;
     text-align: left;
   }
-  table.items th.acq, table.items td.acq { text-align: center; }
   table.items th.rate, table.items th.total { text-align: right; }
   table.items tr.pad td { height: 16mm; }
   table.items td.summary {
@@ -131,12 +128,10 @@ export function renderNodaBillDocument(data: PrintData): string {
     padding: 3px 4px 5px;
   }
   table.items col.qty { width: 18px; }
-  table.items col.acq { width: 28px; }
   table.items col.rate { width: 36px; }
   table.items col.total { width: 40px; }
   table.items td.qty { font-size: 10px; }
   table.items td.desc { text-transform: uppercase; }
-  table.items td.acq { text-align: center; }
   table.items td.rate, table.items td.total { text-align: right; font-variant-numeric: tabular-nums; }
   .totals {
     margin: 2px 0 0 auto;
@@ -176,7 +171,7 @@ export function renderNodaBillDocument(data: PrintData): string {
       <div class="pageno">Page 1 of 1</div>
     </div>
     <div class="head">
-      <img class="logo" src="${esc(logo)}" alt="" />
+      ${logo ? `<img class="logo" src="${esc(logo)}" alt="" />` : ''}
       <div class="letterhead">
         ${names.main ? `<div class="hotel">${esc(names.main)}</div>` : ''}
         ${names.suffix ? `<div class="ltd">${esc(names.suffix)}</div>` : ''}
@@ -203,7 +198,6 @@ export function renderNodaBillDocument(data: PrintData): string {
       <colgroup>
         <col class="qty" />
         <col />
-        <col class="acq" />
         <col class="rate" />
         <col class="total" />
       </colgroup>
@@ -211,24 +205,21 @@ export function renderNodaBillDocument(data: PrintData): string {
         <tr>
           <th>Qty</th>
           <th>Description</th>
-          <th class="acq">Acqty.</th>
           <th class="rate">Rate</th>
           <th class="total">Total</th>
         </tr>
       </thead>
       <tbody>
         ${rows}
-        <tr class="pad"><td></td><td></td><td></td><td></td><td></td></tr>
+        <tr class="pad"><td></td><td></td><td></td><td></td></tr>
       </tbody>
       <tfoot>
         <tr>
-          <td class="summary" colspan="5">
+          <td class="summary" colspan="4">
             <div class="totals">
               ${totalRow('SubTotal:', gh(data.totals.subTotal || 0), false)}
               ${discountRow}
-              ${totalRow('NHIL/GTFL (5%:)', gh(nhilGroup), false)}
-              ${totalRow('VAT12.5%:', gh(vat), false)}
-              ${totalRow('GTB Levy 1%:', gh(gtb), false)}
+              ${taxRows}
               ${totalRow('Total:', gh(grand), true)}
             </div>
             <div class="words">${esc(nodaWords(grand))}</div>
@@ -249,10 +240,37 @@ function itemRow(item: PrintLineItem): string {
   return `<tr>
     <td class="qty">${esc(qty)}</td>
     <td class="desc">${esc(item.description || '')}</td>
-    <td class="acq">0</td>
     <td class="rate">${esc(rate)}</td>
     <td class="total">${esc(amount)}</td>
   </tr>`;
+}
+
+/**
+ * Tax lines in the Noda style (NHIL and GETFund together, then VAT, then the
+ * tourism levy), built from the taxes actually on this bill. The rate in each
+ * label is worked out from the amounts, so it follows the hotel's tax settings
+ * and any change in Ghana's rates instead of printing a fixed percentage.
+ */
+function nodaTaxLines(taxes: PrintTaxes | undefined, taxable: number): Array<[string, number]> {
+  if (!taxes) return [];
+  const rate = (amount: number) => {
+    if (taxable <= 0) return '';
+    const pct = Math.round((amount / taxable) * 10000) / 100;
+    return ` ${Number.isInteger(pct) ? pct : pct.toFixed(2).replace(/0$/, '')}%`;
+  };
+  const lines: Array<[string, number]> = [];
+  const group = [
+    ['NHIL', taxes.nhil || 0],
+    ['GETFund', taxes.gefl || 0],
+    ['COVID-19', taxes.covid || 0],
+  ] as const;
+  const present = group.filter(([, amount]) => amount > 0);
+  const groupTotal = present.reduce((sum, [, amount]) => sum + amount, 0);
+  if (groupTotal > 0) lines.push([`${present.map(([name]) => name).join('/')}${rate(groupTotal)}:`, groupTotal]);
+  if ((taxes.vat || 0) > 0) lines.push([`VAT${rate(taxes.vat || 0)}:`, taxes.vat || 0]);
+  const levy = (taxes.levy || 0) + (taxes.gtal || 0);
+  if (levy > 0) lines.push([`Tourism Levy${rate(levy)}:`, levy]);
+  return lines;
 }
 
 function totalRow(label: string, value: string, grand: boolean): string {

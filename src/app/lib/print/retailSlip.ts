@@ -1,18 +1,17 @@
 import type { PrintData, PrintLineItem, PrintTender } from './templates';
 import { money } from './templates';
-import { SAMPLE_LOGO_URL } from './sampleData';
 import { computeTotalsBreakdown } from './taxBreakdown';
 
 /**
  * 80mm till slip laid out like a grocery receipt: centred store lines, items
  * with the price on the right, a dashed rule, tax, a heavier total, then the
- * way it was paid. The mark is the hotel logo (AGM on samples), not a
- * third-party wordmark.
+ * way it was paid. The mark is the hotel's own logo (samples supply the AGM one);
+ * a hotel with no logo prints none.
  */
 export function renderRetailSlipDocument(data: PrintData): string {
   const currency = data.currency || '₵';
   const org = data.org;
-  const logo = org.logoUrl || SAMPLE_LOGO_URL;
+  const logo = org.logoUrl || '';
   const address = addressLines(org.address);
   const when = slipStamp(data.docDate);
   const code = (data.docNumber || '').trim();
@@ -84,7 +83,7 @@ export function renderRetailSlipDocument(data: PrintData): string {
 </head><body>
   <div class="slip">
     <div class="mark">
-      <img src="${esc(logo)}" alt="" />
+      ${logo ? `<img src="${esc(logo)}" alt="" />` : ''}
       <div class="stripes" aria-hidden="true"></div>
     </div>
     ${org.name ? `<div class="store">${esc(org.name)}</div>` : ''}
