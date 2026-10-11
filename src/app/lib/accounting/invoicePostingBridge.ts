@@ -15,6 +15,7 @@ import { getActiveTaxConfigs } from '../tax/engine';
 import { GHANA_TAX_CODES } from './models';
 import { GL_ACCOUNTS, PAYMENT_GL_MAP } from './glAccounts';
 import { assertPeriodNotClosed } from './periodClose';
+import { nextJournalEntryNumber } from './journalNumbers';
 
 // AR/AP/CASH/BANK share the one canonical GL_ACCOUNTS table (glAccounts.ts) so every
 // posting path lands guest/departmental/supplier transactions in the same leaf accounts.
@@ -41,7 +42,7 @@ function nowIso(): string {
 }
 
 function nextEntryNumber(seq: number): string {
-  return `JE-${new Date().getFullYear()}-${String(seq + 1).padStart(4, '0')}`;
+  return nextJournalEntryNumber([], seq);
 }
 
 function partnerArCode(partner: BusinessPartner | undefined): string {

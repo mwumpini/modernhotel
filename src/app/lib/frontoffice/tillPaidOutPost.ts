@@ -1,6 +1,7 @@
-import { createJournalEntry, listBankAccounts, upsertBankAccountRow, upsertBankTransactionRow } from '../accounting/repository'
+import { allocateJournalEntryNumber, createJournalEntry, listBankAccounts, upsertBankAccountRow, upsertBankTransactionRow } from '../accounting/repository'
 
 const CASH_GL = '1110'
+const MOMO_GL = '1120'
 
 function round2(n: number) {
   return Math.round(n * 100) / 100
@@ -77,9 +78,12 @@ export async function postTillPaidOut(input: {
   description: string
   businessDate: string
   postedBy: string
-}): Promise<string> {
+  paidFrom?: 'cash' | 'momo'
+}): Promise<{ id: string; entryNumber: string }> {
   const amount = round2(input.amount)
-  const reference = `TPO-${input.paidOutId.replace(/-/g, '').slice(0, 12)}`
+  const paidFrom = input.paidFrom === 'momo' ? 'momo' : 'cash'
+  const creditGl = paidFrom === 'momo' ? MOMO_GL : CASH_GL
+  const reference = await allocateJournalEntryNumber(input.tenantId)
   const when = `${input.businessDate}T12:00:00`
   const text = `${input.expenseName}: ${input.description}`
   const entry = await createJournalEntry(input.tenantId, {
@@ -97,15 +101,17 @@ export async function postTillPaidOut(input: {
     sourceTransactionId: input.paidOutId,
     lines: [
       { id: `${reference}-1`, journalEntryId: reference, accountCode: input.expenseCode, description: text, debit: amount, credit: 0, currency: 'GHS' },
-      { id: `${reference}-2`, journalEntryId: reference, accountCode: CASH_GL, description: `Cash in hand — ${input.description}`, debit: 0, credit: amount, currency: 'GHS' },
+      { id: `${reference}-2`, journalEntryId: reference, accountCode: creditGl, description: paidFrom === 'momo' ? `MoMo — ${input.description}` : `Cash in hand — ${input.description}`, debit: 0, credit: amount, currency: 'GHS' },
     ],
   })
-  try {
-    await writeCashbookLine(input.tenantId, 'out', amount, entry.id, input.businessDate, reference, text)
-  } catch (error) {
-    console.error('[till paid-out] cashbook line failed', error)
+  if (paidFrom === 'cash') {
+    try {
+      await writeCashbookLine(input.tenantId, 'out', amount, entry.id, input.businessDate, reference, text)
+    } catch (error) {
+      console.error('[till paid-out] cashbook line failed', error)
+    }
   }
-  return entry.id
+  return { id: entry.id, entryNumber: reference }
 }
 
 /** Put the cash back: debit cash in hand, credit the same expense. */
@@ -118,9 +124,12 @@ export async function reverseTillPaidOut(input: {
   description: string
   businessDate: string
   postedBy: string
-}): Promise<string> {
+  paidFrom?: 'cash' | 'momo'
+}): Promise<{ id: string; entryNumber: string }> {
   const amount = round2(input.amount)
-  const reference = `TPO-VOID-${input.paidOutId.replace(/-/g, '').slice(0, 12)}`
+  const paidFrom = input.paidFrom === 'momo' ? 'momo' : 'cash'
+  const debitGl = paidFrom === 'momo' ? MOMO_GL : CASH_GL
+  const reference = await allocateJournalEntryNumber(input.tenantId)
   const when = `${input.businessDate}T12:00:00`
   const text = `Void petty paid-out — ${input.expenseName}: ${input.description}`
   const entry = await createJournalEntry(input.tenantId, {
@@ -137,14 +146,16 @@ export async function reverseTillPaidOut(input: {
     sourceModule: 'till_paid_out_void',
     sourceTransactionId: input.paidOutId,
     lines: [
-      { id: `${reference}-1`, journalEntryId: reference, accountCode: CASH_GL, description: text, debit: amount, credit: 0, currency: 'GHS' },
+      { id: `${reference}-1`, journalEntryId: reference, accountCode: debitGl, description: text, debit: amount, credit: 0, currency: 'GHS' },
       { id: `${reference}-2`, journalEntryId: reference, accountCode: input.expenseCode, description: text, debit: 0, credit: amount, currency: 'GHS' },
     ],
   })
-  try {
-    await writeCashbookLine(input.tenantId, 'in', amount, entry.id, input.businessDate, reference, text)
-  } catch (error) {
-    console.error('[till paid-out] void cashbook line failed', error)
+  if (paidFrom === 'cash') {
+    try {
+      await writeCashbookLine(input.tenantId, 'in', amount, entry.id, input.businessDate, reference, text)
+    } catch (error) {
+      console.error('[till paid-out] void cashbook line failed', error)
+    }
   }
-  return entry.id
+  return { id: entry.id, entryNumber: reference }
 }

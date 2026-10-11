@@ -29,7 +29,7 @@ export function SortLabel({
   align?: 'left' | 'right' | 'center';
   children: string;
 }) {
-  const alignClass = align === 'right' ? 'ml-auto block text-right' : align === 'center' ? 'mx-auto block text-center' : 'text-left';
+  const alignClass = align === 'right' ? 'block w-full text-right' : align === 'center' ? 'block w-full text-center' : 'text-left';
   return (
     <button
       type="button"

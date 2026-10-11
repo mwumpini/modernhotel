@@ -88,6 +88,7 @@ model Tenant {
   complianceReports ComplianceReport[]
   complianceTaxRules ComplianceTaxRule[]
   tenantRecords          TenantRecord[]
+  numberCounters         NumberCounter[]
   complianceTaxTypes ComplianceTaxType[]
   complianceReportingRules ComplianceReportingRule[]
   bankReconciliations BankReconciliation[]
@@ -2220,6 +2221,8 @@ model CashierShift {
   momoVariance     Float?
   /** Petty cash taken from this till. Active rows reduce expected cash and post an expense. */
   paidOuts         Json?
+  /** Tills opened on this shift. Close counts these same rows. */
+  tillLines        Json?
   status           String    @default("open")
   notes            String?
   /** accounts | cashier — cash drop / till handover after close */
@@ -2933,4 +2936,19 @@ model TenantRecord {
 
   @@unique([tenantId, kind, recordId])
   @@index([tenantId, kind])
+}
+
+/// Document numbers handed out by the server, one hotel and one series per row (e.g.
+/// "journal-2026"). Taking a number is a single atomic increment, so two staff saving at the
+/// same moment can never get the same number.
+model NumberCounter {
+  id        String   @id @default(cuid())
+  tenantId  String
+  series    String
+  value     Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, series])
 }

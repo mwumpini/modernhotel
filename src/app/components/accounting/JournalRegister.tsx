@@ -22,6 +22,7 @@ import {
   ModalFooter,
 } from '@heroui/react';
 import { useAccountingStore } from '../../lib/accounting/store';
+import { takeJournalEntryNumber } from '../../lib/accounting/journalNumbers';
 import { confirmDelete as askDelete, confirmUnvoid as askUnvoid, confirmVoid as askVoid } from '../DangerConfirm';
 import { accountingAmountsLabel } from '../../lib/accounting/tenantAccountingConfig';
 import { downloadCSV, generatePdfHtml, openPrintPreview } from '../../lib/accounting/helpers/exportHelpers';
@@ -469,9 +470,10 @@ export default function JournalRegister() {
     }
 
     const id = `JE-MAN-${Date.now()}`;
+    const entryNumber = await takeJournalEntryNumber(useAccountingStore.getState().journalEntries.map((entry) => entry.entryNumber));
     addJournalEntry({
       id,
-      entryNumber: `JE-${now.slice(0, 4)}-${String(useAccountingStore.getState().journalEntries.length + 1).padStart(4, '0')}`,
+      entryNumber,
       date: draftDate,
       reference: draftReference.trim(),
       description,

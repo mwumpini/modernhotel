@@ -1,6 +1,8 @@
 import { prisma } from '../database/client'
 import { pettyExpenseName } from './pettyExpenses'
 import { postTillPaidOut, reverseTillPaidOut } from './tillPaidOutPost'
+import { readTillTypes } from './tillTypesPolicy'
+import type { TillKind } from './tillTypes'
 
 export type CashierOutlet = 'frontoffice' | 'restaurant'
 
@@ -10,13 +12,54 @@ export type TillPaidOut = {
   expenseCode: string
   expenseName: string
   description: string
+  /** cash leaves the drawer. momo leaves the device and does not change expected cash. */
+  method?: 'cash' | 'momo'
+  /** Which opened till this expense left. */
+  tillId?: string
+  /** MoMo receipt number. Required when method is momo. */
+  momoTxnId?: string
+  /** Person or business the MoMo was sent to. */
+  paidTo?: string
+  /** MoMo number that received the payment. */
+  paidToNumber?: string
   journalEntryId?: string
+  /** Accounting journal number, same series as other expenses. */
+  entryNumber?: string
   voidedAt?: string
   createdAt: string
 }
 
 function round2(n: number) {
   return Math.round(n * 100) / 100
+}
+
+/** One till on a shift. Close counts the same rows that were opened. */
+export type ShiftTillLine = {
+  tillId: string
+  name: string
+  kind: TillKind
+  opening: number
+  note?: string
+  counted?: number
+}
+
+export function readTillLines(raw: unknown): ShiftTillLine[] {
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((row) => {
+    if (!row || typeof row !== 'object') return []
+    const item = row as ShiftTillLine
+    const opening = Number(item.opening)
+    if (!item.tillId || !item.name || !Number.isFinite(opening) || opening < 0) return []
+    const counted = item.counted == null ? undefined : Number(item.counted)
+    return [{
+      tillId: String(item.tillId),
+      name: String(item.name),
+      kind: item.kind === 'momo' ? 'momo' : 'cash',
+      opening,
+      note: item.note ? String(item.note) : undefined,
+      counted: counted != null && Number.isFinite(counted) ? counted : undefined,
+    }]
+  })
 }
 
 export function readPaidOuts(raw: unknown): TillPaidOut[] {
@@ -32,7 +75,13 @@ export function readPaidOuts(raw: unknown): TillPaidOut[] {
       expenseCode: String(item.expenseCode || ''),
       expenseName: String(item.expenseName || ''),
       description: String(item.description || ''),
+      method: item.method === 'momo' ? 'momo' : 'cash',
+      tillId: item.tillId ? String(item.tillId) : undefined,
+      momoTxnId: item.momoTxnId ? String(item.momoTxnId) : undefined,
+      paidTo: item.paidTo ? String(item.paidTo) : undefined,
+      paidToNumber: item.paidToNumber ? String(item.paidToNumber) : undefined,
       journalEntryId: item.journalEntryId ? String(item.journalEntryId) : undefined,
+      entryNumber: item.entryNumber ? String(item.entryNumber) : undefined,
       voidedAt: item.voidedAt ? String(item.voidedAt) : undefined,
       createdAt: String(item.createdAt || ''),
     }]
@@ -43,8 +92,20 @@ export function activePaidOutTotal(raw: unknown): number {
   return round2(readPaidOuts(raw).filter((row) => !row.voidedAt).reduce((sum, row) => sum + row.amount, 0))
 }
 
+function cashPaidOutTotal(raw: unknown): number {
+  return round2(readPaidOuts(raw).filter((row) => !row.voidedAt && row.method !== 'momo').reduce((sum, row) => sum + row.amount, 0))
+}
+
+function momoPaidOutTotal(raw: unknown): number {
+  return round2(readPaidOuts(raw).filter((row) => !row.voidedAt && row.method === 'momo').reduce((sum, row) => sum + row.amount, 0))
+}
+
 function tillExpected(openingFloat: number, cashSales: number, paidOuts: unknown) {
-  return round2(openingFloat + cashSales - activePaidOutTotal(paidOuts))
+  return round2(openingFloat + cashSales - cashPaidOutTotal(paidOuts))
+}
+
+function momoExpected(recorded: number, paidOuts: unknown) {
+  return round2(recorded - momoPaidOutTotal(paidOuts))
 }
 
 export interface CashierShiftDTO {
@@ -68,6 +129,8 @@ export interface CashierShiftDTO {
   /** momoDeclared minus recorded MoMo sales. */
   momoVariance?: number
   paidOuts: TillPaidOut[]
+  /** Tills opened on this shift. Close counts these same rows. Older shifts have none. */
+  tillLines: ShiftTillLine[]
   /** Active petty paid-outs. Already subtracted from expected cash once the shift is closed. */
   totalPaidOut: number
   status: 'open' | 'closed'
@@ -98,6 +161,7 @@ function toDTO(row: any): CashierShiftDTO {
     momoDeclared: row.momoDeclared != null ? Number(row.momoDeclared) : undefined,
     momoVariance: row.momoVariance != null ? Number(row.momoVariance) : undefined,
     paidOuts: readPaidOuts(row.paidOuts),
+    tillLines: readTillLines(row.tillLines),
     totalPaidOut: activePaidOutTotal(row.paidOuts),
     status: row.status,
     notes: row.notes ?? undefined,
@@ -140,9 +204,13 @@ export async function openCashierShift(
   notes?: string,
   outlet: CashierOutlet = 'frontoffice',
   businessDate?: string,
+  tills?: Array<{ tillId: string; opening: number; note?: string }>,
 ): Promise<CashierShiftDTO> {
   await ensureWalletColumns()
   const day = (businessDate || new Date().toISOString().slice(0, 10)).slice(0, 10)
+  const tillLines = tills ? await snapshotOpenTills(tenantId, tills) : []
+  const cashLine = tillLines.find((line) => line.kind === 'cash')
+  const float = cashLine ? cashLine.opening : openingFloat
   const row = await prisma.cashierShift.create({
     data: {
       tenantId,
@@ -150,12 +218,41 @@ export async function openCashierShift(
       businessDate: day,
       cashierUserId,
       cashierName,
-      openingFloat,
-      notes: notes || undefined,
+      openingFloat: float,
+      notes: cashLine?.note || notes || undefined,
       status: 'open',
+      tillLines: tillLines.length ? tillLines : undefined,
     },
   })
   return toDTO(row)
+}
+
+function applyTillCounts(
+  opened: ShiftTillLine[],
+  counts?: Array<{ tillId: string; amount: number }>,
+): ShiftTillLine[] {
+  if (!counts || counts.length !== opened.length) throw new Error('Count each till that was opened')
+  return opened.map((line) => {
+    const row = counts.find((item) => item.tillId === line.tillId)
+    const amount = Number(row?.amount)
+    if (!row || !Number.isFinite(amount) || amount < 0) throw new Error(`Count ${line.name}`)
+    return { ...line, counted: round2(amount) }
+  })
+}
+
+async function snapshotOpenTills(
+  tenantId: string,
+  tills: Array<{ tillId: string; opening: number; note?: string }>,
+): Promise<ShiftTillLine[]> {
+  const active = (await readTillTypes(tenantId)).filter((till) => till.active)
+  if (tills.length !== active.length) throw new Error('Enter an opening amount for each till')
+  return active.map((till) => {
+    const row = tills.find((item) => item.tillId === till.id)
+    const opening = Number(row?.opening)
+    if (!row || !Number.isFinite(opening) || opening < 0) throw new Error(`Enter the opening amount for ${till.name}`)
+    const note = String(row.note || '').trim().slice(0, 160)
+    return { tillId: till.id, name: till.name, kind: till.kind, opening: round2(opening), note: note || undefined }
+  })
 }
 
 let walletColumnsReady: Promise<void> | null = null
@@ -168,6 +265,7 @@ function ensureWalletColumns(): Promise<void> {
         'ALTER TABLE cashier_shifts ADD COLUMN momoDeclared REAL',
         'ALTER TABLE cashier_shifts ADD COLUMN momoVariance REAL',
         'ALTER TABLE cashier_shifts ADD COLUMN paidOuts TEXT',
+        'ALTER TABLE cashier_shifts ADD COLUMN tillLines TEXT',
       ]) {
         try {
           await prisma.$executeRawUnsafe(sql)
@@ -316,6 +414,7 @@ export async function closeCashierShift(
   closingCount: number,
   notes?: string,
   momoDeclared?: number,
+  counts?: Array<{ tillId: string; amount: number }>,
 ): Promise<CashierShiftDTO | null> {
   await ensureWalletColumns()
   const existing = await prisma.cashierShift.findFirst({ where: { id, tenantId } })
@@ -332,15 +431,25 @@ export async function closeCashierShift(
     closedAt,
   )
 
+  const opened = readTillLines(existing.tillLines)
+  const countedLines = opened.length ? applyTillCounts(opened, counts) : opened
+  const cashCount = countedLines.find((line) => line.kind === 'cash')?.counted
+  const count = cashCount != null ? cashCount : closingCount
   const expectedCash = tillExpected(Number(existing.openingFloat || 0), totals.cash, existing.paidOuts)
-  const variance = closingCount - expectedCash
-  const declaredMomo = momoDeclared != null && Number.isFinite(momoDeclared) ? momoDeclared : null
+  const variance = count - expectedCash
+  const momoLines = countedLines.filter((line) => line.kind === 'momo')
+  const declaredMomo = momoLines.length
+    ? round2(momoLines.reduce((sum, line) => sum + Number(line.counted || 0), 0))
+    : momoDeclared != null && Number.isFinite(momoDeclared) ? momoDeclared : null
+  const momoOpening = round2(momoLines.reduce((sum, line) => sum + line.opening, 0))
+  const momoOnDevices = declaredMomo == null ? null : momoOpening + momoExpected(totals.mobileMoney, existing.paidOuts)
 
   const row = await prisma.cashierShift.update({
     where: { id },
     data: {
       closedAt,
-      closingCount,
+      status: 'closed',
+      closingCount: count,
       expectedCash,
       variance,
       totalCash: totals.cash,
@@ -348,9 +457,9 @@ export async function closeCashierShift(
       totalMobileMoney: totals.mobileMoney,
       totalOther: totals.other,
       momoDeclared: declaredMomo,
-      momoVariance: declaredMomo == null ? null : declaredMomo - totals.mobileMoney,
-      status: 'closed',
+      momoVariance: declaredMomo == null || momoOnDevices == null ? null : declaredMomo - momoOnDevices,
       notes: notes !== undefined ? notes : existing.notes,
+      tillLines: countedLines.length ? countedLines : undefined,
     },
   })
   return toDTO(row)
@@ -508,7 +617,7 @@ export async function updateCashierShift(
     if (declared == null) {
       if (patch.momoDeclared !== undefined) data.momoVariance = null
     } else {
-      data.momoVariance = declared - recorded
+      data.momoVariance = declared - momoExpected(recorded, existing.paidOuts)
     }
   }
 
@@ -516,34 +625,81 @@ export async function updateCashierShift(
   return toDTO(row)
 }
 
+function readPayee(input: { paidTo?: string; paidToNumber?: string }) {
+  const paidTo = String(input.paidTo || '').trim()
+  const paidToNumber = String(input.paidToNumber || '').trim()
+  if (!paidTo) throw new Error('Say who was paid')
+  if (paidTo.length > 80) throw new Error('Keep the name under 80 characters')
+  const digits = paidToNumber.replace(/\D/g, '')
+  if (digits.length < 9 || digits.length > 15) throw new Error('Enter the number')
+  return { paidTo, paidToNumber }
+}
+
+function readMomoTxn(raw?: string) {
+  const momoTxnId = String(raw || '').trim()
+  if (!momoTxnId) throw new Error('Enter the MoMo transaction ID')
+  if (momoTxnId.length > 40) throw new Error('Transaction ID is too long')
+  return momoTxnId
+}
+
 export async function recordTillPaidOut(
   tenantId: string,
   shiftId: string,
-  input: { amount: number; expenseCode: string; description: string },
+  input: {
+    amount: number
+    expenseCode: string
+    description: string
+    method?: 'cash' | 'momo'
+    tillId?: string
+    momoTxnId?: string
+    paidTo?: string
+    paidToNumber?: string
+  },
   postedBy: string,
 ): Promise<CashierShiftDTO> {
   await ensureWalletColumns()
   const existing = await prisma.cashierShift.findFirst({ where: { id: shiftId, tenantId } })
   if (!existing || existing.status !== 'open') throw new Error('Shift is not open')
+  const opened = readTillLines(existing.tillLines)
+  const tillLine = input.tillId ? opened.find((line) => line.tillId === input.tillId) : undefined
+  if (opened.length && !tillLine) throw new Error('Choose a till that is open')
+  const tillTypes = await readTillTypes(tenantId)
+  const tillType = tillLine ? tillTypes.find((till) => till.id === tillLine.tillId) : undefined
+  if (tillLine && tillType && !tillType.spend) throw new Error(`${tillLine.name} cannot pay expenses`)
   const expenseName = pettyExpenseName(input.expenseCode)
   if (!expenseName) throw new Error('Choose an expense')
   const description = String(input.description || '').trim()
-  if (!description) throw new Error('Say what the cash was for')
+  if (!description) throw new Error('Say what it was for')
   if (description.length > 160) throw new Error('Keep the note under 160 characters')
   const amount = round2(Number(input.amount))
   if (!Number.isFinite(amount) || amount <= 0) throw new Error('Amount must be greater than zero')
+  const method: TillKind = tillLine ? tillLine.kind : input.method === 'momo' ? 'momo' : 'cash'
+  if (method === 'cash' && !tillLine) {
+    const cashType = tillTypes.find((till) => till.kind === 'cash')
+    if (cashType && !cashType.spend) throw new Error(`${cashType.name} cannot pay expenses`)
+  }
+  if (method === 'momo' && !tillLine && !tillTypes.some((till) => till.kind === 'momo' && till.spend)) {
+    throw new Error('MoMo expenses are turned off')
+  }
+  if (tillType?.threshold != null && amount - tillType.threshold > 0.009) {
+    throw new Error(`That is more than the ${tillLine?.name || tillType.name} limit`)
+  }
+  const payee = readPayee(input)
+  const momoTxnId = method === 'momo' ? readMomoTxn(input.momoTxnId) : undefined
 
-  const outlet = (existing.outlet === 'restaurant' ? 'restaurant' : 'frontoffice') as CashierOutlet
-  const totals = await sumPaymentsForShift(
-    tenantId,
-    outlet,
-    existing.cashierUserId,
-    existing.cashierName,
-    existing.openedAt,
-    new Date(),
-  )
-  const available = tillExpected(Number(existing.openingFloat || 0), totals.cash, existing.paidOuts)
-  if (amount - available > 0.009) throw new Error('That is more cash than the till has')
+  if (method === 'cash') {
+    const outlet = (existing.outlet === 'restaurant' ? 'restaurant' : 'frontoffice') as CashierOutlet
+    const totals = await sumPaymentsForShift(
+      tenantId,
+      outlet,
+      existing.cashierUserId,
+      existing.cashierName,
+      existing.openedAt,
+      new Date(),
+    )
+    const available = tillExpected(Number(existing.openingFloat || 0), totals.cash, existing.paidOuts)
+    if (amount - available > 0.009) throw new Error('That is more cash than the till has')
+  }
 
   const paid: TillPaidOut = {
     id: crypto.randomUUID(),
@@ -551,18 +707,30 @@ export async function recordTillPaidOut(
     expenseCode: input.expenseCode,
     expenseName,
     description,
+    method,
+    tillId: tillLine?.tillId,
+    momoTxnId,
+    paidTo: payee.paidTo,
+    paidToNumber: payee.paidToNumber,
     createdAt: new Date().toISOString(),
   }
-  paid.journalEntryId = await postTillPaidOut({
+  const wallet = tillLine && tillLine.kind === 'momo' ? `${tillLine.name} ` : ''
+  const journalNote = momoTxnId
+    ? `${description} (${wallet}MoMo ${momoTxnId}, ${payee.paidTo}, ${payee.paidToNumber})`
+    : `${description} (${payee.paidTo}, ${payee.paidToNumber})`
+  const posted = await postTillPaidOut({
     tenantId,
     paidOutId: paid.id,
     amount,
     expenseCode: paid.expenseCode,
     expenseName,
-    description,
+    description: journalNote,
     businessDate: String(existing.businessDate || '').slice(0, 10) || new Date().toISOString().slice(0, 10),
     postedBy,
+    paidFrom: method,
   })
+  paid.journalEntryId = posted.id
+  paid.entryNumber = posted.entryNumber
   const paidOuts = [...readPaidOuts(existing.paidOuts), paid]
   const row = await prisma.cashierShift.update({ where: { id: shiftId }, data: { paidOuts } })
   return toDTO(row)
@@ -586,9 +754,14 @@ export async function voidTillPaidOut(
     amount: item.amount,
     expenseCode: item.expenseCode,
     expenseName: item.expenseName,
-    description: item.description,
+    description: item.paidTo
+      ? item.method === 'momo' && item.momoTxnId
+        ? `${item.description} (MoMo ${item.momoTxnId}, ${item.paidTo}, ${item.paidToNumber || ''})`
+        : `${item.description} (${item.paidTo}, ${item.paidToNumber || ''})`
+      : item.description,
     businessDate: String(existing.businessDate || '').slice(0, 10) || new Date().toISOString().slice(0, 10),
     postedBy,
+    paidFrom: item.method === 'momo' ? 'momo' : 'cash',
   })
   item.voidedAt = new Date().toISOString()
   const row = await prisma.cashierShift.update({ where: { id: shiftId }, data: { paidOuts } })

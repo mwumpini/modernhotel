@@ -105,7 +105,7 @@ export async function GET(request: NextRequest) {
     }
 
     const orderNumbers = orders.map((order) => order.orderNumber).filter(Boolean)
-    const paymentByOrder = new Map<string, string>()
+    const paymentByOrder = new Map<string, { method: string; amount: number }>()
     if (orderNumbers.length > 0) {
       const payments = await prisma.accountingPayment.findMany({
         where: {
@@ -114,19 +114,28 @@ export async function GET(request: NextRequest) {
           status: { not: 'Void' },
           reference: { in: orderNumbers },
         },
-        select: { reference: true, paymentMethod: true },
+        select: { reference: true, paymentMethod: true, amount: true },
       })
       payments.forEach((payment) => {
-        if (payment.reference && payment.paymentMethod) paymentByOrder.set(payment.reference, payment.paymentMethod)
+        if (!payment.reference) return
+        const current = paymentByOrder.get(payment.reference) || { method: '', amount: 0 }
+        current.amount += Number(payment.amount) || 0
+        if (payment.paymentMethod) current.method = payment.paymentMethod
+        paymentByOrder.set(payment.reference, current)
       })
     }
 
     return NextResponse.json({
-      orders: orders.map((order) => ({
-        ...serializeFbOrder(order, menuRouteById),
-        paymentMethod: paymentByOrder.get(order.orderNumber)
-          || (order.folioId && order.status === 'billed' ? 'Room Charge' : null),
-      })),
+      orders: orders.map((order) => {
+        const receipt = paymentByOrder.get(order.orderNumber)
+        const roomCharge = !receipt?.method && !!order.folioId && order.status === 'billed'
+        const orderTotal = Number(order.total) || 0
+        return {
+          ...serializeFbOrder(order, menuRouteById),
+          paymentMethod: receipt?.method || (roomCharge ? 'Room Charge' : null),
+          amountPaid: receipt ? round2(receipt.amount) : (roomCharge ? orderTotal : 0),
+        }
+      }),
     })
   } catch (error) {
     console.error('[fb/orders][GET] error', error)

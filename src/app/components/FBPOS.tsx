@@ -1025,6 +1025,8 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
         roomNumber: customerType === 'In-house' ? roomNumber : undefined,
         total,
         orderNumber: apiOrder?.orderNumber || expressStamp?.orderNumber,
+        paymentMethod,
+        amountPaid: total,
       } as any;
       const existingBilled = ordersStore.all().find(o => o.id === newId);
       if (existingBilled) {

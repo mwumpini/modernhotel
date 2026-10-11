@@ -3,6 +3,7 @@
  */
 
 import type { JournalEntry, JournalEntryLine } from './models';
+import { nextJournalEntryNumber } from './journalNumbers';
 import { assertPeriodNotClosed } from './periodClose';
 
 export const AR_AP_REVERSAL_SOURCE = 'manual_ar_ap_reversal';
@@ -11,8 +12,8 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function nextEntryNumber(seq: number): string {
-  return `JE-${new Date().getFullYear()}-${String(seq + 1).padStart(4, '0')}`;
+function nextEntryNumber(seq: number, entryNumbers: string[] = []): string {
+  return nextJournalEntryNumber(entryNumbers, seq);
 }
 
 export function hasReversalForEntry(journalEntries: JournalEntry[], originalEntryId: string): boolean {
@@ -60,6 +61,7 @@ export function postJournalReversal(
 
   const reversal = buildReversalJournalEntry(original, {
     journalSeq: journalEntries.length,
+    entryNumbers: journalEntries.map((entry) => entry.entryNumber),
     reason: reason || `Reversal — ${original.description}`,
     sourceModule: JOURNAL_REVERSAL_SOURCE,
   });
@@ -70,7 +72,7 @@ export function postJournalReversal(
 
 export function buildReversalJournalEntry(
   original: JournalEntry,
-  opts: { journalSeq: number; postedBy?: string; reason?: string; sourceModule?: string },
+  opts: { journalSeq: number; entryNumbers?: string[]; postedBy?: string; reason?: string; sourceModule?: string },
 ): JournalEntry | null {
   if (original.status !== 'Posted') return null;
   if (hasReversalForEntry([], original.id)) {
@@ -93,7 +95,7 @@ export function buildReversalJournalEntry(
 
   return {
     id: revId,
-    entryNumber: nextEntryNumber(opts.journalSeq),
+    entryNumber: nextEntryNumber(opts.journalSeq, opts.entryNumbers),
     date: ts.slice(0, 10),
     reference: original.reference,
     description: opts.reason || `Reversal — ${original.description}`,
@@ -144,6 +146,7 @@ export function postJournalEntryReversal(
 
   const reversal = buildReversalJournalEntry(original, {
     journalSeq: store.journalEntries.length,
+    entryNumbers: store.journalEntries.map((entry) => entry.entryNumber),
     postedBy: opts.postedBy,
     reason: opts.reason,
   });

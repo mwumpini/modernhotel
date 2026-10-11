@@ -70,6 +70,8 @@ export interface FBOrder {
   guestId?: string;
   /** Cash, Card, Mobile Money, or Room Charge. Empty until the order is settled. */
   paymentMethod?: string;
+  /** Cash collected, or the folio charge when the order was settled to the room. */
+  amountPaid?: number;
 }
 
 class OrdersStore {
@@ -218,6 +220,7 @@ class OrdersStore {
           folioId: o.folioId || undefined,
           guestId: o.guestId || undefined,
           paymentMethod: o.paymentMethod || undefined,
+          amountPaid: Number(o.amountPaid) || undefined,
         };
       });
       this.listeners.forEach((l) => l());

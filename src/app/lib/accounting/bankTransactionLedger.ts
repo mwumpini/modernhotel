@@ -1,5 +1,6 @@
 import type { BankAccount, BankTransaction, JournalEntry, JournalEntryLine } from './models';
 import { assertPeriodNotClosed } from './periodClose';
+import { nextJournalEntryNumber } from './journalNumbers';
 
 export const BANK_MANUAL_SOURCE = 'bank_manual_transaction';
 export const BANK_MANUAL_REVERSAL_SOURCE = 'bank_manual_reversal';
@@ -44,8 +45,8 @@ function lineId(jeId: string, seq: number) {
   return `JEL-${jeId}-${seq}`;
 }
 
-function jeNumber(seq: number) {
-  return `JE-${new Date().getFullYear()}-${String(seq + 1).padStart(4, '0')}`;
+function jeNumber(seq: number, entryNumbers: string[] = []) {
+  return nextJournalEntryNumber(entryNumbers, seq);
 }
 
 function round2(n: number) {
@@ -361,7 +362,7 @@ export function reverseManualBankTransaction(
         const reversal: JournalEntry = {
           ...original,
           id: revId,
-          entryNumber: jeNumber(store.journalEntries.length),
+          entryNumber: jeNumber(store.journalEntries.length, store.journalEntries.map((entry) => entry.entryNumber)),
           description: `Reversal — ${original.description}`,
           date: now.slice(0, 10),
           sourceModule: BANK_MANUAL_REVERSAL_SOURCE,
@@ -394,7 +395,7 @@ export function reverseManualBankTransaction(
       const reversal: JournalEntry = {
         ...original,
         id: revId,
-        entryNumber: jeNumber(store.journalEntries.length),
+        entryNumber: jeNumber(store.journalEntries.length, store.journalEntries.map((entry) => entry.entryNumber)),
         description: `Reversal — ${original.description}`,
         date: now.slice(0, 10),
         sourceModule: BANK_MANUAL_REVERSAL_SOURCE,

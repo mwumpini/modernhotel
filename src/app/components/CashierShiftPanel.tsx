@@ -2,7 +2,7 @@
 
 import React from 'react';
 import {
-  Card, CardBody, CardHeader, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
+  Card, CardBody, CardHeader, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
   Chip, Divider, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
 } from '@heroui/react';
 import { useSession } from 'next-auth/react';
@@ -10,8 +10,10 @@ import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import { useCashierShift, type ShiftPreview } from '../lib/frontoffice/useCashierShift';
 import type { CashierOutlet, CashierShiftDTO } from '../lib/frontoffice/cashierShiftRepository';
 import { PETTY_EXPENSES } from '../lib/frontoffice/pettyExpenses';
-import { printSimpleReport } from '../lib/print/simpleReport';
-import { DateFilterPills, matchesDateFilter, useDateFilter } from './fb/DateFilterPills';
+import { CASH_TILL_ID, defaultTillTypes, type TillType } from '../lib/frontoffice/tillTypes';
+import { printDetailSheet, printSimpleReport } from '../lib/print/simpleReport';
+import { DateFilterPills, matchesDateFilter, useDateFilter, type DateMode } from './fb/DateFilterPills';
+import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from './frontoffice/columnResize';
 import { useSettingsStore } from '../lib/settings/store';
 import { BACKDATE_MESSAGE, postingDateError, postingDateMin } from '../lib/frontoffice/backdate';
 
@@ -36,6 +38,16 @@ function fmtWhen(iso?: string | null) {
   });
 }
 
+function fmtDay(iso?: string | null) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric' });
+}
+
+function fmtTime(iso?: string | null) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
 function todayLocalISO() {
   const d = new Date();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -43,8 +55,13 @@ function todayLocalISO() {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
-function paidOutTotal(shift?: { paidOuts?: { amount: number; voidedAt?: string }[] } | null) {
-  return (shift?.paidOuts || []).filter((row) => !row.voidedAt).reduce((sum, row) => sum + row.amount, 0);
+function paidOutTotal(
+  shift?: { paidOuts?: { amount: number; voidedAt?: string; method?: string }[] } | null,
+  kind: 'all' | 'cash' | 'momo' = 'all',
+) {
+  return (shift?.paidOuts || [])
+    .filter((row) => !row.voidedAt && (kind === 'momo' ? row.method === 'momo' : kind === 'cash' ? row.method !== 'momo' : true))
+    .reduce((sum, row) => sum + row.amount, 0);
 }
 
 function shiftDayKey(s: { businessDate?: string | null; openedAt: string }) {
@@ -187,6 +204,386 @@ function WalletStrip({
   );
 }
 
+type PettyHistoryRow = {
+  id: string;
+  shiftId: string;
+  businessDate: string;
+  cashierName: string;
+  expenseName: string;
+  description: string;
+  method: 'cash' | 'momo';
+  momoTxnId?: string;
+  paidTo?: string;
+  paidToNumber?: string;
+  amount: number;
+  createdAt: string;
+  voidedAt?: string;
+  entryNumber?: string;
+  canUndo: boolean;
+};
+
+type ExpenseCol = 'date' | 'txn' | 'cashier' | 'expense' | 'paidFrom' | 'amount' | 'paidTo' | 'status' | 'note';
+type ShiftCol = 'date' | 'cashier' | 'status' | 'cash' | 'momo' | 'card' | 'other' | 'momoDiff' | 'expected' | 'counted' | 'variance' | 'float' | 'opened' | 'openTime' | 'closed' | 'closeTime';
+
+const COL = {
+  date: 118,
+  time: 96,
+  cashier: 156,
+  status: 104,
+  money: 118,
+  paidFrom: 112,
+  paidTo: 148,
+  txn: 156,
+  expense: 196,
+  note: 220,
+};
+
+const EXPENSE_WIDTHS: Record<ExpenseCol, number> = {
+  date: COL.date,
+  txn: COL.txn,
+  cashier: COL.cashier,
+  expense: COL.expense,
+  paidFrom: COL.paidFrom,
+  amount: COL.money,
+  paidTo: COL.paidTo,
+  status: COL.status,
+  note: COL.note,
+};
+
+const SHIFT_WIDTHS: Record<ShiftCol, number> = {
+  date: COL.date,
+  cashier: COL.cashier,
+  status: COL.status,
+  cash: COL.money,
+  momo: COL.money,
+  card: COL.money,
+  other: COL.money,
+  momoDiff: COL.money,
+  expected: COL.money,
+  counted: COL.money,
+  variance: COL.money,
+  float: COL.money,
+  opened: COL.date,
+  openTime: COL.time,
+  closed: COL.date,
+  closeTime: COL.time,
+};
+
+function compareValues(a: string | number | null, b: string | number | null) {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function useColumnSort<K extends string>(initial: K) {
+  const [sortKey, setSortKey] = React.useState<K>(initial);
+  const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('desc');
+  const onSort = (key: K) => {
+    if (key === sortKey) setSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
+  return { sortKey, sortDir, onSort };
+}
+
+function SheetFrame<T extends { id: string }>({
+  items,
+  columns,
+  widths,
+  sortKey,
+  sortDir,
+  onSort,
+  label,
+  empty,
+  flexKeys,
+  renderRow,
+}: {
+  items: T[];
+  columns: { key: string; label: string; align?: 'left' | 'right' }[];
+  widths: Record<string, number>;
+  sortKey: string;
+  sortDir: 'asc' | 'desc';
+  onSort: (key: string) => void;
+  label: string;
+  empty: string;
+  flexKeys?: string[];
+  renderRow: (item: T) => React.ReactElement;
+}) {
+  const cols = useResizableColumns(widths, { flexKeys });
+  return (
+    <div ref={cols.frameRef} style={{ ...cols.frameStyle, overflowX: 'auto' }}>
+      <Table aria-label={label} removeWrapper classNames={deskResizableTableClassNames()}>
+        <TableHeader columns={columns}>
+          {(col) => (
+            <TableColumn key={col.key} className="relative" style={cols.style(col.key)}>
+              <SortLabel active={sortKey === col.key} dir={sortDir} align={col.align} onPress={() => onSort(col.key)}>
+                {col.label}
+              </SortLabel>
+              {cols.sizer(col.key, col.label)}
+            </TableColumn>
+          )}
+        </TableHeader>
+        <TableBody emptyContent={empty} items={items}>
+          {(item) => renderRow(item)}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function ExpenseSheet({
+  rows,
+  selectedId,
+  onOpen,
+}: {
+  rows: PettyHistoryRow[];
+  selectedId?: string | null;
+  onOpen: (row: PettyHistoryRow) => void;
+}) {
+  const { sortKey, sortDir, onSort } = useColumnSort<ExpenseCol>('date');
+  const columns: { key: ExpenseCol; label: string; align?: 'left' | 'right' }[] = [
+    { key: 'date', label: 'Date' },
+    { key: 'txn', label: 'Transaction ID' },
+    { key: 'cashier', label: 'Cashier' },
+    { key: 'expense', label: 'Expense' },
+    { key: 'paidFrom', label: 'Paid from' },
+    { key: 'amount', label: 'Amount', align: 'right' },
+    { key: 'paidTo', label: 'Paid to' },
+    { key: 'status', label: 'Status' },
+    { key: 'note', label: 'What it was for' },
+  ];
+  const valueOf = (row: PettyHistoryRow, key: ExpenseCol): string | number | null => {
+    if (key === 'date') return row.businessDate || row.createdAt;
+    if (key === 'txn') return row.momoTxnId || null;
+    if (key === 'cashier') return row.cashierName;
+    if (key === 'expense') return row.expenseName;
+    if (key === 'paidFrom') return row.method === 'momo' ? 'MoMo' : 'Cash';
+    if (key === 'amount') return row.amount;
+    if (key === 'paidTo') return row.paidTo || null;
+    if (key === 'note') return row.description;
+    return row.voidedAt ? 'Voided' : 'Posted';
+  };
+  const sorted = [...rows].sort((a, b) => {
+    const diff = compareValues(valueOf(a, sortKey), valueOf(b, sortKey));
+    return sortDir === 'asc' ? diff : -diff;
+  });
+  return (
+    <SheetFrame
+      items={sorted}
+      columns={columns}
+      widths={EXPENSE_WIDTHS}
+      flexKeys={['note', 'expense', 'txn', 'cashier', 'paidTo']}
+      sortKey={sortKey}
+      sortDir={sortDir}
+      onSort={(key) => onSort(key as ExpenseCol)}
+      label="Petty expenses"
+      empty="No petty expenses match."
+      renderRow={(row) => {
+        const cells: Record<ExpenseCol, React.ReactNode> = {
+          date: <span className="tabular-nums">{row.businessDate || '—'}</span>,
+          txn: <span className="block truncate" title={row.momoTxnId || undefined}>{row.momoTxnId || '—'}</span>,
+          cashier: <span className="block truncate" title={row.cashierName}>{row.cashierName}</span>,
+          expense: <span className="block truncate" title={row.expenseName}>{row.expenseName}</span>,
+          paidFrom: row.method === 'momo' ? 'MoMo' : 'Cash',
+          amount: <span className={`block text-right font-semibold tabular-nums ${row.voidedAt ? 'text-gray-400 line-through' : ''}`}>{money(row.amount)}</span>,
+          paidTo: <span className="block truncate" title={row.paidTo || undefined}>{row.paidTo || '—'}</span>,
+          status: <Chip size="sm" variant="flat" color={row.voidedAt ? 'default' : 'success'}>{row.voidedAt ? 'Voided' : 'Posted'}</Chip>,
+          note: <span className="block truncate" title={row.description}>{row.description}</span>,
+        };
+        return (
+          <TableRow key={row.id} className={rowClassNames(row.id === selectedId)} onClick={() => onOpen(row)}>
+            {(columnKey) => <TableCell>{cells[columnKey as ExpenseCol]}</TableCell>}
+          </TableRow>
+        );
+      }}
+    />
+  );
+}
+
+function ShiftSheet({
+  rows,
+  selectedId,
+  onOpen,
+  empty,
+}: {
+  rows: CashierShiftDTO[];
+  selectedId?: string | null;
+  onOpen: (row: CashierShiftDTO) => void;
+  empty: string;
+}) {
+  const { sortKey, sortDir, onSort } = useColumnSort<ShiftCol>('date');
+  const columns: { key: ShiftCol; label: string; align?: 'left' | 'right' }[] = [
+    { key: 'date', label: 'Date' },
+    { key: 'cashier', label: 'Cashier' },
+    { key: 'status', label: 'Status' },
+    { key: 'cash', label: 'Cash', align: 'right' },
+    { key: 'momo', label: 'MoMo', align: 'right' },
+    { key: 'card', label: 'Card', align: 'right' },
+    { key: 'other', label: 'Other', align: 'right' },
+    { key: 'momoDiff', label: 'MoMo diff', align: 'right' },
+    { key: 'expected', label: 'Expected', align: 'right' },
+    { key: 'counted', label: 'Counted', align: 'right' },
+    { key: 'variance', label: 'Variance', align: 'right' },
+    { key: 'float', label: 'Float', align: 'right' },
+    { key: 'opened', label: 'Opened' },
+    { key: 'openTime', label: 'Open time' },
+    { key: 'closed', label: 'Closed' },
+    { key: 'closeTime', label: 'Close time' },
+  ];
+  const valueOf = (row: CashierShiftDTO, key: ShiftCol): string | number | null => {
+    if (key === 'date') return row.businessDate || row.openedAt;
+    if (key === 'cashier') return row.cashierName;
+    if (key === 'status') return row.status;
+    if (key === 'cash') return row.totalCash ?? null;
+    if (key === 'momo') return row.totalMobileMoney ?? null;
+    if (key === 'card') return row.totalCard ?? null;
+    if (key === 'other') return row.totalOther ?? null;
+    if (key === 'momoDiff') return row.momoVariance ?? null;
+    if (key === 'expected') return row.expectedCash ?? null;
+    if (key === 'counted') return row.closingCount ?? null;
+    if (key === 'variance') return row.variance ?? null;
+    if (key === 'float') return row.openingFloat;
+    if (key === 'opened' || key === 'openTime') return row.openedAt;
+    return row.closedAt || null;
+  };
+  const sorted = [...rows].sort((a, b) => {
+    const diff = compareValues(valueOf(a, sortKey), valueOf(b, sortKey));
+    return sortDir === 'asc' ? diff : -diff;
+  });
+  const moneyCell = (n?: number | null, strike = false) => (
+    <span className={`block text-right tabular-nums ${strike ? 'text-gray-400' : ''}`}>{n == null ? '—' : money(n)}</span>
+  );
+  return (
+    <SheetFrame
+      items={sorted}
+      columns={columns}
+      widths={SHIFT_WIDTHS}
+      flexKeys={['cashier']}
+      sortKey={sortKey}
+      sortDir={sortDir}
+      onSort={(key) => onSort(key as ShiftCol)}
+      label="Cashier shifts"
+      empty={empty}
+      renderRow={(row) => {
+        const cells: Record<ShiftCol, React.ReactNode> = {
+          date: <span className="tabular-nums">{row.businessDate || '—'}</span>,
+          cashier: <span className="block font-semibold text-ghana-black">{row.cashierName}</span>,
+          status: <Chip size="sm" variant="flat" color={row.status === 'open' ? 'warning' : 'default'}>{row.status}</Chip>,
+          cash: moneyCell(row.totalCash),
+          momo: moneyCell(row.totalMobileMoney),
+          card: moneyCell(row.totalCard),
+          other: moneyCell(row.totalOther),
+          momoDiff: row.momoVariance == null
+            ? <span className="block text-right text-gray-400">—</span>
+            : <span className={`block text-right tabular-nums ${row.momoVariance === 0 ? 'text-success' : 'text-danger'}`}>{signedMoney(row.momoVariance)}</span>,
+          expected: moneyCell(row.expectedCash),
+          counted: moneyCell(row.closingCount),
+          variance: row.variance == null
+            ? <span className="block text-right text-gray-400">—</span>
+            : <span className={`block text-right tabular-nums ${row.variance === 0 ? 'text-success' : 'text-danger'}`}>{signedMoney(row.variance)}</span>,
+          float: moneyCell(row.openingFloat),
+          opened: <span className="tabular-nums">{fmtDay(row.openedAt)}</span>,
+          openTime: <span className="tabular-nums">{fmtTime(row.openedAt)}</span>,
+          closed: <span className="tabular-nums">{row.closedAt ? fmtDay(row.closedAt) : '—'}</span>,
+          closeTime: <span className="tabular-nums">{row.closedAt ? fmtTime(row.closedAt) : '—'}</span>,
+        };
+        return (
+          <TableRow key={row.id} className={rowClassNames(row.id === selectedId)} onClick={() => onOpen(row)}>
+            {(columnKey) => <TableCell>{cells[columnKey as ShiftCol]}</TableCell>}
+          </TableRow>
+        );
+      }}
+    />
+  );
+}
+
+function ListTools({
+  query,
+  onQuery,
+  placeholder,
+  filters,
+  filter,
+  onFilter,
+  dateMode,
+  onDateMode,
+  single,
+  onSingle,
+  from,
+  onFrom,
+  to,
+  onTo,
+  countLabel,
+  children,
+}: {
+  query: string;
+  onQuery: (value: string) => void;
+  placeholder: string;
+  filters: { key: string; label: string }[];
+  filter: string;
+  onFilter: (key: string) => void;
+  dateMode: DateMode;
+  onDateMode: (mode: DateMode) => void;
+  single: string;
+  onSingle: (value: string) => void;
+  from: string;
+  onFrom: (value: string) => void;
+  to: string;
+  onTo: (value: string) => void;
+  countLabel: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <Card className="border-0 shadow-lg">
+      <CardBody className="space-y-2 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            size="sm"
+            placeholder={placeholder}
+            value={query}
+            onValueChange={onQuery}
+            startContent={<span className="text-gray-400">🔍</span>}
+            isClearable
+            onClear={() => onQuery('')}
+            aria-label={placeholder}
+            className="min-w-[14rem] grow basis-[16rem]"
+          />
+          {children}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {filters.map((item) => (
+            <Button
+              key={item.key}
+              size="sm"
+              color={filter === item.key ? 'primary' : 'default'}
+              variant={filter === item.key ? 'solid' : 'flat'}
+              onPress={() => onFilter(item.key)}
+            >
+              {item.label}
+            </Button>
+          ))}
+          {dateMode !== 'all' && <span className="text-xs text-gray-500">{countLabel}</span>}
+          <div className="ml-auto">
+            <DateFilterPills
+              mode={dateMode}
+              onMode={onDateMode}
+              single={single}
+              onSingle={onSingle}
+              from={from}
+              onFrom={onFrom}
+              to={to}
+              onTo={onTo}
+            />
+          </div>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
 export default function CashierShiftPanel({
   outlet = 'frontoffice',
 }: {
@@ -194,6 +591,9 @@ export default function CashierShiftPanel({
 } = {}) {
   const { data: session } = useSession();
   const allowBackdating = useSettingsStore((s) => s.roomManagement.allowBackdating === true);
+  const canVoidPetty = useSettingsStore((s) =>
+    s.hasPermission(outlet === 'restaurant' ? 'restaurant.void-petty' : 'frontdesk.void-petty'),
+  );
   const currentUserId = (session?.user as any)?.id as string | undefined;
   const {
     shifts, myOpenShift, loading, openShift, closeShift, recordPaidOut, voidPaidOut, updateShift, deleteShift, fetchPreview,
@@ -216,8 +616,21 @@ export default function CashierShiftPanel({
   const [closing, setClosing] = React.useState(false);
   const [closeError, setCloseError] = React.useState<string | null>(null);
   const [pettyError, setPettyError] = React.useState<string | null>(null);
-  const [tillOpen, setTillOpen] = React.useState(false);
-  const [pettyOpen, setPettyOpen] = React.useState(false);
+  const [pettyTillId, setPettyTillId] = React.useState(CASH_TILL_ID);
+  const [tillTypes, setTillTypes] = React.useState<TillType[]>(() => defaultTillTypes());
+  const [openLines, setOpenLines] = React.useState<Record<string, { amount: string; note: string }>>({});
+  const [tillCounts, setTillCounts] = React.useState<Record<string, string>>({});
+  const [momoTxnId, setMomoTxnId] = React.useState('');
+  const [paidTo, setPaidTo] = React.useState('');
+  const [paidToNumber, setPaidToNumber] = React.useState('');
+  const [expenseOpen, setExpenseOpen] = React.useState(false);
+  const [cashierPage, setCashierPage] = React.useState<'till' | 'petty'>('till');
+  const [tillQuery, setTillQuery] = React.useState('');
+  const [pettyQuery, setPettyQuery] = React.useState('');
+  const [tillView, setTillView] = React.useState<'all' | 'open' | 'closed'>('all');
+  const [pettyView, setPettyView] = React.useState<'all' | 'posted' | 'voided'>('all');
+  const [tillFormOpen, setTillFormOpen] = React.useState(false);
+  const [openExpense, setOpenExpense] = React.useState<PettyHistoryRow | null>(null);
   const [livePreview, setLivePreview] = React.useState<ShiftPreview | null>(null);
 
   const [selected, setSelected] = React.useState<CashierShiftDTO | null>(null);
@@ -304,6 +717,19 @@ export default function CashierShiftPanel({
   }, [outlet]);
 
   React.useEffect(() => {
+    let cancel = false;
+    fetch('/api/frontoffice/till-types', {
+      headers: { 'x-tenant-subdomain': getClientTenantSubdomain() },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancel && Array.isArray(data?.tills) && data.tills.length) setTillTypes(data.tills);
+      })
+      .catch(() => { /* the cash row stays available if settings cannot load */ });
+    return () => { cancel = true; };
+  }, []);
+
+  React.useEffect(() => {
     void refreshCustody();
     let cancelled = false;
     (async () => {
@@ -378,37 +804,92 @@ export default function CashierShiftPanel({
   };
 
   const handleOpen = async () => {
-    const val = parseFloat(openingFloat);
-    if (isNaN(val) || val < 0) { setOpenError('Enter a valid opening float.'); return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) { setOpenError('Pick a valid business date.'); return; }
     const backdate = postingDateError(businessDate, allowBackdating);
     if (backdate) { setOpenError(backdate); return; }
+    const tills = tillTypes.filter((till) => till.active).map((till) => {
+      const amount = parseFloat(openLines[till.id]?.amount ?? '');
+      return { till, amount, note: openLines[till.id]?.note?.trim() || '' };
+    });
+    const missing = tills.find((row) => isNaN(row.amount) || row.amount < 0);
+    if (missing) { setOpenError(`Enter the opening amount for ${missing.till.name}.`); return; }
+    const cash = tills.find((row) => row.till.id === CASH_TILL_ID);
     setOpening(true);
     setOpenError(null);
-    const result = await openShift(val, openNotes || undefined, businessDate);
+    const result = await openShift(
+      cash?.amount ?? 0,
+      cash?.note,
+      businessDate,
+      tills.map((row) => ({ tillId: row.till.id, opening: row.amount, note: row.note })),
+    );
     setOpening(false);
     if (!result.ok) { setOpenError(result.error || 'Failed to open shift.'); return; }
+    setTillFormOpen(false);
+    setOpenLines({});
     setOpeningFloat('');
     setOpenNotes('');
-    setTillOpen(false);
   };
+
+  const spendChoices = React.useMemo(() => {
+    const lines = myOpenShift?.tillLines || [];
+    if (lines.length) {
+      return lines
+        .filter((line) => {
+          const type = tillTypes.find((till) => till.id === line.tillId);
+          return type ? type.spend : line.kind === 'cash';
+        })
+        .map((line) => ({ id: line.tillId, name: line.name, kind: line.kind }));
+    }
+    const choices: Array<{ id: string; name: string; kind: 'cash' | 'momo' }> = [];
+    const cash = tillTypes.find((till) => till.id === CASH_TILL_ID);
+    if (cash?.spend) choices.push({ id: CASH_TILL_ID, name: cash.name || 'Cash', kind: 'cash' });
+    if (tillTypes.some((till) => till.kind === 'momo' && till.spend)) {
+      choices.push({ id: 'momo', name: 'MoMo', kind: 'momo' });
+    }
+    return choices;
+  }, [myOpenShift?.tillLines, tillTypes]);
+  const pettyAllowed = tillTypes.some((till) => till.spend);
+
+  React.useEffect(() => {
+    if (!spendChoices.some((row) => row.id === pettyTillId)) setPettyTillId(spendChoices[0]?.id || CASH_TILL_ID);
+  }, [spendChoices, pettyTillId]);
+
+  React.useEffect(() => {
+    if (!pettyAllowed && cashierPage === 'petty') setCashierPage('till');
+  }, [pettyAllowed, cashierPage]);
 
   const handlePaidOut = async () => {
     if (!myOpenShift) return;
     const amount = parseFloat(pettyAmount);
-    if (isNaN(amount) || amount <= 0) { setPettyError('Enter the cash that left the till.'); return; }
-    if (!pettyNote.trim()) { setPettyError('Say what the cash was for.'); return; }
+    if (isNaN(amount) || amount <= 0) { setPettyError('Enter the amount.'); return; }
+    if (!pettyNote.trim()) { setPettyError('Say what it was for.'); return; }
+    const payingFrom = spendChoices.find((row) => row.id === pettyTillId) || spendChoices[0];
+    if (!payingFrom) { setPettyError('No till can pay this expense.'); return; }
+    const payingMomo = payingFrom?.kind === 'momo';
+    if (!paidTo.trim()) { setPettyError('Say who was paid.'); return; }
+    const digits = paidToNumber.replace(/\D/g, '');
+    if (digits.length < 9 || digits.length > 15) { setPettyError('Enter the number.'); return; }
+    if (payingMomo && !momoTxnId.trim()) { setPettyError('Enter the MoMo transaction ID.'); return; }
     setPettyBusy(true);
     setPettyError(null);
     const result = await recordPaidOut(myOpenShift.id, {
       amount,
       expenseCode: pettyCode,
       description: pettyNote.trim(),
+      method: payingMomo ? 'momo' : 'cash',
+      tillId: payingFrom && payingFrom.id !== 'momo' ? payingFrom.id : undefined,
+      momoTxnId: payingMomo ? momoTxnId.trim() : undefined,
+      paidTo: paidTo.trim(),
+      paidToNumber: paidToNumber.trim(),
     });
     setPettyBusy(false);
-    if (!result.ok) { setPettyError(result.error || 'Could not record the paid-out.'); return; }
+    if (!result.ok) { setPettyError(result.error || 'Could not record the expense.'); return; }
     setPettyAmount('');
     setPettyNote('');
+    setMomoTxnId('');
+    setPaidTo('');
+    setPaidToNumber('');
+    setExpenseOpen(false);
   };
 
   const handleVoidPaidOut = async (paidOutId: string) => {
@@ -422,19 +903,34 @@ export default function CashierShiftPanel({
 
   const handleClose = async () => {
     if (!myOpenShift) return;
-    const val = parseFloat(closingCount);
-    if (isNaN(val) || val < 0) { setCloseError('Enter a valid closing count.'); return; }
-    const momoVal = parseFloat(momoOnDevice);
-    if (isNaN(momoVal) || momoVal < 0) { setCloseError('Enter the amount received on the MoMo device.'); return; }
+    const opened = myOpenShift.tillLines || [];
+    let cashCount = parseFloat(closingCount);
+    let momoVal = parseFloat(momoOnDevice);
+    let counts: Array<{ tillId: string; amount: number }> | undefined;
+    if (opened.length) {
+      counts = [];
+      for (const line of opened) {
+        const amount = parseFloat(tillCounts[line.tillId] ?? '');
+        if (isNaN(amount) || amount < 0) { setCloseError(`Count ${line.name}.`); return; }
+        counts.push({ tillId: line.tillId, amount });
+        if (line.kind === 'cash') cashCount = amount;
+      }
+      momoVal = opened.filter((line) => line.kind === 'momo').reduce((sum, line) => sum + parseFloat(tillCounts[line.tillId] || '0'), 0);
+    } else {
+      if (isNaN(cashCount) || cashCount < 0) { setCloseError('Enter a valid closing count.'); return; }
+      if (isNaN(momoVal) || momoVal < 0) { setCloseError('Enter the amount received on the MoMo device.'); return; }
+    }
     setClosing(true);
     setCloseError(null);
-    const result = await closeShift(myOpenShift.id, val, closeNotes || undefined, momoVal);
+    const result = await closeShift(myOpenShift.id, cashCount, closeNotes || undefined, opened.length ? undefined : momoVal, counts);
     setClosing(false);
     if (!result.ok) { setCloseError(result.error || 'Failed to close shift.'); return; }
     setClosingCount('');
     setMomoOnDevice('');
+    setTillCounts({});
     setCloseNotes('');
-    setTillOpen(false);
+    setTillFormOpen(false);
+    setCashierPage('till');
     if (result.shift) openDetail(result.shift);
   };
 
@@ -559,12 +1055,41 @@ export default function CashierShiftPanel({
     setSelected(null);
   };
 
+  const printExpense = (slip: {
+    paidFrom: 'cash' | 'momo';
+    amount: string;
+    expense: string;
+    description: string;
+    paidTo: string;
+    number: string;
+    txnId?: string;
+    entryNumber?: string;
+    cashier?: string;
+    when?: string;
+    status?: string;
+  }) => {
+    const fields: Array<{ label: string; value: string }> = [
+      { label: 'Entry', value: slip.entryNumber || '—' },
+      { label: 'Paid from', value: slip.paidFrom === 'momo' ? 'MoMo' : 'Cash' },
+      { label: 'Amount', value: slip.amount || '—' },
+      { label: 'Expense', value: slip.expense || '—' },
+      { label: 'What it was for', value: slip.description || '—' },
+      { label: 'Paid to', value: slip.paidTo || '—' },
+      { label: 'Number', value: slip.number || '—' },
+    ];
+    if (slip.paidFrom === 'momo') fields.push({ label: 'Transaction ID', value: slip.txnId || '—' });
+    if (slip.cashier) fields.push({ label: 'Cashier', value: slip.cashier });
+    if (slip.when) fields.push({ label: 'When', value: slip.when });
+    if (slip.status) fields.push({ label: 'Status', value: slip.status });
+    printDetailSheet('Petty expense', fields, slip.cashier || '');
+  };
+
   const printHistory = () => {
     printSimpleReport(
       `${title} — Shift History`,
-      `${filteredShifts.length} shift${filteredShifts.length === 1 ? '' : 's'}`,
+      `${shownShifts.length} shift${shownShifts.length === 1 ? '' : 's'}`,
       ['Business Date', 'Cashier', 'Opened', 'Closed', 'Float', 'Cash sales', 'Expected', 'Counted', 'Variance', 'MoMo', 'Card', 'Other', 'MoMo on device', 'MoMo difference', 'Transfer', 'Status'],
-      filteredShifts.map((s) => [
+      shownShifts.map((s) => [
         s.businessDate,
         s.cashierName,
         fmtWhen(s.openedAt),
@@ -588,12 +1113,18 @@ export default function CashierShiftPanel({
   };
 
   const liveCash = livePreview?.totalCash ?? 0;
-  const livePaidOut = paidOutTotal(myOpenShift);
+  const livePaidOut = paidOutTotal(myOpenShift, 'cash');
+  const liveMomoOut = paidOutTotal(myOpenShift, 'momo');
   const liveExpected = myOpenShift ? myOpenShift.openingFloat + liveCash - livePaidOut : 0;
   const liveMomo = livePreview?.totalMobileMoney ?? 0;
+  const openedMomo = (myOpenShift?.tillLines || []).filter((line) => line.kind === 'momo');
+  const liveMomoExpected = openedMomo.reduce((sum, line) => sum + line.opening, 0) + liveMomo - liveMomoOut;
   const liveCard = livePreview?.totalCard ?? 0;
   const liveOther = livePreview?.totalOther ?? 0;
-  const typedMomo = momoOnDevice !== '' && !isNaN(parseFloat(momoOnDevice)) ? parseFloat(momoOnDevice) : null;
+  const countedMomo = openedMomo.length && openedMomo.every((line) => tillCounts[line.tillId] !== undefined && tillCounts[line.tillId] !== '' && !isNaN(parseFloat(tillCounts[line.tillId])))
+    ? openedMomo.reduce((sum, line) => sum + parseFloat(tillCounts[line.tillId]), 0)
+    : null;
+  const typedMomo = openedMomo.length ? countedMomo : (momoOnDevice !== '' && !isNaN(parseFloat(momoOnDevice)) ? parseFloat(momoOnDevice) : null);
   const momoReady = typedMomo != null && typedMomo >= 0;
 
   const recordedTotal = (pick: (shift: CashierShiftDTO) => number | undefined) => {
@@ -609,6 +1140,55 @@ export default function CashierShiftPanel({
   const shownPetty = filteredShifts.length
     ? filteredShifts.reduce((total, shift) => total + paidOutTotal(shift), 0)
     : null;
+
+  const pettyHistory = React.useMemo(() => {
+    const rows: PettyHistoryRow[] = [];
+    for (const shift of shifts) {
+      for (const row of shift.paidOuts || []) {
+        rows.push({
+          id: row.id,
+          shiftId: shift.id,
+          businessDate: shift.businessDate,
+          cashierName: shift.cashierName,
+          expenseName: row.expenseName,
+          description: row.description,
+          method: row.method === 'momo' ? 'momo' : 'cash',
+          momoTxnId: row.momoTxnId,
+          paidTo: row.paidTo,
+          paidToNumber: row.paidToNumber,
+          amount: row.amount,
+          createdAt: row.createdAt,
+          voidedAt: row.voidedAt,
+          entryNumber: row.entryNumber,
+          canUndo: canVoidPetty && shift.status === 'open' && shift.id === myOpenShift?.id && !row.voidedAt,
+        });
+      }
+    }
+    rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    return rows;
+  }, [shifts, myOpenShift?.id, canVoidPetty]);
+
+  const shownShifts = React.useMemo(() => {
+    const q = tillQuery.trim().toLowerCase();
+    return filteredShifts.filter((shift) => {
+      if (tillView !== 'all' && shift.status !== tillView) return false;
+      if (!q) return true;
+      return [shift.cashierName, shift.businessDate, shift.status].join(' ').toLowerCase().includes(q);
+    });
+  }, [filteredShifts, tillQuery, tillView]);
+
+  const shownExpenses = React.useMemo(() => {
+    const q = pettyQuery.trim().toLowerCase();
+    return pettyHistory.filter((row) => {
+      if (!matchesDateFilter(row.businessDate, dateFilter.mode, dateFilter.single, dateFilter.from, dateFilter.to)) return false;
+      if (pettyView === 'posted' && row.voidedAt) return false;
+      if (pettyView === 'voided' && !row.voidedAt) return false;
+      if (!q) return true;
+      return [row.cashierName, row.expenseName, row.description, row.method === 'momo' ? 'momo' : 'cash', row.paidTo, row.paidToNumber, row.momoTxnId].join(' ').toLowerCase().includes(q);
+    });
+  }, [pettyHistory, pettyQuery, pettyView, dateFilter.mode, dateFilter.single, dateFilter.from, dateFilter.to]);
+
+  const viewedExpense = openExpense ? pettyHistory.find((row) => row.id === openExpense.id) ?? null : null;
 
   const filteredTransfers = React.useMemo(
     () =>
@@ -628,17 +1208,17 @@ export default function CashierShiftPanel({
       .filter((row) => row.kind === 'custody_forward' && row.fromUserId === currentUserId)
       .reduce((total, row) => total + row.amount, 0);
 
-  const activePaidOuts = (myOpenShift?.paidOuts || []).filter((row) => !row.voidedAt);
-
   return (
     <div className="p-2 space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Button color="primary" variant={myOpenShift ? 'solid' : 'flat'} onPress={() => setTillOpen(true)}>
+        <Button color="primary" variant={cashierPage === 'till' ? 'solid' : 'flat'} onPress={() => setCashierPage('till')}>
           Till
         </Button>
-        <Button color="secondary" variant="flat" onPress={() => setPettyOpen(true)}>
-          Petty expense
-        </Button>
+        {pettyAllowed && (
+          <Button color="primary" variant={cashierPage === 'petty' ? 'solid' : 'flat'} onPress={() => setCashierPage('petty')}>
+            Petty expense
+          </Button>
+        )}
         {myOpenShift && (
           <span className="text-sm text-gray-600">
             Open · {myOpenShift.cashierName} · expected {money(liveExpected)}
@@ -646,38 +1226,55 @@ export default function CashierShiftPanel({
         )}
       </div>
 
-      <Modal isOpen={tillOpen} onClose={() => setTillOpen(false)} size="3xl" scrollBehavior="inside">
+      <Modal isOpen={tillFormOpen} onClose={() => setTillFormOpen(false)} size="3xl" scrollBehavior="inside">
         <ModalContent>
-          {(onClose) => (
-            <>
-              <ModalHeader>{myOpenShift ? `Till — ${myOpenShift.cashierName}` : `Open ${title}`}</ModalHeader>
-              <ModalBody className="gap-4">
+          <ModalHeader>{myOpenShift ? `Till — ${myOpenShift.cashierName}` : `Open ${title}`}</ModalHeader>
+          <ModalBody className="gap-4">
       {!myOpenShift ? (
         <div className="space-y-3">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <Field label="Business date">
-                <input
-                  type="date"
-                  className={fieldInputClass}
-                  min={postingDateMin(allowBackdating)}
-                  value={businessDate}
-                  onChange={(e) => {
-                    const error = postingDateError(e.target.value, allowBackdating);
-                    if (error) { setOpenError(error); return; }
-                    setBusinessDate(e.target.value);
-                    setOpenError((prev) => (prev === BACKDATE_MESSAGE ? null : prev));
-                  }}
-                />
-              </Field>
-              <Field label="Opening float (GH₵)">
-                <input type="number" min={0} step="0.01" className={fieldInputClass} value={openingFloat} onChange={(e) => setOpeningFloat(e.target.value)} placeholder="0.00" />
-              </Field>
-              <Field label="Notes (optional)">
-                <input type="text" className={fieldInputClass} value={openNotes} onChange={(e) => setOpenNotes(e.target.value)} placeholder="Optional" />
-              </Field>
-            </div>
+            <Field label="Business date">
+              <input
+                type="date"
+                className={fieldInputClass}
+                min={postingDateMin(allowBackdating)}
+                value={businessDate}
+                onChange={(e) => {
+                  const error = postingDateError(e.target.value, allowBackdating);
+                  if (error) { setOpenError(error); return; }
+                  setBusinessDate(e.target.value);
+                  setOpenError((prev) => (prev === BACKDATE_MESSAGE ? null : prev));
+                }}
+              />
+            </Field>
+            {tillTypes.filter((till) => till.active).map((till) => (
+              <div key={till.id} className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div className="flex items-end pb-2">
+                  <p className="text-sm font-medium text-gray-700">{till.name}</p>
+                </div>
+                <Field label="Opening amount (GH₵)">
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    className={fieldInputClass}
+                    value={openLines[till.id]?.amount ?? ''}
+                    onChange={(e) => setOpenLines((rows) => ({ ...rows, [till.id]: { amount: e.target.value, note: rows[till.id]?.note ?? '' } }))}
+                    placeholder="0.00"
+                  />
+                </Field>
+                <Field label="Notes (optional)">
+                  <input
+                    type="text"
+                    className={fieldInputClass}
+                    value={openLines[till.id]?.note ?? ''}
+                    onChange={(e) => setOpenLines((rows) => ({ ...rows, [till.id]: { amount: rows[till.id]?.amount ?? '', note: e.target.value } }))}
+                    placeholder="Optional"
+                  />
+                </Field>
+              </div>
+            ))}
             {openError && <p className="text-sm text-danger">{openError}</p>}
-            <Button color="primary" isLoading={opening} isDisabled={!openingFloat || !businessDate} onPress={handleOpen}>
+            <Button color="success" isLoading={opening} isDisabled={!businessDate || tillTypes.filter((till) => till.active).some((till) => openLines[till.id]?.amount === undefined || openLines[till.id]?.amount === '')} onPress={handleOpen}>
               Open Shift
             </Button>
         </div>
@@ -715,10 +1312,39 @@ export default function CashierShiftPanel({
                 card={liveCard}
                 other={liveOther}
                 declared={typedMomo}
-                variance={typedMomo == null ? null : typedMomo - liveMomo}
+                variance={typedMomo == null ? null : typedMomo - liveMomoExpected}
               />
             </div>
+            {liveMomoOut > 0 && (
+              <p className="text-sm text-gray-500">MoMo expenses of {money(liveMomoOut)} have already left the device. Count what is still on it.</p>
+            )}
             <Divider />
+            {myOpenShift.tillLines?.length ? (
+              <div className="space-y-3">
+                {myOpenShift.tillLines.map((line) => (
+                  <div key={line.tillId} className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <div className="flex flex-col justify-end pb-2">
+                      <p className="text-sm font-medium text-gray-700">{line.name}</p>
+                      <p className="text-xs text-gray-500">Opening {money(line.opening)}</p>
+                    </div>
+                    <Field label="Count (GH₵)">
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        className={fieldInputClass}
+                        value={tillCounts[line.tillId] ?? ''}
+                        onChange={(e) => setTillCounts((rows) => ({ ...rows, [line.tillId]: e.target.value }))}
+                        placeholder="0.00"
+                      />
+                    </Field>
+                    <Field label="Note">
+                      <input type="text" className={fieldInputClass} value={line.note || ''} disabled />
+                    </Field>
+                  </div>
+                ))}
+              </div>
+            ) : (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <Field label="Closing count (GH₵)">
                 <input type="number" min={0} step="0.01" className={fieldInputClass} value={closingCount} onChange={(e) => setClosingCount(e.target.value)} placeholder="Cash on hand" />
@@ -730,98 +1356,261 @@ export default function CashierShiftPanel({
                 <input type="text" className={fieldInputClass} value={closeNotes} onChange={(e) => setCloseNotes(e.target.value)} placeholder="Optional" />
               </Field>
             </div>
+            )}
             {closeError && <p className="text-sm text-danger">{closeError}</p>}
-            <Button color="primary" isLoading={closing} isDisabled={!closingCount || !momoReady} onPress={handleClose}>
+            <Button color="warning" isLoading={closing} isDisabled={myOpenShift.tillLines?.length ? myOpenShift.tillLines.some((line) => tillCounts[line.tillId] === undefined || tillCounts[line.tillId] === '') : (!closingCount || !momoReady)} onPress={handleClose}>
               Close &amp; Reconcile
             </Button>
         </div>
       )}
-              </ModalBody>
-              <ModalFooter>
-                <Button variant="light" onPress={onClose}>Close</Button>
-              </ModalFooter>
-            </>
-          )}
+          </ModalBody>
         </ModalContent>
       </Modal>
 
-      <Modal isOpen={pettyOpen} onClose={() => setPettyOpen(false)} size="2xl" scrollBehavior="inside">
-        <ModalContent>
-          {(onClose) => (
-            <>
-              <ModalHeader>Petty expense</ModalHeader>
-              <ModalBody className="gap-4">
-                {!myOpenShift ? (
-                  <div className="space-y-3">
-                    <p className="text-sm text-gray-600">Open a till first. Petty cash comes out of that drawer.</p>
-                    <Button color="primary" variant="flat" onPress={() => { setPettyOpen(false); setTillOpen(true); }}>
-                      Open till
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <p className="text-sm text-gray-500">
-                      Expected cash after this is {money(liveExpected)}. Card and MoMo stay out of the drawer.
-                    </p>
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                      <Field label="Amount (GH₵)">
-                        <input type="number" min={0} step="0.01" className={fieldInputClass} value={pettyAmount} onChange={(e) => setPettyAmount(e.target.value)} placeholder="Cash from the drawer" />
-                      </Field>
-                      <Field label="Expense">
-                        <select className={fieldInputClass} value={pettyCode} onChange={(e) => setPettyCode(e.target.value)}>
-                          {PETTY_EXPENSES.map((row) => (
-                            <option key={row.code} value={row.code}>{row.name}</option>
-                          ))}
-                        </select>
-                      </Field>
-                      <Field label="What it was for">
-                        <input type="text" className={fieldInputClass} value={pettyNote} onChange={(e) => setPettyNote(e.target.value)} placeholder="Taxi, stationery, fuel" />
-                      </Field>
-                    </div>
-                    {pettyError && <p className="text-sm text-danger">{pettyError}</p>}
-                    <Button size="sm" color="secondary" variant="flat" isLoading={pettyBusy} isDisabled={!pettyAmount || !pettyNote.trim()} onPress={handlePaidOut}>
-                      Record paid-out
-                    </Button>
-                    {activePaidOuts.length > 0 && (
-                      <div className="divide-y divide-default-200 text-sm">
-                        {activePaidOuts.map((row) => (
-                          <div key={row.id} className="flex items-baseline justify-between gap-3 py-1.5">
-                            <span className="min-w-0">
-                              <span className="font-medium">{row.expenseName}</span>
-                              <span className="text-gray-500"> — {row.description}</span>
-                            </span>
-                            <span className="flex shrink-0 items-center gap-2">
-                              <span className="tabular-nums">{money(row.amount)}</span>
-                              <button type="button" className="text-xs text-danger" disabled={pettyBusy} onClick={() => handleVoidPaidOut(row.id)}>Undo</button>
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </ModalBody>
-              <ModalFooter>
-                <Button variant="light" onPress={onClose}>Close</Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
-
-      <Card>
-        <CardHeader className="flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
-          <div className="font-medium">Cash and payments</div>
-          <DateFilterPills
-            mode={dateFilter.mode}
-            onMode={dateFilter.setMode}
+      {cashierPage === 'petty' && (
+        <>
+          <ListTools
+            query={pettyQuery}
+            onQuery={setPettyQuery}
+            placeholder="Search cashier, expense, or what it was for"
+            filters={[
+              { key: 'all', label: 'All' },
+              { key: 'posted', label: 'Posted' },
+              { key: 'voided', label: 'Voided' },
+            ]}
+            filter={pettyView}
+            onFilter={(key) => setPettyView(key as 'all' | 'posted' | 'voided')}
+            dateMode={dateFilter.mode}
+            onDateMode={dateFilter.setMode}
             single={dateFilter.single}
             onSingle={dateFilter.setSingle}
             from={dateFilter.from}
             onFrom={dateFilter.setFrom}
             to={dateFilter.to}
             onTo={dateFilter.setTo}
-          />
+            countLabel={shownExpenses.length === 1 ? '1 expense' : `${shownExpenses.length} expenses`}
+          >
+            <Button color="primary" className="ml-auto shrink-0" onPress={() => { setPettyError(null); setExpenseOpen(true); }}>
+              New expense
+            </Button>
+          </ListTools>
+          <Card className="border-0 shadow-lg">
+            <CardBody className="px-2 py-3">
+              <ExpenseSheet rows={shownExpenses} selectedId={openExpense?.id} onOpen={setOpenExpense} />
+            </CardBody>
+          </Card>
+        </>
+      )}
+
+      <Modal isOpen={expenseOpen} onClose={() => setExpenseOpen(false)} size="lg" scrollBehavior="inside">
+        <ModalContent>
+          {(onClose) => (
+            <>
+              <ModalHeader>New expense</ModalHeader>
+              <ModalBody className="gap-4">
+                {!myOpenShift ? (
+                  <p className="text-sm text-gray-600">Open a till first. The expense is recorded on that shift.</p>
+                ) : (
+                  <>
+                    <p className="text-sm text-gray-500">
+                      {myOpenShift.cashierName} · expected cash {money(liveExpected)}
+                    </p>
+                    <div>
+                      <p className="mb-2 text-sm font-medium text-gray-600">Paid from</p>
+                      <div className="flex flex-wrap gap-2">
+                        {spendChoices.map((choice) => (
+                          <Button key={choice.id} size="sm" color="primary" variant={pettyTillId === choice.id ? 'solid' : 'flat'} onPress={() => setPettyTillId(choice.id)}>{choice.name}</Button>
+                        ))}
+                      </div>
+                    </div>
+                    <p className="text-sm text-gray-500">
+                      {(spendChoices.find((row) => row.id === pettyTillId) || spendChoices[0])?.kind === 'momo'
+                        ? `This leaves ${(spendChoices.find((row) => row.id === pettyTillId) || spendChoices[0])?.name}. The cash drawer does not change.`
+                        : 'This leaves the cash drawer.'}
+                    </p>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-[9rem_1fr]">
+                      <Field label="Amount (GH₵)">
+                        <input type="number" min={0} step="0.01" className={fieldInputClass} value={pettyAmount} onChange={(e) => setPettyAmount(e.target.value)} placeholder="0.00" />
+                      </Field>
+                      <Field label="What it was for">
+                        <input type="text" className={fieldInputClass} value={pettyNote} onChange={(e) => setPettyNote(e.target.value)} placeholder="Taxi to the bank, guest cards, fuel" />
+                      </Field>
+                    </div>
+                    <Select
+                      label="Expense"
+                      labelPlacement="outside"
+                      placeholder="Choose an expense"
+                      selectedKeys={pettyCode ? [pettyCode] : []}
+                      disallowEmptySelection
+                      onSelectionChange={(keys) => {
+                        const next = Array.from(keys)[0];
+                        if (typeof next === 'string') setPettyCode(next);
+                      }}
+                      classNames={{
+                        label: 'text-sm font-medium text-gray-600',
+                        trigger: 'h-10 min-h-10 border border-default-300 bg-white shadow-none',
+                        value: 'text-sm',
+                      }}
+                    >
+                      {PETTY_EXPENSES.map((row) => (
+                        <SelectItem key={row.code}>{row.name}</SelectItem>
+                      ))}
+                    </Select>
+                    {(spendChoices.find((row) => row.id === pettyTillId) || spendChoices[0])?.kind === 'momo' && (
+                      <Field label="Transaction ID">
+                        <input type="text" className={fieldInputClass} value={momoTxnId} onChange={(e) => setMomoTxnId(e.target.value)} placeholder="MoMo receipt number" />
+                      </Field>
+                    )}
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <Field label="Paid to">
+                        <input type="text" className={fieldInputClass} value={paidTo} onChange={(e) => setPaidTo(e.target.value)} placeholder="Who received it" />
+                      </Field>
+                      <Field label="Number">
+                        <input type="tel" className={fieldInputClass} value={paidToNumber} onChange={(e) => setPaidToNumber(e.target.value)} placeholder="024 000 0000" />
+                      </Field>
+                    </div>
+                    {pettyError && <p className="text-sm text-danger">{pettyError}</p>}
+                  </>
+                )}
+              </ModalBody>
+              <ModalFooter>
+                {!myOpenShift ? (
+                  <Button color="success" onPress={() => { onClose(); setCashierPage('till'); setTillFormOpen(true); }}>
+                    Open till
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      variant="flat"
+                      onPress={() => printExpense({
+                        paidFrom: (spendChoices.find((row) => row.id === pettyTillId) || spendChoices[0])?.kind === 'momo' ? 'momo' : 'cash',
+                        amount: pettyAmount ? money(parseFloat(pettyAmount) || 0) : '',
+                        expense: PETTY_EXPENSES.find((row) => row.code === pettyCode)?.name || '',
+                        description: pettyNote.trim(),
+                        paidTo: paidTo.trim(),
+                        number: paidToNumber.trim(),
+                        txnId: momoTxnId.trim(),
+                        cashier: myOpenShift.cashierName,
+                      })}
+                    >
+                      Print
+                    </Button>
+                    <Button color="primary" isLoading={pettyBusy} isDisabled={!pettyAmount || !pettyNote.trim() || !paidTo.trim() || paidToNumber.replace(/\D/g, '').length < 9 || ((spendChoices.find((row) => row.id === pettyTillId) || spendChoices[0])?.kind === 'momo' && !momoTxnId.trim())} onPress={handlePaidOut}>
+                      Record expense
+                    </Button>
+                  </>
+                )}
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={!!viewedExpense} onClose={() => setOpenExpense(null)} size="md">
+        <ModalContent>
+          {viewedExpense && (
+            <>
+              <ModalHeader className="flex flex-col gap-0.5">
+                <span>{viewedExpense.expenseName}</span>
+                <span className="text-sm font-normal text-gray-500">
+                  {viewedExpense.businessDate} · {fmtTime(viewedExpense.createdAt)} · {viewedExpense.cashierName}
+                </span>
+              </ModalHeader>
+              <ModalBody className="gap-3 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-gray-500">Entry</span>
+                  <span className="font-mono">{viewedExpense.entryNumber || '—'}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-gray-500">Paid from</span>
+                  <span>{viewedExpense.method === 'momo' ? 'MoMo' : 'Cash'}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-gray-500">Amount</span>
+                  <span className={`font-semibold tabular-nums ${viewedExpense.voidedAt ? 'text-gray-400 line-through' : ''}`}>{money(viewedExpense.amount)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-gray-500">Status</span>
+                  <Chip size="sm" variant="flat" color={viewedExpense.voidedAt ? 'default' : 'success'}>{viewedExpense.voidedAt ? 'Voided' : 'Posted'}</Chip>
+                </div>
+                {viewedExpense.method === 'momo' && (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-gray-500">Transaction ID</span>
+                    <span>{viewedExpense.momoTxnId || '—'}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-gray-500">Paid to</span>
+                  <span>{viewedExpense.paidTo || '—'}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-gray-500">Number</span>
+                  <span>{viewedExpense.paidToNumber || '—'}</span>
+                </div>
+                <p>{viewedExpense.description}</p>
+                <p className="text-xs text-gray-500">{fmtWhen(viewedExpense.createdAt)}</p>
+              </ModalBody>
+              <ModalFooter>
+                <Button
+                  variant="flat"
+                  onPress={() => printExpense({
+                    paidFrom: viewedExpense.method,
+                    amount: money(viewedExpense.amount),
+                    expense: viewedExpense.expenseName,
+                    description: viewedExpense.description,
+                    paidTo: viewedExpense.paidTo || '',
+                    number: viewedExpense.paidToNumber || '',
+                    txnId: viewedExpense.momoTxnId,
+                    entryNumber: viewedExpense.entryNumber,
+                    cashier: viewedExpense.cashierName,
+                    when: fmtWhen(viewedExpense.createdAt),
+                    status: viewedExpense.voidedAt ? 'Voided' : 'Posted',
+                  })}
+                >
+                  Print
+                </Button>
+                {viewedExpense.canUndo && (
+                  <Button color="danger" variant="flat" isLoading={pettyBusy} onPress={() => { void handleVoidPaidOut(viewedExpense.id); }}>
+                    Undo
+                  </Button>
+                )}
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
+
+      {cashierPage === 'till' && (
+      <>
+      <ListTools
+        query={tillQuery}
+        onQuery={setTillQuery}
+        placeholder="Search cashier or date"
+        filters={[
+          { key: 'all', label: 'All' },
+          { key: 'open', label: 'Open' },
+          { key: 'closed', label: 'Closed' },
+        ]}
+        filter={tillView}
+        onFilter={(key) => setTillView(key as 'all' | 'open' | 'closed')}
+        dateMode={dateFilter.mode}
+        onDateMode={dateFilter.setMode}
+        single={dateFilter.single}
+        onSingle={dateFilter.setSingle}
+        from={dateFilter.from}
+        onFrom={dateFilter.setFrom}
+        to={dateFilter.to}
+        onTo={dateFilter.setTo}
+        countLabel={shownShifts.length === 1 ? '1 shift' : `${shownShifts.length} shifts`}
+      >
+        <Button size="sm" variant="flat" className="shrink-0" onPress={printHistory}>Print</Button>
+        <Button color={myOpenShift ? 'warning' : 'success'} className="ml-auto shrink-0" onPress={() => setTillFormOpen(true)}>
+          {myOpenShift ? 'Close till' : 'Open till'}
+        </Button>
+      </ListTools>
+      <Card>
+        <CardHeader>
+          <div className="font-medium">Cash and payments</div>
         </CardHeader>
         <CardBody className="space-y-3">
           <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3 lg:grid-cols-5">
@@ -978,82 +1767,18 @@ export default function CashierShiftPanel({
         </CardBody>
       </Card>
 
-      <Card>
-        <CardHeader className="flex flex-wrap items-center justify-between gap-2">
-          <div className="font-medium">Shift History</div>
-          <Button size="sm" color="primary" variant="flat" className="shrink-0" onPress={printHistory}>🖨️ Print</Button>
-        </CardHeader>
-        <CardBody>
-          <Table
-            aria-label="Cashier shift history"
-            classNames={{ base: 'overflow-x-auto', th: 'whitespace-nowrap', td: 'whitespace-nowrap' }}
-            selectionMode="single"
-            selectionBehavior="replace"
-            onRowAction={(key) => {
-              const s = filteredShifts.find((row) => row.id === String(key));
-              if (s) openDetail(s);
-            }}
-          >
-            <TableHeader>
-              <TableColumn>BUSINESS DATE</TableColumn>
-              <TableColumn>CASHIER</TableColumn>
-              <TableColumn>MOMO</TableColumn>
-              <TableColumn>CARD</TableColumn>
-              <TableColumn>OTHER</TableColumn>
-              <TableColumn>MOMO DIFF</TableColumn>
-              <TableColumn>CASH SALES</TableColumn>
-              <TableColumn>STATUS</TableColumn>
-              <TableColumn>OPENED</TableColumn>
-              <TableColumn>CLOSED</TableColumn>
-              <TableColumn>FLOAT</TableColumn>
-              <TableColumn>EXPECTED</TableColumn>
-              <TableColumn>COUNTED</TableColumn>
-              <TableColumn>VARIANCE</TableColumn>
-            </TableHeader>
-            <TableBody emptyContent={loading ? 'Loading…' : filteredShifts.length === 0 && shifts.length > 0 ? 'No shifts for this date filter.' : 'No cashier shifts yet for this outlet.'}>
-              {filteredShifts.map((s) => (
-                <TableRow key={s.id} className="cursor-pointer">
-                  <TableCell className="whitespace-nowrap font-medium tabular-nums">{s.businessDate || '—'}</TableCell>
-                  <TableCell>{s.cashierName}</TableCell>
-                  <TableCell className="tabular-nums">{s.totalMobileMoney != null ? money(s.totalMobileMoney) : '—'}</TableCell>
-                  <TableCell className="tabular-nums">{s.totalCard != null ? money(s.totalCard) : '—'}</TableCell>
-                  <TableCell className="tabular-nums">{s.totalOther != null ? money(s.totalOther) : '—'}</TableCell>
-                  <TableCell>
-                    {s.momoVariance != null ? (
-                      <span className={`tabular-nums ${s.momoVariance === 0 ? 'text-success' : 'text-danger'}`}>
-                        {signedMoney(s.momoVariance)}
-                      </span>
-                    ) : '—'}
-                  </TableCell>
-                  <TableCell className="tabular-nums">{s.totalCash != null ? money(s.totalCash) : '—'}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-col gap-1">
-                      <Chip size="sm" variant="flat" color={s.status === 'open' ? 'warning' : 'default'}>{s.status}</Chip>
-                      {s.transferTo && (
-                        <span className="text-[11px] text-gray-500">
-                          → {s.transferTo === 'accounts' ? 'Accounts' : s.transferToName || 'Cashier'}
-                        </span>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">{fmtWhen(s.openedAt)}</TableCell>
-                  <TableCell className="whitespace-nowrap">{s.closedAt ? fmtWhen(s.closedAt) : '—'}</TableCell>
-                  <TableCell className="tabular-nums">{money(s.openingFloat)}</TableCell>
-                  <TableCell className="font-semibold tabular-nums">{s.expectedCash != null ? money(s.expectedCash) : '—'}</TableCell>
-                  <TableCell className="font-semibold tabular-nums">{s.closingCount != null ? money(s.closingCount) : '—'}</TableCell>
-                  <TableCell>
-                    {s.variance != null ? (
-                      <span className={`tabular-nums ${s.variance === 0 ? 'text-success' : 'text-danger'}`}>
-                        {s.variance > 0 ? '+' : ''}{money(s.variance)}
-                      </span>
-                    ) : '—'}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+      <Card className="border-0 shadow-lg">
+        <CardBody className="px-2 py-3">
+          <ShiftSheet
+            rows={shownShifts}
+            selectedId={selected?.id}
+            onOpen={openDetail}
+            empty={loading ? 'Loading…' : shifts.length > 0 ? 'No shifts match.' : 'No cashier shifts yet.'}
+          />
         </CardBody>
       </Card>
+      </>
+      )}
 
       <Modal isOpen={!!selected} onClose={() => setSelected(null)} size="2xl" scrollBehavior="inside">
         <ModalContent>
@@ -1071,12 +1796,12 @@ export default function CashierShiftPanel({
                   <ReconStrip
                     float={Number(editFloat) || selected.openingFloat}
                     cashSales={selected.totalCash ?? 0}
-                    paidOut={paidOutTotal(selected)}
-                    expected={(Number(editFloat) || selected.openingFloat) + (selected.totalCash ?? 0) - paidOutTotal(selected)}
+                    paidOut={paidOutTotal(selected, 'cash')}
+                    expected={(Number(editFloat) || selected.openingFloat) + (selected.totalCash ?? 0) - paidOutTotal(selected, 'cash')}
                     counted={editCount !== '' && !isNaN(parseFloat(editCount)) ? parseFloat(editCount) : selected.closingCount}
                     variance={
                       editCount !== '' && !isNaN(parseFloat(editCount))
-                        ? parseFloat(editCount) - ((Number(editFloat) || selected.openingFloat) + (selected.totalCash ?? 0) - paidOutTotal(selected))
+                        ? parseFloat(editCount) - ((Number(editFloat) || selected.openingFloat) + (selected.totalCash ?? 0) - paidOutTotal(selected, 'cash'))
                         : selected.variance
                     }
                   />
@@ -1087,7 +1812,7 @@ export default function CashierShiftPanel({
                     declared={editMomo !== '' && !isNaN(parseFloat(editMomo)) ? parseFloat(editMomo) : null}
                     variance={
                       editMomo !== '' && !isNaN(parseFloat(editMomo))
-                        ? parseFloat(editMomo) - (selected.totalMobileMoney ?? 0)
+                        ? parseFloat(editMomo) - ((selected.totalMobileMoney ?? 0) - paidOutTotal(selected, 'momo'))
                         : selected.momoVariance
                     }
                   />

@@ -45,11 +45,16 @@ export function useCashierShift(currentUserId?: string, outlet: CashierOutlet = 
     [shifts, currentUserId]
   );
 
-  const openShift = React.useCallback(async (openingFloat: number, notes?: string, businessDate?: string) => {
+  const openShift = React.useCallback(async (
+    openingFloat: number,
+    notes?: string,
+    businessDate?: string,
+    tills?: Array<{ tillId: string; opening: number; note?: string }>,
+  ) => {
     const res = await fetch('/api/frontoffice/cashier-shifts', {
       method: 'POST',
       headers: headers(),
-      body: JSON.stringify({ openingFloat, notes, outlet, businessDate }),
+      body: JSON.stringify({ openingFloat, notes, outlet, businessDate, tills }),
     });
     const data = await res.json().catch(() => null);
     if (res.ok) await refresh();
@@ -58,7 +63,16 @@ export function useCashierShift(currentUserId?: string, outlet: CashierOutlet = 
 
   const recordPaidOut = React.useCallback(async (
     id: string,
-    paidOut: { amount: number; expenseCode: string; description: string },
+    paidOut: {
+      amount: number
+      expenseCode: string
+      description: string
+      method?: 'cash' | 'momo'
+      tillId?: string
+      momoTxnId?: string
+      paidTo?: string
+      paidToNumber?: string
+    },
   ) => {
     const res = await fetch(`/api/frontoffice/cashier-shifts/${id}`, {
       method: 'PATCH',
@@ -81,11 +95,17 @@ export function useCashierShift(currentUserId?: string, outlet: CashierOutlet = 
     return { ok: res.ok, error: data?.error as string | undefined, shift: data?.shift as CashierShiftDTO | undefined };
   }, [refresh]);
 
-  const closeShift = React.useCallback(async (id: string, closingCount: number, notes?: string, momoDeclared?: number) => {
+  const closeShift = React.useCallback(async (
+    id: string,
+    closingCount: number,
+    notes?: string,
+    momoDeclared?: number,
+    counts?: Array<{ tillId: string; amount: number }>,
+  ) => {
     const res = await fetch(`/api/frontoffice/cashier-shifts/${id}`, {
       method: 'PATCH',
       headers: headers(),
-      body: JSON.stringify({ action: 'close', closingCount, notes, momoDeclared }),
+      body: JSON.stringify({ action: 'close', closingCount, notes, momoDeclared, counts }),
     });
     const data = await res.json().catch(() => null);
     if (res.ok) await refresh();

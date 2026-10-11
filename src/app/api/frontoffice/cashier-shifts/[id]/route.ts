@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
-import { requireAuth } from '@/app/lib/api/auth-guard'
+import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
+import { prisma } from '@/app/lib/database/client'
 import { rejectIfBackdated } from '@/app/lib/frontoffice/postingDateGuard'
 import {
   closeCashierShift,
@@ -47,11 +48,25 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     if (action === 'paid-out' || action === 'void-paid-out') {
       try {
+        if (action === 'void-paid-out') {
+          const shiftRow = await prisma.cashierShift.findFirst({
+            where: { id, tenantId: ctx.tenantId },
+            select: { outlet: true },
+          })
+          const perm = shiftRow?.outlet === 'restaurant' ? 'restaurant.void-petty' : 'frontdesk.void-petty'
+          const allowed = await requirePermission(request, perm)
+          if (!allowed.ok) return allowed.response
+        }
         const shift = action === 'paid-out'
           ? await recordTillPaidOut(ctx.tenantId, id, {
             amount: Number(body.amount),
             expenseCode: String(body.expenseCode || ''),
             description: String(body.description || ''),
+            method: body.method === 'momo' ? 'momo' : 'cash',
+            tillId: body.tillId ? String(body.tillId) : undefined,
+            momoTxnId: body.momoTxnId ? String(body.momoTxnId) : undefined,
+            paidTo: body.paidTo ? String(body.paidTo) : undefined,
+            paidToNumber: body.paidToNumber ? String(body.paidToNumber) : undefined,
           }, postedBy)
           : await voidTillPaidOut(ctx.tenantId, id, String(body.paidOutId || ''), postedBy)
         await createAuditLog(
@@ -82,7 +97,18 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       if (momoDeclared !== undefined && (!Number.isFinite(momoDeclared) || momoDeclared < 0)) {
         return NextResponse.json({ error: 'momoDeclared must be zero or a positive number' }, { status: 400 })
       }
-      const shift = await closeCashierShift(ctx.tenantId, id, closingCount, body.notes, momoDeclared)
+      const counts = Array.isArray(body.counts)
+        ? body.counts.map((row: { tillId?: string; amount?: number }) => ({
+          tillId: String(row?.tillId || ''),
+          amount: Number(row?.amount),
+        }))
+        : undefined
+      let shift
+      try {
+        shift = await closeCashierShift(ctx.tenantId, id, closingCount, body.notes, momoDeclared, counts)
+      } catch (e: any) {
+        return NextResponse.json({ error: e?.message || 'Could not close the till' }, { status: 400 })
+      }
       if (!shift) return NextResponse.json({ error: 'Shift not found, or already closed' }, { status: 404 })
       await createAuditLog(
         ctx.tenantId,

@@ -1,4 +1,5 @@
 import { prisma } from '../database/client'
+import { nextJournalEntryNumber } from './journalNumbers'
 import { JournalEntry, JournalEntryLine, Invoice, InvoiceLine, Payment, ChartOfAccounts, BankAccount, CostCenter, RevenueCenter, BusinessPartner, BankTransaction, GHANA_CHART_OF_ACCOUNTS } from './models'
 import type { PpeAsset, PpeCategory } from './ppe/types'
 import { mapCoaTypeToCategory, mapCoaTypeToRollup } from './coaTree'
@@ -59,6 +60,31 @@ export async function listJournalEntries(tenantId: string): Promise<JournalEntry
     orderBy: { date: 'desc' },
   })
   return rows.map(toStoreJournalEntry)
+}
+
+/**
+ * Next JE-year-number for one hotel, shared by every journal (screens, expenses, till petty
+ * expenses). A per-hotel counter hands numbers out one at a time — an atomic increment — so
+ * two staff saving at the same moment never get the same number. The first use of a year's
+ * series starts from the highest number already in that hotel's books.
+ */
+export async function allocateJournalEntryNumber(tenantId: string): Promise<string> {
+  const year = new Date().getFullYear()
+  const where = { tenantId_series: { tenantId, series: `journal-${year}` } }
+  const existing = await prisma.numberCounter.findUnique({ where })
+  if (!existing) {
+    const rows = await prisma.journalEntry.findMany({ where: { tenantId }, select: { entryNumber: true } })
+    // nextJournalEntryNumber returns highest + 1; the counter stores the last number used.
+    const next = nextJournalEntryNumber(rows.map((row) => row.entryNumber), rows.length)
+    const lastUsed = Number(next.slice(next.lastIndexOf('-') + 1)) - 1
+    try {
+      await prisma.numberCounter.create({ data: { tenantId, series: `journal-${year}`, value: lastUsed } })
+    } catch {
+      // Another request started the series at the same moment; use its row.
+    }
+  }
+  const counter = await prisma.numberCounter.update({ where, data: { value: { increment: 1 } } })
+  return `JE-${year}-${String(counter.value).padStart(4, '0')}`
 }
 
 export async function createJournalEntry(tenantId: string, je: Partial<JournalEntry>): Promise<JournalEntry> {

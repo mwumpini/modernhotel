@@ -70,15 +70,21 @@ export async function POST(request: NextRequest) {
     const blocked = await rejectIfBackdated(ctx.tenantId, businessDate)
     if (blocked) return blocked
 
-    const shift = await openCashierShift(
-      ctx.tenantId,
-      cashierUserId,
-      cashierName,
-      openingFloat,
-      body.notes || undefined,
-      outlet,
-      businessDate,
-    )
+    let shift
+    try {
+      shift = await openCashierShift(
+        ctx.tenantId,
+        cashierUserId,
+        cashierName,
+        openingFloat,
+        body.notes || undefined,
+        outlet,
+        businessDate,
+        Array.isArray(body.tills) ? body.tills : undefined,
+      )
+    } catch (e: any) {
+      return NextResponse.json({ error: e?.message || 'Could not open the till' }, { status: 400 })
+    }
     const sessionUserId = (auth.session as any).user?.id
     await createAuditLog(
       ctx.tenantId,

@@ -46,7 +46,7 @@ function SortHeader({
 
 function toggleColumnSort(prev: ColumnSort, column: string): ColumnSort {
   if (prev.column !== column) {
-    return { column, direction: column === 'time' || column === 'amount' ? 'desc' : 'asc' };
+    return { column, direction: column === 'time' || column === 'amount' || column === 'paid' ? 'desc' : 'asc' };
   }
   return { column, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
 }
@@ -107,6 +107,27 @@ function money(amount: number) {
   return `₵${amount.toFixed(2)}`;
 }
 
+function orderTotalOf(order: FBOrder) {
+  const stored = Number(order.total) || 0;
+  if (stored > 0) return stored;
+  return order.items.reduce((sum, line) => sum + (line.price || 0) * (line.qty || 0), 0);
+}
+
+/** This line's share of what was collected. Unsettled lines stay blank. */
+function lineAmountPaid(order: FBOrder, item: OrderItem, lineAmount: number) {
+  const status = lineStatus(order, item);
+  if (status === 'cancelled' || status === 'void') return null;
+  const paid = Number(order.amountPaid) || 0;
+  if (paid <= 0) return null;
+  const base = orderTotalOf(order);
+  if (base <= 0) return null;
+  return Math.round(Math.min(lineAmount, (lineAmount * paid) / base) * 100) / 100;
+}
+
+function mopLabel(order: FBOrder) {
+  return order.paymentMethod || '—';
+}
+
 function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -133,7 +154,6 @@ export default function FoodBeveragePosActivity({
   const activityCols = useResizableColumns({
     ticket: 120,
     date: 88,
-    clock: 72,
     item: 180,
     customer: 140,
     room: 80,
@@ -141,6 +161,8 @@ export default function FoodBeveragePosActivity({
     venue: 110,
     qty: 64,
     amount: 96,
+    mop: 120,
+    paid: 110,
     status: 110,
     server: 140,
   });
@@ -169,7 +191,7 @@ export default function FoodBeveragePosActivity({
       }
       if (!term) return true;
       const ticket = lineTicket(order.notes, item.route, order.orderNumber || order.id);
-      return [ticket, order.orderNumber, item.name, order.table, order.guestName, order.waiterId, order.roomNumber]
+      return [ticket, order.orderNumber, item.name, order.table, order.guestName, order.waiterId, order.roomNumber, order.paymentMethod]
         .some((value) => String(value || '').toLowerCase().includes(term));
     });
     const direction = sort.direction === 'asc' ? 1 : -1;
@@ -183,6 +205,8 @@ export default function FoodBeveragePosActivity({
         case 'venue': return order.venue || '';
         case 'qty': return item.qty || 0;
         case 'amount': return (item.price || 0) * (item.qty || 0);
+        case 'mop': return order.paymentMethod || '';
+        case 'paid': return lineAmountPaid(order, item, (item.price || 0) * (item.qty || 0)) ?? -1;
         case 'status': return lineStatus(order, item);
         case 'server': return order.waiterId || '';
         default: return order.createdAt || '';
@@ -301,7 +325,6 @@ export default function FoodBeveragePosActivity({
             <TableHeader>
               <TableColumn className="relative" style={activityCols.style('ticket')}>{<SortHeader label="Ticket" column="ticket" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} />}{activityCols.sizer('ticket', 'Ticket')}</TableColumn>
               <TableColumn className="relative" style={activityCols.style('date')}>{<SortHeader label="Date" column="time" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} />}{activityCols.sizer('date', 'Date')}</TableColumn>
-              <TableColumn className="relative" style={activityCols.style('clock')}>Time{activityCols.sizer('clock', 'Time')}</TableColumn>
               <TableColumn className="relative" style={activityCols.style('item')}>{<SortHeader label="Item" column="item" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} />}{activityCols.sizer('item', 'Item')}</TableColumn>
               <TableColumn className="relative" style={activityCols.style('customer')}>{<SortHeader label="Customer" column="customer" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} />}{activityCols.sizer('customer', 'Customer')}</TableColumn>
               <TableColumn className="relative" style={activityCols.style('room')}>{<SortHeader label="Room" column="room" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} />}{activityCols.sizer('room', 'Room')}</TableColumn>
@@ -309,6 +332,8 @@ export default function FoodBeveragePosActivity({
               <TableColumn className="relative" style={activityCols.style('venue')}>{<SortHeader label="Venue" column="venue" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} />}{activityCols.sizer('venue', 'Venue')}</TableColumn>
               <TableColumn className="relative" style={activityCols.style('qty')}>{<SortHeader label="Qty" column="qty" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} align="right" />}{activityCols.sizer('qty', 'Qty')}</TableColumn>
               <TableColumn className="relative" style={activityCols.style('amount')}>{<SortHeader label="Amount" column="amount" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} align="right" />}{activityCols.sizer('amount', 'Amount')}</TableColumn>
+              <TableColumn className="relative" style={activityCols.style('mop')}>{<SortHeader label="MOP" column="mop" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} />}{activityCols.sizer('mop', 'MOP')}</TableColumn>
+              <TableColumn className="relative" style={activityCols.style('paid')}>{<SortHeader label="Amount paid" column="paid" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} align="right" />}{activityCols.sizer('paid', 'Amount paid')}</TableColumn>
               <TableColumn className="relative" style={activityCols.style('status')}>{<SortHeader label="Status" column="status" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} />}{activityCols.sizer('status', 'Status')}</TableColumn>
               <TableColumn className="relative" style={activityCols.style('server')}>{<SortHeader label="Staff" column="server" sort={sort} onSort={(column) => setSort((prev) => toggleColumnSort(prev, column))} />}{activityCols.sizer('server', 'Staff')}</TableColumn>
             </TableHeader>
@@ -317,6 +342,7 @@ export default function FoodBeveragePosActivity({
                 const when = stamp(order.createdAt);
                 const status = lineStatus(order, item);
                 const amount = (item.price || 0) * (item.qty || 0);
+                const paid = lineAmountPaid(order, item, amount);
                 const selected = openLine?.orderId === order.id && openLine.itemId === item.id;
                 return (
                   <TableRow
@@ -326,7 +352,6 @@ export default function FoodBeveragePosActivity({
                   >
                     <TableCell className="font-medium">{lineTicket(order.notes, item.route, order.orderNumber || order.id)}</TableCell>
                     <TableCell>{when.date}</TableCell>
-                    <TableCell>{when.time}</TableCell>
                     <TableCell>
                       <span className="block truncate" title={item.name}>{item.name}</span>
                     </TableCell>
@@ -339,6 +364,10 @@ export default function FoodBeveragePosActivity({
                     </TableCell>
                     <TableCell>
                       <span className="block text-right tabular-nums">₵{amount.toFixed(2)}</span>
+                    </TableCell>
+                    <TableCell>{mopLabel(order)}</TableCell>
+                    <TableCell>
+                      <span className="block text-right tabular-nums">{paid == null ? '—' : money(paid)}</span>
                     </TableCell>
                     <TableCell>
                       <Chip size="sm" variant="flat" color={statusColor(status)}>{statusLabel(status)}</Chip>
@@ -382,6 +411,8 @@ function TransactionDialog({
   const orderTotal = order
     ? order.items.reduce((sum, line) => sum + (line.price || 0) * (line.qty || 0), 0)
     : 0;
+  const lineAmount = order && item ? (item.price || 0) * (item.qty || 0) : 0;
+  const paid = order && item ? lineAmountPaid(order, item, lineAmount) : null;
   const lineState = order && item ? lineStatus(order, item) : '';
   const isVoided = lineState === 'cancelled' || lineState === 'void';
   const isBilled = lineState === 'billed' || lineState === 'paid';
@@ -504,7 +535,9 @@ function TransactionDialog({
                       <Fact label="Table" value={order.table || '—'} />
                       <Fact label="Venue" value={order.venue || '—'} />
                       <Fact label="Qty" value={String(item.qty || 0)} />
-                      <Fact label="Amount" value={money((item.price || 0) * (item.qty || 0))} />
+                      <Fact label="Amount" value={money(lineAmount)} />
+                      <Fact label="MOP" value={mopLabel(order)} />
+                      <Fact label="Amount paid" value={paid == null ? '—' : money(paid)} />
                       <Fact label="Ticket" value={ticket || '—'} />
                     </div>
                     {notes && <p className="mt-3 text-sm text-gray-600">{notes}</p>}

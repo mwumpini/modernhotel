@@ -1,5 +1,6 @@
 import type { BankAccount, JournalEntry, JournalEntryLine } from './models';
 import { assertPeriodNotClosed } from './periodClose';
+import { nextJournalEntryNumber } from './journalNumbers';
 import { logAccountingProcessWarn } from './accountingProcessLog';
 
 /** Offset for bank opening balances — Retained Earnings (3200) in the Ghana hotel COA. */
@@ -12,8 +13,8 @@ function lineId(jeId: string, seq: number) {
   return `JEL-${jeId}-${seq}`;
 }
 
-function jeNumber(seq: number) {
-  return `JE-${new Date().getFullYear()}-${String(seq + 1).padStart(4, '0')}`;
+function jeNumber(seq: number, entryNumbers: string[] = []) {
+  return nextJournalEntryNumber(entryNumbers, seq);
 }
 
 /** Net debit posted to the bank GL from opening-balance journal entries. */
@@ -124,7 +125,7 @@ export function syncBankOpeningBalanceToLedger(
 
   const entry: JournalEntry = {
     id: jeId,
-    entryNumber: jeNumber(store.journalEntries.length),
+    entryNumber: jeNumber(store.journalEntries.length, store.journalEntries.map((entry) => entry.entryNumber)),
     date: now.slice(0, 10),
     reference: bankAccount.accountNumber || bankAccount.id,
     description: isFirst

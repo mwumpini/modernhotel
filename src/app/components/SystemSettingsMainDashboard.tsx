@@ -24,11 +24,12 @@ import SampleDataPanel from './settings/SampleDataPanel';
 import SecurityPolicyPanel from './settings/SecurityPolicyPanel';
 import OperationalPoliciesPanel from './settings/OperationalPoliciesPanel';
 import CompanyYearPanel from './settings/CompanyYearPanel';
+import TillManagementPanel from './settings/TillManagementPanel';
 import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 import { useSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
 import { SummaryToggle } from './dashboard/SummaryToggle';
 
-const VALID_TABS = ['users', 'rooms', 'policies', 'company-year', 'numbering', 'templates', 'locations', 'security', 'approvals', 'modules', 'sample-data', 'audit'] as const;
+const VALID_TABS = ['users', 'rooms', 'policies', 'company-year', 'tills', 'numbering', 'templates', 'locations', 'security', 'approvals', 'modules', 'sample-data', 'audit'] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
 
 function resolveInitialTab(searchParams: URLSearchParams): SettingsTab {
@@ -163,6 +164,10 @@ export default function SystemSettingsMainDashboard() {
 
             <Tab key="company-year" title="Accounting year">
               <CompanyYearPanel />
+            </Tab>
+
+            <Tab key="tills" title="Till management">
+              <TillManagementPanel />
             </Tab>
 
             <Tab key="numbering" title="Document Numbering">

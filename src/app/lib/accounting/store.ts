@@ -20,6 +20,7 @@ import {
   AuditTrail,
   WHTCertificate,
 } from './models';
+import { takeJournalEntryNumber } from './journalNumbers';
 import type { Supplier } from '../inventory/models';
 import {
   computeTrialBalanceGLBalances,
@@ -2913,7 +2914,8 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       }
 
       // Create journal entry from payment voucher
-      const entryNumber = `JE-${new Date().getFullYear()}-${String(get().journalEntries.length + 1).padStart(4, '0')}`;
+      const existingEntries = get().journalEntries;
+      const entryNumber = await takeJournalEntryNumber(existingEntries.map((entry) => entry.entryNumber));
       const journalEntryId = Date.now().toString();
       const journalLines: JournalEntryLine[] = voucher.lines.map(line => ({
         id: Date.now().toString() + Math.random(),
