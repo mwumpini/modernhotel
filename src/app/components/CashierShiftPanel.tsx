@@ -16,6 +16,7 @@ import { DateFilterPills, matchesDateFilter, useDateFilter, type DateMode } from
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from './frontoffice/columnResize';
 import { useSettingsStore } from '../lib/settings/store';
 import { BACKDATE_MESSAGE, postingDateError, postingDateMin } from '../lib/frontoffice/backdate';
+import { pollInterval, useLiveChanges } from '../lib/realtime/useLiveChanges';
 
 type TransferUser = { id: string; name: string; role?: string; isActive?: boolean };
 
@@ -764,6 +765,13 @@ export default function CashierShiftPanel({
     }
   }, [transferTo, recipientCashiers, selected, transferUserId]);
 
+  // Live updates: a sale or payment taken on another till moves this preview at once.
+  const [previewTick, setPreviewTick] = React.useState(0);
+  const previewLive = useLiveChanges(
+    ['Payment', 'FBOrder', 'CashierShift', 'CashTransfer', 'PettyCashTxn'],
+    () => setPreviewTick((n) => n + 1),
+  );
+
   React.useEffect(() => {
     if (!myOpenShift) {
       setLivePreview(null);
@@ -775,12 +783,12 @@ export default function CashierShiftPanel({
       if (!cancelled) setLivePreview(preview);
     };
     void load();
-    const t = window.setInterval(load, 15000);
+    const t = window.setInterval(load, pollInterval(previewLive, 15000));
     return () => {
       cancelled = true;
       window.clearInterval(t);
     };
-  }, [myOpenShift, fetchPreview]);
+  }, [myOpenShift, fetchPreview, previewTick, previewLive]);
 
   const openDetail = (s: CashierShiftDTO) => {
     setSelected(s);

@@ -29,6 +29,7 @@ import { SummaryToggle } from './dashboard/SummaryToggle';
 import KitchenReportsAnalysis from './KitchenReportsAnalysis';
 import ReadyNowBoard from './fb/ReadyNowBoard';
 import { useSettingsStore } from '../lib/settings/store';
+import { useLiveChanges, pollInterval } from '../lib/realtime/useLiveChanges';
 
 type SuppliesView = 'inventory' | 'stock-count' | 'requisitions';
 const SUPPLIES_VIEWS: { key: SuppliesView; label: string }[] = [
@@ -191,11 +192,12 @@ export default function FoodBeverageKitchen({
     }
   }, []);
 
+  const liveUpdates = useLiveChanges(['FBOrder', 'FBOrderItem'], () => { void refreshLiveOrders(); });
   useEffect(() => {
     refreshLiveOrders();
-    const id = setInterval(refreshLiveOrders, 10_000);
+    const id = setInterval(refreshLiveOrders, pollInterval(liveUpdates, 10_000));
     return () => clearInterval(id);
-  }, [refreshLiveOrders]);
+  }, [refreshLiveOrders, liveUpdates]);
 
   // Catalog for requisition picker; on-hand for the Inventory tab lives in DepartmentInventoryPanel.
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);

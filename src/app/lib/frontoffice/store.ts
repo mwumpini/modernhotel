@@ -563,8 +563,15 @@ class FrontOfficeStore {
     void this.refreshFromApi({ force: true });
     this.liveRefreshTimer = window.setInterval(() => {
       if (document.visibilityState !== 'visible') return;
+      // Live updates already refresh on every save; the timer is then only a once-a-minute safety check.
+      if (this.liveConnected && Date.now() - this.lastRefreshFromApiAt < 60_000) return;
       void this.refreshFromApi();
     }, FrontOfficeStore.LIVE_REFRESH_MS);
+  }
+
+  private liveConnected = false;
+  setLiveConnected(live: boolean) {
+    this.liveConnected = live;
   }
 
   endLiveRefresh() {

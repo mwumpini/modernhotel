@@ -45,6 +45,7 @@ import { confirmDelete, confirmVoid } from './DangerConfirm';
 import { issueOrderIdentity, lineTicket, parseTicketTag } from '../lib/fb/ticketTag';
 import { useSession } from 'next-auth/react';
 import { menuImageSrc } from './fb/MenuPhotoPicker';
+import { useLiveChanges, pollInterval } from '@/app/lib/realtime/useLiveChanges';
 import {
   ChefHat, ChevronDown, ChevronUp, ClipboardList, CreditCard, Minus, MoreHorizontal, Plus, Printer,
   Receipt, Search, Send, Trash2, UserRound, UtensilsCrossed, Wine,
@@ -364,6 +365,11 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
   };
 
 
+  // Live updates: another till's order, the kitchen marking it ready, or a menu change shows here at once.
+  const [menuRefresh, setMenuRefresh] = useState(0);
+  const liveUpdates = useLiveChanges(['FBMenuItem'], () => setMenuRefresh((n) => n + 1));
+  useLiveChanges(['FBOrder', 'FBOrderItem'], () => { void ordersStore.hydrateFromApi(); });
+
   // keep orders table in sync with shared store
   React.useEffect(() => {
     const sync = () => setOrders(ordersStore.all());
@@ -434,10 +440,10 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
       }
     }
     fetchMenu();
-    const timer = window.setInterval(fetchMenu, 20000);
+    const timer = window.setInterval(fetchMenu, pollInterval(liveUpdates, 20000));
     return () => { cancelled = true; window.clearInterval(timer); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [menuRefresh, liveUpdates]);
 
   // Load tenant info: hotel name + staff list for waiter select
   React.useEffect(() => {

@@ -57,6 +57,7 @@ import CleaningAreasPanel from './housekeeping/CleaningAreasPanel';
 import PublicSpacesStatusGrid from './housekeeping/PublicSpacesStatusGrid';
 import SubViewPills from './dashboard/SubViewPills';
 import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
+import { useLiveChanges } from '../lib/realtime/useLiveChanges';
 
 /** Slim top-level tabs — Desk/Events style. Legacy keys remap below. */
 const HK_PRIMARY = ['floor', 'work', 'supplies', 'staff', 'reports'] as const;
@@ -183,6 +184,11 @@ export default function HousekeepingMainDashboard({
     housekeepingStore.hydrateFromApi();
     return unsubscribe;
   }, []);
+  // Live updates: a room cleaned, inspected or reported on another device shows here at once.
+  useLiveChanges(
+    ['HousekeepingTask', 'RoomStatusLog', 'MaintenanceRequest', 'HousekeepingStaff', 'Reservation'],
+    () => { void housekeepingStore.hydrateFromApi(); },
+  );
 
   useEffect(() => {
     const apply = () => {

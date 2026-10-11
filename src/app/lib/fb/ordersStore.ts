@@ -77,16 +77,23 @@ export interface FBOrder {
 class OrdersStore {
   private orders: FBOrder[] = [];
   private listeners: Array<() => void> = [];
+  // Live refresh must not wipe a change made on this screen while the fetch was in flight.
+  private lastLocalChange = 0;
+  private recentLocalIds = new Map<string, number>();
+  private touched() { this.lastLocalChange = Date.now(); }
 
   add(order: FBOrder) {
     const now = new Date().toISOString();
     this.orders.unshift({ ...order, createdAt: now, updatedAt: now, audit: order.audit || [] });
+    this.recentLocalIds.set(order.id, Date.now());
+    this.touched();
     this.listeners.forEach((l) => l());
   }
 
   update(order: FBOrder) {
     const now = new Date().toISOString();
     this.orders = this.orders.map(o => o.id === order.id ? { ...order, updatedAt: now, audit: order.audit || o.audit || [] } : o);
+    this.touched();
     this.listeners.forEach((l) => l());
   }
 
@@ -95,6 +102,7 @@ class OrdersStore {
     if (idx === -1) return;
     const current = this.orders[idx];
     this.orders[idx] = { ...current, ...patch, updatedAt: new Date().toISOString() };
+    this.touched();
     this.listeners.forEach(l => l());
   }
 
@@ -103,6 +111,7 @@ class OrdersStore {
     if (!order) return;
     order.items = order.items.map(i => i.id === itemId ? { ...i, ...patch } : i);
     order.updatedAt = new Date().toISOString();
+    this.touched();
     this.listeners.forEach(l => l());
   }
 
@@ -123,6 +132,7 @@ class OrdersStore {
 
   remove(orderId: string) {
     this.orders = this.orders.filter(o => o.id !== orderId);
+    this.touched();
     this.listeners.forEach((l) => l());
   }
 
@@ -131,6 +141,7 @@ class OrdersStore {
     if (!order) return;
     order.items = order.items.filter(i => i.id !== itemId);
     order.updatedAt = new Date().toISOString();
+    this.touched();
     this.listeners.forEach(l => l());
   }
 
@@ -160,13 +171,17 @@ class OrdersStore {
     if (typeof window === 'undefined') return;
     const t = getClientTenantSubdomain();
     if (!t) return;
+    const startedAt = Date.now();
     try {
       const res = await fetch('/api/fb/orders', { headers: { 'x-tenant-subdomain': t }, cache: 'no-store' });
       if (!res.ok) return;
       const data = await res.json();
       const rows: any[] = data.orders || [];
+      if (this.lastLocalChange > startedAt) return; // changed here meanwhile; the save's own live notice refetches
+      const serverIds = new Set(rows.map((o) => o.id));
+      const pendingLocal = this.orders.filter((o) => !serverIds.has(o.id) && Date.now() - (this.recentLocalIds.get(o.id) ?? 0) < 120_000);
 
-      this.orders = rows.map((o): FBOrder => {
+      const fromServer = rows.map((o): FBOrder => {
         const venue: VenueMode = (o.venue === 'bar' || o.venue === 'pool_bar') ? 'Bar' : 'Restaurant';
         const customerType: CustomerType = o.guestId || o.roomNumber
           ? 'In-house'
@@ -223,6 +238,8 @@ class OrdersStore {
           amountPaid: Number(o.amountPaid) || undefined,
         };
       });
+      // Orders sent from this screen in the last two minutes that the server has not returned yet stay visible.
+      this.orders = [...pendingLocal, ...fromServer];
       this.listeners.forEach((l) => l());
       const ticket = (notes: string | undefined, key: 'KOT' | 'BOT') => notes?.match(new RegExp(`${key}=([^;\\]]+)`))?.[1];
       const settings = useSettingsStore.getState();

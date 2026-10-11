@@ -174,8 +174,9 @@ class HousekeepingStore {
    * vocabulary ('in-progress', 'deep-clean', etc.) round-trips through the API
    * unchanged — no translation layer needed.
    */
-  async hydrateFromApi(): Promise<void> {
+  async hydrateFromApi(retried = false): Promise<void> {
     if (typeof window === 'undefined') return;
+    const changesAtStart = this.changeCount;
     try {
       const [tasksRes, maintRes, staffRes, statusRes] = await Promise.all([
         fetch('/api/housekeeping/tasks', { headers: hkHeaders(), cache: 'no-store' }),
@@ -183,6 +184,11 @@ class HousekeepingStore {
         fetch('/api/housekeeping/staff', { headers: hkHeaders(), cache: 'no-store' }),
         fetch('/api/housekeeping/room-status', { headers: hkHeaders(), cache: 'no-store' }),
       ]);
+      // Something changed on this screen while loading: this copy may be older, so load again shortly.
+      if (this.changeCount !== changesAtStart) {
+        if (!retried) window.setTimeout(() => { void this.hydrateFromApi(true); }, 1500);
+        return;
+      }
 
       if (tasksRes.ok) {
         const data = await tasksRes.json();
@@ -931,7 +937,9 @@ class HousekeepingStore {
     }).catch((e) => console.warn('HK: Failed to sync maintenance update:', e));
   }
 
+  private changeCount = 0;
   private notify() {
+    this.changeCount += 1;
     this.listeners.forEach(listener => listener());
   }
 

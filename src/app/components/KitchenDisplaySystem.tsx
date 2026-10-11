@@ -5,6 +5,7 @@ import { createSaveGuard } from '../lib/api/saveGuard'
 import { fetchFbOrders, fetchKitchenStaff, patchFbOrder, patchFbOrderStatus, openKitchenOverview, type FbOrderDto } from '../lib/fb/api'
 import { parseTicketTag } from '../lib/fb/ticketTag'
 import { logKitchenStatusChange } from '../lib/fb/kitchenEvents'
+import { useLiveChanges, pollInterval } from '../lib/realtime/useLiveChanges'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type KDSOrder = FbOrderDto
@@ -353,10 +354,11 @@ export default function KitchenDisplaySystem({ embedded = false, lockStation = '
   }, [venueFilter, stationFilter, statusFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { fetchOrders() }, [fetchOrders])
+  const liveUpdates = useLiveChanges(['FBOrder', 'FBOrderItem'], () => { void fetchOrders() })
   useEffect(() => {
-    const id = setInterval(fetchOrders, POLL_MS)
+    const id = setInterval(fetchOrders, pollInterval(liveUpdates, POLL_MS))
     return () => clearInterval(id)
-  }, [fetchOrders])
+  }, [fetchOrders, liveUpdates])
 
   // Tick elapsed timers locally — no API call
   useEffect(() => {
@@ -496,7 +498,7 @@ export default function KitchenDisplaySystem({ embedded = false, lockStation = '
               <div className={`text-lg font-black tracking-widest uppercase ${lightBoard ? 'text-stone-900' : 'text-white'}`}>🍳 Kitchen</div>
               {lastRefresh && (
                 <div className="text-[10px] text-gray-500 mt-0.5">
-                  synced {lastRefresh.toLocaleTimeString()} · every {POLL_MS / 1000}s
+                  synced {lastRefresh.toLocaleTimeString()} · {liveUpdates ? 'live' : `every ${POLL_MS / 1000}s`}
                 </div>
               )}
             </div>

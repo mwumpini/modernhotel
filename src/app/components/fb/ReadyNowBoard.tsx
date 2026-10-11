@@ -6,6 +6,7 @@ import { fbTenantHeaders } from '../../lib/fb/api';
 import { isOnReadyBoard, todayServiceDate } from '../../lib/fb/readyBoard';
 import { useSettingsStore } from '../../lib/settings/store';
 import { createSaveGuard } from '../../lib/api/saveGuard';
+import { useLiveChanges, pollInterval } from '../../lib/realtime/useLiveChanges';
 
 /** Shared by every board in this file: a reload must not undo a dish just changed. */
 const saveGuard = createSaveGuard();
@@ -74,11 +75,12 @@ export function ReadyNowPage() {
     }
   }, []);
 
+  const liveUpdates = useLiveChanges(['FBMenuItem'], () => { void refresh(); });
   useEffect(() => {
     refresh();
-    const timer = window.setInterval(refresh, 20000);
+    const timer = window.setInterval(refresh, pollInterval(liveUpdates, 20000));
     return () => window.clearInterval(timer);
-  }, [refresh]);
+  }, [refresh, liveUpdates]);
 
   const togglePin = async (dish: Dish) => {
     const pinned = !dish.isPinned;
@@ -217,11 +219,12 @@ export function ReadyNowNotice() {
     }
   }, []);
 
+  const liveUpdates = useLiveChanges(['FBMenuItem'], () => { void refresh(); });
   useEffect(() => {
     refresh();
-    const timer = window.setInterval(refresh, 20000);
+    const timer = window.setInterval(refresh, pollInterval(liveUpdates, 20000));
     return () => window.clearInterval(timer);
-  }, [refresh]);
+  }, [refresh, liveUpdates]);
 
   return (
     <div className="mb-8 rounded-xl border border-[#006B3F] bg-[#e5f6ec] px-4 py-3 dark:border-[#7dffa8] dark:bg-[#123528]">
