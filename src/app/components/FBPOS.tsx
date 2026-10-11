@@ -661,6 +661,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
       guestName: o.guestName,
       roomNumber: o.roomNumber,
       paymentMethod: paid ? o.paymentMethod : undefined,
+      billedAt: paid ? (o.billedAt || o.updatedAt || o.createdAt) : undefined,
     }, paid);
   };
 

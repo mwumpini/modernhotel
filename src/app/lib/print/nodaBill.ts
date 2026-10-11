@@ -255,8 +255,9 @@ function nodaTaxLines(taxes: PrintTaxes | undefined, taxable: number): Array<[st
   if (!taxes) return [];
   const rate = (amount: number) => {
     if (taxable <= 0) return '';
-    const pct = Math.round((amount / taxable) * 10000) / 100;
-    return ` ${Number.isInteger(pct) ? pct : pct.toFixed(2).replace(/0$/, '')}%`;
+    // One decimal: amounts are rounded to the pesewa, so 1.26 on 25.00 reads 5%, not 5.04%.
+    const pct = Math.round((amount / taxable) * 1000) / 10;
+    return ` ${Number.isInteger(pct) ? pct : pct.toFixed(1)}%`;
   };
   const lines: Array<[string, number]> = [];
   const group = [

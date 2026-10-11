@@ -465,6 +465,7 @@ function TransactionDialog({
       guestName: order.guestName,
       roomNumber: order.roomNumber,
       paymentMethod: isBilled ? order.paymentMethod : undefined,
+      billedAt: order.billedAt || order.updatedAt || order.createdAt,
     });
   };
 

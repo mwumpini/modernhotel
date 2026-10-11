@@ -193,6 +193,8 @@ export function renderFbReceipt(args: Parameters<typeof buildReceiptHtml>[0] & {
   authCode?: string;
   terminalId?: string;
   verification?: string;
+  /** When the bill was paid (ISO). A reprint passes it so the slip keeps the original time. */
+  billedAt?: string;
 }): string {
   const settings = useSettingsStore.getState();
   const taxable = Math.max(0, args.subtotal - args.discount);
@@ -207,7 +209,7 @@ export function renderFbReceipt(args: Parameters<typeof buildReceiptHtml>[0] & {
     },
     tableNumber: args.table,
     docNumber: args.code,
-    docDate: new Date().toISOString(),
+    docDate: args.billedAt || new Date().toISOString(),
     title: 'Receipt',
     items: args.items.map((item) => ({
       description: item.name,
