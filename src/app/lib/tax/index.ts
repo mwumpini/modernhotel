@@ -18,6 +18,7 @@ export {
   effectiveSalesTaxRate,
   computeQuoteTax,
   salesTaxBreakdown,
+  printTaxesFromTotal,
   roundMoney2,
   roundToIncrement,
   type TaxComputationResult,

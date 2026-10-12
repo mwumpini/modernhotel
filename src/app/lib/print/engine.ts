@@ -50,6 +50,8 @@ export function renderPrint(type: PrintType, templateKey: string, data: PrintDat
   const settings = useSettingsStore.getState();
   const key = templateKind(type, templateKey) ? templateKey : activeTemplateKey(type);
   const block = settings.getDocBuilderTemplate(key) || getBuiltInTemplate(key);
+  // Till slips print the short NHIL/GFL; every other document NHIL/GETFund.
+  if (type === 'fb-receipt' && !data.taxLabelStyle) data = { ...data, taxLabelStyle: 'short' };
   if (block && block.docType === type) {
     const withUser = data.userName ? data : { ...data, userName: signedInUserName() };
     return renderBlockTemplate(block, withUser);

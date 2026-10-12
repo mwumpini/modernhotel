@@ -1,4 +1,5 @@
 import type { PrintData } from './templates';
+import { displayTaxesFromAmounts, taxLineLabel } from '../tax/displayLines';
 
 /**
  * Shared totals math — used by both the block-template engine
@@ -17,13 +18,12 @@ export function computeTotalsBreakdown(data: PrintData) {
 
   const taxLines: Array<[string, number]> = [];
   if (t.taxes) {
-    const { vat, nhil, levy, covid, gefl, gtal } = t.taxes;
-    if (gefl) taxLines.push(['GEFL (2.5%)', gefl]);
-    if (nhil) taxLines.push(['NHIL (2.5%)', nhil]);
-    if (covid) taxLines.push(['COVID Levy (legacy)', covid]);
-    if (levy) taxLines.push(['Tourism Levy (1%)', levy]);
-    if (vat) taxLines.push(['VAT', vat]);
-    if (gtal) taxLines.push(['GTAL (1%)', gtal]);
+    // NHIL/GETFund together, then VAT, then Tourism Levy (see tax/displayLines.ts).
+    // Till slips say NHIL/GFL. Rates come from the amounts, so they follow the hotel's settings.
+    const taxable = Math.max(0, (t.subTotal || 0) - (t.discount || 0));
+    for (const line of displayTaxesFromAmounts(t.taxes, taxable, data.taxLabelStyle || 'full')) {
+      taxLines.push([taxLineLabel(line), line.amount]);
+    }
   }
   const taxesTotal = t.taxes ? Object.values(t.taxes).reduce((s, v) => s + (v || 0), 0) : 0;
   const grand = t.grandTotal != null ? t.grandTotal : (t.subTotal - (t.discount || 0) - (t.advance || 0) + taxesTotal);

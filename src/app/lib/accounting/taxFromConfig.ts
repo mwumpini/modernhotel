@@ -173,6 +173,14 @@ function passesContextFilters(c: TaxConfig, context: TaxStackContext): boolean {
  * Compute stacked tax lines from active configs.
  * @param targetTotalTax If set, scales pre-VAT lines then sets VAT (or last slice) so the sum matches.
  */
+
+/** Line order everywhere: NHIL, GETFund, VAT, Tourism Levy, then the rest. Amounts don't
+ *  depend on it (each levy is on the same base); bills and screens read the lines in this order. */
+const LINE_ORDER: Partial<Record<TaxConfig['type'], number>> = { NHIL: 10, GETFund: 20, VAT: 30, Tourism: 40, COVID19: 50 };
+function arrangeTaxLines(lines: StackedTaxLine[]): StackedTaxLine[] {
+  const rank = (l: StackedTaxLine) => LINE_ORDER[l.type as TaxConfig['type']] ?? 60;
+  return [...lines].sort((a, b) => rank(a) - rank(b));
+}
 export function computeStackedTaxLines(
   exclusiveAmount: number,
   configs: TaxConfig[],
@@ -270,7 +278,7 @@ export function computeStackedTaxLines(
     }
   }
 
-  return { lines, totalTax, gross: roundMoney2(net + totalTax) };
+  return { lines: arrangeTaxLines(lines), totalTax, gross: roundMoney2(net + totalTax) };
 }
 
 /** Use store configs when initialized; otherwise Ghana template (matches `initializeAccounting` seed). */

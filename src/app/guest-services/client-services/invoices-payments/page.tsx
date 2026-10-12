@@ -46,7 +46,7 @@ import { listAllTemplates, openPrintPreview } from '../../../lib/print/engine';
 import { buildOrgProfile } from '../../../lib/print/buildOrgProfile';
 import { trackEvent } from '../../../lib/analytics/trackEvent';
 import { logAudit } from '../../../lib/analytics/auditLogStore';
-import { computeSalesTaxTotal, effectiveSalesTaxRate } from '../../../lib/tax/engine';
+import { computeSalesTaxTotal, effectiveSalesTaxRate, printTaxesFromTotal } from '../../../lib/tax/engine';
 import { formatMoney } from '../../../lib/format/currency';
 import { billingPersonLabel, localStayDay, shortDay, sortStays, stayFigures, type StaySortKey } from '../../../lib/frontoffice/stayWorksheet';
 import StayWorksheetTable, { worksheetTableClassNames } from '../../../components/frontoffice/StayWorksheetTable';
@@ -666,7 +666,7 @@ export default function InvoicesPaymentsPage() {
       })),
       totals: {
         subTotal: invoice.subtotal,
-        taxes: { vat: invoice.taxAmount },
+        taxes: printTaxesFromTotal((invoice.subtotal || 0) - (invoice.discountAmount || 0), invoice.taxAmount || 0),
         payments: invoice.totalAmount - invoice.balance,
         balance: invoice.balance,
         discount: invoice.discountAmount,

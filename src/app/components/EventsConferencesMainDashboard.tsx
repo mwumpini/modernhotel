@@ -80,7 +80,7 @@ import { useAccountingStore } from '../lib/accounting/store';
 import { adjustConferenceChargeInAccounting, unvoidConferenceReceiptInAccounting, voidConferenceReceiptInAccounting } from '../lib/accounting/folioVoidSync';
 import { captureRevenue, capturePayment, recognizeDeferredRevenue, reverseRecognizedRevenue, captureConferenceProforma, markConferenceProformaConverted, retireOrphanConferenceInvoices } from '../lib/accounting/integration';
 import { announcementStore, DepartmentKey } from '../lib/analytics/announcementStore';
-import { computeQuoteTax, exclusiveFromGross } from '../lib/tax/engine';
+import { computeQuoteTax, exclusiveFromGross, printTaxesFromTotal } from '../lib/tax/engine';
 import EventsModuleFilters, {
   matchesEventsDateFilter,
   getEventsDateRangeBounds,
@@ -4417,7 +4417,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         items,
         totals: {
           subTotal: invoice.subtotal || 0,
-          taxes: invoice.tax > 0 ? { vat: invoice.tax } : undefined,
+          taxes: printTaxesFromTotal(invoice.subtotal || 0, invoice.tax || 0),
           grandTotal: invoice.total || 0,
           payments,
           balance: invoice.balance ?? invoice.total ?? 0,

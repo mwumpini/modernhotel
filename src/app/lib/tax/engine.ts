@@ -156,4 +156,20 @@ export function salesTaxBreakdown(exclusiveAmount: number): {
   };
 }
 
+/**
+ * A bill's one tax total split into the levies a printed document lists (NHIL, GETFund,
+ * VAT, Tourism), scaled so they add back to exactly `totalTax`. For invoices stored with
+ * only a lump tax amount, so they don't print it all as "VAT".
+ */
+export function printTaxesFromTotal(
+  exclusiveAmount: number,
+  totalTax: number,
+): { vat?: number; nhil?: number; gefl?: number; levy?: number; covid?: number } | undefined {
+  if (!(totalTax > 0)) return undefined;
+  const { lines } = computeSalesTax(Math.max(0, exclusiveAmount), totalTax);
+  if (!lines.length) return { vat: totalTax };
+  const sum = (type: string) => roundMoney2(lines.filter((l) => l.type === type).reduce((s, l) => s + l.amount, 0));
+  return { nhil: sum('NHIL'), gefl: sum('GETFund'), vat: sum('VAT'), levy: sum('Tourism'), covid: sum('COVID19') };
+}
+
 export { roundMoney2, roundToIncrement, type StackedTaxLine, type TaxStackContext };

@@ -5,6 +5,7 @@ import type { TaxRule } from '@/app/lib/models';
 import { createGuestRow, createReservationRow } from '@/app/lib/frontoffice/repository';
 import { hotelSignInOpen } from '@/app/lib/platform/billing';
 import { tenantForBookingKey } from './websiteApiKey';
+import { displayTaxLines } from '../tax/displayLines';
 
 const ACTIVE = ['pending', 'confirmed', 'checked-in'] as const;
 const MAX_NIGHTS = 30;
@@ -121,7 +122,8 @@ function quoteStay(rules: TaxRule[], nightlyExclusive: number, nights: number) {
     nightlyTotal: nights > 0 ? round2(stayTotal / nights) : stayTotal,
     stayTotal,
     shares,
-    taxes: quoted.taxes.map((line) => ({ name: line.name, amount: round2(line.amount) })),
+    // Same lines a guest sees on the bill: NHIL/GETFund, VAT, Tourism Levy.
+    taxes: displayTaxLines(quoted.taxes).map((line) => ({ name: line.name, amount: round2(line.amount) })),
   };
 }
 

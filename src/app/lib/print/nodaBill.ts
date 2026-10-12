@@ -1,6 +1,7 @@
 import type { PrintData, PrintLineItem, PrintTaxes } from './templates';
 import { amountInWords } from './amountInWords';
 import { computeTotalsBreakdown } from './taxBreakdown';
+import { displayTaxesFromAmounts, formatRate } from '../tax/displayLines';
 
 /**
  * Restaurant bill in the Noda Hotel form: TIN and logo on the left, the hotel
@@ -246,32 +247,15 @@ function itemRow(item: PrintLineItem): string {
 }
 
 /**
- * Tax lines in the Noda style (NHIL and GETFund together, then VAT, then the
- * tourism levy), built from the taxes actually on this bill. The rate in each
- * label is worked out from the amounts, so it follows the hotel's tax settings
- * and any change in Ghana's rates instead of printing a fixed percentage.
+ * Tax lines on the bill: NHIL/GFL together, then VAT, then Tourism Levy (the shared
+ * order in tax/displayLines.ts), with each rate worked out from the bill's own amounts.
  */
 function nodaTaxLines(taxes: PrintTaxes | undefined, taxable: number): Array<[string, number]> {
   if (!taxes) return [];
-  const rate = (amount: number) => {
-    if (taxable <= 0) return '';
-    // One decimal: amounts are rounded to the pesewa, so 1.26 on 25.00 reads 5%, not 5.04%.
-    const pct = Math.round((amount / taxable) * 1000) / 10;
-    return ` ${Number.isInteger(pct) ? pct : pct.toFixed(1)}%`;
-  };
-  const lines: Array<[string, number]> = [];
-  const group = [
-    ['NHIL', taxes.nhil || 0],
-    ['GETFund', taxes.gefl || 0],
-    ['COVID-19', taxes.covid || 0],
-  ] as const;
-  const present = group.filter(([, amount]) => amount > 0);
-  const groupTotal = present.reduce((sum, [, amount]) => sum + amount, 0);
-  if (groupTotal > 0) lines.push([`${present.map(([name]) => name).join('/')}${rate(groupTotal)}:`, groupTotal]);
-  if ((taxes.vat || 0) > 0) lines.push([`VAT${rate(taxes.vat || 0)}:`, taxes.vat || 0]);
-  const levy = (taxes.levy || 0) + (taxes.gtal || 0);
-  if (levy > 0) lines.push([`Tourism Levy${rate(levy)}:`, levy]);
-  return lines;
+  return displayTaxesFromAmounts(taxes, taxable, 'short').map((line) => {
+    const rate = formatRate(line.rate);
+    return [`${line.name}${rate ? ` ${rate}` : ''}:`, line.amount];
+  });
 }
 
 function totalRow(label: string, value: string, grand: boolean): string {

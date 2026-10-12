@@ -52,6 +52,7 @@ import { isManualArApSource } from '@/app/lib/accounting/journalReversal';
 import { roundMoney2 } from '@/app/lib/accounting/taxFromConfig';
 import { convertProformaToInvoice, GL_ACCOUNTS } from '@/app/lib/accounting/integration';
 import { computeSalesTax } from '@/app/lib/tax/engine';
+import { displayTaxLines, taxLineLabel } from '@/app/lib/tax/displayLines';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/react';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
@@ -923,8 +924,8 @@ export default function AccountsReceivable() {
 			invoice.taxBreakdown && invoice.taxBreakdown.length > 0
 				? invoice.taxBreakdown
 				: (pdfSubtotal > 0 ? computeSalesTax(pdfSubtotal, pdfTotalTax).lines.map(l => ({ name: l.name, rate: l.rate, amount: l.amount })) : []);
-		const taxBreakdownRows = pdfTaxBreakdown.map(t =>
-			`<tr><td>${t.name} (${t.rate}%)</td><td class="amount">${formatAccountingCurrency(Number(t.amount))}</td></tr>`
+		const taxBreakdownRows = displayTaxLines(pdfTaxBreakdown).map(t =>
+			`<tr><td>${taxLineLabel(t)}</td><td class="amount">${formatAccountingCurrency(Number(t.amount))}</td></tr>`
 		).join('');
 
 		const html = generatePdfHtml(isProforma ? 'Proforma Invoice' : 'Sales Invoice', `
@@ -4307,9 +4308,9 @@ export default function AccountsReceivable() {
 												<div className="bg-gray-50 rounded-md p-2.5 text-sm">
 													<table className="w-full">
 														<tbody>
-															{taxBreakdown.length > 0 ? taxBreakdown.map((tax: any, idx: number) => (
-																<tr key={tax.code || idx} className="border-b border-gray-200">
-																	<td className="py-1 text-gray-600">{tax.name} ({tax.rate}%)</td>
+															{taxBreakdown.length > 0 ? displayTaxLines(taxBreakdown).map((tax, idx: number) => (
+																<tr key={tax.name || idx} className="border-b border-gray-200">
+																	<td className="py-1 text-gray-600">{taxLineLabel(tax)}</td>
 																	<td className="py-1 text-right font-mono">{formatAccountingCurrency(Number(tax.amount || 0))}</td>
 																</tr>
 															)) : (

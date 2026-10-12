@@ -1,3 +1,4 @@
+import type { TaxLabelStyle } from '../tax/displayLines';
 import { computeTotalsBreakdown } from './taxBreakdown';
 
 export type PrintType =
@@ -243,6 +244,8 @@ export interface PrintData {
   tender?: PrintTender;
   /** Restaurant table on a Noda bill, such as "01" or "T01". */
   tableNumber?: string;
+  /** 'short' prints NHIL/GFL (restaurant till slips); otherwise NHIL/GETFund. Set by renderPrint. */
+  taxLabelStyle?: TaxLabelStyle;
 }
 
 function cssBase() {
