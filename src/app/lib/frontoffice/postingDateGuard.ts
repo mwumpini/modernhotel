@@ -19,6 +19,9 @@ const DATE_FIELDS = {
   accountingPayment: 'date',
   journalEntry: 'date',
   hrStaffDebt: 'issuedDate',
+  hrAttendance: 'date',
+  hrPayrollRecord: 'paidAt',
+  tableReservation: 'reservationDate',
   reservation: 'checkInDate',
 } as const;
 

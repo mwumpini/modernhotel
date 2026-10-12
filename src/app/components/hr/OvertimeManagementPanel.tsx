@@ -14,6 +14,8 @@ import { printDetailSheet } from '@/app/lib/print/simpleReport';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { DetailGrid, DetailField } from '../frontoffice/detailView';
 import { useDeskPagination } from '../dashboard/deskTableUi';
+import PostingDateField from '../shared/PostingDateField';
+import { businessToday, postingDateError } from '@/app/lib/frontoffice/backdate';
 
 type OvertimeSortKey = 'timesheet' | 'employee' | 'date' | 'start' | 'end' | 'hours' | 'overtime' | 'status';
 
@@ -45,6 +47,7 @@ export default function OvertimeManagementPanel() {
   const directorThreshold = useSettingsStore((s) => s.financialSettings.overtimeApprovalThreshold);
   const canApproveAsDirector = useSettingsStore((s) => s.hasPermission('hr.approve-overtime'));
   const canLogOvertime = useSettingsStore((s) => s.hasPermission('hr.log-overtime'));
+  const allowBackdating = useSettingsStore((s) => s.roomManagement.allowBackdating === true);
   const needsDirector = (hours: number) => requireDirectorApproval && hours >= directorThreshold;
 
   const [filter, setFilter] = React.useState<'all' | 'pending' | 'approved'>('all');
@@ -60,7 +63,7 @@ export default function OvertimeManagementPanel() {
 
   const [logOpen, setLogOpen] = React.useState(false);
   const [manualEmployeeId, setManualEmployeeId] = React.useState('');
-  const [manualDate, setManualDate] = React.useState(() => new Date().toISOString().slice(0, 10));
+  const [manualDate, setManualDate] = React.useState(() => businessToday());
   const [manualStartTime, setManualStartTime] = React.useState('');
   const [manualEndTime, setManualEndTime] = React.useState('');
   const [manualNotes, setManualNotes] = React.useState('');
@@ -137,7 +140,7 @@ export default function OvertimeManagementPanel() {
 
   const openLogForm = () => {
     setManualEmployeeId(employees.find((e) => e.status === 'active')?.id || employees[0]?.id || '');
-    setManualDate(new Date().toISOString().slice(0, 10));
+    setManualDate(businessToday());
     setManualStartTime('');
     setManualEndTime('');
     setManualNotes('');
@@ -146,9 +149,10 @@ export default function OvertimeManagementPanel() {
 
   const handleLogManual = () => {
     if (!manualEmployeeId || !manualStartTime || !manualEndTime || !manualPreviewHours || manualPreviewHours <= 0) return;
+    if (postingDateError(manualDate, allowBackdating)) return;
     logManualOvertime(
       manualEmployeeId,
-      new Date(`${manualDate}T00:00:00`),
+      new Date(`${manualDate}T12:00:00.000Z`),
       new Date(`${manualDate}T${manualStartTime}:00`),
       new Date(`${manualDate}T${manualEndTime}:00`),
       manualNotes || undefined
@@ -387,7 +391,14 @@ export default function OvertimeManagementPanel() {
                       <SelectItem key={e.id} textValue={`${e.firstName} ${e.lastName}`}>{e.firstName} {e.lastName}</SelectItem>
                     ))}
                   </Select>
-                  <Input label="Date" type="date" value={manualDate} onChange={(e) => setManualDate(e.target.value)} variant="bordered" />
+                  <PostingDateField
+                    label="Date"
+                    value={manualDate}
+                    onChange={(e) => setManualDate(e.target.value)}
+                    variant="bordered"
+                    isInvalid={Boolean(postingDateError(manualDate, allowBackdating))}
+                    errorMessage={postingDateError(manualDate, allowBackdating) || undefined}
+                  />
                   <Input label="Notes (optional)" value={manualNotes} onChange={(e) => setManualNotes(e.target.value)} variant="bordered" />
                   <Input label="Start time" type="time" value={manualStartTime} onChange={(e) => setManualStartTime(e.target.value)} variant="bordered" />
                   <Input label="End time" type="time" value={manualEndTime} onChange={(e) => setManualEndTime(e.target.value)} variant="bordered" />
@@ -404,7 +415,7 @@ export default function OvertimeManagementPanel() {
                 <Button
                   color="primary"
                   onPress={handleLogManual}
-                  isDisabled={!manualEmployeeId || !manualStartTime || !manualEndTime || !manualPreviewHours || manualPreviewHours <= 0}
+                  isDisabled={!manualEmployeeId || !manualStartTime || !manualEndTime || !manualPreviewHours || manualPreviewHours <= 0 || Boolean(postingDateError(manualDate, allowBackdating))}
                 >
                   Save
                 </Button>

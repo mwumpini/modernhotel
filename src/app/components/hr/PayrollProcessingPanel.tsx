@@ -25,6 +25,8 @@ import { deskBookTabsClassNames, deskBookTabPanelClassName } from '../dashboard/
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { DetailField, DetailGrid } from '../frontoffice/detailView';
 import { readDebtRepayments, useStaffDebtStore } from '@/app/lib/hr/staffDebtStore';
+import PostingDateField from '@/app/components/shared/PostingDateField';
+import { postingDateError } from '@/app/lib/frontoffice/backdate';
 
 type PayrollColKey =
   | 'idNo' | 'staffNo' | 'name' | 'department' | 'position' | 'residencyClass' | 'status' | 'type' | 'secondEmployment'
@@ -96,6 +98,7 @@ export default function PayrollProcessingPanel() {
   const canProcessPayroll = useSettingsStore((s) => s.hasPermission('hr.process-payroll'));
   const canApprovePayroll = useSettingsStore((s) => s.hasPermission('hr.approve-payroll'));
   const requireApprovalForPayroll = useSettingsStore((s) => s.financialSettings.requireApprovalForPayroll !== false);
+  const allowBackdating = useSettingsStore((s) => s.roomManagement.allowBackdating === true);
   const currentUserName = useCurrentUserName();
   // Each tab has its own month. '' means "the default": Staff Payroll opens on a prepared month;
   // Payment Advice prefers awaiting approval, else the oldest approved month still to be paid.
@@ -803,11 +806,12 @@ export default function PayrollProcessingPanel() {
     : adviceRecords.filter((r) => payIds.includes(r.id)).reduce((s, r) => s + r.netPay, 0);
   const doPay = async () => {
     if (!advicePeriod || !payTarget || !payDate || payIds.length === 0) return;
+    if (postingDateError(payDate, allowBackdating) || payDate > todayKey()) return;
     const p = advicePeriod;
     const n = payIds.length;
     const where = payTarget === 'all' ? 'all channels' : payTarget;
     setPayTarget(null);
-    const ok = await markRecordsPaid(p.id, payIds, new Date(`${payDate}T00:00:00`));
+    const ok = await markRecordsPaid(p.id, payIds, new Date(`${payDate}T12:00:00.000Z`));
     if (ok) notifySuccess(`${n} staff marked as paid (${where}) for ${periodMonth(p)}.`, 'Marked as paid');
   };
 
@@ -1433,12 +1437,20 @@ export default function PayrollProcessingPanel() {
               <ModalHeader>Mark {payTarget === 'all' ? 'all channels' : payTarget} as paid?</ModalHeader>
               <ModalBody>
                 <p className="text-sm">{advicePeriod && periodMonth(advicePeriod)} · <strong>{payIds.length}</strong> staff · <strong className="text-green-700">{formatGhs(payAmount)}</strong></p>
-                <Input label="Date paid" type="date" max={todayKey()} value={payDate} onChange={(e) => setPayDate(e.target.value)} variant="bordered" />
+                <PostingDateField
+                  label="Date paid"
+                  max={todayKey()}
+                  value={payDate}
+                  onChange={(e) => setPayDate(e.target.value)}
+                  variant="bordered"
+                  isInvalid={Boolean(postingDateError(payDate, allowBackdating))}
+                  errorMessage={postingDateError(payDate, allowBackdating) || undefined}
+                />
                 <p className="text-xs text-gray-600">This marks every staff member in {payTarget === 'all' ? 'the month' : 'this batch'} as paid in one go. Do it once the bank or MoMo transfer has actually gone out.</p>
               </ModalBody>
               <ModalFooter>
                 <Button variant="flat" onPress={() => setPayTarget(null)}>Cancel</Button>
-                <Button color="success" onPress={doPay} isDisabled={!payDate || payDate > todayKey() || payIds.length === 0}>Mark as paid</Button>
+                <Button color="success" onPress={doPay} isDisabled={!payDate || payDate > todayKey() || Boolean(postingDateError(payDate, allowBackdating)) || payIds.length === 0}>Mark as paid</Button>
               </ModalFooter>
             </>
           )}

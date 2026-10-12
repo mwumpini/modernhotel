@@ -11,6 +11,8 @@ import { useLeaveAttendanceStore } from '../../lib/hr/leaveAttendanceStore';
 import { useSettingsStore } from '../../lib/settings/store';
 import type { DepartmentStaffMember } from '../../lib/hr/useDepartmentStaff';
 import { todayKey } from '../../lib/hr/leaveDates';
+import PostingDateField from '../shared/PostingDateField';
+import { postingDateError } from '../../lib/frontoffice/backdate';
 
 interface OvertimeRow {
   rowId: string;
@@ -64,6 +66,7 @@ export default function RequestOvertimeButton({
   staff?: DepartmentStaffMember[];
 }) {
   const canLog = useSettingsStore((s) => s.hasPermission(permissionId));
+  const allowBackdating = useSettingsStore((s) => s.roomManagement.allowBackdating === true);
   const { data: session } = useSession();
   const requesterName = (session?.user as any)?.name || (session?.user as any)?.email || departmentLabel;
 
@@ -124,13 +127,13 @@ export default function RequestOvertimeButton({
   const totalCost = validRows.reduce((sum, r) => sum + (computeHours(r.startTime, r.endTime) || 0) * r.rate, 0);
 
   const handleSubmit = async () => {
-    if (validRows.length === 0) return;
+    if (validRows.length === 0 || postingDateError(date, allowBackdating)) return;
     setSaving(true);
     try {
       for (const row of validRows) {
         logManualOvertime(
           row.employeeId,
-          new Date(`${date}T00:00:00`),
+          new Date(`${date}T12:00:00.000Z`),
           new Date(`${date}T${row.startTime}:00`),
           new Date(`${date}T${row.endTime}:00`),
           `[${departmentLabel}] ${notes || 'Overtime request'}`
@@ -153,7 +156,14 @@ export default function RequestOvertimeButton({
           <ModalBody>
             <div className="grid grid-cols-2 gap-4">
               <Input label="Requested By" value={requesterName} isDisabled />
-              <Input label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} isRequired />
+              <PostingDateField
+                label="Date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                isRequired
+                isInvalid={Boolean(postingDateError(date, allowBackdating))}
+                errorMessage={postingDateError(date, allowBackdating) || undefined}
+              />
             </div>
 
             <Divider />
@@ -240,7 +250,7 @@ export default function RequestOvertimeButton({
           </ModalBody>
           <ModalFooter>
             <Button variant="light" onPress={() => setIsOpen(false)}>Cancel</Button>
-            <Button color="primary" isLoading={saving} isDisabled={validRows.length === 0} onPress={handleSubmit}>
+            <Button color="primary" isLoading={saving} isDisabled={validRows.length === 0 || Boolean(postingDateError(date, allowBackdating))} onPress={handleSubmit}>
               Submit Request{validRows.length > 1 ? ` (${validRows.length})` : ''}
             </Button>
           </ModalFooter>

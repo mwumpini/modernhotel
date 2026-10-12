@@ -1,5 +1,7 @@
 'use client';
 
+import { loadRecords, saveRecord } from '../api/tenantRecords';
+
 export type AuditArea = 'frontdesk' | 'f&b' | 'kitchen' | 'housekeeping' | 'inventory' | 'security' | 'hr' | 'accounting' | 'settings' | 'system';
 export type AuditAction = 'create' | 'update' | 'delete' | 'status' | 'assign' | 'print' | 'export' | 'login' | 'logout' | 'view' | 'void' | 'refund' | 'other';
 
@@ -16,24 +18,56 @@ export interface AuditRecord {
 	 meta?: Record<string, unknown>;
 }
 
+const MAX_RECORDS = 300;
+
 class AuditLogStore {
 	 private records: AuditRecord[] = [];
 	 private listeners: Array<() => void> = [];
+	 private hydrateStarted = false;
+	 private loaded = false;
+
+	 // Kept on the server so a refresh (or another computer in the hotel) still sees them.
+	 private hydrate() {
+		 if (this.hydrateStarted || typeof window === 'undefined') return;
+		 this.hydrateStarted = true;
+		 void loadRecords<AuditRecord>('desk.activity').then((server) => {
+			 if (server) {
+				 const demos = this.records.filter((r) => r.meta?.demo);
+				 const byId = new Map(server.filter((r) => !r.meta?.demo).map((r) => [r.id, r]));
+				 for (const r of this.records) if (!r.meta?.demo) byId.set(r.id, r);
+				 const saved = Array.from(byId.values()).sort((a, b) => b.at.localeCompare(a.at)).slice(0, MAX_RECORDS);
+				 this.records = [...saved, ...demos];
+			 }
+			 this.loaded = true;
+			 this.listeners.forEach((l) => l());
+		 });
+	 }
 
 	 add(record: Omit<AuditRecord, 'id' | 'at'> & Partial<Pick<AuditRecord, 'at'>>) {
+		 this.hydrate();
 		 const at = record.at || new Date().toISOString();
 		 const id = `AUD-${Date.now().toString().slice(-6)}-${Math.floor(Math.random()*100)}`;
 		 const full: AuditRecord = { id, at, ...record } as AuditRecord;
 		 this.records.unshift(full);
+		 if (this.records.length > MAX_RECORDS) this.records.length = MAX_RECORDS;
+		 if (!full.meta?.demo) void saveRecord('desk.activity', full.id, full);
 		 this.listeners.forEach(l => l());
 	 }
 
-	 all() { return [...this.records]; }
+	 all() {
+		 this.hydrate();
+		 return [...this.records];
+	 }
 
-	 byArea(area: AuditArea) { return this.records.filter(r => r.area === area); }
+	 byArea(area: AuditArea) {
+		 this.hydrate();
+		 return this.records.filter(r => r.area === area);
+	 }
 
 	 subscribe(listener: () => void) {
+		 this.hydrate();
 		 this.listeners.push(listener);
+		 if (this.loaded) listener();
 		 return () => { this.listeners = this.listeners.filter(l => l !== listener); };
 	 }
 }

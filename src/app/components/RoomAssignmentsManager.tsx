@@ -39,6 +39,8 @@ import { frontOfficeStore } from '../lib/frontoffice/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { shortDay } from '../lib/frontoffice/stayWorksheet';
 import { trackEvent } from '../lib/analytics/trackEvent';
+import { useArrivalDateLock } from './events/useEventStartLock';
+import { calendarDay } from '../lib/frontoffice/backdate';
 
 interface RoomAssignment {
   roomId: string;
@@ -77,6 +79,9 @@ export default function RoomAssignmentsManager({ onNewReservation }: { onNewRese
   const [selectedAssignment, setSelectedAssignment] = useState<RoomAssignment | null>(null);
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [isEditing, setIsEditing] = useState(false);
+  const [savedCheckIn, setSavedCheckIn] = useState('');
+  const [checkInBlocked, setCheckInBlocked] = useState(false);
+  const arrivalLock = useArrivalDateLock();
 
   useEffect(() => {
     loadRoomAssignments();
@@ -190,11 +195,17 @@ export default function RoomAssignmentsManager({ onNewReservation }: { onNewRese
   };
 
   const handleEditAssignment = () => {
+    setSavedCheckIn(calendarDay(selectedAssignment?.checkInDate));
+    setCheckInBlocked(false);
     setIsEditing(true);
   };
 
   const handleSaveAssignment = () => {
     if (!selectedAssignment) return;
+    if (arrivalLock.errorFor(selectedAssignment.checkInDate, savedCheckIn || undefined)) {
+      setCheckInBlocked(true);
+      return;
+    }
 
     // Update room status in housekeeping store
     housekeepingStore.updateRoomStatus(
@@ -764,11 +775,25 @@ export default function RoomAssignmentsManager({ onNewReservation }: { onNewRese
                     <label className="block text-sm font-medium text-gray-700 mb-1">Check In Date</label>
                     <Input
                       type="date"
+                      min={isEditing && arrivalLock.floor && !(savedCheckIn && savedCheckIn < arrivalLock.floor && calendarDay(selectedAssignment.checkInDate) === savedCheckIn) ? arrivalLock.floor : undefined}
                       value={selectedAssignment.checkInDate ? selectedAssignment.checkInDate.split('T')[0] : ''}
-                      onChange={(e) => setSelectedAssignment({
-                        ...selectedAssignment,
-                        checkInDate: e.target.value
-                      })}
+                      isInvalid={isEditing && (checkInBlocked || Boolean(arrivalLock.errorFor(selectedAssignment.checkInDate, savedCheckIn || undefined)))}
+                      errorMessage={isEditing && (checkInBlocked || arrivalLock.errorFor(selectedAssignment.checkInDate, savedCheckIn || undefined)) ? arrivalLock.message : undefined}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (arrivalLock.errorFor(next, savedCheckIn || undefined)) {
+                          setCheckInBlocked(true);
+                          return;
+                        }
+                        setCheckInBlocked(false);
+                        const start = calendarDay(next);
+                        const end = calendarDay(selectedAssignment.checkOutDate);
+                        setSelectedAssignment({
+                          ...selectedAssignment,
+                          checkInDate: next,
+                          checkOutDate: start && end && end < start ? next : selectedAssignment.checkOutDate,
+                        });
+                      }}
                       disabled={!isEditing}
                     />
                   </div>
@@ -776,11 +801,17 @@ export default function RoomAssignmentsManager({ onNewReservation }: { onNewRese
                     <label className="block text-sm font-medium text-gray-700 mb-1">Check Out Date</label>
                     <Input
                       type="date"
+                      min={isEditing ? (calendarDay(selectedAssignment.checkInDate) || arrivalLock.floor) : undefined}
                       value={selectedAssignment.checkOutDate ? selectedAssignment.checkOutDate.split('T')[0] : ''}
-                      onChange={(e) => setSelectedAssignment({
-                        ...selectedAssignment,
-                        checkOutDate: e.target.value
-                      })}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        const start = calendarDay(selectedAssignment.checkInDate);
+                        const end = calendarDay(next);
+                        setSelectedAssignment({
+                          ...selectedAssignment,
+                          checkOutDate: start && end && end < start ? selectedAssignment.checkInDate || next : next,
+                        });
+                      }}
                       disabled={!isEditing}
                     />
                   </div>

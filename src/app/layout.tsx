@@ -96,6 +96,11 @@ export default async function RootLayout({
             __html: `(function(){try{var t='light',f='source',s='medium',bg='';var r=localStorage.getItem('system.currentUser');if(r){var p=(JSON.parse(r)||{}).preferences||{};if(p.theme==='light'||p.theme==='dark'||p.theme==='auto')t=p.theme;if(p.font==='source'||p.font==='nunito'||p.font==='geist'||p.font==='serif')f=p.font;if(p.fontSize==='small'||p.fontSize==='medium'||p.fontSize==='large'||p.fontSize==='xlarge')s=p.fontSize;var d=t==='dark'||(t==='auto'&&window.matchMedia('(prefers-color-scheme: dark)').matches);bg=d?p.backgroundDark:p.backgroundLight;}else{var d=false;}var root=document.documentElement;root.setAttribute('data-theme',t);root.setAttribute('data-font',f);root.setAttribute('data-font-size',s);root.classList.toggle('dark',d);root.classList.toggle('light',!d);root.style.colorScheme=d?'dark':'light';if(bg&&/^#[0-9a-fA-F]{6}$/.test(bg)){root.style.setProperty('--page-background',bg);root.setAttribute('data-bg','custom');}}catch(e){}})();`,
           }}
         />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){function chunk(e){var r=e&&(e.reason||e.error);var name=r&&r.name||'';var msg=String((r&&r.message)||(e&&e.message)||'');if(name==='ChunkLoadError'||/Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module/i.test(msg)){try{if(sessionStorage.getItem('chunk-reload'))return;sessionStorage.setItem('chunk-reload','1');}catch(err){}location.reload();}}window.addEventListener('unhandledrejection',chunk);window.addEventListener('error',chunk);})();`,
+          }}
+        />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${sourceSans.variable} ${nunitoSans.variable} ${literata.variable} ${notoEmoji.variable} antialiased`}

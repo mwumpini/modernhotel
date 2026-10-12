@@ -10,6 +10,9 @@ import { isRecordKind } from '@/app/lib/api/recordKinds';
  */
 const MAX_BYTES = 3 * 1024 * 1024; // settings can carry logos
 
+/** Kinds where each record belongs to one person (record id = their user id): nobody else may read or change it. */
+const PERSONAL_KINDS = new Set<string>(['setting.stickies']);
+
 async function context(request: NextRequest, kind: string) {
   const auth = await requireAuth(request);
   if (!auth.ok) return { error: auth.response };
@@ -18,7 +21,12 @@ async function context(request: NextRequest, kind: string) {
   if (!subdomain) return { error: NextResponse.json({ error: 'Missing tenant header' }, { status: 400 }) };
   const ctx = await getTenantContext(subdomain);
   if (!ctx) return { error: NextResponse.json({ error: 'Tenant not found' }, { status: 404 }) };
-  return { tenantId: ctx.tenantId };
+  const userId = String((auth.session as { user?: { id?: string } }).user?.id || '');
+  return { tenantId: ctx.tenantId, userId, personal: PERSONAL_KINDS.has(kind) };
+}
+
+function notYours() {
+  return NextResponse.json({ error: 'You can only change your own notes.' }, { status: 403 });
 }
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ kind: string }> }) {
@@ -26,7 +34,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const { kind } = await params;
     const c = await context(request, kind);
     if ('error' in c) return c.error;
-    const rows = await prisma.tenantRecord.findMany({ where: { tenantId: c.tenantId, kind }, orderBy: { createdAt: 'asc' } });
+    const rows = await prisma.tenantRecord.findMany({
+      where: { tenantId: c.tenantId, kind, ...(c.personal ? { recordId: c.userId || '-' } : {}) },
+      orderBy: { createdAt: 'asc' },
+    });
     return NextResponse.json({ records: rows.map((r) => ({ id: r.recordId, data: r.data, updatedAt: r.updatedAt })) });
   } catch (error) {
     console.error('[records][GET] error', error);
@@ -44,6 +55,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     if (!recordId || recordId.length > 200 || body?.data === undefined) {
       return NextResponse.json({ error: 'id and data are required' }, { status: 400 });
     }
+    if (c.personal && recordId !== c.userId) return notYours();
     if (JSON.stringify(body.data).length > MAX_BYTES) {
       return NextResponse.json({ error: 'Record too large' }, { status: 413 });
     }
@@ -66,6 +78,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     if ('error' in c) return c.error;
     const recordId = request.nextUrl.searchParams.get('id') || '';
     if (!recordId) return NextResponse.json({ error: 'id is required' }, { status: 400 });
+    if (c.personal && recordId !== c.userId) return notYours();
     await prisma.tenantRecord.deleteMany({ where: { tenantId: c.tenantId, kind, recordId } });
     return NextResponse.json({ ok: true });
   } catch (error) {

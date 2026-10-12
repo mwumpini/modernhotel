@@ -53,6 +53,24 @@ export function isManualPosting(sourceModule: unknown): boolean {
 }
 
 /**
+ * A new event check-in uses the same floor as a stay arrival.
+ * Keeping the date already saved on the event is allowed.
+ */
+export function eventStartBackdateError(
+  value: unknown,
+  allowBackdating: boolean,
+  businessDate?: string,
+  kept?: unknown,
+): string | null {
+  if (allowBackdating) return null;
+  const floor = arrivalFloor(businessDate);
+  const day = calendarDay(value);
+  if (!day || day >= floor) return null;
+  if (calendarDay(kept) && calendarDay(kept) === day) return null;
+  return BACKDATE_MESSAGE;
+}
+
+/**
  * Earliest arrival a booking may have while backdating is off. The front desk's business date
  * lags the calendar until night audit, so a late walk-in may still arrive on it, but never
  * more than one day back however far behind the audit is.

@@ -12,6 +12,7 @@ import DepartmentActivityLog from './DepartmentActivityLog';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
 import { useDepartmentStaff } from '../lib/hr/useDepartmentStaff';
 import { ReadyNowNotice } from './fb/ReadyNowBoard';
+import { useArrivalDateLock } from './events/useEventStartLock';
 
 const RESTAURANT_STAFF_DEPT_HINTS = ['food', 'beverage', 'restaurant', 'bar'];
 const RESTAURANT_STAFF_EXCLUDE_HINTS = ['kitchen'];
@@ -186,8 +187,20 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
   const [reservationForm, setReservationForm] = useState({
     customerName: '', phone: '', date: '', time: '', guests: '2', tableId: '', specialRequests: '',
   });
+  const tableDateLock = useArrivalDateLock();
+  const [tableDateBlocked, setTableDateBlocked] = useState(false);
+  useEffect(() => {
+    if (!isNewReservationModalOpen || !tableDateLock.floor) return;
+    if (!tableDateLock.errorFor(reservationForm.date)) return;
+    setReservationForm((prev) => ({ ...prev, date: tableDateLock.floor || prev.date }));
+    setTableDateBlocked(false);
+  }, [isNewReservationModalOpen, tableDateLock.floor]);
   const submitReservation = async () => {
     if (!reservationForm.customerName || !reservationForm.date || !reservationForm.time) return;
+    if (tableDateLock.errorFor(reservationForm.date)) {
+      setTableDateBlocked(true);
+      return;
+    }
     const res = await fetch('/api/fb/reservations', {
       method: 'POST',
       headers: fbHeaders(),
@@ -205,9 +218,13 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
     });
     if (res.ok) {
       setReservationForm({ customerName: '', phone: '', date: '', time: '', guests: '2', tableId: '', specialRequests: '' });
+      setTableDateBlocked(false);
       setIsNewReservationModalOpen(false);
       reloadReservations();
+      return;
     }
+    const data = await res.json().catch(() => ({}));
+    if (data?.error) setTableDateBlocked(true);
   };
   const setReservationStatus = async (reservation: Reservation, status: Reservation['status']) => {
     await fetch('/api/fb/reservations', {
@@ -886,7 +903,23 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Input label="Date" type="date" value={reservationForm.date} onChange={(e) => setReservationForm({ ...reservationForm, date: e.target.value })} />
+                <Input
+                  label="Date"
+                  type="date"
+                  min={tableDateLock.floor}
+                  value={reservationForm.date}
+                  isInvalid={tableDateBlocked || Boolean(tableDateLock.errorFor(reservationForm.date))}
+                  errorMessage={tableDateBlocked || tableDateLock.errorFor(reservationForm.date) ? tableDateLock.message : undefined}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    if (tableDateLock.errorFor(next)) {
+                      setTableDateBlocked(true);
+                      return;
+                    }
+                    setTableDateBlocked(false);
+                    setReservationForm({ ...reservationForm, date: next });
+                  }}
+                />
                 <Input label="Time" type="time" value={reservationForm.time} onChange={(e) => setReservationForm({ ...reservationForm, time: e.target.value })} />
                 <Input label="Number of Guests" type="number" value={reservationForm.guests} onChange={(e) => setReservationForm({ ...reservationForm, guests: e.target.value })} />
               </div>

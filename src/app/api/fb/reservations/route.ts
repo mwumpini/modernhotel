@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth } from '@/app/lib/api/auth-guard'
 import { listTableReservations, upsertTableReservation, deleteTableReservation } from '@/app/lib/fb/tablesRepository'
+import { rejectIfBackdated } from '@/app/lib/frontoffice/postingDateGuard'
+import { arrivalFloor, businessToday } from '@/app/lib/frontoffice/backdate'
+import { getFrontOfficeBusinessDate } from '@/app/lib/frontoffice/folioServer'
 
 async function resolveTenant(req: NextRequest) {
   const subdomain = getTenantFromRequest(req)
@@ -32,6 +35,16 @@ export async function POST(request: NextRequest) {
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const body = await request.json()
     if (!body.id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
+    if (body.reservationDate !== undefined) {
+      const businessDate = await getFrontOfficeBusinessDate(ctx.tenantId).catch(() => businessToday())
+      const backdated = await rejectIfBackdated(
+        ctx.tenantId,
+        body.reservationDate,
+        { model: 'tableReservation', id: body.id },
+        arrivalFloor(businessDate),
+      )
+      if (backdated) return backdated
+    }
     const reservation = await upsertTableReservation(ctx.tenantId, body.id, body)
     await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'TABLE_RESERVATION_SAVED', 'TableReservation', body.id, undefined, { customerName: reservation.customerName, status: reservation.status }, request)
     return NextResponse.json({ reservation })

@@ -175,6 +175,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   const [assignRoomSearch, setAssignRoomSearch] = useState<string>('');
   const [assignMatchTypeOnly, setAssignMatchTypeOnly] = useState<boolean>(true);
   const [editRateInput, setEditRateInput] = useState('');
+  /** Which arrival box just refused a date earlier than the backdating floor. */
+  const [arrivalBlockedFor, setArrivalBlockedFor] = useState<string | null>(null);
   const [noShowTarget, setNoShowTarget] = useState<Reservation | null>(null);
   const { isOpen: isNoShowOpen, onOpen: onNoShowOpen, onClose: onNoShowClose } = useDisclosure();
   
@@ -1112,8 +1114,37 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   };
   // The date boxes refuse an earlier arrival straight away, not only when saving.
   const backdatingOn = useSettingsStore((s) => s.roomManagement.allowBackdating === true);
-  const minArrival = backdatingOn ? undefined : arrivalFloor(frontOfficeStore.getBusinessDate());
+  const minArrival = backdatingOn ? undefined : arrivalFloor(businessDate || frontOfficeStore.getBusinessDate());
   const arrivalTooEarly = (value?: string) => !!minArrival && calendarDay(value) !== '' && calendarDay(value) < minArrival;
+  // Same-day departure is one night. A departure before arrival counts as none, so it moves up to the arrival.
+  const departureNotBefore = (arrival: string, departure: string) => {
+    const start = calendarDay(arrival);
+    const end = calendarDay(departure);
+    if (start && end && end < start) return start;
+    return departure;
+  };
+  // A new booking must not keep an arrival that was chosen before the lock, or a departure before that arrival.
+  useEffect(() => {
+    if (!isCreatingNew) return;
+    setBulkGuests((prev) => {
+      let changed = false;
+      const next = prev.map((guest) => {
+        const arrival = arrivalTooEarly(guest.arrival) && minArrival ? minArrival : guest.arrival;
+        const departure = departureNotBefore(arrival, guest.departure);
+        if (arrival === guest.arrival && departure === guest.departure) return guest;
+        changed = true;
+        return { ...guest, arrival, departure };
+      });
+      return changed ? next : prev;
+    });
+    setFormData((prev) => {
+      const arrival = arrivalTooEarly(prev.arrival) && minArrival ? minArrival : prev.arrival;
+      const departure = departureNotBefore(arrival, prev.departure);
+      if (arrival === prev.arrival && departure === prev.departure) return prev;
+      return { ...prev, arrival, departure };
+    });
+    setArrivalBlockedFor(null);
+  }, [minArrival, isCreatingNew]);
 
   const handleSaveReservation = async () => {
     if (isCreatingNew) {
@@ -1978,8 +2009,17 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       <div className="bg-blue-50 p-3 rounded-lg border">
                         <h4 className="mb-2 font-medium text-blue-900">📅 Stay</h4>
                         <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                          <Input label="Arrival" type="date" min={(selectedReservation?.status === 'confirmed' || selectedReservation?.status === 'pending') ? minArrival : undefined} isInvalid={(selectedReservation?.status === 'confirmed' || selectedReservation?.status === 'pending') && arrivalTooEarly(formData.arrival)} errorMessage={(selectedReservation?.status === 'confirmed' || selectedReservation?.status === 'pending') && arrivalTooEarly(formData.arrival) ? BACKDATE_MESSAGE : undefined} value={formData.arrival} onChange={(e) => setFormData({...formData, arrival: e.target.value})} />
-                          <Input label="Departure" type="date" value={formData.departure} onChange={(e) => setFormData({...formData, departure: e.target.value})} />
+                          <Input label="Arrival" type="date" min={(selectedReservation?.status === 'confirmed' || selectedReservation?.status === 'pending') ? minArrival : undefined} isInvalid={((selectedReservation?.status === 'confirmed' || selectedReservation?.status === 'pending') && arrivalTooEarly(formData.arrival)) || arrivalBlockedFor === 'edit'} errorMessage={((selectedReservation?.status === 'confirmed' || selectedReservation?.status === 'pending') && arrivalTooEarly(formData.arrival)) || arrivalBlockedFor === 'edit' ? BACKDATE_MESSAGE : undefined} value={formData.arrival} onChange={(e) => {
+                            const locked = selectedReservation?.status === 'confirmed' || selectedReservation?.status === 'pending';
+                            if (locked && arrivalTooEarly(e.target.value)) {
+                              setArrivalBlockedFor('edit');
+                              return;
+                            }
+                            setArrivalBlockedFor((prev) => (prev === 'edit' ? null : prev));
+                            const arrival = e.target.value;
+                            setFormData({ ...formData, arrival, departure: departureNotBefore(arrival, formData.departure) });
+                          }} />
+                          <Input label="Departure" type="date" min={formData.arrival || undefined} value={formData.departure} onChange={(e) => setFormData({ ...formData, departure: departureNotBefore(formData.arrival, e.target.value) })} />
                           <Input label="Nights" value={String(calculateNights(formData.arrival, formData.departure))} isReadOnly />
                           <Input label="Adults" type="number" value={String(formData.adults)} onChange={(e) => setFormData({...formData, adults: parseInt(e.target.value) || 1})} />
                           <Input label="Children" type="number" value={String(formData.children)} onChange={(e) => setFormData({...formData, children: parseInt(e.target.value) || 0})} />
@@ -2322,22 +2362,32 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                     label="Arrival Date"
                                     type="date"
                                     min={minArrival}
-                                    isInvalid={arrivalTooEarly(bulkGuest.arrival)}
-                                    errorMessage={arrivalTooEarly(bulkGuest.arrival) ? BACKDATE_MESSAGE : undefined}
+                                    isInvalid={arrivalTooEarly(bulkGuest.arrival) || arrivalBlockedFor === bulkGuest.id}
+                                    errorMessage={arrivalTooEarly(bulkGuest.arrival) || arrivalBlockedFor === bulkGuest.id ? BACKDATE_MESSAGE : undefined}
                                     value={bulkGuest.arrival}
                                     onChange={(e) => {
-                                      updateBulkGuest(bulkGuest.id, 'arrival', e.target.value);
-                                      keepRoomIfStillFree(bulkGuest.id, bulkGuest.roomId, bulkGuest.roomTypeId, e.target.value, bulkGuest.departure);
+                                      if (arrivalTooEarly(e.target.value)) {
+                                        setArrivalBlockedFor(bulkGuest.id);
+                                        return;
+                                      }
+                                      setArrivalBlockedFor((prev) => (prev === bulkGuest.id ? null : prev));
+                                      const arrival = e.target.value;
+                                      const departure = departureNotBefore(arrival, bulkGuest.departure);
+                                      updateBulkGuest(bulkGuest.id, 'arrival', arrival);
+                                      if (departure !== bulkGuest.departure) updateBulkGuest(bulkGuest.id, 'departure', departure);
+                                      keepRoomIfStillFree(bulkGuest.id, bulkGuest.roomId, bulkGuest.roomTypeId, arrival, departure);
                                     }}
                           size="sm"
                                   />
                       <Input
                                     label="Departure Date"
                                     type="date"
+                                    min={bulkGuest.arrival || minArrival}
                                     value={bulkGuest.departure}
                                     onChange={(e) => {
-                                      updateBulkGuest(bulkGuest.id, 'departure', e.target.value);
-                                      keepRoomIfStillFree(bulkGuest.id, bulkGuest.roomId, bulkGuest.roomTypeId, bulkGuest.arrival, e.target.value);
+                                      const departure = departureNotBefore(bulkGuest.arrival, e.target.value);
+                                      updateBulkGuest(bulkGuest.id, 'departure', departure);
+                                      keepRoomIfStillFree(bulkGuest.id, bulkGuest.roomId, bulkGuest.roomTypeId, bulkGuest.arrival, departure);
                                     }}
                         size="sm"
                       />

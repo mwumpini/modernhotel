@@ -1,12 +1,14 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Autocomplete, AutocompleteItem, Badge, Button, Card, CardBody, CardHeader, Divider, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Popover, PopoverContent, PopoverTrigger, Select, SelectItem, Switch, Tab, Tabs, Textarea } from '@heroui/react';
 import { EVENT_DOC_TYPE } from './eventShared';
 import type { SimpleEventStatus } from './eventTypes';
 import { paymentMethodLabel } from '../../lib/accounting/receiptPrint';
 import { useEventsScreen } from './eventsScreenContext';
 import { stayNightDates } from '../../lib/frontoffice/folioLedger';
+import { calendarDay } from '../../lib/frontoffice/backdate';
+import { useEventStartLock } from './useEventStartLock';
 
 function guestPersonName(guest: any) {
   return String(guest?.name || `${guest?.firstName || ''} ${guest?.lastName || ''}`).trim();
@@ -30,6 +32,27 @@ function findExactGuest(guests: any[], query: string) {
 /** Events → event form. Dates, rooms, daily schedule, tax, and status. */
 export function EventEditorModal() {
   const eventsScreen = useEventsScreen();
+  const startLock = useEventStartLock();
+  const [startBlocked, setStartBlocked] = useState(false);
+  const savedStart = eventsScreen.isCreatingEvent
+    ? ''
+    : calendarDay(eventsScreen.editingEvent?.arrivalDate || eventsScreen.editingEvent?.startDate);
+  const datesEditable = !eventsScreen.isViewMode || eventsScreen.isEditingInvoiceDetails;
+  const startTooEarly = datesEditable && Boolean(startLock.errorFor(eventsScreen.startDate, savedStart || undefined));
+  const startMin = startLock.floor && !(savedStart && savedStart < startLock.floor && calendarDay(eventsScreen.startDate) === savedStart)
+    ? startLock.floor
+    : undefined;
+
+  useEffect(() => {
+    if (!eventsScreen.isEventModalOpen || !eventsScreen.isCreatingEvent || !startLock.floor) return;
+    const start = calendarDay(eventsScreen.startDate);
+    if (!start || start >= startLock.floor) return;
+    eventsScreen.setStartDate(startLock.floor);
+    if (calendarDay(eventsScreen.endDate) && calendarDay(eventsScreen.endDate) < startLock.floor) {
+      eventsScreen.setEndDate(startLock.floor);
+    }
+    setStartBlocked(false);
+  }, [eventsScreen.isEventModalOpen, eventsScreen.isCreatingEvent, eventsScreen.startDate, eventsScreen.endDate, startLock.floor]);
   const eventNameDefaultRef = useRef('');
   const eventNameTouchedRef = useRef(false);
   const eventSessionRef = useRef('');
@@ -333,18 +356,39 @@ export function EventEditorModal() {
                     size="sm"
                     label="Check-in Date"
                     type="date"
+                    min={datesEditable ? startMin : undefined}
                     value={eventsScreen.startDate}
-                    onChange={(e) => eventsScreen.setStartDate(e.target.value)}
-                    isReadOnly={eventsScreen.isViewMode && !eventsScreen.isEditingInvoiceDetails}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (startLock.errorFor(next, savedStart || undefined)) {
+                        setStartBlocked(true);
+                        return;
+                      }
+                      setStartBlocked(false);
+                      if (eventsScreen.phase1Error === startLock.message) eventsScreen.setPhase1Error('');
+                      eventsScreen.setStartDate(next);
+                      if (calendarDay(eventsScreen.endDate) && calendarDay(next) && calendarDay(eventsScreen.endDate) < calendarDay(next)) {
+                        eventsScreen.setEndDate(next);
+                      }
+                    }}
+                    isReadOnly={!datesEditable}
+                    isInvalid={startBlocked || startTooEarly || eventsScreen.phase1Error === startLock.message}
+                    errorMessage={startBlocked || startTooEarly || eventsScreen.phase1Error === startLock.message ? startLock.message : undefined}
                     description={eventsScreen.isEditingInvoiceDetails ? "Change to expand/contract schedule" : undefined}
                   />
                   <Input
                     size="sm"
                     label="Check-out Date"
                     type="date"
+                    min={datesEditable ? (eventsScreen.startDate || startMin) : undefined}
                     value={eventsScreen.endDate}
-                    onChange={(e) => eventsScreen.setEndDate(e.target.value)}
-                    isReadOnly={eventsScreen.isViewMode && !eventsScreen.isEditingInvoiceDetails}
+                    onChange={(e) => {
+                      const next = calendarDay(eventsScreen.startDate) && calendarDay(e.target.value) && calendarDay(e.target.value) < calendarDay(eventsScreen.startDate)
+                        ? eventsScreen.startDate
+                        : e.target.value;
+                      eventsScreen.setEndDate(next);
+                    }}
+                    isReadOnly={!datesEditable}
                     description={eventsScreen.isEditingInvoiceDetails ? "Change to expand/contract schedule" : undefined}
                   />
                   <Select

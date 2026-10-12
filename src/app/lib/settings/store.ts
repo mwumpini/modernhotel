@@ -46,6 +46,9 @@ const ROOM_MANAGEMENT_SYNC_INTERVAL_MS = 2000;
 let roomManagementLastSyncAt = 0;
 let roomManagementSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let roomManagementPending: RoomManagementSettings | null = null;
+// A room-management fetch that started before the switch was flipped must not
+// write the old Allow backdating value back over the click.
+let allowBackdatingChangedAt = 0;
 
 function postRoomManagement(rm: RoomManagementSettings, tenant: string) {
   roomManagementLastSyncAt = Date.now();
@@ -2702,6 +2705,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     set({ [rootKey]: nextRoot } as any);
     get().saveSettings();
     get().publish();
+    if (path === 'roomManagement.allowBackdating') allowBackdatingChangedAt = Date.now();
     if (path.startsWith('roomManagement.')) {
       syncRoomManagementToApi(get().roomManagement);
     }
@@ -2833,11 +2837,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       // localStorage.
       const t = typeof window !== 'undefined' ? getClientTenantSubdomain() : '';
       if (t) {
+        const requestedAt = Date.now();
         fetch('/api/settings/room-management', { headers: { 'x-tenant-subdomain': t } })
           .then((res) => (res.ok ? res.json() : null))
           .then((data) => {
             if (data?.policy) {
-              set({ roomManagement: { ...get().roomManagement, ...data.policy } });
+              const policy = { ...data.policy };
+              if (allowBackdatingChangedAt > requestedAt) delete policy.allowBackdating;
+              set({ roomManagement: { ...get().roomManagement, ...policy } });
             }
             if (!data) return;
 

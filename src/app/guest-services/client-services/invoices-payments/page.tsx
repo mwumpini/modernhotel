@@ -63,6 +63,8 @@ const ledgerTableClassNames = {
 };
 import { DateFilterPills } from '../../../components/fb/DateFilterPills';
 import GuestFolioModal from '../../../components/frontoffice/GuestFolioModal';
+import { useArrivalDateLock } from '../../../components/events/useEventStartLock';
+import { calendarDay } from '../../../lib/frontoffice/backdate';
 
 interface ServiceBill {
   id: string;
@@ -277,6 +279,19 @@ export default function InvoicesPaymentsPage() {
       } as InvoiceItem
     ]
   });
+  const arrivalLock = useArrivalDateLock();
+  const [checkInBlocked, setCheckInBlocked] = useState(false);
+  useEffect(() => {
+    if (!isCreateOpen || !arrivalLock.floor) return;
+    setNewInvoice((prev) => {
+      if (!arrivalLock.errorFor(prev.checkInDate)) return prev;
+      const checkInDate = arrivalLock.floor || prev.checkInDate;
+      const end = calendarDay(prev.checkOutDate);
+      const checkOutDate = end && end < checkInDate ? checkInDate : prev.checkOutDate;
+      return { ...prev, checkInDate, checkOutDate };
+    });
+    setCheckInBlocked(false);
+  }, [isCreateOpen, arrivalLock.floor]);
 
   // Folio filters matcher reused for count and slicing
   const matchesFolioFilters = React.useCallback((reservation: any) => {
@@ -820,6 +835,10 @@ export default function InvoicesPaymentsPage() {
   };
 
   const handleCreateInvoice = () => {
+    if (arrivalLock.errorFor(newInvoice.checkInDate)) {
+      setCheckInBlocked(true);
+      return;
+    }
     const { subtotal, taxAmount, totalAmount } = calculateInvoiceTotals();
     // Create or link a reservation so folio/invoice stays consistent
     const reservation = frontOfficeStore.addReservation({
@@ -1643,8 +1662,43 @@ export default function InvoicesPaymentsPage() {
                   <Input label="Room Number" placeholder="Enter room number" value={newInvoice.roomNumber} onChange={(e) => setNewInvoice(prev => ({ ...prev, roomNumber: e.target.value }))} required />
                   <Input label="Room Type" placeholder="e.g., Deluxe Suite, Standard Room" value={newInvoice.roomType} onChange={(e) => setNewInvoice(prev => ({ ...prev, roomType: e.target.value }))} required />
                   <div className="md:col-span-2 grid grid-cols-2 gap-4">
-                    <Input label="Check-in Date" type="date" value={newInvoice.checkInDate} onChange={(e) => setNewInvoice(prev => ({ ...prev, checkInDate: e.target.value }))} required />
-                    <Input label="Check-out Date" type="date" value={newInvoice.checkOutDate} onChange={(e) => setNewInvoice(prev => ({ ...prev, checkOutDate: e.target.value }))} required />
+                    <Input
+                      label="Check-in Date"
+                      type="date"
+                      min={arrivalLock.floor}
+                      value={newInvoice.checkInDate}
+                      isInvalid={checkInBlocked || Boolean(arrivalLock.errorFor(newInvoice.checkInDate))}
+                      errorMessage={checkInBlocked || arrivalLock.errorFor(newInvoice.checkInDate) ? arrivalLock.message : undefined}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (arrivalLock.errorFor(next)) {
+                          setCheckInBlocked(true);
+                          return;
+                        }
+                        setCheckInBlocked(false);
+                        setNewInvoice((prev) => {
+                          const end = calendarDay(prev.checkOutDate);
+                          const start = calendarDay(next);
+                          return { ...prev, checkInDate: next, checkOutDate: start && end && end < start ? next : prev.checkOutDate };
+                        });
+                      }}
+                      required
+                    />
+                    <Input
+                      label="Check-out Date"
+                      type="date"
+                      min={newInvoice.checkInDate || arrivalLock.floor}
+                      value={newInvoice.checkOutDate}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setNewInvoice((prev) => {
+                          const start = calendarDay(prev.checkInDate);
+                          const end = calendarDay(next);
+                          return { ...prev, checkOutDate: start && end && end < start ? prev.checkInDate : next };
+                        });
+                      }}
+                      required
+                    />
                   </div>
                 </div>
               </div>

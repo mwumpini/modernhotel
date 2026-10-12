@@ -10,7 +10,10 @@ export const RECORD_KINDS = [
   'fo.serviceCharge',
   'fo.inHouseGroup',
   'kitchen.op',
+  'desk.activity',
+  'desk.notice',
   'setting.system',
+  'setting.stickies',
   'setting.eventRates',
   'setting.payrollConfig',
 ] as const;

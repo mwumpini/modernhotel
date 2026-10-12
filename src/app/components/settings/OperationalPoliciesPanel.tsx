@@ -51,13 +51,13 @@ export default function OperationalPoliciesPanel() {
   return (
 <div className="space-y-8">
   <p className="text-sm text-gray-500">Front desk rules for arrival, departure, booking changes, company accounts, night audit, and whether a posting can use an earlier date. Each change saves immediately.</p>
-  <PolicyGroup title="Posting dates" description="Payments, charges, journals, bills, goods received, and stock movements. Guest details, bookings, and report ranges stay free.">
+  <PolicyGroup title="Posting dates" description="Payments, charges, journals, bills, goods received, stock movements, payroll pay dates, overtime, a new stay's arrival, a table booking, and a new event's check-in. Report date ranges stay free.">
     <PolicyCard title="Backdating" wide>
       <PolicyRow
         label="Allow backdating"
         hint={canAllowBackdating
-          ? 'Off: a new posting uses today or a later date. On: those same forms accept an earlier date. Turn it off again after the correction.'
-          : 'Only an admin or a manager can change this. While it is off, a new posting cannot be dated before today.'}
+          ? 'Off: a new posting, a payroll pay date, an overtime date, a new booking\'s arrival, a table booking, and a new event\'s check-in cannot be earlier than today. A stay, table booking, or event can still start yesterday while night audit has not closed. On: those forms accept an earlier date. Turn it off again after the correction.'
+          : 'Only an admin or a manager can change this. While it is off, a new posting, a payroll pay date, an overtime date, a new booking\'s arrival, a table booking, or a new event\'s check-in cannot be dated before today.'}
       >
         <Switch
           isSelected={settingsStore.roomManagement.allowBackdating === true}

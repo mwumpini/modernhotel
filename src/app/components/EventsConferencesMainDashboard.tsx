@@ -67,6 +67,8 @@ import { useCalculateTax } from '../hooks/useCalculateTax';
 import { enhancedFrontOfficeStore } from '../lib/frontoffice/enhancedStore';
 import { fetchEventBookings, saveEventBooking } from '../lib/frontoffice/eventsApi';
 import { frontOfficeStore } from '../lib/frontoffice/store';
+import { eventStartBackdateError } from '../lib/frontoffice/backdate';
+import { notifyError } from '../lib/notifications/notify';
 import type { EventBooking, GuestProfile } from '../lib/frontoffice/types';
 import { genId } from '../lib/frontoffice/helpers/ids';
 import { openPrintPreview, openHtmlPrintWindow } from '../lib/print/engine';
@@ -2739,6 +2741,14 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       return false;
     }
     if (!emailOk) { setPhase1Error('Please enter a valid client email'); return false; }
+    const savedStart = isCreatingEvent ? undefined : (editingEvent?.arrivalDate || editingEvent?.startDate);
+    const backdated = eventStartBackdateError(
+      startDate,
+      useSettingsStore.getState().roomManagement.allowBackdating === true,
+      frontOfficeStore.getBusinessDate(),
+      savedStart,
+    );
+    if (backdated) { setPhase1Error(backdated); return false; }
     setPhase1Error('');
     return true;
   };
@@ -5478,6 +5488,16 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
 
   const handleSaveBeoForm = () => {
     if (!selectedEventForBEO || !beoForm) return;
+    const backdated = eventStartBackdateError(
+      beoForm.eventInfo?.arrivalDate,
+      useSettingsStore.getState().roomManagement.allowBackdating === true,
+      frontOfficeStore.getBusinessDate(),
+      selectedEventForBEO.arrivalDate || selectedEventForBEO.startDate,
+    );
+    if (backdated) {
+      notifyError(backdated, 'Event date not allowed');
+      return;
+    }
     const updatedEvent = buildEventFromBeoForm();
     if (!updatedEvent) return;
 
@@ -11099,6 +11119,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     setReceiptPrintAfterSave,
     setRoomRate,
     setSelectedContractEventInfo,
+    selectedEventForBEO,
     setSelectedEventForBEO,
     setSelectedInvoiceTemplate,
     setSelectedProformaTemplate,

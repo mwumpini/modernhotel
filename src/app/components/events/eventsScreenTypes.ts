@@ -325,6 +325,7 @@ export interface EventsScreen {
   setReceiptPrintAfterSave: (value: React.SetStateAction<boolean>) => void;
   setRoomRate: (value: React.SetStateAction<number>) => void;
   setSelectedContractEventInfo: (value: any) => void;
+  selectedEventForBEO: any;
   setSelectedEventForBEO: (value: any) => void;
   setSelectedInvoiceTemplate: (value: React.SetStateAction<string>) => void;
   setSelectedProformaTemplate: (value: React.SetStateAction<string>) => void;

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { listHrPayrollRecords, upsertHrPayrollRecord, payrollRecordLockedReason } from '@/app/lib/hr/repository'
+import { rejectIfBackdated } from '@/app/lib/frontoffice/postingDateGuard'
 
 async function resolveTenant(req: NextRequest) {
   const subdomain = getTenantFromRequest(req)
@@ -42,6 +43,10 @@ export async function POST(request: NextRequest) {
     if (!perm.ok) return perm.response
     const periodStatuses = new Map<string, string | undefined>()
     for (const item of items) {
+      if (item.paidAt) {
+        const backdated = await rejectIfBackdated(ctx.tenantId, item.paidAt, { model: 'hrPayrollRecord', id: item.id })
+        if (backdated) return backdated
+      }
       const locked = await payrollRecordLockedReason(ctx.tenantId, item, periodStatuses)
       if (locked) return NextResponse.json({ error: locked }, { status: 409 })
     }

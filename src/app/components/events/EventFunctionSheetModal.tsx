@@ -2,11 +2,21 @@
 
 import { BEO_ACCESS, BEO_INTERNET, BEO_LAYOUTS, BEO_LIGHTING, BEO_MEAL_TYPES, BEO_PARKING, BEO_SERVICE_STYLES, BeoPick, UNASSIGNED_STAFF, formatEventTableRange } from './eventShared';
 import { Button, Chip, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Select, SelectItem, Switch, Tab, Tabs, Textarea } from '@heroui/react';
+import { useState } from 'react';
 import { useEventsScreen } from './eventsScreenContext';
+import { calendarDay } from '../../lib/frontoffice/backdate';
+import { useEventStartLock } from './useEventStartLock';
 
 /** Events → service dialog and the function sheet (BEO). */
 export function EventFunctionSheetModal() {
   const eventsScreen = useEventsScreen();
+  const startLock = useEventStartLock();
+  const [startBlocked, setStartBlocked] = useState(false);
+  const savedStart = calendarDay(eventsScreen.selectedEventForBEO?.arrivalDate || eventsScreen.selectedEventForBEO?.startDate);
+  const beoStart = eventsScreen.beoForm?.eventInfo?.arrivalDate || '';
+  const startMin = startLock.floor && !(savedStart && savedStart < startLock.floor && calendarDay(beoStart) === savedStart)
+    ? startLock.floor
+    : undefined;
   return (
   <>
         {/* Service Modal */}
@@ -153,8 +163,44 @@ export function EventFunctionSheetModal() {
                           <p className="mb-2 text-xs font-semibold text-primary">Schedule</p>
                           <div className="grid grid-cols-2 md:grid-cols-12 gap-3">
                             <Input className="md:col-span-4" size="sm" label="Venue" value={eventsScreen.beoForm.eventInfo.venueName} onChange={(e) => eventsScreen.updateBeoFormSection('eventInfo', 'venueName', e.target.value)} />
-                            <Input className="md:col-span-2" size="sm" label="Start" type="date" value={eventsScreen.beoForm.eventInfo.arrivalDate} onChange={(e) => eventsScreen.updateBeoFormSection('eventInfo', 'arrivalDate', e.target.value)} />
-                            <Input className="md:col-span-2" size="sm" label="End" type="date" value={eventsScreen.beoForm.eventInfo.departureDate} onChange={(e) => eventsScreen.updateBeoFormSection('eventInfo', 'departureDate', e.target.value)} />
+                            <Input
+                              className="md:col-span-2"
+                              size="sm"
+                              label="Start"
+                              type="date"
+                              min={startMin}
+                              value={eventsScreen.beoForm.eventInfo.arrivalDate}
+                              isInvalid={startBlocked}
+                              errorMessage={startBlocked ? startLock.message : undefined}
+                              onChange={(e) => {
+                                const next = e.target.value;
+                                if (startLock.errorFor(next, savedStart || undefined)) {
+                                  setStartBlocked(true);
+                                  return;
+                                }
+                                setStartBlocked(false);
+                                eventsScreen.updateBeoFormSection('eventInfo', 'arrivalDate', next);
+                                const end = calendarDay(eventsScreen.beoForm.eventInfo.departureDate);
+                                if (end && calendarDay(next) && end < calendarDay(next)) {
+                                  eventsScreen.updateBeoFormSection('eventInfo', 'departureDate', next);
+                                }
+                              }}
+                            />
+                            <Input
+                              className="md:col-span-2"
+                              size="sm"
+                              label="End"
+                              type="date"
+                              min={eventsScreen.beoForm.eventInfo.arrivalDate || startMin}
+                              value={eventsScreen.beoForm.eventInfo.departureDate}
+                              onChange={(e) => {
+                                const start = calendarDay(eventsScreen.beoForm.eventInfo.arrivalDate);
+                                const next = start && calendarDay(e.target.value) && calendarDay(e.target.value) < start
+                                  ? eventsScreen.beoForm.eventInfo.arrivalDate
+                                  : e.target.value;
+                                eventsScreen.updateBeoFormSection('eventInfo', 'departureDate', next);
+                              }}
+                            />
                             <Input className="md:col-span-2" size="sm" label="Days" value={eventsScreen.beoForm.eventInfo.duration} onChange={(e) => eventsScreen.updateBeoFormSection('eventInfo', 'duration', e.target.value)} />
                             <Input className="md:col-span-2" size="sm" label="Pax" value={eventsScreen.beoForm.eventInfo.pax} onChange={(e) => eventsScreen.updateBeoFormSection('eventInfo', 'pax', e.target.value)} />
                           </div>

@@ -4,6 +4,7 @@ import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { listHrAttendances, upsertHrAttendance } from '@/app/lib/hr/repository'
 import { getApprovalRequirement } from '@/app/lib/api/approvalThresholds'
 import { prisma } from '@/app/lib/database/client'
+import { rejectIfBackdated } from '@/app/lib/frontoffice/postingDateGuard'
 
 async function resolveTenant(req: NextRequest) {
   const subdomain = getTenantFromRequest(req)
@@ -33,6 +34,12 @@ export async function POST(request: NextRequest) {
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const body = await request.json()
     if (!body.id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
+
+    // Manual overtime is a posting date. Clock-in updates resend an existing day and are left alone.
+    if (String(body.notes ?? '').includes('[Manual OT') && body.date !== undefined) {
+      const backdated = await rejectIfBackdated(ctx.tenantId, body.date, { model: 'hrAttendance', id: body.id })
+      if (backdated) return backdated
+    }
 
     // An overtime approval at/above the tenant's configured hour threshold needs
     // director sign-off — same "downgrade rather than reject" approach used for

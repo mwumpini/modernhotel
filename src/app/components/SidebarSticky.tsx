@@ -1,52 +1,114 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useSession } from 'next-auth/react';
+import { loadRecords, saveRecord } from '../lib/api/tenantRecords';
 
-const STORAGE_KEY = 'sidebar.stickies';
+const LOCAL_KEY = 'sidebar.stickies';
 const MAX_NOTES = 5;
 
 type Note = { id: string; text: string };
+type StickyData = { id: string; notes: Note[]; draft: string; updatedAt: string };
 
-function readNotes(): Note[] {
+function normalize(value: unknown): Note[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((note) => note && typeof note.text === 'string' && note.text.trim())
+    .slice(0, MAX_NOTES)
+    .map((note) => ({ id: String(note.id || Date.now()), text: String(note.text).trim() }));
+}
+
+function readLocal(): StickyData {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
+    const raw = localStorage.getItem(LOCAL_KEY);
+    if (!raw) return { id: '', notes: [], draft: '', updatedAt: '' };
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((note) => note && typeof note.text === 'string' && note.text.trim())
-      .slice(0, MAX_NOTES)
-      .map((note) => ({ id: String(note.id || Date.now()), text: String(note.text).trim() }));
+    // Older copies were just the list of notes, with nothing typed still in the box.
+    if (Array.isArray(parsed)) return { id: '', notes: normalize(parsed), draft: '', updatedAt: '' };
+    return {
+      id: '',
+      notes: normalize(parsed?.notes),
+      draft: typeof parsed?.draft === 'string' ? parsed.draft : '',
+      updatedAt: typeof parsed?.updatedAt === 'string' ? parsed.updatedAt : '',
+    };
   } catch {
-    return [];
+    return { id: '', notes: [], draft: '', updatedAt: '' };
   }
 }
 
-/** Personal notes in the side menu. Saved in this browser only. */
+function writeLocal(notes: Note[], draft: string, updatedAt: string) {
+  try {
+    localStorage.setItem(LOCAL_KEY, JSON.stringify({ notes, draft, updatedAt }));
+  } catch {
+    /* this browser may be blocking storage; the server copy still applies */
+  }
+}
+
+/** Personal notes in the side menu. The typed text and the saved notes both survive a refresh. */
 export default function SidebarSticky() {
+  const { data: session } = useSession();
+  const userId = session?.user?.id || '';
   const [notes, setNotes] = useState<Note[]>([]);
   const [draft, setDraft] = useState('');
+  const [updatedAt, setUpdatedAt] = useState('');
   const [ready, setReady] = useState(false);
+  const [serverReady, setServerReady] = useState(false);
+  const updatedAtRef = useRef('');
 
   useEffect(() => {
-    setNotes(readNotes());
+    const local = readLocal();
+    setNotes(local.notes);
+    setDraft(local.draft);
+    setUpdatedAt(local.updatedAt);
+    updatedAtRef.current = local.updatedAt;
     setReady(true);
   }, []);
 
   useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    setServerReady(false);
+    void loadRecords<StickyData>('setting.stickies').then((rows) => {
+      if (cancelled) return;
+      const mine = (rows || []).find((row) => row.id === userId);
+      const localAt = updatedAtRef.current;
+      if (mine && (mine.updatedAt || '') > localAt) {
+        const nextNotes = normalize(mine.notes);
+        const nextDraft = typeof mine.draft === 'string' ? mine.draft : '';
+        setNotes(nextNotes);
+        setDraft(nextDraft);
+        setUpdatedAt(mine.updatedAt);
+        updatedAtRef.current = mine.updatedAt;
+        writeLocal(nextNotes, nextDraft, mine.updatedAt);
+      }
+      setServerReady(true);
+    });
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  useEffect(() => {
     if (!ready) return;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
-    } catch {
-      /* ignore */
-    }
-  }, [notes, ready]);
+    writeLocal(notes, draft, updatedAt);
+    if (!userId || !serverReady) return;
+    const handle = window.setTimeout(() => {
+      void saveRecord('setting.stickies', userId, { id: userId, notes, draft, updatedAt });
+    }, 400);
+    return () => window.clearTimeout(handle);
+  }, [notes, draft, updatedAt, ready, userId, serverReady]);
+
+  const stamp = () => {
+    const at = new Date().toISOString();
+    updatedAtRef.current = at;
+    setUpdatedAt(at);
+    return at;
+  };
 
   const add = () => {
     const text = draft.trim();
     if (!text || notes.length >= MAX_NOTES) return;
     setNotes((prev) => [{ id: `${Date.now()}`, text }, ...prev].slice(0, MAX_NOTES));
     setDraft('');
+    stamp();
   };
 
   const full = notes.length >= MAX_NOTES;
@@ -63,7 +125,10 @@ export default function SidebarSticky() {
         placeholder={full ? 'Clear a note to add another' : 'A reminder for yourself…'}
         aria-label="New note"
         className="w-full resize-none rounded-md border border-amber-300 bg-[#fff8dc] px-2 py-1.5 text-xs text-[#1a1200] outline-none placeholder:text-[#5c4a1a]/70 focus:border-amber-500 disabled:opacity-60"
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          stamp();
+        }}
         onKeyDown={(event) => {
           if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
@@ -90,7 +155,10 @@ export default function SidebarSticky() {
               <button
                 type="button"
                 aria-label="Clear note"
-                onClick={() => setNotes((prev) => prev.filter((item) => item.id !== note.id))}
+                onClick={() => {
+                  setNotes((prev) => prev.filter((item) => item.id !== note.id));
+                  stamp();
+                }}
                 className="shrink-0 text-xs leading-none text-[#5c4a1a]/70 hover:text-[#1a1200]"
               >
                 ✕

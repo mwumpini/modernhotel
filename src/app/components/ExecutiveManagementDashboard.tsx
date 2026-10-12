@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Card, CardBody, CardHeader, Button, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Tooltip } from "@heroui/react";
-import { CalendarDays, Download, Shield, Sparkles, PartyPopper, Wallet, AlertTriangle, TrendingUp, TrendingDown, UtensilsCrossed, Package, Activity, Bell, Users, LogIn, LogOut, Gauge } from 'lucide-react';
+import { CalendarDays, Download, FileSpreadsheet, FileText, Printer, Shield, Sparkles, PartyPopper, Wallet, AlertTriangle, TrendingUp, TrendingDown, UtensilsCrossed, Package, Activity, Bell, Users, LogIn, LogOut, Gauge } from 'lucide-react';
 import { useAnalyticsStore } from '../lib/analytics/analyticsStore';
 import { useReportingStore } from '../lib/frontoffice/reportingStore';
 import { auditLogStore, AuditRecord } from '../lib/analytics/auditLogStore';
@@ -15,7 +15,11 @@ import { kitchenOpsStore } from '../lib/fb/kitchenOpsStore';
 import { useIncidentStore } from '../lib/security/incidentStore';
 import { usePatrolStore } from '../lib/security/patrolStore';
 import { fetchEventBookings } from '../lib/frontoffice/eventsApi';
-import { getZonedClockParts } from '../lib/frontoffice/propertyTime';
+import { formatPropertyClockStamp, getZonedClockParts } from '../lib/frontoffice/propertyTime';
+import { sectionsToCSV, sectionsToExcelHtml, sectionsToPdfBlob, sectionsToPrintHtml, type ExportSection } from '../lib/frontoffice/reportExportFormat';
+import { openHtmlPrintWindow } from '../lib/print/engine';
+import { buildOrgProfile } from '../lib/print/buildOrgProfile';
+import { formatGhs } from '../lib/format/currency';
 import { resolvePropertyTimezone } from '../lib/frontoffice/propertyTimeClient';
 import { useAccountingStore } from '../lib/accounting/store';
 import { toRollupCoa } from '../lib/accounting/coaHierarchy';
@@ -101,16 +105,9 @@ function smoothLinePath(points: Array<{ x: number; y: number }>): string {
 }
 
 function formatCurrency(amount: number | undefined) {
-  // Intl already renders GHS as "GH₵" for this locale (the .replace below is a
-  // no-op safety net for locales/engines that instead spell out "GHS") — the
-  // zero fallback has to match that exact prefix, or ₵0 sits next to GH₵3,300
-  // on the same card with no explanation for the missing "GH".
-  if (!amount || Number.isNaN(amount)) return 'GH₵0';
-  try {
-    return new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS', maximumFractionDigits: 0 }).format(amount).replace('GHS', '₵');
-  } catch {
-    return `GH₵${Math.round(amount).toLocaleString()}`;
-  }
+  // The cedi sign paints as µ on many Windows fonts, so "GH₵0" reads as "GHµ0".
+  // Spell the currency code instead, the same way payroll and staff debts do.
+  return formatGhs(Number.isFinite(amount) ? amount : 0);
 }
 
 
@@ -542,6 +539,7 @@ export default function ExecutiveManagementDashboard() {
   }, [generateDailyFlashReport]);
 
   const [mounted, setMounted] = React.useState(false);
+  const [exporting, setExporting] = React.useState(false);
 
   React.useEffect(() => {
     // Refresh KPIs on mount
@@ -627,46 +625,6 @@ export default function ExecutiveManagementDashboard() {
 
   const go = (href: string) => { window.location.href = href; };
 
-  const handleExportCSV = () => {
-    const data = {
-      date: selectedDate || propertyToday(),
-      totalRooms,
-      occupiedRooms,
-      availableRooms,
-      revenueToday,
-      postedRevenue,
-      adr,
-      revpar,
-      guestsInHouse,
-      arrivals,
-      departures,
-      revenueSplit
-    };
-    const csv = useAnalyticsStore.getState().convertToCSV(data);
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `executive_dashboard_${data.date}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleExportPDF = async () => {
-    const data = {
-      date: selectedDate || propertyToday(),
-      kpis: { totalRooms, occupiedRooms, availableRooms, revenueToday, postedRevenue, adr, revpar, arrivals, departures },
-      trend: occupancyTrend,
-      revenueSplit
-    };
-    const url = await useReportingStore.getState().exportReport(data, 'pdf', `executive_dashboard_${data.date}.pdf`);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `executive_dashboard_${data.date}.pdf`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   // Communications hub removed on executive dashboard
 
   // Inventory snapshot
@@ -713,10 +671,28 @@ export default function ExecutiveManagementDashboard() {
     const out: { critical: ExecAlert[]; warning: ExecAlert[]; info: ExecAlert[] } = { critical: [], warning: [], info: [] };
     try {
       const stock = useStockStore.getState();
-      (stock.alerts || []).filter(a => a.isActive && !a.isAcknowledged).forEach(a => {
-        const sev = a.severity === 'high' ? 'critical' : a.severity === 'medium' ? 'warning' : 'info';
-        out[sev].push({ id: `inv-${a.id}`, severity: sev as any, text: `${a.message} (${a.itemName})`, nav: '/?tab=overview' });
-      });
+      const active = (stock.alerts || []).filter(a => a.isActive && !a.isAcknowledged);
+      // One line per kind of stock problem. Listing every item made this card
+      // as tall as the stock list, and the names were repeated in parentheses.
+      const stockLine = (
+        items: typeof active,
+        kind: string,
+        column: 'critical' | 'warning' | 'info',
+        plural: string,
+      ) => {
+        if (items.length === 0) return;
+        const names = items.map(a => a.itemName).filter(Boolean);
+        const text = items.length === 1
+          ? items[0].message
+          : names.length <= 3
+            ? `${names.join(', ').replace(/, ([^,]*)$/, ' and $1')} ${plural}`
+            : `${names.slice(0, 3).join(', ')} and ${names.length - 3} more ${plural}`;
+        out[column].push({ id: `inv-${kind}:${items.length}`, severity: column, text, nav: '/?tab=overview' });
+      };
+      stockLine(active.filter(a => a.severity === 'critical'), 'out', 'critical', 'are out of stock');
+      stockLine(active.filter(a => a.severity === 'high'), 'low', 'critical', 'are below minimum');
+      stockLine(active.filter(a => a.severity === 'medium'), 'reorder', 'warning', 'need reordering');
+      stockLine(active.filter(a => a.severity === 'low'), 'over', 'info', 'are near maximum stock');
     } catch {}
     // Ids carry the date (or the count), so acknowledging one occurrence doesn't hide every future one.
     if (expectedOcc > 95) {
@@ -733,6 +709,196 @@ export default function ExecutiveManagementDashboard() {
     }
     return out;
   }, [expectedOcc, hkDirtyPct, overstays, security.openSerious, selectedDate]);
+
+  // One file of the cards on screen for the selected day. Cards hidden with
+  // Customize view are left out, so the file matches what the manager sees.
+  const exportDashboard = async (format: 'pdf' | 'excel' | 'csv' | 'print') => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const date = selectedDate || propertyToday();
+      const sections: ExportSection[] = [];
+      const measure = (title: string, rows: (string | number)[][]) => {
+        sections.push({ title, columns: ['Measure', 'Value'], rows });
+      };
+      const share = (count: number) => (hk.total > 0 ? `${Math.round((count / hk.total) * 100)}%` : '0%');
+
+      if (!isHidden('liveOps')) {
+        const rows: (string | number)[][] = [
+          ['In-house guests', guestsInHouse],
+          ['Rooms occupied', occupiedRooms],
+          ['Rooms available', availableRooms],
+          ['Total rooms', totalRooms],
+          ['Arrivals', arrivals],
+          ['Departures', departures],
+          ['Expected occupancy', `${Number.isFinite(expectedOcc) ? Math.round(expectedOcc) : 0}%`],
+        ];
+        if (isTodaySelected) {
+          rows.push(['Still to arrive', awaitingArrival], ['Still to depart', awaitingDeparture]);
+        }
+        if (overstays > 0) rows.push(['Still checked in past check-out', overstays]);
+        measure('Live operations', rows);
+      }
+
+      if (!isHidden('security')) {
+        measure('Security and safety', [
+          ['Incidents reported', security.reported],
+          ['Open incidents', security.open],
+          ['High or critical still open', security.openSerious],
+          ['Patrols completed', security.patrolsTotal === 0 ? 'None logged' : `${security.patrolsCompleted} of ${security.patrolsTotal}`],
+          ['Checkpoints missed', security.missedCheckpoints],
+        ]);
+      }
+
+      if (!isHidden('housekeeping')) {
+        sections.push({
+          title: 'Housekeeping',
+          columns: ['Status', 'Rooms', 'Share'],
+          rows: hk.total === 0
+            ? [['No rooms configured', 0, '']]
+            : [
+                ['Clean / ready', hk.ready, share(hk.ready)],
+                ['Occupied', hk.occupied, share(hk.occupied)],
+                ['Being cleaned', hk.inProgress, share(hk.inProgress)],
+                ['Dirty', hk.dirty, share(hk.dirty)],
+                ['Out of order', hk.outOfOrder, share(hk.outOfOrder)],
+              ],
+        });
+      }
+
+      if (!isHidden('events')) {
+        sections.push({
+          title: 'Conferences and events',
+          columns: ['Event', 'Hall', 'Time', 'Guests', 'Status'],
+          rows: eventsOnDate.length === 0
+            ? [['No events on this date', '', '', '', '']]
+            : eventsOnDate.map((e) => [
+                e.title || '',
+                e.hallName || '',
+                e.startTime && e.endTime ? `${e.startTime}–${e.endTime}` : '',
+                e.attendees ?? '',
+                e.status || '',
+              ]),
+        });
+      }
+
+      if (!isHidden('financial')) {
+        measure(isTodaySelected || !date ? "Today's financial pulse" : `Financial pulse — ${date}`, [
+          ['Revenue posted to the books', formatCurrency(postedRevenue)],
+          ['Billed, not yet posted', formatCurrency(revenueToday)],
+          ['ADR', formatCurrency(adr)],
+          ['RevPAR', formatCurrency(revpar)],
+          ['Room revenue', formatCurrency(revenueSplit.room)],
+          ['Food and drink', formatCurrency(revenueSplit.fb)],
+          ['Other revenue', formatCurrency(revenueSplit.other)],
+        ]);
+      }
+
+      if (!isHidden('alerts')) {
+        const live = buildLiveAlerts();
+        const open = [
+          ...live.critical.filter((a) => !ackIds.includes(a.id)).map((a) => ['Critical', a.text] as (string | number)[]),
+          ...live.warning.filter((a) => !ackIds.includes(a.id)).map((a) => ['Warning', a.text] as (string | number)[]),
+          ...live.info.filter((a) => !ackIds.includes(a.id)).map((a) => ['Informational', a.text] as (string | number)[]),
+        ];
+        sections.push({
+          title: 'System alerts',
+          columns: ['Level', 'Alert'],
+          rows: open.length === 0 ? [['', 'No open alerts']] : open,
+        });
+      }
+
+      if (!isHidden('trend')) {
+        sections.push({
+          title: '7-day occupancy trend',
+          columns: ['Date', 'Occupancy'],
+          rows: occupancyTrend.length === 0
+            ? [['', 'No trend yet']]
+            : occupancyTrend.map((t) => [t.date, `${Math.round(t.rate || 0)}%`]),
+        });
+      }
+
+      if (!isHidden('fbKitchen')) {
+        measure('Restaurant, bar, and kitchen', [
+          ['Total orders', fbEff.total],
+          ['Served or paid', fbEff.served],
+          ['Items in queue', fbEff.queue],
+          ['Average order value', formatCurrency(fbEff.avgOrder)],
+          ['Orders in the last hour', fbEff.lastHour],
+          ['Kitchen items assigned', kitchEff.assigned],
+          ['Kitchen items prepared', kitchEff.prepared],
+          ['Average prep time', `${Math.round(kitchEff.avgPrep)} min`],
+          ['Prepared within 15 minutes', `${kitchEff.sla15}%`],
+        ]);
+      }
+
+      if (!isHidden('stock')) {
+        const items = useStockStore.getState().stockItems || [];
+        const levelOf = (item: { currentStock: number; minimumStock: number; reorderPoint: number }) =>
+          item.currentStock <= item.minimumStock ? 'Critical' : item.currentStock <= item.reorderPoint ? 'Low' : 'Adequate';
+        const attention = items
+          .filter((item) => item.currentStock <= item.reorderPoint)
+          .sort((a, b) => a.currentStock - b.currentStock);
+        const lowPct = useStockStore.getState().getLowStockPercentage();
+        sections.push({
+          title: `Critical stock levels — ${Number.isFinite(lowPct) ? lowPct.toFixed(0) : '0'}% at or below reorder`,
+          columns: ['Item', 'On hand', 'Level'],
+          rows: attention.length === 0
+            ? [['No items need reordering', '', '']]
+            : attention.map((item) => [
+                item.name,
+                `${item.currentStock}${item.unit ? ` ${item.unit}` : ''}`,
+                levelOf(item),
+              ]),
+        });
+      }
+
+      if (!isHidden('recentActivities')) {
+        const tz = resolvePropertyTimezone();
+        const activity = auditLogStore.all()
+          .filter((r) => r.area === 'system' && !(r.meta && (r.meta as { demo?: boolean }).demo) && (r.at || '').startsWith(date))
+          .slice(0, 10);
+        sections.push({
+          title: 'Recent activities',
+          columns: ['When', 'Activity'],
+          rows: activity.length === 0
+            ? [['', 'No activity recorded for this day']]
+            : activity.map((r) => [
+                r.at ? formatPropertyClockStamp(new Date(r.at), tz) : '',
+                [r.entity, r.action, r.details].filter(Boolean).join(' — '),
+              ]),
+        });
+      }
+
+      if (sections.length === 0) {
+        measure('Executive dashboard', [['Nothing to export', 'Every card is hidden']]);
+      }
+
+      const title = `Executive dashboard — ${date}`;
+      const label = `Figures for ${date}. Cards hidden with Customize view are left out.`;
+      const org = buildOrgProfile(useSettingsStore.getState());
+      const filename = `executive_dashboard_${date}`;
+      if (format === 'print') {
+        openHtmlPrintWindow(sectionsToPrintHtml(title, sections, org, label, true));
+        return;
+      }
+      const blob = format === 'csv'
+        ? new Blob(['\uFEFF', sectionsToCSV(sections, org, label)], { type: 'text/csv;charset=utf-8' })
+        : format === 'excel'
+          ? new Blob([sectionsToExcelHtml(title, sections, org, label)], { type: 'application/vnd.ms-excel' })
+          : await sectionsToPdfBlob(title, sections, org, label, true);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${filename}.${format === 'excel' ? 'xls' : format}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Executive dashboard export failed', error);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   // "Today" follows the hotel's timezone, same as the rest of this screen.
   const todayISO = propertyToday();
@@ -776,13 +942,21 @@ export default function ExecutiveManagementDashboard() {
           </label>
           <Dropdown>
             <DropdownTrigger>
-              <Button size="sm" variant="flat" className="h-10 rounded-xl border border-gray-200 bg-white px-3 shadow-sm" startContent={<Download className="h-3.5 w-3.5" />}>
+              <Button
+                size="sm"
+                variant="flat"
+                isLoading={exporting}
+                className="h-10 rounded-xl border border-gray-200 bg-white px-3 shadow-sm"
+                startContent={exporting ? undefined : <Download className="h-3.5 w-3.5" />}
+              >
                 Export
               </Button>
             </DropdownTrigger>
-            <DropdownMenu aria-label="Export dashboard">
-              <DropdownItem key="csv" onPress={handleExportCSV}>Export CSV</DropdownItem>
-              <DropdownItem key="pdf" onPress={handleExportPDF}>Export PDF</DropdownItem>
+            <DropdownMenu aria-label="Export this day's dashboard" disabledKeys={exporting ? ['pdf', 'excel', 'csv', 'print'] : []}>
+              <DropdownItem key="pdf" description="Briefing for this day" startContent={<FileText className="h-4 w-4" />} onPress={() => exportDashboard('pdf')}>PDF</DropdownItem>
+              <DropdownItem key="excel" description="Same figures, in a spreadsheet" startContent={<FileSpreadsheet className="h-4 w-4" />} onPress={() => exportDashboard('excel')}>Excel</DropdownItem>
+              <DropdownItem key="csv" description="Same figures, as a text file" startContent={<Download className="h-4 w-4" />} onPress={() => exportDashboard('csv')}>CSV</DropdownItem>
+              <DropdownItem key="print" description="Open the print dialog" startContent={<Printer className="h-4 w-4" />} onPress={() => exportDashboard('print')}>Print</DropdownItem>
             </DropdownMenu>
           </Dropdown>
           <CustomizeViewControl
@@ -1000,7 +1174,7 @@ export default function ExecutiveManagementDashboard() {
               onHide={() => hide('alerts')}
               hideLabel="System Alerts"
             />
-            <CardBody className="pt-2 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+            <CardBody className="pt-2 grid grid-cols-1 items-start gap-3 text-sm md:grid-cols-3">
               {!mounted ? (
                 <>
                   <div className="p-3 rounded-lg border border-red-200 bg-red-50 space-y-2">
@@ -1027,13 +1201,13 @@ export default function ExecutiveManagementDashboard() {
                     { key: 'info', title: '🔵 INFORMATIONAL', cls: 'border-blue-200 bg-blue-50', items: live.info.filter(a => !ackIds.includes(a.id)) }
                   ];
                   return blocks.map(b => (
-                    <div key={b.key} className={`p-3 rounded-lg border ${b.cls} space-y-2`}>
-                      <div className="font-semibold mb-1">{b.title}</div>
+                    <div key={b.key} className={`self-start space-y-2 rounded-lg border p-3 ${b.cls}`}>
+                      <div className="mb-1 font-semibold">{b.title}</div>
                       {b.items.length === 0 && <div className="text-xs text-gray-600">No alerts</div>}
                       {b.items.map(a => (
-                        <div key={a.id} className="flex flex-col items-start gap-1.5">
-                          <button onClick={() => a.nav && go(a.nav)} className="text-left hover:underline">{a.text}</button>
-                          <Button size="sm" variant="flat" onPress={() => acknowledgeAlert(a.id)}>Acknowledge</Button>
+                        <div key={a.id} className="flex items-start justify-between gap-2">
+                          <button onClick={() => a.nav && go(a.nav)} className="min-w-0 text-left hover:underline">{a.text}</button>
+                          <Button size="sm" variant="flat" className="h-7 min-h-0 shrink-0 px-2 text-xs" onPress={() => acknowledgeAlert(a.id)}>Acknowledge</Button>
                         </div>
                       ))}
                     </div>
