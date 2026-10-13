@@ -1,6 +1,6 @@
 'use client';
 
-import { isPlatformOperator } from './lib/platform/operatorRole';
+import { isPlatformOperator, PLATFORM_SUBDOMAIN } from './lib/platform/operatorRole';
 import React from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
@@ -88,7 +88,7 @@ export default function Home() {
   const isOperator = status === 'authenticated' && isPlatformOperator(session?.user as { role?: string } | undefined, (session?.user as { tenant?: { subdomain?: string } } | undefined)?.tenant);
 
   React.useEffect(() => {
-    if (isOperator) setClientTenantSubdomain('platform');
+    if (isOperator) setClientTenantSubdomain(PLATFORM_SUBDOMAIN);
   }, [isOperator]);
 
   React.useEffect(() => {

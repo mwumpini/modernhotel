@@ -216,8 +216,8 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
       }
       setNotice(
         data.onTrial && data.trialEndsOn
-          ? `${data.name} is open on a free trial until ${formatDay(data.trialEndsOn)}. The admin signs in with Tenant ID “${data.subdomain}”, username ${data.adminUsername}, or ${data.adminEmail}.`
-          : `${data.name} is open with no free trial. Record a payment for them to keep signing in. The admin signs in with Tenant ID “${data.subdomain}”, username ${data.adminUsername}, or ${data.adminEmail}.`,
+          ? `${data.name} is open on a free trial until ${formatDay(data.trialEndsOn)}. The admin signs in with Organization ID “${data.subdomain}”, username ${data.adminUsername}, or ${data.adminEmail}.`
+          : `${data.name} is open with no free trial. Record a payment for them to keep signing in. The admin signs in with Organization ID “${data.subdomain}”, username ${data.adminUsername}, or ${data.adminEmail}.`,
       );
       resetForm();
       setCreating(false);
@@ -330,7 +330,7 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
         setError(data.error || 'Could not reset the admin sign-in.');
         return;
       }
-      setNotice(`${hotel.name}: the admin now signs in with Tenant ID “${hotel.subdomain}”${data.adminUsername ? `, username ${data.adminUsername},` : ''} or ${data.adminEmail}. The new password is the one you just typed.`);
+      setNotice(`${hotel.name}: the admin now signs in with Organization ID “${hotel.subdomain}”${data.adminUsername ? `, username ${data.adminUsername},` : ''} or ${data.adminEmail}. The new password is the one you just typed.`);
       await refreshSelected(hotel.id);
     } finally {
       setBusy('');
@@ -478,7 +478,7 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
             <form id="open-hotel" onSubmit={createHotel} className="space-y-4 pb-2">
               <div className="grid gap-4 sm:grid-cols-2">
                 <Input label="Hotel name" value={name} onChange={(e) => setName(e.target.value)} isRequired variant="bordered" classNames={fieldClass} />
-                <Input label="Tenant ID" description="What they type at sign-in, such as sunrise" value={subdomain} onChange={(e) => setSubdomain(e.target.value)} isRequired variant="bordered" classNames={fieldClass} />
+                <Input label="Organization ID" description="What they type at sign-in, such as sunrise" value={subdomain} onChange={(e) => setSubdomain(e.target.value)} isRequired variant="bordered" classNames={fieldClass} />
               </div>
               <fieldset>
                 <legend className="mb-2 text-sm font-medium text-ghana-black">Where it runs</legend>
@@ -684,7 +684,7 @@ function CompanyFinancials({
       <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
         {sheet === 'fees' && (
           <MoneyTable
-            columns={['Hotel', 'Tenant ID', 'Monthly fee', 'Paid until', 'Standing']}
+            columns={['Hotel', 'Organization ID', 'Monthly fee', 'Paid until', 'Standing']}
             empty="No hotel is on a monthly fee yet."
             rows={hotels.map((hotel) => ({
               warn: hotel.paymentDue,
@@ -976,7 +976,7 @@ function HotelDesk({
       {tab === 'overview' && (
         <section className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
-            <Fact label="Tenant ID" value={detail.subdomain} />
+            <Fact label="Organization ID" value={detail.subdomain} />
             <Fact label="Where it runs" value={hostingLabel(detail.hosting)} />
             <Fact label="Opened" value={formatDay(detail.createdAt)} />
             <Fact label="First admin" value={detail.adminName ? [detail.adminName, detail.adminUsername, detail.adminEmail].filter(Boolean).join(' · ') : 'No admin on file'} />
@@ -1057,7 +1057,7 @@ function HotelDesk({
           {deleteOpen && (
             <div className="max-w-md space-y-3 rounded-2xl border border-red-200 bg-red-50 p-4">
               <p className="text-sm text-red-800">This removes the hotel and everything inside it. Type <span className="font-semibold">{detail.subdomain}</span> to confirm.</p>
-              <Input label="Tenant ID" value={deleteText} onChange={(e) => onDeleteText(e.target.value)} variant="bordered" classNames={fieldClass} />
+              <Input label="Organization ID" value={deleteText} onChange={(e) => onDeleteText(e.target.value)} variant="bordered" classNames={fieldClass} />
               <Button color="danger" isLoading={busy === 'delete'} isDisabled={deleteText.trim().toLowerCase() !== detail.subdomain} onPress={() => onDelete(detail)}>Delete hotel</Button>
             </div>
           )}

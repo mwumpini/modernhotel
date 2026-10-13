@@ -69,7 +69,7 @@ export const authOptions: NextAuthOptions = {
         // Email or username — see findUserForLogin.
         email: { label: 'Email or username', type: 'text' },
         password: { label: 'Password', type: 'password' },
-        tenantId: { label: 'Tenant ID', type: 'text' },
+        tenantId: { label: 'Organization ID', type: 'text' },
         otp: { label: 'Authentication code', type: 'text' },
       },
       async authorize(credentials, req) {

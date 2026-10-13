@@ -13,6 +13,8 @@ import { OPERATOR_ROLE, PLATFORM_SUBDOMAIN } from './operatorRole';
 export { OPERATOR_ROLE, PLATFORM_SUBDOMAIN, isPlatformOperator } from './operatorRole';
 
 const RESERVED_SUBDOMAINS = new Set([
+  'agm',
+  'agmsync',
   'platform',
   'www',
   'api',
@@ -42,7 +44,7 @@ export async function ensurePlatformOperator() {
   const isProd = process.env.NODE_ENV === 'production';
   const password = process.env.PLATFORM_OPERATOR_PASSWORD || (isProd ? '' : 'password123');
   if (!password) return null;
-  const email = (process.env.PLATFORM_OPERATOR_EMAIL || 'operator@platform.local').trim().toLowerCase();
+  const email = (process.env.PLATFORM_OPERATOR_EMAIL || 'info@agmsync.com').trim().toLowerCase();
 
   const tenant = await prisma.tenant.upsert({
     where: { subdomain: PLATFORM_SUBDOMAIN },
@@ -139,7 +141,7 @@ export async function openHotel(input: {
 }) {
   const subdomain = hotelSubdomain(input.subdomain);
   if (!subdomain) {
-    return { error: 'Tenant ID uses letters, numbers, and hyphens.' };
+    return { error: 'Organization ID uses letters, numbers, and hyphens.' };
   }
   const name = input.name.trim();
   const adminName = input.adminName.trim();
@@ -160,7 +162,7 @@ export async function openHotel(input: {
   if (trialDays == null) return { error: 'Enter the free trial in whole days, from 0 to 365.' };
 
   const taken = await prisma.tenant.findUnique({ where: { subdomain }, select: { id: true } });
-  if (taken) return { error: 'That Tenant ID is already used.' };
+  if (taken) return { error: 'That Organization ID is already used.' };
 
   const today = todayISO();
   const trialEndsOn = trialDays > 0 ? addDaysISO(today, trialDays) : null;

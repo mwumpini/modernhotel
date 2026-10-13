@@ -86,8 +86,8 @@ export default function LoginForm() {
           <div className="space-y-4">
             <Input
               type="text"
-              label="Tenant ID"
-              placeholder="Enter tenant ID (e.g., demo)"
+              label="Organization ID"
+              placeholder="Enter your organization ID (e.g. continental-dream)"
               value={tenantId}
               onChange={(e) => setTenantId(e.target.value)}
               required
@@ -224,7 +224,7 @@ export default function LoginForm() {
                 Also try: manager@demohotel.com or staff@demohotel.com (same password)
               </p>
               <p className="text-xs text-gray-500 mt-1">
-                Operator: platform / operator@platform.local / password123
+                Operator: agm / info@agmsync.com / password123
               </p>
             </div>
           )}

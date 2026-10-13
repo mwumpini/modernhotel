@@ -133,7 +133,7 @@ export default function ForgotPasswordPanel({
       <div>
         <p className="text-sm font-semibold text-ghana-black">Reset password</p>
         <p className="mt-1 text-xs text-gray-600">
-          Uses the Tenant ID and email or username above. Answer the secret questions you saved, then choose a new password.
+          Uses the Organization ID and email or username above. Answer the secret questions you saved, then choose a new password.
         </p>
       </div>
 

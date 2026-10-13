@@ -1,5 +1,6 @@
 /** Browser-safe operator identity (no database imports), shared by sign-in, the API guard and the home page. */
-export const PLATFORM_SUBDOMAIN = 'platform';
+// The operator's Organization ID at sign-in. Hotels can never use it (see RESERVED_SUBDOMAINS in operator.ts).
+export const PLATFORM_SUBDOMAIN = 'agm';
 export const OPERATOR_ROLE = 'operator';
 
 /**

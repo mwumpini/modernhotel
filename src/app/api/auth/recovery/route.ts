@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
     const subdomain = normalizeTenantSubdomain(String(body.tenantId || ''));
     const login = String(body.login || body.email || '').trim();
     if (!subdomain || !login) {
-      return NextResponse.json({ fallback: true, message: 'Enter the Tenant ID and the email or username first.' }, { status: 400 });
+      return NextResponse.json({ fallback: true, message: 'Enter the Organization ID and the email or username first.' }, { status: 400 });
     }
 
     const tenant = await resolveLoginTenant(subdomain);
