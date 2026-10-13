@@ -1282,7 +1282,7 @@ export default function ExecutiveManagementDashboard() {
 
           {/* Stocks & Inventory - functional */}
           {!isHidden('stock') && (
-          <Card className="border border-gray-200/70 border-l-4 border-l-purple-300 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md md:col-span-2">
+          <Card className="@container min-w-0 border border-gray-200/70 border-l-4 border-l-purple-300 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md md:col-span-2">
             <SectionHeader
               icon={<Package className="h-4 w-4" />}
               iconClass="bg-purple-100 text-purple-600"
@@ -1291,26 +1291,26 @@ export default function ExecutiveManagementDashboard() {
               hideLabel="Critical Stock Levels"
               extra={<div className="text-xs text-gray-600">Low stock %: {useStockStore.getState().getLowStockPercentage().toFixed(0)}%</div>}
             />
-            <CardBody className="pt-2 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-              <div>
+            <CardBody className="grid grid-cols-1 gap-4 pt-2 text-sm @4xl:grid-cols-3">
+              <div className="min-w-0">
                 <div className="font-semibold mb-2">🟢 Adequate</div>
-                <ul className="space-y-1 list-disc list-inside">
+                <ul className="space-y-1">
                   {stockSummary.adequate.map(i => (
-                    <li key={i.id} className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="min-w-0">{i.name}</span>
-                      <Button size="sm" variant="light" className="min-h-9 shrink-0" onPress={() => go('/?tab=overview')}>View</Button>
+                    <li key={i.id} className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate">{i.name}</span>
+                      <Button size="sm" variant="light" className="h-7 min-h-0 shrink-0 px-2" onPress={() => go('/?tab=overview')}>View</Button>
                     </li>
                   ))}
                   {stockSummary.adequate.length === 0 && <li className="text-gray-600">No items</li>}
                 </ul>
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="font-semibold mb-2">🟡 Low (Reorder)</div>
-                 <ul className="space-y-1 list-disc list-inside">
+                <ul className="space-y-1">
                   {stockSummary.low.map(i => (
-                    <li key={i.id} className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="min-w-0">{i.name}</span>
-                      <Button size="sm" variant="flat" className="min-h-9 shrink-0" onPress={() => {
+                    <li key={i.id} className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate">{i.name}</span>
+                      <Button size="sm" variant="flat" className="h-7 min-h-0 shrink-0 px-2" onPress={() => {
                         try {
                           announcementStore.publish({ level: 'normal', message: `Reorder suggested for ${i.name} (low stock)`, departments: ['inventory'], from: 'Master' });
                           auditLogStore.add({ area: 'inventory' as any, action: 'status', entity: 'Stock', entityId: i.id, details: `Notified Inventory: Reorder ${i.name}` });
@@ -1321,13 +1321,13 @@ export default function ExecutiveManagementDashboard() {
                   {stockSummary.low.length === 0 && <li className="text-gray-600">No items</li>}
                 </ul>
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="font-semibold mb-2">🔴 Critical</div>
-                <ul className="space-y-1 list-disc list-inside">
+                <ul className="space-y-1">
                   {stockSummary.critical.map(i => (
-                    <li key={i.id} className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="min-w-0">{i.name}</span>
-                      <Button size="sm" color="danger" variant="flat" className="min-h-9 shrink-0" onPress={() => {
+                    <li key={i.id} className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate">{i.name}</span>
+                      <Button size="sm" color="danger" variant="flat" className="h-7 min-h-0 shrink-0 px-2" onPress={() => {
                         try {
                           announcementStore.publish({ level: 'urgent', message: `URGENT: Critical stock for ${i.name}. Immediate action required.`, departments: ['inventory'], from: 'Master' });
                           auditLogStore.add({ area: 'inventory' as any, action: 'status', entity: 'Stock', entityId: i.id, details: `Notified Inventory: URGENT ${i.name}` });

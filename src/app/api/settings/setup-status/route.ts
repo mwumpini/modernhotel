@@ -24,10 +24,40 @@ export async function GET(request: NextRequest) {
 
     const settings = await prisma.systemSettings.findUnique({
       where: { tenantId: ctx.tenantId },
-      select: { generalSettings: true },
+      select: { generalSettings: true, hotelSettings: true, roomSettings: true },
     })
     const gs = (settings?.generalSettings as Record<string, any>) || {}
-    return NextResponse.json({ initialSetupCompleted: gs.initialSetupCompleted === true })
+    const hotel = (settings?.hotelSettings as Record<string, any>) || {}
+    const rooms = (settings?.roomSettings as Record<string, any>) || {}
+    const saved = await prisma.tenantRecord.findUnique({
+      where: { tenantId_kind_recordId: { tenantId: ctx.tenantId, kind: 'setting.system', recordId: 'main' } },
+      select: { data: true },
+    })
+    const blob = ((saved?.data as { settings?: Record<string, any> } | null)?.settings) || {}
+    const hotelName = String(
+      hotel.hotelName || blob.hotelSettings?.hotelName || blob.companySettings?.tradingName || blob.companySettings?.legalName || ''
+    ).trim()
+    const hasRooms = (Array.isArray(rooms.roomTypes) && rooms.roomTypes.length > 0)
+      || (Array.isArray(rooms.rooms) && rooms.rooms.length > 0)
+      || (Array.isArray(blob.roomManagement?.roomTypes) && blob.roomManagement.roomTypes.length > 0)
+      || (Array.isArray(blob.roomManagement?.rooms) && blob.roomManagement.rooms.length > 0)
+    const roomCount = hotelName || hasRooms ? 0 : await prisma.room.count({ where: { tenantId: ctx.tenantId } })
+    // A hotel you can already sign into, with a name or rooms, finished setup on
+    // some other computer. The flag used to live only in that computer's browser.
+    const done = gs.initialSetupCompleted === true
+      || blob.initialSetupCompleted === true
+      || hotelName.length > 0
+      || hasRooms
+      || roomCount > 0
+
+    if (done && settings && gs.initialSetupCompleted !== true) {
+      await prisma.systemSettings.update({
+        where: { tenantId: ctx.tenantId },
+        data: { generalSettings: { ...gs, initialSetupCompleted: true } },
+      }).catch(() => {})
+    }
+
+    return NextResponse.json({ initialSetupCompleted: done })
   } catch (error) {
     console.error('[settings/setup-status][GET] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

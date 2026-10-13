@@ -36,6 +36,7 @@ export default function Home() {
   // needed, otherwise every new device would repeat a wizard another device
   // already finished.
   const setupStatusChecked = useSettingsStore(s => s.setupStatusChecked);
+  const setupCheckFailed = useSettingsStore(s => s.setupCheckFailed);
   const setSessionRole = useSettingsStore(s => s.setSessionRole);
 
   // Read once, synchronously, on first render — so a browser that already has
@@ -100,17 +101,18 @@ export default function Home() {
   // Role-based landing (client-safe, runs after mount)
   React.useEffect(() => {
     if (status !== 'authenticated' || isOperator) return;
-    if (initialSetupCompleted || localPersistedComplete) return;
+    if (initialSetupCompleted || localPersistedComplete || setupCheckFailed) return;
     // No local record — wait for the server check (kicked off above) before
-    // deciding. Only a tenant the server also has no record for is genuinely new.
+    // deciding. Only a hotel the server explicitly says is new opens the wizard.
+    // A failed check is not that answer: Demo Hotel must still open on a new computer.
     if (!setupStatusChecked) return;
     router.replace('/setup');
-  }, [status, isOperator, initialSetupCompleted, localPersistedComplete, setupStatusChecked, router]);
+  }, [status, isOperator, initialSetupCompleted, localPersistedComplete, setupStatusChecked, setupCheckFailed, router]);
 
   // While a device with no local setup record waits on the server's answer,
   // show a spinner rather than flashing the dashboard (or the wizard) before
   // the real, shared answer is known.
-  const awaitingSetupCheck = status === 'authenticated' && !isOperator && !initialSetupCompleted && !localPersistedComplete && !setupStatusChecked;
+  const awaitingSetupCheck = status === 'authenticated' && !isOperator && !initialSetupCompleted && !localPersistedComplete && !setupCheckFailed && !setupStatusChecked;
 
   if (!mounted || status === 'loading' || awaitingSetupCheck) {
     return (

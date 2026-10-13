@@ -3,7 +3,7 @@
 import React, { Suspense, lazy } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { MessageSquare } from 'lucide-react';
-import { Button, Accordion, AccordionItem, Badge, Avatar, Tooltip } from "@heroui/react";
+import { Button, Accordion, AccordionItem, Avatar, Tooltip } from "@heroui/react";
 import { useSession } from 'next-auth/react';
 import { useComplianceStore } from '../lib/compliance/store';
 import { useSettingsStore } from '../lib/settings/store';
@@ -200,6 +200,12 @@ export default function Navigation({ onLogout }: NavigationProps) {
   const { data: session } = useSession();
   const currentUserName = session?.user?.name || 'User';
   const currentUserRoleLabel = ROLE_LABELS[(session?.user as any)?.role] || (session?.user as any)?.role || '';
+  const hotelName = useSettingsStore((s) =>
+    s.companySettings?.tradingName?.trim()
+    || s.companySettings?.legalName?.trim()
+    || s.hotelSettings?.hotelName?.trim()
+    || ''
+  );
 
   // Settings (role/session, branding, etc.) load from localStorage here, once,
   // after mount — not synchronously at module-import time (see the comment
@@ -862,9 +868,11 @@ export default function Navigation({ onLogout }: NavigationProps) {
             onClick={() => setActiveSection('dashboard')}
           >
             <BrandMark size={48} className="mr-4 shrink-0" />
-            <div>
+            <div className="min-w-0">
               <h1 className="text-xl"><BrandWordmark /></h1>
-              <Badge color="primary" variant="flat" size="sm" className="mt-1">Executive</Badge>
+              {hotelName ? (
+                <p className="mt-1 truncate text-sm font-bold text-ghana-black" title={hotelName}>{hotelName}</p>
+              ) : null}
             </div>
             <Tooltip content="Hide side pane (Ctrl+B)" placement="bottom">
               <Button

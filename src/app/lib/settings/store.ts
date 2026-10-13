@@ -135,18 +135,21 @@ function syncSecurityToApi(security: SystemSettings['security']) {
 // from more than one place — Navigation's mount effect and the demo-fixtures
 // module-init microtask both call loadSettings()) so they share one fetch
 // instead of each firing its own.
-let setupStatusFetchPromise: Promise<any> | null = null;
+const setupStatusFetches = new Map<string, Promise<any>>();
 function fetchSetupStatusOnce(tenant: string): Promise<any> {
-  if (!setupStatusFetchPromise) {
-    // no-store: the route has no cache-control of its own, so without this the
-    // browser's default HTTP cache can keep serving whatever this exact URL+headers
-    // combo first returned — including a `false` fetched before the tenant's setup
-    // was ever completed — forever, regardless of what the server now says.
-    setupStatusFetchPromise = fetch('/api/settings/setup-status', { headers: { 'x-tenant-subdomain': tenant }, cache: 'no-store' })
-      .then((res) => (res.ok ? res.json() : null))
-      .catch((e) => { console.warn('[Settings] Failed to hydrate setup status:', e); return null; });
-  }
-  return setupStatusFetchPromise;
+  const cached = setupStatusFetches.get(tenant);
+  if (cached) return cached;
+  // no-store: the route has no cache-control of its own, so without this the
+  // browser's default HTTP cache can keep serving whatever this exact URL+headers
+  // combo first returned — including a `false` fetched before the tenant's setup
+  // was ever completed — forever, regardless of what the server now says.
+  // Keyed by hotel: a guess made before sign-in must not answer for the hotel
+  // the person actually signed into.
+  const pending = fetch('/api/settings/setup-status', { headers: { 'x-tenant-subdomain': tenant }, cache: 'no-store' })
+    .then((res) => (res.ok ? res.json() : null))
+    .catch((e) => { console.warn('[Settings] Failed to hydrate setup status:', e); return null; });
+  setupStatusFetches.set(tenant, pending);
+  return pending;
 }
 
 // Marks the tenant's setup wizard as done server-side (see /api/settings/setup-status)
@@ -1556,6 +1559,8 @@ interface SettingsStore extends SystemSettings {
    *  deciding whether to show the wizard — otherwise it would show it every
    *  time, ahead of the answer the server already has for this tenant. */
   setupStatusChecked: boolean;
+  /** The setup check never got an answer. Do not treat that as a new hotel. */
+  setupCheckFailed: boolean;
 
   // Printing defaults management
   updatePrintingTemplates: (tpl: Partial<SettingsStore['printing']>) => void;
@@ -2662,6 +2667,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   subscribers: new Set(),
   hydrated: false,
   setupStatusChecked: false,
+  setupCheckFailed: false,
   printing: DEFAULT_PRINTING,
   docBuilder: { templates: [] },
   addDocBuilderTemplate: (template) => {
@@ -2739,6 +2745,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         // replace the real Set with whatever JSON.stringify turned it into (`{}`),
         // permanently breaking publish() until the browser's storage is cleared.
         delete (parsed as any).subscribers;
+        delete (parsed as any).hydrated;
+        delete (parsed as any).setupStatusChecked;
+        delete (parsed as any).setupCheckFailed;
+        if (get().initialSetupCompleted) parsed.initialSetupCompleted = true;
         if (parsed.numberingDefaultsVersion == null) parsed.numberingDefaultsVersion = 0;
         set(parsed);
         set(state => ({
@@ -2997,7 +3007,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         fetchSetupStatusOnce(t)
           .then((data) => {
             if (data?.initialSetupCompleted) {
-              set({ initialSetupCompleted: true });
+              set({ initialSetupCompleted: true, setupCheckFailed: false });
               // loadSettings() runs more than once per page load (Navigation's
               // own mount effect calls it again), and its synchronous
               // `set(parsed)` from this same 'system.settings' key would
@@ -3016,8 +3026,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
               } catch {
                 // Non-fatal — worst case a later loadSettings() call re-fetches and corrects it.
               }
-            } else if (get().initialSetupCompleted) {
-              syncSetupStatusToApi();
+            } else if (data && data.initialSetupCompleted === false) {
+              set({ setupCheckFailed: false });
+              if (get().initialSetupCompleted) syncSetupStatusToApi();
+            } else {
+              set({ setupCheckFailed: true });
             }
           })
           .finally(() => set({ setupStatusChecked: true }));

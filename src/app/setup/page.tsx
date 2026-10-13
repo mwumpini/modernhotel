@@ -17,11 +17,15 @@ import {
   Spinner
 } from '@heroui/react';
 import { useSettingsStore, syncSetupStatusToApi } from '../lib/settings/store';
+import { setClientTenantSubdomain } from '../lib/api/clientTenant';
 
 export default function SetupWizardPage() {
   const router = useRouter();
-  const { status } = useSession();
+  const { data: session, status } = useSession();
   const settings = useSettingsStore();
+  const initialSetupCompleted = useSettingsStore(s => s.initialSetupCompleted);
+  const setupStatusChecked = useSettingsStore(s => s.setupStatusChecked);
+  const setupCheckFailed = useSettingsStore(s => s.setupCheckFailed);
 
   // This page had no auth check at all — reachable by URL without logging in
   // first. Login must come before setup, both because the wizard writes as
@@ -29,6 +33,21 @@ export default function SetupWizardPage() {
   React.useEffect(() => {
     if (status === 'unauthenticated') router.replace('/');
   }, [status, router]);
+
+  // A hotel that already has a name or rooms is done. A new computer must ask
+  // the server before showing this form, or Demo Hotel opens the wizard again.
+  React.useEffect(() => {
+    if (status !== 'authenticated') return;
+    const subdomain = (session?.user as { tenant?: { subdomain?: string } } | undefined)?.tenant?.subdomain;
+    if (subdomain) setClientTenantSubdomain(subdomain);
+    useSettingsStore.getState().loadSettings();
+  }, [status, session]);
+
+  React.useEffect(() => {
+    if (status === 'authenticated' && setupStatusChecked && (initialSetupCompleted || setupCheckFailed)) {
+      router.replace('/');
+    }
+  }, [status, setupStatusChecked, initialSetupCompleted, setupCheckFailed, router]);
   const updateSetting = useSettingsStore(s => s.updateSetting);
   const updateNestedSetting = useSettingsStore(s => s.updateNestedSetting);
   const updateCountryCompliance = useSettingsStore(s => s.updateCountryCompliance);
@@ -484,7 +503,7 @@ export default function SetupWizardPage() {
     </div>
   );
 
-  if (status !== 'authenticated') {
+  if (status !== 'authenticated' || !setupStatusChecked || initialSetupCompleted || setupCheckFailed) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <Spinner size="lg" />
