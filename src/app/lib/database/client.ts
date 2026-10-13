@@ -12,9 +12,23 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
+/**
+ * On Vercel every running server copy opens its own database pool (about 5 connections by
+ * default). Several copies at once (busy hours, or old and new copies after a deploy) used up
+ * the database's connection limit and took the whole site down ("too many connections").
+ * One connection per copy keeps them inside the limit; a request waits briefly instead.
+ */
+function serverlessDatabaseUrl(): string | undefined {
+  const url = process.env.DATABASE_URL
+  if (!process.env.VERCEL || !url || !/^postgres(ql)?:\/\//.test(url) || /[?&]connection_limit=/.test(url)) return undefined
+  return `${url}${url.includes('?') ? '&' : '?'}connection_limit=1&pool_timeout=20`
+}
+
 function createClient(): PrismaClient {
+  const datasourceUrl = serverlessDatabaseUrl()
   const base = new PrismaClient({
     log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
+    ...(datasourceUrl ? { datasourceUrl } : {}),
   })
   // Every write tells that hotel's open screens to refresh (live updates).
   return base.$extends({
