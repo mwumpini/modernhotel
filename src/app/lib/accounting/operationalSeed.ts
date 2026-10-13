@@ -7,6 +7,7 @@
 
 import type { CostCenter, RevenueCenter } from './models';
 import { getChartTemplate } from './chartOfAccountsTemplates';
+import { buildDefaultPaymentAccounts } from './defaultPaymentAccounts';
 
 /** GL revenue codes — Ghana hotel template; extend per country template when adding markets. */
 const REVENUE_GL_BY_COUNTRY: Record<string, Record<string, string>> = {
@@ -56,14 +57,14 @@ export function buildOperationalAccountingSeed(countryCode?: string): Operationa
   return { costCenters, revenueCenters };
 }
 
-/** Empty transaction registers for production tenants. */
+/** Transaction registers for a new hotel. Cash, bank, and mobile money are already there. */
 export const EMPTY_TRANSACTION_SEED = {
   journalEntries: [] as import('./models').JournalEntry[],
   invoices: [] as import('./models').Invoice[],
   payments: [] as import('./models').Payment[],
   whtCertificates: [] as import('./models').WHTCertificate[],
   businessPartners: [] as import('./models').BusinessPartner[],
-  bankAccounts: [] as import('./models').BankAccount[],
+  bankAccounts: buildDefaultPaymentAccounts(),
   bankTransactions: [] as import('./models').BankTransaction[],
   auditTrail: [] as import('./models').AuditTrail[],
 };

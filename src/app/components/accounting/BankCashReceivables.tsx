@@ -317,15 +317,15 @@ export default function BankCashManagementPage() {
   // Seed demo data on first load; restore sample banks if they were deleted
   useEffect(() => {
     const run = async () => {
-      if (!bankAccounts.length && !bankTransactions.length) {
-        try {
-          await initializeAccounting();
-        } catch {}
-      }
+      try {
+        await initializeAccounting();
+      } catch {}
+      const store = useAccountingStore.getState();
+      await Promise.all([store.ensureBankTransactions(), store.ensureJournalEntries()]);
       restoreMissingDemoBankAccounts();
     };
     void run();
-  }, [bankAccounts.length, bankTransactions.length, initializeAccounting, restoreMissingDemoBankAccounts]);
+  }, [initializeAccounting, restoreMissingDemoBankAccounts]);
 
   useEffect(() => {
     try {

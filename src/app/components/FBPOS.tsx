@@ -36,7 +36,16 @@ import { frontOfficeStore } from '../lib/frontoffice/store';
 import { customerStore } from '../lib/fb/customerStore';
 import { fbTenantHeaders, normalizePosVenue, createFbOrder, patchFbOrderStatus, fetchFbOrderById, alertStockWarnings, type FbOrderStatus, type FbStockWarning } from '../lib/fb/api';
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
-import { computeSalesTaxTotal } from '../lib/tax/engine';
+import { computeSalesTax, computeSalesTaxTotal, exclusiveFromGross } from '../lib/tax/engine';
+import { quoteMenuBill } from '../lib/fb/menuPriceTax';
+
+/** Order-line amount before tax. A tax-included menu price is opened up; a before-tax price stays as entered. */
+function beforeTaxLineAmount(ci: { price: number; qty: number; discountPerUnit?: number; serviceChargePerUnit?: number; priceIncludesTax?: boolean }) {
+  const goods = Math.max(0, ci.price - (ci.discountPerUnit || 0)) * ci.qty;
+  const service = (ci.serviceChargePerUnit || 0) * ci.qty;
+  const netGoods = ci.priceIncludesTax === false ? goods : exclusiveFromGross(goods);
+  return netGoods + service;
+}
 import { useSettingsStore } from '../lib/settings/store';
 import { verifyManagerPin } from '../lib/settings/managerPin';
 import { notifyError } from '../lib/notifications/notify';
@@ -67,6 +76,8 @@ interface MenuItem {
   name: string;
   alias?: string;
   price: number;
+  /** False: this price is before tax. Missing or true: the guest pays this price. */
+  priceIncludesTax?: boolean;
   category: string;
   route: 'kitchen' | 'bar';
   aliases?: string[];
@@ -419,6 +430,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
           name: it.name,
           alias: it.alias || '',
           price: Number(it.unitPrice),
+          priceIncludesTax: it.priceIncludesTax !== false,
           category: it.category,
           venue: it.venue,
           aliases: it.aliases ? it.aliases.split(',').map((a: string) => a.trim()).filter(Boolean) : [],
@@ -740,7 +752,34 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
   const orderDiscountAmount = Math.round(subtotal * discountPercent / 100 * 100) / 100;
   const totalBeforeTip = Math.max(0, subtotal - itemDiscountAmount - orderDiscountAmount + serviceChargeAmount + (orderMode === 'Takeaway' ? (packagingFee || 0) : 0));
   const total = Math.max(0, totalBeforeTip);
-  const grandTotal = Math.max(0, total + (tipAmount || 0));
+  const bill = quoteMenuBill({
+    lines: cart.map((ci) => ({
+      unitPrice: Math.max(0, ci.price - (ci.discountPerUnit || 0)),
+      quantity: ci.qty,
+      priceIncludesTax: ci.priceIncludesTax !== false,
+    })),
+    discountAmount: orderDiscountAmount,
+    serviceCharge: serviceChargeAmount,
+    packaging: orderMode === 'Takeaway' ? (packagingFee || 0) : 0,
+    taxOnExclusive: (net) => {
+      const taxed = computeSalesTax(net);
+      return {
+        totalTax: taxed.totalTax,
+        lines: taxed.lines.map((line) => ({
+          taxCode: line.taxCode,
+          name: line.name,
+          type: line.type,
+          rate: line.rate,
+          amount: line.amount,
+          glAccountCode: line.glAccountCode,
+        })),
+      };
+    },
+  });
+  const taxAmount = bill.taxAmount;
+  const guestTotal = bill.guestTotal;
+  const taxIsInside = cart.length > 0 && cart.every((ci) => ci.priceIncludesTax !== false) && serviceChargeAmount <= 0 && (orderMode !== 'Takeaway' || !(packagingFee > 0));
+  const grandTotal = Math.max(0, guestTotal + (tipAmount || 0));
   // A saved ticket (just sent, or opened from the activity table) is billed at its stored total.
   const payingSavedTicket = Boolean(sentOrderData && (cart.length === 0 || editingOrderId === sentOrderData.id));
   const amountDue = payingSavedTicket
@@ -821,6 +860,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
           category: i.category,
           quantity: i.qty,
           unitPrice: i.price,
+          priceIncludesTax: i.priceIncludesTax !== false,
           notes: i.note,
           route: i.route,
         })),
@@ -963,6 +1003,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
               category: i.category,
               quantity: i.qty,
               unitPrice: i.price,
+          priceIncludesTax: i.priceIncludesTax !== false,
               notes: i.note,
               route: i.route,
             })),
@@ -981,12 +1022,9 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
             setIsProcessingPayment(false);
             return;
           }
-          // Order creation failed — fall back to the real configured stacked tax rate
-          // (VAT/NHIL/GETFund/Tourism from Settings → Tax Rate Builder) instead of a
-          // hardcoded 21%, which was both wrong (the real Ghana stack is 21.9%) and stale
-          // the moment anyone changes a rate.
-          totalTax = computeSalesTaxTotal(subtotal);
-          total = subtotal + totalTax;
+          // Order creation failed — keep the till quote, which already used the Compliance rates.
+          totalTax = taxAmount;
+          total = guestTotal;
         }
       }
 
@@ -1462,7 +1500,6 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
   const customerLabel = customerType === 'In-house'
     ? (roomNumber ? `Room ${roomNumber}${guestName ? ` · ${guestName}` : ''}` : 'In-house · pick a room')
     : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : 'Walk-in');
-  const taxAmount = computeSalesTaxTotal(total);
   const previewCurrentBill = () => {
     if (cart.length === 0) return;
     const guestDisplayName = customerType === 'In-house'
@@ -1476,7 +1513,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
       items: cart.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
       subtotal,
       discount: itemDiscountAmount + orderDiscountAmount,
-      total: total + taxAmount,
+      total: guestTotal,
       table: tableNumber,
       waiter: waiters.find(w => w.id === waiterId)?.name,
       guestName: guestDisplayName,
@@ -1812,6 +1849,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                           )}
                           <span className="truncate text-xs text-slate-500">{mi.category}</span>
                           <span className="mt-auto whitespace-nowrap pt-2 text-sm font-bold text-ghana-black">GH₵ {mi.price.toFixed(2)}</span>
+                          {mi.priceIncludesTax === false && <span className="text-[10px] text-slate-400">before tax</span>}
                         </div>
                       </button>
                       <button
@@ -1900,7 +1938,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                           <Button isIconOnly size="sm" variant="bordered" className="h-[31px] w-[31px] min-w-[31px] border-slate-200" aria-label={`One more ${ci.name}`} onClick={() => updateQty(ci.id, 1)}><Plus size={14} /></Button>
                         </div>
                         <div className="hidden min-w-[4.5rem] shrink-0 whitespace-nowrap text-right text-sm font-semibold sm:block">
-                          GH₵ {((ci.price - (ci.discountPerUnit || 0) + (ci.serviceChargePerUnit || 0)) * ci.qty).toFixed(2)}
+                          GH₵ {beforeTaxLineAmount(ci).toFixed(2)}
                         </div>
                         <Button isIconOnly size="sm" variant="light" color="danger" className="h-[31px] w-[31px] min-w-[31px]" aria-label={`Remove ${ci.name}`} onClick={() => updateQty(ci.id, -ci.qty)}><Trash2 size={15} /></Button>
                       </div>
@@ -1923,13 +1961,13 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                   <div className="mt-3 shrink-0 space-y-1.5 border-t border-slate-100 pt-3 text-sm">
                     {/* Breakdown folds away under the total so the item list keeps the room; a discount stays visible when set. */}
                     <div id="pos-totals-breakdown" className={showBreakdown ? 'space-y-1.5' : 'hidden'}>
-                    <div className="flex justify-between"><span className="text-slate-600">Subtotal</span><span>GH₵ {subtotal.toFixed(2)}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-600">Subtotal</span><span>GH₵ {bill.exclusiveSubtotal.toFixed(2)}</span></div>
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-slate-600">Discount %</span>
                       <Input size="sm" className="w-20" type="number" aria-label="Discount percent" value={String(discountPercent)} onChange={(e) => setDiscountPercent(Number(e.target.value || 0))} />
                     </div>
                     {orderDiscountAmount > 0 && (
-                      <div className="flex justify-between text-slate-500"><span>Discount</span><span>−GH₵ {orderDiscountAmount.toFixed(2)}</span></div>
+                      <div className="flex justify-between text-slate-500"><span>Discount</span><span>−GH₵ {bill.exclusiveDiscount.toFixed(2)}</span></div>
                     )}
                     {serviceChargeAmount > 0 && (
                       <div className="flex justify-between text-slate-500"><span>Service</span><span>GH₵ {serviceChargeAmount.toFixed(2)}</span></div>
@@ -1937,7 +1975,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                     {orderMode === 'Takeaway' && packagingFee > 0 && (
                       <div className="flex justify-between text-slate-500"><span>Packaging</span><span>GH₵ {packagingFee.toFixed(2)}</span></div>
                     )}
-                    <div className="flex justify-between text-slate-500"><span>Tax (VAT &amp; levies)</span><span>GH₵ {taxAmount.toFixed(2)}</span></div>
+                    <div className="flex justify-between text-slate-500"><span>{taxIsInside ? 'Tax included' : 'Tax (VAT & levies)'}</span><span>GH₵ {taxAmount.toFixed(2)}</span></div>
                     </div>
                     <button
                       type="button"
@@ -1955,7 +1993,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                           </span>
                         )}
                       </span>
-                      <span className="whitespace-nowrap text-2xl font-bold text-ghana-black">GH₵ {(total + taxAmount).toFixed(2)}</span>
+                      <span className="whitespace-nowrap text-2xl font-bold text-ghana-black">GH₵ {guestTotal.toFixed(2)}</span>
                     </button>
                   </div>
                 )}
@@ -2119,7 +2157,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
             }}
           >
             {cart.length > 0
-              ? `View order · ${cartCount} ${cartCount === 1 ? 'item' : 'items'} · GH₵ ${(total + taxAmount).toFixed(2)}`
+              ? `View order · ${cartCount} ${cartCount === 1 ? 'item' : 'items'} · GH₵ ${guestTotal.toFixed(2)}`
               : sentOrderData ? 'Sent to kitchen · Take payment' : 'Open orders'}
           </Button>
         </div>
@@ -2427,8 +2465,8 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
               // Resolve or create DB order
               let orderId = sentOrderData?.id ?? null;
               let finalSubtotal = sentOrderData?.subtotal ?? subtotal;
-              let finalTax = sentOrderData?.taxAmount ?? computeSalesTaxTotal(subtotal);
-              let finalTotal = sentOrderData?.total ?? (subtotal + finalTax);
+              let finalTax = sentOrderData?.taxAmount ?? taxAmount;
+              let finalTotal = sentOrderData?.total ?? guestTotal;
 
               if (!orderId) {
                 try {
@@ -2455,6 +2493,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                       category: i.category,
                       quantity: i.qty,
                       unitPrice: i.price,
+          priceIncludesTax: i.priceIncludesTax !== false,
                       notes: i.note,
                       route: i.route,
                     })),

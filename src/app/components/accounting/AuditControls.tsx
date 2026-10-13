@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import HeadingInfo from '../HeadingInfo';
 import {
   Card, CardBody, Button, Input, Select, SelectItem,
@@ -56,8 +56,13 @@ export default function AuditControlsPage() {
   const {
     auditTrail,
     isLoading,
-    error
+    error,
+    ensureAuditTrail,
   } = useAccountingStore();
+
+  useEffect(() => {
+    void ensureAuditTrail();
+  }, [ensureAuditTrail]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterAction, setFilterAction] = useState<string>('all');

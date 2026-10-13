@@ -164,6 +164,10 @@ function blankLine(): DraftLine {
 
 export default function JournalRegister() {
   const journalEntries = useAccountingStore((s) => s.journalEntries);
+  const ensureJournalEntries = useAccountingStore((s) => s.ensureJournalEntries);
+  useEffect(() => {
+    void ensureJournalEntries();
+  }, [ensureJournalEntries]);
   const chartOfAccounts = useAccountingStore((s) => s.chartOfAccounts);
   const addJournalEntry = useAccountingStore((s) => s.addJournalEntry);
   const updateJournalEntry = useAccountingStore((s) => s.updateJournalEntry);

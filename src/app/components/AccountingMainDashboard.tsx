@@ -129,9 +129,10 @@ export default function AccountingMainDashboard({
 }: {
   fullPage?: boolean;
 } = {}) {
-  useAccountingLedgerLiveRefresh();
   const leanMode = isLeanAccountingUI();
   const [selectedTab, setSelectedTab] = useState('receivables');
+  const journalDesk = selectedTab === 'journal' || selectedTab === 'statements' || selectedTab === 'reports' || selectedTab === 'banking';
+  useAccountingLedgerLiveRefresh({ journal: journalDesk });
   const [tabsReady, setTabsReady] = useState(false);
 
   const {
@@ -177,6 +178,31 @@ export default function AccountingMainDashboard({
 
   const { collapsed: headerCollapsed, toggle: toggleHeader } = useSummaryCollapsed('accounting.headerCollapsed');
   const showSummary = !fullPage && !headerCollapsed;
+
+  useEffect(() => {
+    let cancel = false;
+    void (async () => {
+      await useAccountingStore.getState().initializeAccounting().catch(() => {});
+      if (cancel) return;
+      const store = useAccountingStore.getState();
+      const wantsJournal =
+        journalDesk ||
+        selectedTab === 'receivables' ||
+        selectedTab === 'payables' ||
+        selectedTab === 'taxes' ||
+        selectedTab === 'accounts' ||
+        selectedTab === 'cost-centers' ||
+        selectedTab === 'assets' ||
+        (showSummary && (!isHidden('profitability') || !isHidden('todayOps')));
+      const wantsCashbook = selectedTab === 'banking' || (showSummary && !isHidden('cashBank'));
+      if (wantsJournal) void store.ensureJournalEntries();
+      if (wantsCashbook) void store.ensureBankTransactions();
+      if (selectedTab === 'audit') void store.ensureAuditTrail();
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [journalDesk, selectedTab, showSummary, isHidden]);
 
   useEffect(() => {
     initializeAccounting().catch(() => {});

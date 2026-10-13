@@ -4,8 +4,9 @@ import { drawReadyBoard } from '@/app/lib/fb/readyBoardServer'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
-import { resolveTaxConfigs, type PrismaTaxRow } from '@/app/lib/tax/resolveConfigs'
 import { computeStackedTaxLines } from '@/app/lib/accounting/taxFromConfig'
+import { salesTaxConfigsForTenant } from '@/app/lib/tax/serverConfigs'
+import { quoteMenuBill } from '@/app/lib/fb/menuPriceTax'
 import { resolveItemRouteFromPayload, serializeFbOrder } from '@/app/lib/fb/serializeOrder'
 import { venueGlAccount } from '@/app/lib/fb/venueGl'
 import { resolveCheckedInReservationId } from '@/app/lib/frontoffice/folioServer'
@@ -178,34 +179,41 @@ export async function POST(request: NextRequest) {
     let orderNumber = await nextFreeOrderNumber(ctx.tenantId, body.orderNumber as string | undefined)
 
     // ── Subtotal ──────────────────────────────────────────────────────────────
-    const subtotal = round2(
-      body.items.reduce((s: number, i: any) => s + round2((i.unitPrice ?? 0) * (i.quantity ?? 1)), 0)
-    )
-    const discountAmount = round2(Math.min(Math.max(body.discountAmount ?? 0, 0), subtotal))
     const serviceCharge = round2(Math.max(body.serviceCharge ?? 0, 0))
-    const taxableAmount = round2(subtotal - discountAmount + serviceCharge)
 
-    // ── Stacked tax (compliance JSON → tenant Prisma → Ghana template) ────────
-    let prismaTaxes: PrismaTaxRow[] | undefined;
-    try {
-      const dbTaxes = await prisma.tax.findMany({ where: { tenantId: ctx.tenantId, isActive: true } })
-      if (dbTaxes.length > 0) {
-        prismaTaxes = dbTaxes.map((t) => ({
-          id: t.id,
-          code: t.code,
-          name: t.name,
-          rate: t.rate,
-          type: t.type,
-          isActive: t.isActive,
-        }))
-      }
-    } catch { /* compliance JSON fallback */ }
-
-    const taxConfigs = resolveTaxConfigs({ countryCode: 'GH', prismaTaxes })
-
-    const { lines: taxLines, totalTax } = computeStackedTaxLines(taxableAmount, taxConfigs, 'sales')
-    const taxAmount = round2(totalTax)
-    const total = round2(taxableAmount + taxAmount)
+    const taxConfigs = await salesTaxConfigsForTenant(ctx.tenantId, 'GH')
+    const menuIds = [...new Set(
+      (body.items as any[]).map((item) => item.menuItemId || item.catalogId || item.id).filter(Boolean),
+    )] as string[]
+    const menuFlags = menuIds.length
+      ? await prisma.fBMenuItem.findMany({
+          where: { tenantId: ctx.tenantId, id: { in: menuIds } },
+          select: { id: true, priceIncludesTax: true },
+        })
+      : []
+    const includesTaxById = new Map(menuFlags.map((row) => [row.id, row.priceIncludesTax]))
+    const quote = quoteMenuBill({
+      lines: (body.items as any[]).map((item) => {
+        const menuId = item.menuItemId || item.catalogId || item.id
+        const fromMenu = menuId ? includesTaxById.get(menuId) : undefined
+        return {
+          unitPrice: Number(item.unitPrice ?? 0),
+          quantity: Number(item.quantity ?? 1),
+          priceIncludesTax: fromMenu !== undefined ? fromMenu : item.priceIncludesTax !== false,
+        }
+      }),
+      discountAmount: Number(body.discountAmount ?? 0),
+      serviceCharge,
+      taxOnExclusive: (net) => {
+        const taxed = computeStackedTaxLines(net, taxConfigs, 'sales')
+        return { totalTax: taxed.totalTax, lines: taxed.lines }
+      },
+    })
+    const subtotal = quote.exclusiveSubtotal
+    const discountAmount = quote.exclusiveDiscount
+    const taxLines = quote.taxLines
+    const taxAmount = quote.taxAmount
+    const total = quote.guestTotal
 
     // ── Determine GL code per item based on venue ─────────────────────────────
     const revenueGL = venueGlAccount(body.venue)
@@ -245,7 +253,7 @@ export async function POST(request: NextRequest) {
         items: {
           create: body.items.map((item: any) => ({
             tenantId: ctx.tenantId,
-            menuItemId: item.menuItemId ?? item.id,
+            menuItemId: item.menuItemId ?? item.catalogId ?? item.id,
             name: item.name,
             category: item.category,
             route: resolveItemRouteFromPayload(item),

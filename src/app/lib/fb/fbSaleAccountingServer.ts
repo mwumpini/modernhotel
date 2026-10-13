@@ -10,6 +10,7 @@ import {
   updatePayment,
 } from '@/app/lib/accounting/repository'
 import { GL_ACCOUNTS, PAYMENT_GL_MAP } from '@/app/lib/accounting/glAccounts'
+import { mirrorGlCashToCashbookServer, reverseCashbookMirrorServer } from '@/app/lib/accounting/cashbookMirrorServer'
 import { departmentSourceGlAccount } from '@/app/lib/fb/venueGl'
 import { prisma } from '@/app/lib/database/client'
 import { GHANA_TAX_CODES } from '@/app/lib/accounting/models'
@@ -199,7 +200,7 @@ export async function postFbSaleAndCogsServer(
         date: now,
         // Cash-at-sale F&B invoices settle immediately — due date matches the sale date.
         dueDate: now,
-        businessPartnerId: `GUEST-FB-${input.orderId}`,
+        businessPartnerId: `W${input.orderId.replace(/[^a-z0-9]/gi, '').slice(-6).toUpperCase()}`,
         reference: input.orderNumber,
         description: `${source} sale — Table ${input.tableNumber || 'N/A'} — ${input.orderNumber}`,
         subtotal,
@@ -239,7 +240,6 @@ export async function postFbSaleAndCogsServer(
               debit: amount,
               credit: 0,
               currency: 'GHS',
-              costCenter: center,
             },
             {
               id: `JL-${payJeId}-ar`,
@@ -249,7 +249,6 @@ export async function postFbSaleAndCogsServer(
               debit: 0,
               credit: amount,
               currency: 'GHS',
-              costCenter: center,
             },
           ],
           totalDebit: amount,
@@ -266,7 +265,7 @@ export async function postFbSaleAndCogsServer(
         paymentNumber: `RCP-${sourceKey}-${Date.now().toString().slice(-6)}`,
         date: now,
         type: 'Receipt',
-        businessPartnerId: `GUEST-FB-${input.orderId}`,
+        businessPartnerId: `W${input.orderId.replace(/[^a-z0-9]/gi, '').slice(-6).toUpperCase()}`,
         invoiceId,
         reference: input.orderNumber,
         description: `Payment for ${source} order ${input.orderNumber}`,
@@ -282,6 +281,17 @@ export async function postFbSaleAndCogsServer(
         cashierUserId: input.cashierUserId || undefined,
         cashierName: input.cashierName || undefined,
       } as any)
+
+      await mirrorGlCashToCashbookServer({
+        tenantId: input.tenantId,
+        glCode: cashGl,
+        amount,
+        direction: 'in',
+        date: now,
+        reference: input.orderNumber,
+        description: `Payment for ${source} order ${input.orderNumber}`,
+        journalEntryId: payJeId,
+      })
     }
     result.receiptId = receiptId
   }
@@ -389,6 +399,7 @@ export async function refundFbSaleServer(params: {
 
   try {
     await reverseJournalIfNeeded(params.tenantId, payJeId, reason)
+    await reverseCashbookMirrorServer(params.tenantId, payJeId)
     await reverseJournalIfNeeded(params.tenantId, saleJeId, reason)
     await reverseJournalIfNeeded(params.tenantId, cogsId, reason)
 
@@ -409,7 +420,10 @@ export async function refundFbSaleServer(params: {
       },
     })
     for (const p of extras) {
-      if (p.journalEntryId) await reverseJournalIfNeeded(params.tenantId, p.journalEntryId, reason)
+      if (p.journalEntryId) {
+        await reverseJournalIfNeeded(params.tenantId, p.journalEntryId, reason)
+        await reverseCashbookMirrorServer(params.tenantId, p.journalEntryId)
+      }
       await updatePayment(params.tenantId, p.id, { status: 'Void' } as any)
     }
 

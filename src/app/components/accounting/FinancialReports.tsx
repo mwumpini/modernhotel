@@ -279,7 +279,7 @@ export default function FinancialReportsPage() {
 
   // Initialize
   useEffect(() => {
-    initializeAccounting();
+    void initializeAccounting().then(() => useAccountingStore.getState().ensureJournalEntries());
   }, [initializeAccounting]);
 
   useEffect(() => {
@@ -292,6 +292,7 @@ export default function FinancialReportsPage() {
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     await initializeAccounting();
+    await useAccountingStore.getState().ensureJournalEntries({ refresh: true });
     setTimeout(() => setIsRefreshing(false), 500);
   }, [initializeAccounting]);
 

@@ -642,14 +642,86 @@ function toStoreAccount(row: any): ChartOfAccounts {
 }
 
 export async function listChartOfAccounts(tenantId: string): Promise<ChartOfAccounts[]> {
+  await ensureMobileMoneyGlAccount(tenantId)
   await ensurePostedTemplateAccounts(tenantId)
+  await repairChartParents(tenantId)
   const rows = await prisma.account.findMany({ where: { tenantId }, orderBy: { position: 'asc' } })
   return rows.map(toStoreAccount)
 }
 
+const chartParentsRepaired = new Set<string>()
+
+/** Parent code from the Ghana hotel chart. Level 1 accounts are the roots. */
+function designParentCode(code: string): string | null | undefined {
+  const n = parseInt(code, 10)
+  const row = GHANA_CHART_OF_ACCOUNTS.find((item) => item.code === code)
+  if (!row) {
+    if (!Number.isNaN(n) && n >= 1121 && n <= 1199) return '1120'
+    return undefined
+  }
+  if (row.level <= 1) return null
+  const candidates = GHANA_CHART_OF_ACCOUNTS.filter(
+    (item) => item.level === row.level - 1 && parseInt(item.code, 10) < n,
+  )
+  candidates.sort((a, b) => parseInt(b.code, 10) - parseInt(a.code, 10))
+  return candidates[0]?.code ?? null
+}
+
+/**
+ * Older charts saved every account as its own main row. Put each template account
+ * under the group the chart is designed around: 1110, 1120 and 1130 under 1100, and
+ * the same for the rest of the book. A bank the hotel added under 1120 stays there.
+ */
+async function repairChartParents(tenantId: string) {
+  if (chartParentsRepaired.has(tenantId)) return
+  const rows = await prisma.account.findMany({
+    where: { tenantId },
+    select: { id: true, code: true, parentId: true },
+  })
+  const idByCode = new Map(rows.map((row) => [row.code, row.id]))
+  const updates = []
+  for (const row of rows) {
+    const parentCode = designParentCode(row.code)
+    if (parentCode === undefined) continue
+    const parentId = parentCode ? idByCode.get(parentCode) ?? null : null
+    if (parentCode && !parentId) continue
+    if (row.parentId === parentId) continue
+    updates.push(prisma.account.update({ where: { id: row.id }, data: { parentId } }))
+  }
+  if (updates.length) await prisma.$transaction(updates)
+  chartParentsRepaired.add(tenantId)
+}
+
+/** 1130 sits beside 1110 and 1120. Older charts were saved before it existed. */
+export async function ensureMobileMoneyGlAccount(tenantId: string) {
+  const existing = await prisma.account.findUnique({ where: { tenantId_code: { tenantId, code: '1130' } } })
+  if (existing) return
+  const [parent, rows] = await Promise.all([
+    prisma.account.findUnique({ where: { tenantId_code: { tenantId, code: '1100' } } }),
+    prisma.account.findMany({ where: { tenantId }, select: { position: true } }),
+  ])
+  const position = rows.reduce((max, row) => Math.max(max, row.position || 0), 0) + 1
+  await prisma.account.create({
+    data: {
+      tenantId,
+      code: '1130',
+      name: 'Mobile Money',
+      type: 'ASSET',
+      category: 'Asset',
+      parentId: parent?.id ?? null,
+      position,
+      isActive: true,
+    },
+  })
+}
+
+const chartTemplateChecked = new Set<string>();
+
 /** A posted journal can name a template account the tenant chart never received
- *  (payroll Tier 2 is 2225). Add those codes so the balance sheet includes them. */
+ *  (payroll Tier 2 is 2225). Add those codes so the balance sheet includes them.
+ *  One pass per hotel per server process — not on every accounts open. */
 async function ensurePostedTemplateAccounts(tenantId: string) {
+  if (chartTemplateChecked.has(tenantId)) return;
   const [existing, posted] = await Promise.all([
     prisma.account.findMany({ where: { tenantId }, select: { code: true, position: true } }),
     prisma.journalEntryLine.findMany({
@@ -661,7 +733,10 @@ async function ensurePostedTemplateAccounts(tenantId: string) {
   const have = new Set(existing.map((a) => a.code))
   const postedCodes = new Set(posted.map((l) => l.accountCode))
   const missing = GHANA_CHART_OF_ACCOUNTS.filter((row) => postedCodes.has(row.code) && !have.has(row.code))
-  if (!missing.length) return
+  if (!missing.length) {
+    chartTemplateChecked.add(tenantId)
+    return
+  }
   let position = existing.reduce((max, a) => Math.max(max, a.position || 0), 0)
   for (const row of missing) {
     position += 1
@@ -677,6 +752,7 @@ async function ensurePostedTemplateAccounts(tenantId: string) {
       },
     })
   }
+  chartTemplateChecked.add(tenantId)
 }
 
 /** `code` (unique per tenant) is the only identifier guaranteed to match between the
@@ -793,8 +869,45 @@ function toStoreBankAccount(row: any): BankAccount {
 }
 
 export async function listBankAccounts(tenantId: string): Promise<BankAccount[]> {
+  await ensureDefaultPaymentAccounts(tenantId)
   const rows = await prisma.bankAccount.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } })
   return rows.map(toStoreBankAccount)
+}
+
+/**
+ * Every hotel gets one account per default method of payment.
+ * An account already linked to that GL is left as it is.
+ */
+export async function ensureDefaultPaymentAccounts(tenantId: string) {
+  const { DEFAULT_PAYMENT_ACCOUNTS } = await import('./defaultPaymentAccounts')
+  const existing = await prisma.bankAccount.findMany({
+    where: { tenantId },
+    select: { glAccountCode: true },
+  })
+  const have = new Set(existing.map((row) => (row.glAccountCode || '').trim()))
+  for (const row of DEFAULT_PAYMENT_ACCOUNTS) {
+    if (have.has(row.glAccountCode)) continue
+    try {
+      await prisma.bankAccount.create({
+        data: {
+          id: row.id,
+          tenantId,
+          accountNumber: row.accountNumber,
+          accountName: row.accountName,
+          bankName: row.bankName,
+          currency: 'GHS',
+          glAccountCode: row.glAccountCode,
+          openingBalanceType: 'period',
+          openingBalance: 0,
+          currentBalance: 0,
+          isActive: true,
+        },
+      })
+      have.add(row.glAccountCode)
+    } catch {
+      // Another request created this default account.
+    }
+  }
 }
 
 export async function upsertBankAccountRow(tenantId: string, account: {

@@ -14,6 +14,8 @@
 
 import { useAccountingStore } from './store';
 import { GL_ACCOUNTS, REVENUE_CENTERS, PAYMENT_GL_MAP } from './integration';
+import { revenueCenterForGl } from './glAccounts';
+import { buildOperationalAccountingSeed } from './operationalSeed';
 import { computeSalesTax } from '../tax/engine';
 import { applyJournalEntryToGlBalances } from './invoicePostingBridge';
 import { assertPeriodNotClosed } from './periodClose';
@@ -52,25 +54,6 @@ export function postGuestFolioCheckoutToLedger(params: {
     return null;
   }
 
-  // recordRevenue() needs a center with code RM. If the user has not opened a module
-  // that runs initializeAccounting() yet, revenue centers can be empty.
-  if (!store.revenueCenters.some((rc) => rc.code === REVENUE_CENTERS.ROOM)) {
-    store.addRevenueCenter({
-      id: `RC-RM-${Date.now()}`,
-      code: REVENUE_CENTERS.ROOM,
-      name: 'Rooms',
-      description: 'Auto-created for guest folio checkout',
-      type: 'rooms',
-      department: 'front_office',
-      glAccountCode: GL_ACCOUNTS.ROOM_REVENUE,
-      budget: 0,
-      actualRevenue: 0,
-      isActive: true,
-      createdAt: ts,
-      updatedAt: ts,
-    });
-  }
-
   const revenueByGl = new Map<string, number>();
   for (const line of params.lines) {
     const code = line.glAccountCode || GL_ACCOUNTS.ROOM_REVENUE;
@@ -103,12 +86,12 @@ export function postGuestFolioCheckoutToLedger(params: {
       debit: +params.total.toFixed(2),
       credit: 0,
       currency: 'GHS',
-      costCenter: REVENUE_CENTERS.ROOM,
     },
   ];
 
   for (const [code, amt] of revenueByGl) {
     if (amt <= 0) continue;
+    const costCenter = revenueCenterForGl(code) || undefined;
     lines.push({
       id: jl(`rev-${code}`),
       journalEntryId: salesJeId,
@@ -117,7 +100,7 @@ export function postGuestFolioCheckoutToLedger(params: {
       debit: 0,
       credit: +amt.toFixed(2),
       currency: 'GHS',
-      costCenter: REVENUE_CENTERS.ROOM,
+      ...(costCenter ? { costCenter } : {}),
     });
   }
 
@@ -133,7 +116,6 @@ export function postGuestFolioCheckoutToLedger(params: {
         debit: 0,
         credit: +tl.amount.toFixed(2),
         currency: 'GHS',
-        costCenter: REVENUE_CENTERS.ROOM,
       });
     });
   }
@@ -151,7 +133,6 @@ export function postGuestFolioCheckoutToLedger(params: {
       debit: roundingAdjustment < 0 ? +Math.abs(roundingAdjustment).toFixed(2) : 0,
       credit: roundingAdjustment > 0 ? +roundingAdjustment.toFixed(2) : 0,
       currency: 'GHS',
-      costCenter: REVENUE_CENTERS.ROOM,
     });
   }
 
@@ -185,7 +166,16 @@ export function postGuestFolioCheckoutToLedger(params: {
 
   store.addJournalEntry(salesEntry as any);
   applyJournalEntryToGlBalances(salesEntry as any, store);
-  store.recordRevenue(REVENUE_CENTERS.ROOM, params.subtotal);
+  for (const [code, amt] of revenueByGl) {
+    if (amt <= 0) continue;
+    const center = revenueCenterForGl(code);
+    if (!center) continue;
+    if (!useAccountingStore.getState().revenueCenters.some((rc) => rc.code === center)) {
+      const seed = buildOperationalAccountingSeed().revenueCenters.find((rc) => rc.code === center);
+      if (seed) store.addRevenueCenter({ ...seed, createdAt: ts, updatedAt: ts });
+    }
+    store.recordRevenue(center, amt);
+  }
 
   store.addAuditTrail({
     id: `AT-SF-${Date.now()}`,
@@ -232,7 +222,6 @@ export function postGuestFolioCheckoutToLedger(params: {
             debit: +abs.toFixed(2),
             credit: 0,
             currency: 'GHS',
-            costCenter: REVENUE_CENTERS.ROOM,
           },
           {
             id: `JL-${payJeId}-cr`,
@@ -242,7 +231,6 @@ export function postGuestFolioCheckoutToLedger(params: {
             debit: 0,
             credit: +abs.toFixed(2),
             currency: 'GHS',
-            costCenter: REVENUE_CENTERS.ROOM,
           },
         ]
       : [
@@ -254,7 +242,6 @@ export function postGuestFolioCheckoutToLedger(params: {
             debit: +abs.toFixed(2),
             credit: 0,
             currency: 'GHS',
-            costCenter: REVENUE_CENTERS.ROOM,
           },
           {
             id: `JL-${payJeId}-cr`,
@@ -264,7 +251,6 @@ export function postGuestFolioCheckoutToLedger(params: {
             debit: 0,
             credit: +abs.toFixed(2),
             currency: 'GHS',
-            costCenter: REVENUE_CENTERS.ROOM,
           },
         ];
 

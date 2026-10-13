@@ -562,6 +562,7 @@ export const GHANA_CHART_OF_ACCOUNTS = [
   { code: '1100', name: 'Cash and Cash Equivalents', type: 'Asset', category: 'Current Assets', level: 2 },
   { code: '1110', name: 'Cash in Hand', type: 'Asset', category: 'Current Assets', level: 3 },
   { code: '1120', name: 'Bank Accounts', type: 'Asset', category: 'Current Assets', level: 3 },
+  { code: '1130', name: 'Mobile Money', type: 'Asset', category: 'Current Assets', level: 3 },
   { code: '1200', name: 'Accounts Receivable', type: 'Asset', category: 'Current Assets', level: 2 },
   { code: '1210', name: 'Guest Accounts Receivable', type: 'Asset', category: 'Current Assets', level: 3 },
   { code: '1220', name: 'Other Receivables', type: 'Asset', category: 'Current Assets', level: 3 },

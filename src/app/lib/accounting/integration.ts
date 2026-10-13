@@ -400,7 +400,7 @@ export function captureRevenue(
       type: 'Sales' as const,
       date: transactionDate,
       dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
-      businessPartnerId: transaction.customerId || `GUEST-${Date.now()}`,
+      businessPartnerId: transaction.customerId || `W${Date.now().toString(36).toUpperCase()}`,
       reference: transaction.reference,
       description: transaction.description,
       subtotal: transaction.subtotal,
@@ -793,7 +793,7 @@ export function capturePayment(
       paymentNumber: receiptNumber,
       date: transactionDate,
       type: 'Receipt' as const,
-      businessPartnerId: transaction.customerId || `GUEST-${Date.now()}`,
+      businessPartnerId: transaction.customerId || `W${Date.now().toString(36).toUpperCase()}`,
       invoiceId: transaction.invoiceId,
       reference: transaction.reference,
       description: transaction.description || `Payment from ${transaction.customerName}`,

@@ -46,10 +46,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     // general profile editing (settings.edit) — a role can have one without the
     // others.
     // Email and username changes count even when they clear the field.
+    // A signed-in user can always update their own name, email, and username
+    // from their profile. Changing someone else's identity, or any role, still
+    // needs settings.edit.
     const changingUsername = typeof body.username === 'string' && normalizeUsername(body.username) !== (target.username || '')
     const changingEmail = typeof body.email === 'string' && normalizeEmail(body.email) !== (target.email || '')
-    const changingProfile = changingUsername || changingEmail || ['name', 'role'].some((k) => typeof body[k] === 'string' && body[k].trim())
-    if (changingProfile) {
+    const nextName = typeof body.name === 'string' ? body.name.trim() : ''
+    const changingName = !!nextName && nextName !== (target.name || '')
+    const changingRole = typeof body.role === 'string' && body.role.trim() && body.role.trim() !== (target.role || '')
+    if (changingRole || ((changingUsername || changingEmail || changingName) && !isSelf)) {
       const perm = await requirePermission(request, 'settings.edit')
       if (!perm.ok) return perm.response
     }

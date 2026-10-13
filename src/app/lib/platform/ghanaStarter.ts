@@ -1,5 +1,6 @@
 import { prisma } from '@/app/lib/database/client';
 import { listReportingRules, listTaxRules, listTaxTypes } from '@/app/lib/compliance/repository';
+import { ensureDefaultPaymentAccounts, ensureMobileMoneyGlAccount } from '@/app/lib/accounting/repository';
 
 const GHANA_COUNTRY = 'GH';
 
@@ -68,53 +69,13 @@ const STARTER_STATUSES = [
   { id: 'ooo', name: 'Out of Order', color: '#ef4444', description: 'Maintenance required', isActive: true, canBook: false, requiresAction: true },
 ];
 
-function taxTypeOf(name: string): string {
-  const n = name.toLowerCase();
-  if (n.includes('withholding')) return 'Withholding';
-  if (n.includes('vat')) return 'VAT';
-  if (n.includes('nhil')) return 'NHIL';
-  if (n.includes('getfund') || n.includes('get fund')) return 'GETFund';
-  if (n.includes('tourism')) return 'Tourism';
-  return 'Other';
-}
-
-/** Copy the loaded Ghana sales rules into the tax table night audit and the restaurant read. Rates stay in the compliance seed. */
-async function mirrorComplianceTaxes(tenantId: string) {
-  const rules = await listTaxRules(tenantId, GHANA_COUNTRY);
-  const sales = rules.filter((rule) => {
-    const row = rule as { domain?: string; rate?: unknown; id?: string; name?: string };
-    return row.domain === 'sales' && typeof row.rate === 'number' && Number.isFinite(row.rate) && row.id && row.name;
-  });
-  for (const rule of sales) {
-    const row = rule as { id: string; name: string; rate: number; enabled?: boolean };
-    await prisma.tax.upsert({
-      where: { tenantId_code: { tenantId, code: row.id } },
-      update: { name: row.name, rate: row.rate, type: taxTypeOf(row.name), isActive: row.enabled !== false },
-      create: {
-        tenantId,
-        code: row.id,
-        name: row.name,
-        rate: row.rate,
-        type: taxTypeOf(row.name),
-        isInclusive: false,
-        isActive: row.enabled !== false,
-      },
-    });
-  }
-  const live = new Set(sales.map((rule) => String((rule as { id: string }).id)));
-  if (live.size === 0) return;
-  await prisma.tax.updateMany({
-    where: { tenantId, code: { in: ['VAT', 'NHIL', 'GETFUND', 'TOURISM', 'WITHHOLDING'] }, NOT: { code: { in: [...live] } } },
-    data: { isActive: false },
-  });
-}
-
-/** Loads Ghana's compliance pack from the tax seed (not copied rates) and the starter rooms. */
+/** Loads Ghana's compliance pack and the starter rooms. */
 export async function provisionGhanaHotel(tenantId: string, hotelName: string, options?: { replaceIfUnused?: boolean }) {
   await listTaxRules(tenantId, GHANA_COUNTRY);
   await listTaxTypes(tenantId, GHANA_COUNTRY);
   await listReportingRules(tenantId, GHANA_COUNTRY);
-  await mirrorComplianceTaxes(tenantId);
+  await ensureMobileMoneyGlAccount(tenantId);
+  await ensureDefaultPaymentAccounts(tenantId);
   await installStarterRooms(tenantId, hotelName, options?.replaceIfUnused === true);
 }
 

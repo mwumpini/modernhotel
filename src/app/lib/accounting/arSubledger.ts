@@ -154,6 +154,6 @@ export function computeCustomerAgingFromInvoices(
         source: customerInvoices[0]?.sourceModule,
       };
     })
-    .filter((c) => c.balance > 0 || c.invoiceCount > 0)
+    .filter((c) => Math.abs(c.balance) > 0.009)
     .sort((a, b) => b.balance - a.balance);
 }

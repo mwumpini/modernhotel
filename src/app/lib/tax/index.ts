@@ -40,6 +40,4 @@ export {
 export {
   resolveTaxConfigs,
   taxConfigsFromComplianceCountry,
-  mapPrismaTaxRowToConfig,
-  type PrismaTaxRow,
 } from './resolveConfigs';

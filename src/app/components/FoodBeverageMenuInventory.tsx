@@ -66,6 +66,7 @@ const emptyMenuForm = {
   unit: 'portion',
   description: '',
   price: '0',
+  priceIncludesTax: 'included' as 'included' | 'extra',
   cost: '0',
   prepTime: '15',
   allergens: '',
@@ -105,6 +106,7 @@ interface MenuItem {
   route: string;
   unit: string;
   price: number;
+  priceIncludesTax: boolean;
   cost: number;
   profitMargin: number;
   available: boolean;
@@ -172,6 +174,7 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
           route: i.route || (i.category === 'beverage' ? 'bar' : 'kitchen'),
           unit: i.unit || 'portion',
           price,
+          priceIncludesTax: i.priceIncludesTax !== false,
           cost,
           profitMargin: price > 0 ? ((price - cost) / price) * 100 : 0,
           available: i.isAvailable,
@@ -220,6 +223,7 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
       unit: item.unit || 'portion',
       description: item.description,
       price: String(item.price),
+      priceIncludesTax: item.priceIncludesTax === false ? 'extra' : 'included',
       cost: String(item.cost),
       prepTime: String(item.preparationTime || 15),
       allergens: item.allergens.filter((allergen) => allergen && allergen !== 'None').join(', '),
@@ -240,6 +244,7 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
       route: menuForm.route || (menuForm.category === 'beverage' ? 'bar' : 'kitchen'),
       unit: menuForm.unit || 'portion',
       unitPrice: Number(menuForm.price) || 0,
+      priceIncludesTax: menuForm.priceIncludesTax !== 'extra',
       costPrice: Number(menuForm.cost) || 0,
       prepMinutes: Number(menuForm.prepTime) || 10,
       allergens: menuForm.allergens || undefined,
@@ -813,7 +818,25 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
                   <SelectItem key={unit}>{unitLabel(unit)}</SelectItem>
                 ))}
               </Select>
-              <Input label="Selling price (₵)" type="number" placeholder="0.00" value={menuForm.price} onChange={(e) => setMenuForm({ ...menuForm, price: e.target.value })} />
+              <Input
+                label="Selling price (₵)"
+                type="number"
+                placeholder="0.00"
+                value={menuForm.price}
+                description={menuForm.priceIncludesTax === 'included' ? 'The guest pays this amount.' : 'Tax is added on top of this amount.'}
+                onChange={(e) => setMenuForm({ ...menuForm, price: e.target.value })}
+              />
+              <Select
+                label="Tax"
+                selectedKeys={[menuForm.priceIncludesTax]}
+                onSelectionChange={(keys) => {
+                  const next = (Array.from(keys)[0] as string) || 'included';
+                  setMenuForm({ ...menuForm, priceIncludesTax: next === 'extra' ? 'extra' : 'included' });
+                }}
+              >
+                <SelectItem key="included">Included in the price</SelectItem>
+                <SelectItem key="extra">Added on top</SelectItem>
+              </Select>
               <Input label="Dish cost (₵)" type="number" placeholder="0.00" value={menuForm.cost} onChange={(e) => setMenuForm({ ...menuForm, cost: e.target.value })} />
               <Input label="Prep time (min)" type="number" placeholder="15" value={menuForm.prepTime} onChange={(e) => setMenuForm({ ...menuForm, prepTime: e.target.value })} />
               <Select
@@ -829,7 +852,6 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
                   });
                 }}
                 description="Link a bar bottle / retail SKU. Billing deducts 1 per sold unit from Restaurant stock."
-                className="sm:col-span-2"
               >
                 <>
                   <SelectItem key="none">None — no auto deduct</SelectItem>
@@ -859,8 +881,10 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
                   </>
                 </Select>
               ) : null}
-              <Input className="sm:col-span-2" label="Allergens" placeholder="Peanuts, fish, gluten" value={menuForm.allergens} onChange={(e) => setMenuForm({ ...menuForm, allergens: e.target.value })} />
-              <Input className="sm:col-span-2" label="Description" placeholder="How it is served" value={menuForm.description} onChange={(e) => setMenuForm({ ...menuForm, description: e.target.value })} />
+              <div className="keep-cols grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,0.7fr)_minmax(0,1.8fr)]" style={{ gridColumn: '1 / -1' }}>
+                <Input label="Allergens" placeholder="Peanuts, fish, gluten" value={menuForm.allergens} onChange={(e) => setMenuForm({ ...menuForm, allergens: e.target.value })} />
+                <Input label="Description" placeholder="How it is served" value={menuForm.description} onChange={(e) => setMenuForm({ ...menuForm, description: e.target.value })} />
+              </div>
               {(() => {
                 const saved = editingMenuId ? menuItems.find((m) => m.id === editingMenuId) : undefined;
                 return (
@@ -899,6 +923,7 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
                   <div>
                     <p className="text-xs uppercase tracking-wide text-gray-500">Selling price</p>
                     <p className="text-2xl font-semibold tabular-nums text-ghana-black">₵{openMenuItem.price.toFixed(2)}</p>
+                    <p className="text-xs text-gray-500">{openMenuItem.priceIncludesTax ? 'Tax included' : 'Tax added on top'}</p>
                   </div>
                   <p className="text-sm text-gray-500">{categoryLabel(openMenuItem.category)} · {venueLabel(openMenuItem.venue)} · {unitLabel(openMenuItem.unit)}</p>
                 </div>

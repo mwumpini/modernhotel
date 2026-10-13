@@ -61,7 +61,7 @@ export function ColumnSizer({
       aria-orientation="vertical"
       aria-label={`Resize ${label} column`}
       title="Drag to resize. Double-click to reset this column."
-      className="absolute -right-2 top-0 z-10 h-full w-2 cursor-col-resize touch-none hover:bg-ghana-gold/80"
+      className="absolute right-0 top-0 z-20 h-full w-3 translate-x-1/2 cursor-col-resize touch-none before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-transparent hover:before:bg-ghana-gold"
       onPointerDown={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -135,6 +135,7 @@ export function useResizableColumns<T extends string>(defaults: Record<T, number
   useEffect(() => {
     if (!frameEl || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver((entries) => {
+      if (userSized.current) return;
       const containerWidth = entries[0]?.contentRect.width;
       if (!containerWidth) return;
       setWidths((current) => {

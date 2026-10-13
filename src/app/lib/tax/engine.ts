@@ -88,7 +88,7 @@ export function getCanonicalTaxRates(): {
   };
 }
 
-/** Multiplier: tax-exclusive → tax-inclusive (e.g. ₵100 net → ₵121.90 gross). */
+/** Multiplier: tax-exclusive → tax-inclusive (e.g. ₵100 net → ₵121.00 at the 21% Ghana stack). */
 export function salesGrossMultiplier(): number {
   const sample = 100;
   const { gross } = computeSalesTax(sample);

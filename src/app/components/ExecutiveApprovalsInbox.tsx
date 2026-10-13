@@ -143,7 +143,9 @@ export default function ExecutiveApprovalsInbox() {
       if (cancelled) return;
       // Journals need the full book. Overtime and payroll need the staff file.
       // Neither starts until payments and requisitions have been asked for.
-      initializeAccounting().finally(done('accounting'));
+      void initializeAccounting()
+        .then(() => useAccountingStore.getState().ensureJournalEntries())
+        .finally(done('accounting'));
       const employeesLoaded = hydrateEmployees();
       Promise.all([hydrateAttendance(), employeesLoaded]).finally(done('overtime'));
       Promise.all([hydratePayroll(), employeesLoaded]).finally(done('payroll'));

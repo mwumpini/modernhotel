@@ -28,6 +28,7 @@ import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableCol
 import { useDeskPagination } from '../dashboard/deskTableUi';
 import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName, useAccountingDeskPeriod } from './DeskKpiStrip';
 import { isInPeriod } from '@/app/lib/dashboard/useDashboardPeriod';
+import { SupplierFormModal } from '../inventory/SuppliersPanel';
 
 type AgingSortKey = 'supplier' | 'outstanding' | 'current' | 'overdue30' | 'overdue60' | 'overdue90' | 'overdue90Plus' | 'lastActivity';
 type SupplierSortKey = 'supplier' | 'contact' | 'address' | 'creditLimit' | 'balance' | 'paymentTerms' | 'lastActivity' | 'status';
@@ -39,7 +40,7 @@ const agingColumnWidths: Record<AgingSortKey, number> = {
   overdue90: 100, overdue90Plus: 92, lastActivity: 132,
 };
 const supplierColumnWidths: Record<SupplierSortKey, number> = {
-  supplier: 152, contact: 148, address: 140, creditLimit: 104, balance: 112,
+  supplier: 152, contact: 148, address: 70, creditLimit: 115, balance: 112,
   paymentTerms: 112, lastActivity: 132, status: 104,
 };
 const billColumnWidths: Record<BillSortKey, number> = {
@@ -74,7 +75,7 @@ export default function AccountsPayablePage() {
     unvoidPayment,
     updatePayment,
     recordSupplierWHTPayment,
-
+    initializeAccounting,
   } = useAccountingStore();
   const canApprovePayments = useSettingsStore((s) => s.hasPermission('accounting.approve-payment'));
   const canManageAp = useSettingsStore((s) => s.hasPermission('accounting.manage-ap'));
@@ -85,6 +86,7 @@ export default function AccountsPayablePage() {
 
   const [selectedTab, setSelectedTab] = useState("balances");
   const [isOpen, setIsOpen] = useState(false);
+  const [supplierFormOpen, setSupplierFormOpen] = useState(false);
   const [dialogType, setDialogType] = useState<'supplier'|'invoice'|'payment'>('supplier');
   const [editing, setEditing] = useState<any>(null);
   const [form, setForm] = useState<any>({});
@@ -102,6 +104,15 @@ export default function AccountsPayablePage() {
   const [dateFromFilter, setDateFromFilter] = useState('');
   const [dateToFilter, setDateToFilter] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = useCallback(async () => {
+    setDateFromFilter('');
+    setDateToFilter('');
+    setIsRefreshing(true);
+    await initializeAccounting();
+    setTimeout(() => setIsRefreshing(false), 500);
+  }, [initializeAccounting]);
 
   const [agingSortKey, setAgingSortKey] = useState<AgingSortKey>('outstanding');
   const [agingSortDir, setAgingSortDir] = useState<'asc' | 'desc'>('desc');
@@ -217,12 +228,15 @@ export default function AccountsPayablePage() {
   // Payments matching the shared search box (payment #, supplier name, reference)
   const filteredPayments = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
-    if (!q) return supplierPayments;
     return supplierPayments.filter((p: any) => {
+      const d = String(p.date || '').slice(0, 10);
+      if (dateFromFilter && d < dateFromFilter) return false;
+      if (dateToFilter && d > dateToFilter) return false;
+      if (!q) return true;
       const supplierName = suppliers.find(s => s.id === p.businessPartnerId)?.name || '';
       return [p.paymentNumber, supplierName, p.businessPartnerId, p.reference].some((v: any) => (v || '').toLowerCase().includes(q));
     });
-  }, [supplierPayments, suppliers, searchTerm]);
+  }, [supplierPayments, suppliers, searchTerm, dateFromFilter, dateToFilter]);
 
   // Supplier Aging Analysis — shared with any future report/audit-assist consumer via
   // apSubledger.ts, mirroring how arSubledger.ts centralizes AR's aging for the same reason.
@@ -232,12 +246,26 @@ export default function AccountsPayablePage() {
   );
 
   const filteredAging = useMemo(() => {
+    const dated = Boolean(dateFromFilter || dateToFilter);
+    const rows = dated
+      ? computeSupplierAgingFromInvoices(
+          suppliers,
+          invoices.filter((inv) => {
+            const d = String(inv.date || '').slice(0, 10);
+            if (dateFromFilter && d < dateFromFilter) return false;
+            if (dateToFilter && d > dateToFilter) return false;
+            return true;
+          }),
+          payments,
+        )
+      : supplierAging;
+    const open = rows.filter((s) => Math.abs(s.outstandingBalance) > 0.009);
     const q = searchTerm.trim().toLowerCase();
-    if (!q) return supplierAging;
-    return supplierAging.filter((s) =>
+    if (!q) return open;
+    return open.filter((s) =>
       [s.name, s.code, s.taxNumber].some((v) => (v || '').toLowerCase().includes(q)),
     );
-  }, [supplierAging, searchTerm]);
+  }, [supplierAging, suppliers, invoices, payments, searchTerm, dateFromFilter, dateToFilter]);
 
   // Filtered invoices
   const filteredInvoices = useMemo(() => {
@@ -379,7 +407,7 @@ export default function AccountsPayablePage() {
   const agingPager = useDeskPagination(sortedAging, [agingSortKey, agingSortDir, searchTerm, filteredAging.length]);
   const suppliersPager = useDeskPagination(sortedSuppliers, [searchTerm, supplierSortKey, supplierSortDir]);
   const invoicesPager = useDeskPagination(sortedInvoices, [statusFilter, supplierFilter, dateFromFilter, dateToFilter, searchTerm, billSortKey, billSortDir]);
-  const paymentsPager = useDeskPagination(sortedPayments, [searchTerm, paymentSortKey, paymentSortDir]);
+  const paymentsPager = useDeskPagination(sortedPayments, [searchTerm, dateFromFilter, dateToFilter, paymentSortKey, paymentSortDir]);
 
   const onAgingSort = (key: AgingSortKey) => {
     if (agingSortKey === key) setAgingSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -1091,8 +1119,8 @@ export default function AccountsPayablePage() {
   const exportPaymentsCSV = useCallback(() => {
     const columns = [
       { key: 'paymentNumber', label: 'Payment #' },
-      { key: 'supplierName', label: 'Supplier' },
       { key: 'date', label: 'Date' },
+      { key: 'supplierName', label: 'Supplier' },
       { key: 'amount', label: 'Amount' },
       { key: 'paymentMethod', label: 'Method' },
       { key: 'status', label: 'Status' },
@@ -1111,8 +1139,8 @@ export default function AccountsPayablePage() {
       const supplierName = suppliers.find(s => s.id === payment.businessPartnerId)?.name || payment.businessPartnerId;
       return `<tr>
         <td>${payment.paymentNumber}</td>
-        <td>${supplierName}</td>
         <td>${new Date(payment.date).toLocaleDateString()}</td>
+        <td>${supplierName}</td>
         <td class="amount">${formatAccountingCurrency(payment.amount)}</td>
         <td>${payment.paymentMethod}</td>
         <td><span class="badge ${payment.status === 'Posted' ? 'badge-success' : payment.status === 'Draft' ? 'badge-warning' : 'badge-danger'}">${payment.status}</span></td>
@@ -1129,7 +1157,7 @@ export default function AccountsPayablePage() {
         <div class="meta-item"><div class="meta-label">Total Amount</div><div class="meta-value">${formatAccountingCurrency(totalAmount)}</div></div>
       </div>
       <table>
-        <thead><tr><th>Payment #</th><th>Supplier</th><th>Date</th><th>Amount</th><th>Method</th><th>Status</th></tr></thead>
+        <thead><tr><th>Payment #</th><th>Date</th><th>Supplier</th><th>Amount</th><th>Method</th><th>Status</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     `, 'Accounts Payable • Payments');
@@ -1146,11 +1174,27 @@ export default function AccountsPayablePage() {
 
   return (
     <div className="px-3 pt-2 pb-3 md:px-4 md:pt-3 md:pb-4">
-      <div className="mb-2 flex items-center gap-1.5">
-        <h1 className="text-lg md:text-xl font-bold text-gray-800">Accounts Payable</h1>
-        <HeadingInfo label="About money we owe suppliers">
-          <p>What you still owe suppliers from purchase bills, plus payments you have already made.</p>
-        </HeadingInfo>
+      <div className="mb-2 flex justify-between items-center gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <h1 className="text-lg md:text-xl font-bold text-gray-800 truncate">Accounts Payable</h1>
+          <HeadingInfo label="About money we owe suppliers">
+            <p>What you still owe suppliers from purchase bills, plus payments you have already made.</p>
+          </HeadingInfo>
+        </div>
+        <div className="flex gap-2 shrink-0">
+          <Button
+            variant="flat"
+            size="sm"
+            onClick={() => { void handleRefresh(); }}
+            isLoading={isRefreshing}
+            startContent={!isRefreshing && <span>🔄</span>}
+          >
+            {isRefreshing ? 'Refreshing...' : 'Refresh'}
+          </Button>
+          <Chip size="sm" variant="flat" color="default">
+            Last updated: {new Date().toLocaleTimeString()}
+          </Chip>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -1186,31 +1230,15 @@ export default function AccountsPayablePage() {
               <div className={deskBookTabPanelClassName}>
                 <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-2">
                   <h3 className="text-sm font-semibold text-gray-800 shrink-0 mr-auto">Supplier balances by age</h3>
-                  <Button size="sm" color="primary" className="shrink-0" onClick={() => { 
-                      setDialogType('supplier'); 
-                      setEditing(null);
-                      setForm({
-                        code: generateNextSupplierCode(),
-                        name: '',
-                        contactPerson: '',
-                        email: '',
-                        phone: '',
-                        address: '',
-                        country: 'Ghana',
-                        taxNumber: '',
-                        paymentTerms: 'net30',
-                        creditLimit: 0,
-                        currentBalance: 0,
-                        isActive: true
-                      }); 
-                      setIsOpen(true); 
-                    }}>
+                  <Button size="sm" color="primary" className="shrink-0" onClick={() => setSupplierFormOpen(true)}>
                       Add supplier
                     </Button>
                 </div>
 
                 <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-3">
                   <Input aria-label="Search suppliers" placeholder="Search supplier" value={searchTerm} onValueChange={setSearchTerm} className="w-56 shrink-0" size="sm" />
+                  <Input type="date" aria-label="From date" className="w-36 shrink-0" size="sm" value={dateFromFilter} onChange={(e) => setDateFromFilter(e.target.value)} />
+                  <Input type="date" aria-label="To date" className="w-36 shrink-0" size="sm" value={dateToFilter} onChange={(e) => setDateToFilter(e.target.value)} />
                 </div>
 
                 <div ref={agingCols.frameRef} style={agingCols.frameStyle}>
@@ -1267,7 +1295,7 @@ export default function AccountsPayablePage() {
               </div>
             </Tab>
 
-            <Tab key="suppliers" title={`Suppliers (${suppliers.length})`}>
+            <Tab key="suppliers" title={dateFromFilter || dateToFilter ? `Suppliers (${suppliers.length})` : 'Suppliers'}>
               <div className={deskBookTabPanelClassName}>
                 <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-2">
                   <h3 className="text-sm font-semibold text-gray-800 shrink-0 mr-auto">Supplier list</h3>
@@ -1280,25 +1308,7 @@ export default function AccountsPayablePage() {
                         <DropdownItem key="pdf" onPress={printSuppliers}>📑 Print PDF</DropdownItem>
                       </DropdownMenu>
                     </Dropdown>
-                    <Button color="primary" size="sm" className="shrink-0" onClick={() => {
-                      setDialogType('supplier');
-                      setEditing(null);
-                      setForm({
-                        code: generateNextSupplierCode(),
-                        name: '',
-                        contactPerson: '',
-                        email: '',
-                        phone: '',
-                        address: '',
-                        country: 'Ghana',
-                        taxNumber: '',
-                        paymentTerms: 'net30',
-                        creditLimit: 0,
-                        currentBalance: 0,
-                        isActive: true
-                      });
-                      setIsOpen(true);
-                    }}>
+                    <Button color="primary" size="sm" className="shrink-0" onClick={() => setSupplierFormOpen(true)}>
                       Add supplier
                     </Button>
                 </div>
@@ -1395,7 +1405,7 @@ export default function AccountsPayablePage() {
               </div>
             </Tab>
 
-            <Tab key="invoices" title={`Bills (${filteredInvoices.length})`}>
+            <Tab key="invoices" title={dateFromFilter || dateToFilter ? `Bills (${filteredInvoices.length})` : 'Bills'}>
               <div className={deskBookTabPanelClassName}>
                 <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-2">
                   <h3 className="text-sm font-semibold text-gray-800 shrink-0 mr-auto">Purchase bills</h3>
@@ -1600,7 +1610,7 @@ export default function AccountsPayablePage() {
               </div>
             </Tab>
 
-            <Tab key="payments" title={`Payments (${filteredPayments.length})`}>
+            <Tab key="payments" title={dateFromFilter || dateToFilter ? `Payments (${filteredPayments.length})` : 'Payments'}>
               <div className={deskBookTabPanelClassName}>
                 <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-2">
                   <h3 className="text-sm font-semibold text-gray-800 shrink-0 mr-auto">Payments to suppliers</h3>
@@ -1620,14 +1630,16 @@ export default function AccountsPayablePage() {
 
                 <div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-3">
                   <Input aria-label="Search payments" placeholder="Search payment or supplier" value={searchTerm} onValueChange={setSearchTerm} className="w-56 shrink-0" size="sm" />
+                  <Input type="date" aria-label="From date" className="w-36 shrink-0" size="sm" value={dateFromFilter} onChange={(e) => setDateFromFilter(e.target.value)} />
+                  <Input type="date" aria-label="To date" className="w-36 shrink-0" size="sm" value={dateToFilter} onChange={(e) => setDateToFilter(e.target.value)} />
                 </div>
 
                 <div ref={paymentCols.frameRef} style={paymentCols.frameStyle}>
                 <Table aria-label="Supplier Payments" removeWrapper classNames={deskResizableTableClassNames()}>
                   <TableHeader>
                     {paymentColumn('payment', 'Payment #')}
-                    {paymentColumn('supplier', 'Supplier')}
                     {paymentColumn('date', 'Date')}
+                    {paymentColumn('supplier', 'Supplier')}
                     {paymentColumn('amount', 'Amount', 'right')}
                     {paymentColumn('method', 'Method')}
                     {paymentColumn('status', 'Status')}
@@ -1642,12 +1654,12 @@ export default function AccountsPayablePage() {
                           <span className="font-mono font-medium text-blue-600 hover:underline">{payment.paymentNumber}</span>
                         </TableCell>
                         <TableCell>
-                          <span className="text-sm">{supplierName}</span>
-                        </TableCell>
-                        <TableCell>
                           <span className="text-sm">
                             {new Date(payment.date).toLocaleDateString()}
                           </span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm">{supplierName}</span>
                         </TableCell>
                         <TableCell className="tabular-nums text-right">
                           <div className="font-medium">
@@ -3491,6 +3503,7 @@ export default function AccountsPayablePage() {
       </Modal>
 
       {/* end create/edit dialog */}
+      <SupplierFormModal isOpen={supplierFormOpen} onClose={() => setSupplierFormOpen(false)} />
     </div>
   );
 }

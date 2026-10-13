@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client'
 import { prisma } from '../database/client'
-import { resolveTaxConfigs, type PrismaTaxRow } from '../tax/resolveConfigs'
+import { salesTaxConfigsForTenant } from '../tax/serverConfigs'
 import { computeStackedTaxLines } from '../accounting/taxFromConfig'
 import { createNightAuditLog } from './nightAuditLogRepository'
 import { asLineArray, elapsedBusinessDates, isPostedRoomCharge, lineOnBusinessDate, nextCalendarDate, recomputeFolioTotals, roundCents, type FolioLineJson } from './folioLedger'
@@ -93,11 +93,7 @@ export async function runTenantNightAudit(params: {
   let noShowsMarked = 0
   const folioRounding = await loadFolioRounding(params.tenantId)
 
-  const tenantTaxRows = await prisma.tax.findMany({ where: { tenantId: params.tenantId, isActive: true } })
-  const tenantTaxConfigs = resolveTaxConfigs({
-    countryCode: 'GH',
-    prismaTaxes: tenantTaxRows as unknown as PrismaTaxRow[],
-  })
+  const tenantTaxConfigs = await salesTaxConfigsForTenant(params.tenantId, 'GH')
 
   const tenantSettings = await prisma.systemSettings.findUnique({
     where: { tenantId: params.tenantId },

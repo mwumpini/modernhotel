@@ -17,7 +17,10 @@ import { useAccountingStore } from '@/app/lib/accounting/store';
 import PostingDateField from '@/app/components/shared/PostingDateField';
 import { frontOfficeStore } from '@/app/lib/frontoffice/store';
 import { useFrontOfficeSelector } from '@/app/lib/frontoffice/useFoStore';
+import { billingPersonLabel } from '@/app/lib/frontoffice/stayWorksheet';
+import type { GuestProfile, Reservation } from '@/app/lib/frontoffice/types';
 import { findMainFolio } from '@/app/lib/frontoffice/helpers/folio';
+import { chargeNet, type FolioLineJson } from '@/app/lib/frontoffice/folioLedger';
 import {
 	buildFolioReceiptTargets,
 	buildInvoiceReceiptTargets,
@@ -53,7 +56,7 @@ import { roundMoney2 } from '@/app/lib/accounting/taxFromConfig';
 import { convertProformaToInvoice, GL_ACCOUNTS } from '@/app/lib/accounting/integration';
 import { computeSalesTax } from '@/app/lib/tax/engine';
 import { displayTaxLines, taxLineLabel } from '@/app/lib/tax/displayLines';
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/react';
+import { Divider, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/react';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
 import AttachmentUpload from '@/app/components/shared/AttachmentUpload';
@@ -67,8 +70,144 @@ import { isInPeriod } from '@/app/lib/dashboard/useDashboardPeriod';
 const PAYMENT_TERMS_DAYS: Record<string, number> = { immediate: 0, net30: 30, net60: 60, net90: 90 };
 
 type SalesSortKey =
-	| 'invoice' | 'source' | 'customer' | 'date' | 'dueDate' | 'staff'
+	| 'invoice' | 'billing' | 'source' | 'customer' | 'date' | 'dueDate' | 'staff'
 	| 'total' | 'paid' | 'balance' | 'status' | 'wht' | 'gl';
+
+function invoiceBillingPerson(
+	inv: { reference?: string; reservationId?: string; invoiceNumber?: string; businessPartnerId?: string },
+	reservations: Reservation[],
+	partners: { id: string; contactPerson?: string }[],
+): string {
+	const ref = String(inv.reference || inv.reservationId || '').trim();
+	const stay = reservations.find((r) =>
+		(ref && (r.id === ref || r.resId === ref)) ||
+		(!!inv.invoiceNumber && (r as Reservation & { invoiceNumber?: string }).invoiceNumber === inv.invoiceNumber),
+	);
+	if (stay) {
+		const label = billingPersonLabel(stay).trim();
+		if (label) return label;
+	}
+	return partners.find((p) => p.id === inv.businessPartnerId)?.contactPerson?.trim() || '';
+}
+
+function receiptBillingPerson(
+	receipt: { invoiceId?: string; reservationId?: string; businessPartnerId?: string },
+	invoices: { id: string; reference?: string; reservationId?: string; invoiceNumber?: string; businessPartnerId?: string }[],
+	reservations: Reservation[],
+	partners: { id: string; contactPerson?: string }[],
+): string {
+	const inv = receipt.invoiceId ? invoices.find((item) => item.id === receipt.invoiceId) : undefined;
+	if (inv) {
+		const fromInvoice = invoiceBillingPerson(inv, reservations, partners);
+		if (fromInvoice) return fromInvoice;
+	}
+	const stayId = String(receipt.reservationId || '').trim();
+	if (stayId) {
+		const stay = reservations.find((r) => r.id === stayId);
+		if (stay) {
+			const label = billingPersonLabel(stay).trim();
+			if (label) return label;
+		}
+	}
+	return partners.find((p) => p.id === receipt.businessPartnerId)?.contactPerson?.trim() || '';
+}
+
+function invoiceSourceLines(
+	invoice: { lines?: unknown; items?: unknown; lineItems?: unknown; description?: string; reference?: string; sourceModule?: string },
+	reservations: Reservation[],
+	folios: { reservationId?: string; charges?: { description?: string; amount?: number; tax?: number; serviceCharge?: number; discountAmount?: number }[] }[],
+): { description: string; quantity: number; unitPrice: number; amount: number }[] {
+	const asRows = (value: unknown) => (Array.isArray(value) ? value : []);
+	const stored = asRows(invoice.lines).length
+		? asRows(invoice.lines)
+		: asRows(invoice.items).length
+			? asRows(invoice.items)
+			: asRows(invoice.lineItems);
+	const summaryOnly = stored.length <= 1 && stored.every((line) => {
+		const desc = String(line?.description || line?.name || '').trim();
+		return !desc || desc === String(invoice.description || '').trim();
+	});
+	const fromStay = String(invoice.sourceModule || '').startsWith('front_office');
+	if (fromStay && (stored.length === 0 || summaryOnly)) {
+		const ref = String(invoice.reference || '').trim();
+		const stay = reservations.find((reservation) => ref && (reservation.id === ref || reservation.resId === ref));
+		const folio = stay ? folios.find((item) => item.reservationId === stay.id) : undefined;
+		const charges = (folio?.charges || []).filter((charge) => chargeNet(charge as FolioLineJson) !== 0 || Number(charge.tax || 0) !== 0);
+		if (charges.length) {
+			return charges.map((charge) => {
+				const net = chargeNet(charge as FolioLineJson);
+				return { description: String(charge.description || 'Folio charge'), quantity: 1, unitPrice: net, amount: net };
+			});
+		}
+	}
+	return stored.map((line) => {
+		const quantity = Number(line?.quantity || line?.qty || 1) || 1;
+		const unitPrice = Number(line?.unitPrice || line?.price || 0);
+		const amount = line?.amount != null && line.amount !== '' ? Number(line.amount) : quantity * unitPrice;
+		return {
+			description: String(line?.description || line?.name || ''),
+			quantity,
+			unitPrice: unitPrice || (quantity ? amount / quantity : amount),
+			amount,
+		};
+	});
+}
+
+function partyDisplayId(
+	partnerId: string | undefined,
+	guests: Pick<GuestProfile, 'id' | 'serialNumber'>[],
+	reservations: Reservation[],
+): string {
+	const id = String(partnerId || '').trim();
+	if (!id) return '';
+	const direct = guests.find((guest) => guest.id === id);
+	const stay = direct ? undefined : reservations.find((reservation) => reservation.guestId === id || reservation.id === id);
+	const guest = direct || (stay ? guests.find((item) => item.id === stay.guestId) : undefined);
+	const serial = guest?.serialNumber?.trim();
+	if (serial) return serial;
+	const timed = id.match(/^GUEST-(\d{10,})$/i);
+	if (timed) return `W${Number(timed[1]).toString(36).toUpperCase()}`;
+	const walkIn = id.match(/^GUEST-FB-(.+)$/i);
+	if (walkIn) {
+		const compact = walkIn[1].replace(/[^a-z0-9]/gi, '');
+		return `W${compact.slice(-6).toUpperCase()}`;
+	}
+	return id;
+}
+
+function receiptStaffName(
+	receipt: { staffName?: string; cashierName?: string; folioPaymentId?: string; reservationId?: string; invoiceId?: string },
+	folios: { reservationId?: string; payments?: { id: string; processedBy?: string }[] }[],
+	invoices: { id: string; staffName?: string }[],
+): string {
+	const named = String(receipt.staffName || receipt.cashierName || '').trim();
+	if (named && !/^system$/i.test(named)) return named;
+	const folio = folios.find((item) =>
+		(receipt.reservationId && item.reservationId === receipt.reservationId) ||
+		(!!receipt.folioPaymentId && (item.payments || []).some((payment) => payment.id === receipt.folioPaymentId)),
+	);
+	const processedBy = String(folio?.payments?.find((payment) => payment.id === receipt.folioPaymentId)?.processedBy || '').trim();
+	if (processedBy) return processedBy;
+	const fromInvoice = String(invoices.find((invoice) => invoice.id === receipt.invoiceId)?.staffName || '').trim();
+	if (fromInvoice && !/^system$/i.test(fromInvoice)) return fromInvoice;
+	return '';
+}
+
+function certificateBillingPerson(
+	cert: { invoiceId?: string; invoiceNumber?: string; withholdingAgentName?: string },
+	invoices: { id: string; reference?: string; reservationId?: string; invoiceNumber?: string; businessPartnerId?: string }[],
+	reservations: Reservation[],
+	partners: { id: string; contactPerson?: string }[],
+): string {
+	const inv = invoices.find((item) =>
+		item.id === cert.invoiceId || (!!cert.invoiceNumber && item.invoiceNumber === cert.invoiceNumber),
+	);
+	if (inv) {
+		const billing = invoiceBillingPerson(inv, reservations, partners);
+		if (billing) return billing;
+	}
+	return String(cert.withholdingAgentName || '').trim();
+}
 type ProformaSortKey =
 	| 'proforma' | 'source' | 'client' | 'event' | 'dates' | 'pax' | 'venue'
 	| 'amount' | 'validUntil' | 'status';
@@ -76,7 +215,7 @@ type AgingSortKey =
 	| 'customer' | 'source' | 'invoiced' | 'paid' | 'balance'
 	| 'current' | 'days30' | 'days60' | 'days90' | 'over90';
 type ReceiptSortKey =
-	| 'receipt' | 'source' | 'customer' | 'date' | 'method' | 'amount' | 'balance'
+	| 'receipt' | 'billing' | 'source' | 'customer' | 'date' | 'method' | 'amount' | 'balance'
 	| 'invoice' | 'status' | 'time' | 'staff';
 type WhtSortKey =
 	| 'certificate' | 'agent' | 'tin' | 'invoice' | 'taxPeriod'
@@ -309,10 +448,12 @@ export default function AccountsReceivable() {
 	// Modal states
 	const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
 	const [isDetailOpen, setIsDetailOpen] = useState(false);
+	const [showInvoiceCharges, setShowInvoiceCharges] = useState(false);
 	const [selectedReceipt, setSelectedReceipt] = useState<any>(null);
 	const [isReceiptDetailOpen, setIsReceiptDetailOpen] = useState(false);
 	const [isNewInvoiceOpen, setIsNewInvoiceOpen] = useState(false);
 	const [isNewReceiptOpen, setIsNewReceiptOpen] = useState(false);
+	const [showReceiptExtras, setShowReceiptExtras] = useState(false);
 	const [isPrintReceiptOpen, setIsPrintReceiptOpen] = useState(false);
 	const [isWHTPaymentOpen, setIsWHTPaymentOpen] = useState(false);
 	const [whtPaymentMode, setWhtPaymentMode] = useState<'settlement' | 'wht_only'>('settlement');
@@ -350,6 +491,7 @@ export default function AccountsReceivable() {
 
 	const foFolios = useFrontOfficeSelector((s) => s.folios);
 	const foReservations = useFrontOfficeSelector((s) => s.reservations);
+	const foGuests = useFrontOfficeSelector((s) => s.guests);
 
 	useEffect(() => {
 		if (isNewReceiptOpen || isPrintReceiptOpen) void frontOfficeStore.refreshFromApi();
@@ -503,13 +645,13 @@ export default function AccountsReceivable() {
 			if (searchQuery) {
 				const q = searchQuery.toLowerCase();
 				const matchCert = (cert.certificateNumber || '').toLowerCase().includes(q);
-				const matchAgent = (cert.withholdingAgentName || '').toLowerCase().includes(q);
+				const matchAgent = certificateBillingPerson(cert, salesInvoices, foReservations, customers).toLowerCase().includes(q);
 				const matchInv = (cert.invoiceNumber || '').toLowerCase().includes(q);
 				if (!matchCert && !matchAgent && !matchInv) return false;
 			}
 			return true;
 		});
-	}, [whtCertificates, statusFilter, dateFrom, dateTo, searchQuery]);
+	}, [whtCertificates, statusFilter, dateFrom, dateTo, searchQuery, salesInvoices, foReservations, customers]);
 
 	// WHT totals
 	const totalWHTReceivable = (whtCertificates || [])
@@ -527,7 +669,7 @@ export default function AccountsReceivable() {
 	const getReceiptInvoice = (invoiceId: string) => allSalesInvoices.find((inv: any) => inv.id === invoiceId);
 
 	// Open detail views
-	const openInvoiceDetail = (invoice: any) => { setSelectedInvoice(invoice); setIsDetailOpen(true); };
+	const openInvoiceDetail = (invoice: any) => { setSelectedInvoice(invoice); setShowInvoiceCharges(false); setIsDetailOpen(true); };
 	const openReceiptDetail = (receipt: any) => { setSelectedReceipt(receipt); setIsReceiptDetailOpen(true); };
 	const openAgingCustomer = (c: any) => {
 		setSearchQuery(c.customerName || '');
@@ -544,6 +686,7 @@ export default function AccountsReceivable() {
 	const exportInvoicesCSV = useCallback(() => {
 		const columns = [
 			{ key: 'invoiceNumber', label: 'Invoice #' },
+			{ key: 'billingPerson', label: 'Billing person' },
 			{ key: 'customerName', label: 'Customer' },
 			{ key: 'sourceModule', label: 'Source' },
 			{ key: 'date', label: 'Date' },
@@ -557,11 +700,12 @@ export default function AccountsReceivable() {
 		];
 		const data = filteredSalesInvoices.map((inv: any) => ({
 			...inv,
+			billingPerson: invoiceBillingPerson(inv, foReservations, customers) || '',
 			date: new Date(inv.date).toLocaleDateString(),
 			dueDate: new Date(inv.dueDate).toLocaleDateString(),
 		}));
 		downloadCSV(data, 'sales_invoices', columns);
-	}, [filteredSalesInvoices]);
+	}, [filteredSalesInvoices, foReservations, customers]);
 
 	// Export Proformas to CSV
 	const exportProformasCSV = useCallback(() => {
@@ -590,6 +734,7 @@ export default function AccountsReceivable() {
 	const exportReceiptsCSV = useCallback(() => {
 		const columns = [
 			{ key: 'paymentNumber', label: 'Receipt #' },
+			{ key: 'billingPerson', label: 'Billing person' },
 			{ key: 'sourceModule', label: 'Source' },
 			{ key: 'customerName', label: 'Customer' },
 			{ key: 'date', label: 'Date' },
@@ -607,13 +752,14 @@ export default function AccountsReceivable() {
 			const when = new Date(r.date);
 			return {
 				...r,
+				billingPerson: receiptBillingPerson(r, salesInvoices, foReservations, customers),
 				date: when.toLocaleDateString(),
 				time: when.toLocaleTimeString(),
 				balance,
 			};
 		});
 		downloadCSV(data, 'receipts', columns);
-	}, [filteredReceipts, salesInvoices]);
+	}, [filteredReceipts, salesInvoices, foReservations, customers]);
 
 	// Export Aging to CSV
 	const exportAgingCSV = useCallback(() => {
@@ -639,6 +785,7 @@ export default function AccountsReceivable() {
 			const status = balance === 0 ? 'Paid' : new Date(inv.dueDate) < new Date() ? 'Overdue' : 'Open';
 			return `<tr>
 				<td>${inv.invoiceNumber || inv.id}</td>
+				<td>${invoiceBillingPerson(inv, foReservations, customers) || '—'}</td>
 				<td>${inv.customerName || '-'}</td>
 				<td>${getSourceLabel(inv.sourceModule).label}</td>
 				<td>${new Date(inv.date).toLocaleDateString()}</td>
@@ -646,6 +793,7 @@ export default function AccountsReceivable() {
 				<td class="amount">${formatAccountingCurrency(Number(inv.paidAmount || 0))}</td>
 				<td class="amount">${formatAccountingCurrency(balance)}</td>
 				<td><span class="badge ${status === 'Paid' ? 'badge-success' : status === 'Overdue' ? 'badge-danger' : 'badge-warning'}">${status}</span></td>
+				<td>${inv.staffName || '-'}</td>
 			</tr>`;
 		}).join('');
 		const totalAmount = filteredSalesInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0);
@@ -662,12 +810,12 @@ export default function AccountsReceivable() {
 				<div class="meta-item"><div class="meta-label">Outstanding</div><div class="meta-value">${formatAccountingCurrency((totalAmount - totalPaid))}</div></div>
 			</div>
 			<table>
-				<thead><tr><th>Invoice #</th><th>Customer</th><th>Source</th><th>Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th></tr></thead>
+				<thead><tr><th>Invoice #</th><th>Billing person</th><th>Customer</th><th>Source</th><th>Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Staff</th></tr></thead>
 				<tbody>${rows}</tbody>
 			</table>
 		`, 'Accounts Receivable • Sales Invoices');
 		openPrintPreview(html);
-	}, [filteredSalesInvoices]);
+	}, [filteredSalesInvoices, foReservations, customers]);
 
 	// Print Proformas Table as PDF
 	const printProformasTablePDF = useCallback(() => {
@@ -710,6 +858,7 @@ export default function AccountsReceivable() {
 			const when = new Date(r.date);
 			return `<tr>
 			<td>${r.paymentNumber || r.id}</td>
+			<td>${receiptBillingPerson(r, salesInvoices, foReservations, customers) || '—'}</td>
 			<td>${getSourceLabel(r.sourceModule).label}</td>
 			<td>${r.customerName || '-'}</td>
 			<td>${when.toLocaleDateString()}</td>
@@ -735,12 +884,12 @@ export default function AccountsReceivable() {
 				<div class="meta-item"><div class="meta-label">Voided</div><div class="meta-value">${formatAccountingCurrency(voidedAmount)}</div></div>
 			</div>
 			<table>
-				<thead><tr><th>Receipt #</th><th>Source</th><th>Customer</th><th>Date</th><th>Method</th><th>Amount</th><th>Balance</th><th>Invoice</th><th>Status</th><th>Time</th><th>Staff</th></tr></thead>
+				<thead><tr><th>Receipt #</th><th>Billing person</th><th>Source</th><th>Customer</th><th>Date</th><th>Method</th><th>Amount</th><th>Balance</th><th>Invoice</th><th>Status</th><th>Time</th><th>Staff</th></tr></thead>
 				<tbody>${rows}</tbody>
 			</table>
 		`, 'Accounts Receivable • Receipts');
 		openPrintPreview(html);
-	}, [filteredReceipts, salesInvoices]);
+	}, [filteredReceipts, salesInvoices, foReservations, customers]);
 
 	// Export WHT Certificates to CSV
 	const exportWHTCertificatesCSV = useCallback(() => {
@@ -755,14 +904,21 @@ export default function AccountsReceivable() {
 			{ key: 'totalWithheld', label: 'Total' },
 			{ key: 'status', label: 'Status' },
 		];
-		downloadCSV(filteredWHTCerts, 'wht_certificates', columns);
-	}, [filteredWHTCerts]);
+		downloadCSV(
+			filteredWHTCerts.map((cert: any) => ({
+				...cert,
+				withholdingAgentName: certificateBillingPerson(cert, salesInvoices, foReservations, customers) || cert.withholdingAgentName,
+			})),
+			'wht_certificates',
+			columns,
+		);
+	}, [filteredWHTCerts, salesInvoices, foReservations, customers]);
 
 	// Print WHT Certificates Table as PDF
 	const printWHTCertificatesTablePDF = useCallback(() => {
 		const rows = filteredWHTCerts.map((cert: any) => `<tr>
 			<td>${cert.certificateNumber || 'PENDING'}</td>
-			<td>${cert.withholdingAgentName || '-'}</td>
+			<td>${certificateBillingPerson(cert, salesInvoices, foReservations, customers) || '-'}</td>
 			<td>${cert.withholdingAgentTIN || '-'}</td>
 			<td>${cert.invoiceNumber || '-'}</td>
 			<td>${cert.taxPeriod || '-'}</td>
@@ -787,7 +943,7 @@ export default function AccountsReceivable() {
 			</table>
 		`, 'Accounts Receivable • WHT Certificates');
 		openPrintPreview(html);
-	}, [filteredWHTCerts]);
+	}, [filteredWHTCerts, salesInvoices, foReservations, customers]);
 
 	const printWHTCertificatePDF = useCallback((cert: any) => {
 		try {
@@ -2186,7 +2342,7 @@ export default function AccountsReceivable() {
 	const [salesSortDir, setSalesSortDir] = useState<'asc' | 'desc'>('desc');
 	const salesCols = useResizableColumns<SalesSortKey>({
 		// Sized to max(uppercase header, typical cell) — long INV-* numbers & currency chips.
-		invoice: 168, source: 124, customer: 152, date: 92, dueDate: 96, staff: 112,
+		invoice: 168, billing: 152, source: 124, customer: 152, date: 92, dueDate: 96, staff: 112,
 		total: 100, paid: 92, balance: 100, status: 84, wht: 104, gl: 72,
 	});
 	const sortedSales = useMemo(() => {
@@ -2199,6 +2355,7 @@ export default function AccountsReceivable() {
 			const glChip = getGlSyncChip('invoice', inv);
 			switch (salesSortKey) {
 				case 'invoice': return (inv.invoiceNumber || inv.id || '').toLowerCase();
+				case 'billing': return invoiceBillingPerson(inv, foReservations, customers).toLowerCase();
 				case 'source': return (inv.sourceModule || '').toLowerCase();
 				case 'customer': return (inv.customerName || '').toLowerCase();
 				case 'date': return new Date(inv.date).getTime();
@@ -2215,7 +2372,7 @@ export default function AccountsReceivable() {
 		};
 		const sorted = [...filteredSalesInvoices].sort((a, b) => deskCmp(value(a), value(b)));
 		return salesSortDir === 'asc' ? sorted : sorted.reverse();
-	}, [filteredSalesInvoices, salesSortKey, salesSortDir, whtCertificates, journalEntries]);
+	}, [filteredSalesInvoices, salesSortKey, salesSortDir, whtCertificates, journalEntries, foReservations, customers]);
 	const salesPaging = useDeskPagination(sortedSales, [statusFilter, sourceFilter, dateFrom, dateTo, searchQuery, salesSortKey, salesSortDir, invoiceDocType]);
 	const onSalesSort = (key: SalesSortKey) => {
 		if (salesSortKey === key) setSalesSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -2314,7 +2471,7 @@ export default function AccountsReceivable() {
 	const [receiptSortKey, setReceiptSortKey] = useState<ReceiptSortKey>('date');
 	const [receiptSortDir, setReceiptSortDir] = useState<'asc' | 'desc'>('desc');
 	const receiptCols = useResizableColumns<ReceiptSortKey>({
-		receipt: 128, source: 124, customer: 144, date: 92, method: 88, amount: 100,
+		receipt: 128, billing: 152, source: 124, customer: 144, date: 92, method: 88, amount: 100,
 		balance: 100, invoice: 120, status: 84, time: 88, staff: 112,
 	});
 	const receiptBalance = (invoiceId?: string) => {
@@ -2327,6 +2484,7 @@ export default function AccountsReceivable() {
 		const value = (r: any): string | number => {
 			switch (receiptSortKey) {
 				case 'receipt': return (r.paymentNumber || r.id || '').toLowerCase();
+				case 'billing': return receiptBillingPerson(r, salesInvoices, foReservations, customers).toLowerCase();
 				case 'source': return (r.sourceModule || '').toLowerCase();
 				case 'customer': return (r.customerName || '').toLowerCase();
 				case 'date': return new Date(r.date).getTime();
@@ -2342,7 +2500,7 @@ export default function AccountsReceivable() {
 		};
 		const sorted = [...filteredReceipts].sort((a, b) => deskCmp(value(a), value(b)));
 		return receiptSortDir === 'asc' ? sorted : sorted.reverse();
-	}, [filteredReceipts, receiptSortKey, receiptSortDir, salesInvoices]);
+	}, [filteredReceipts, receiptSortKey, receiptSortDir, salesInvoices, foReservations, customers]);
 	const receiptPaging = useDeskPagination(sortedReceipts, [sourceFilter, dateFrom, dateTo, searchQuery, receiptSortKey, receiptSortDir]);
 	const onReceiptSort = (key: ReceiptSortKey) => {
 		if (receiptSortKey === key) setReceiptSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -2368,7 +2526,7 @@ export default function AccountsReceivable() {
 		const value = (cert: any): string | number => {
 			switch (whtSortKey) {
 				case 'certificate': return (cert.certificateNumber || 'PENDING').toLowerCase();
-				case 'agent': return (cert.withholdingAgentName || '').toLowerCase();
+				case 'agent': return certificateBillingPerson(cert, salesInvoices, foReservations, customers).toLowerCase();
 				case 'tin': return (cert.withholdingAgentTIN || '').toLowerCase();
 				case 'invoice': return (cert.invoiceNumber || '').toLowerCase();
 				case 'taxPeriod': return (cert.taxPeriod || '').toLowerCase();
@@ -2381,7 +2539,7 @@ export default function AccountsReceivable() {
 		};
 		const sorted = [...filteredWHTCerts].sort((a, b) => deskCmp(value(a), value(b)));
 		return whtSortDir === 'asc' ? sorted : sorted.reverse();
-	}, [filteredWHTCerts, whtSortKey, whtSortDir]);
+	}, [filteredWHTCerts, whtSortKey, whtSortDir, salesInvoices, foReservations, customers]);
 	const whtPaging = useDeskPagination(sortedWhtCerts, [statusFilter, dateFrom, dateTo, searchQuery, whtSortKey, whtSortDir]);
 	const onWhtSort = (key: WhtSortKey) => {
 		if (whtSortKey === key) setWhtSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -2451,17 +2609,18 @@ export default function AccountsReceivable() {
 				<Table removeWrapper classNames={deskResizableTableClassNames()} aria-label="Sales invoices">
 					<TableHeader>
 						{salesColumn('invoice', 'Invoice #')}
+						{salesColumn('billing', 'Billing person')}
 						{salesColumn('source', 'Source')}
 						{salesColumn('customer', 'Customer')}
 						{salesColumn('date', 'Date')}
 						{salesColumn('dueDate', 'Due date')}
-						{salesColumn('staff', 'Staff')}
 						{salesColumn('total', 'Total', 'right')}
 						{salesColumn('paid', 'Paid', 'right')}
 						{salesColumn('balance', 'Balance', 'right')}
 						{salesColumn('status', 'Status')}
 						{salesColumn('wht', 'Tax held')}
 						{salesColumn('gl', 'Books')}
+						{salesColumn('staff', 'Staff')}
 					</TableHeader>
 					<TableBody emptyContent="No sales invoices found.">
 						{salesPaging.paged.map((inv: any) => {
@@ -2478,6 +2637,9 @@ export default function AccountsReceivable() {
 										<span className="font-mono text-sm text-blue-600 hover:underline">{inv.invoiceNumber || inv.id}</span>
 									</TableCell>
 									<TableCell>
+										<span className="text-sm">{invoiceBillingPerson(inv, foReservations, customers) || '—'}</span>
+									</TableCell>
+									<TableCell>
 										<Chip size="sm" color={source.color} variant="flat">{source.icon} {source.label}</Chip>
 									</TableCell>
 									<TableCell>
@@ -2486,10 +2648,6 @@ export default function AccountsReceivable() {
 									</TableCell>
 									<TableCell>{formatDeskDate(inv.date)}</TableCell>
 									<TableCell className={isOverdue ? 'text-red-600' : ''}>{formatDeskDate(inv.dueDate)}</TableCell>
-									<TableCell>
-										<div className="text-sm">{inv.staffName || '-'}</div>
-										<div className="text-xs text-gray-500">{inv.staffRole || ''}</div>
-									</TableCell>
 									<TableCell className="tabular-nums text-right font-medium">{formatAccountingCurrency(Number(inv.total || 0))}</TableCell>
 									<TableCell className="tabular-nums text-right text-green-600">{formatAccountingCurrency(Number(inv.paidAmount || 0))}</TableCell>
 									<TableCell className="tabular-nums text-right text-orange-600 font-medium">{formatAccountingCurrency(balance)}</TableCell>
@@ -2515,6 +2673,10 @@ export default function AccountsReceivable() {
 										) : (
 											<span className="text-xs text-gray-400">—</span>
 										)}
+									</TableCell>
+									<TableCell>
+										<div className="text-sm">{inv.staffName || '-'}</div>
+										<div className="text-xs text-gray-500">{inv.staffRole || ''}</div>
 									</TableCell>
 								</TableRow>
 							);
@@ -2632,7 +2794,11 @@ export default function AccountsReceivable() {
 					<Button 
 						variant="flat" 
 						size="sm" 
-						onClick={handleRefresh}
+						onClick={() => {
+							setDateFrom('');
+							setDateTo('');
+							void handleRefresh();
+						}}
 						isLoading={isRefreshing}
 						startContent={!isRefreshing && <span>🔄</span>}
 					>
@@ -2766,7 +2932,7 @@ export default function AccountsReceivable() {
 						{/* Invoices Tab — Sales and Proforma are the same document set (allSalesInvoices),
 						    split by isProforma; toggle below switches which subset renders instead of
 						    forcing two separate top-level tabs for what is one invoice ledger. */}
-						<Tab key="invoices" title={`Invoices (${allSalesInvoices.length})`}>
+						<Tab key="invoices" title={dateFrom || dateTo ? `Invoices (${filteredSalesInvoices.length + filteredProformas.length})` : 'Invoices'}>
 							<div className={deskBookTabPanelClassName}>
 								<div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-3">
 									<div className="flex items-center gap-2 shrink-0 mr-auto">
@@ -2837,7 +3003,7 @@ export default function AccountsReceivable() {
 						</Tab>
 
 						{/* Receipts Tab */}
-						<Tab key="receipts" title={`Receipts (${receipts.length})`}>
+						<Tab key="receipts" title={dateFrom || dateTo ? `Receipts (${filteredReceipts.length})` : 'Receipts'}>
 							<div className={deskBookTabPanelClassName}>
 								<div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-3">
 									<h3 className="text-sm font-semibold text-gray-800 shrink-0 mr-auto">Money received</h3>
@@ -2861,6 +3027,7 @@ export default function AccountsReceivable() {
 								<Table removeWrapper classNames={deskResizableTableClassNames()} aria-label="Customer receipts">
                                     <TableHeader>
                                         {receiptColumn('receipt', 'Receipt #')}
+										{receiptColumn('billing', 'Billing person')}
 										{receiptColumn('source', 'Source')}
                                         {receiptColumn('customer', 'Customer')}
                                         {receiptColumn('date', 'Date')}
@@ -2880,6 +3047,9 @@ export default function AccountsReceivable() {
 												<TableRow key={r.id} className={rowClassNames(selectedReceipt?.id === r.id)} onClick={() => openReceiptDetail(r)}>
 													<TableCell>
 														<span className="font-mono text-sm text-blue-600 hover:underline">{r.paymentNumber || r.id}</span>
+													</TableCell>
+													<TableCell>
+														<span className="text-sm">{receiptBillingPerson(r, salesInvoices, foReservations, customers) || '—'}</span>
 													</TableCell>
 													<TableCell>
 														<Chip size="sm" color={source.color} variant="flat">{source.icon} {source.label}</Chip>
@@ -2907,7 +3077,7 @@ export default function AccountsReceivable() {
 													</TableCell>
 													<TableCell className="text-gray-600">{new Date(r.date).toLocaleTimeString()}</TableCell>
 													<TableCell>
-														<div className="text-sm">{r.staffName || '-'}</div>
+														<div className="text-sm">{receiptStaffName(r, foFolios, salesInvoices) || '-'}</div>
 														<div className="text-xs text-gray-500">{r.staffRole || ''}</div>
 													</TableCell>
                                             </TableRow>
@@ -2924,7 +3094,7 @@ export default function AccountsReceivable() {
                         </Tab>
 
 						{/* WHT Certificates Tab */}
-						<Tab key="wht" title={`Tax certificates (${whtCertificates?.length || 0})`}>
+						<Tab key="wht" title={dateFrom || dateTo ? `Tax certificates (${filteredWHTCerts.length})` : 'Tax certificates'}>
 							<div className={deskBookTabPanelClassName}>
 								<div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-3">
 									<h3 className="text-sm font-semibold text-gray-800 inline-flex items-center gap-1.5 shrink-0 mr-auto">
@@ -2975,7 +3145,7 @@ export default function AccountsReceivable() {
 													</span>
 												</TableCell>
 												<TableCell>
-													<div className="font-medium">{cert.withholdingAgentName}</div>
+													<div className="font-medium">{certificateBillingPerson(cert, salesInvoices, foReservations, customers) || '—'}</div>
 												</TableCell>
 												<TableCell className="font-mono text-sm">{cert.withholdingAgentTIN || '-'}</TableCell>
 												<TableCell>
@@ -3310,7 +3480,7 @@ export default function AccountsReceivable() {
 											<div className="text-sm space-y-0.5">
 												<div className="flex justify-between gap-2">
 													<span className="text-gray-500">Name:</span>
-													<span className="font-medium">{selectedWHTCert.withholdingAgentName || '-'}</span>
+													<span className="font-medium">{certificateBillingPerson(selectedWHTCert, salesInvoices, foReservations, customers) || '-'}</span>
 												</div>
 												<div className="flex justify-between gap-2">
 													<span className="text-gray-500">TIN:</span>
@@ -3486,170 +3656,228 @@ export default function AccountsReceivable() {
 						setFormError('');
 					}
 				}}
-				size="2xl"
+				size="5xl"
 				scrollBehavior="inside"
+				classNames={{ base: 'max-w-[980px]' }}
 			>
-                <ModalContent>
-                    {(onClose) => (
-                        <>
-							<ModalHeader>
-								{editingInvoiceId
-									? (invoiceForm.isProforma ? '✏️ Edit Proforma Invoice' : '✏️ Edit Sales Invoice')
-									: (invoiceForm.isProforma ? '➕ New Proforma Invoice' : '➕ New Manual Invoice')}
-							</ModalHeader>
-                            <ModalBody>
-								{formError && <div className="text-red-600 text-sm mb-3 p-2 bg-red-50 rounded">{formError}</div>}
-								
-								{!editingInvoiceId && (
-								<div className="mb-4 p-3 bg-gray-50 rounded-lg">
-									<Checkbox 
-										isSelected={invoiceForm.isProforma || false} 
-										onValueChange={(v) => setInvoiceForm({ ...invoiceForm, isProforma: v })}
-									>
-										📋 Proforma Invoice
-									</Checkbox>
-									<span className="text-xs text-gray-500 ml-2">
-										{invoiceForm.isProforma ? 'Preliminary invoice before delivery' : 'Regular sales invoice'}
-									</span>
-                                        </div>
-								)}
-
-                                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-									<Autocomplete
-										label="Customer Name *"
-										placeholder="Search existing or type a new customer..."
-										selectedKey={invoiceForm.businessPartnerId || null}
-										inputValue={invoiceForm.customerName || ''}
-										onInputChange={(v) =>
-											setInvoiceForm((f: any) => ({
-												...f,
-												customerName: v,
-												...(f.businessPartnerId && v !== customers.find((c) => c.id === f.businessPartnerId)?.name
-													? { businessPartnerId: '' }
-													: {}),
-											}))
-										}
-										onSelectionChange={(key) => {
-											const partner = customers.find((c) => c.id === key);
-											setInvoiceForm((f: any) => ({
-												...f,
-												businessPartnerId: (key as string) || '',
-												customerName: partner?.name || f.customerName,
-												dueDate: dueDateFromTerms(f.date, (key as string) || '', f.customerPaymentTerms),
-											}));
-										}}
-										allowsCustomValue
-									>
-										{customers.map((c) => (
-											<AutocompleteItem key={c.id} textValue={c.name}>
-												<div className="font-medium">{c.name}</div>
-												<div className="text-xs text-gray-500">{c.id}</div>
-											</AutocompleteItem>
-										))}
-									</Autocomplete>
-									<Input label={invoiceForm.isProforma ? "Proforma Number" : "Invoice Number"} value={invoiceForm.invoiceNumber || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, invoiceNumber: e.target.value })} placeholder="Auto-generated" />
-									<Input label="Customer PO / Reference" placeholder="Buyer's PO number (optional)" value={invoiceForm.poNumber || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, poNumber: e.target.value })} />
-									<PostingDateField type="date" label={invoiceForm.isProforma ? "Proforma Date" : "Invoice Date"} value={invoiceForm.date || ''} onValueChange={(v) => setInvoiceForm((f: any) => ({ ...f, date: v, dueDate: dueDateFromTerms(v, f.businessPartnerId, f.customerPaymentTerms) }))} />
-									<Input type="date" label={invoiceForm.isProforma ? "Valid Until" : "Due Date"} value={invoiceForm.dueDate || ''} onValueChange={(v) => setInvoiceForm({ ...invoiceForm, dueDate: v })} description="Auto-set from payment terms — editable" />
-									<Input type="number" label="Subtotal" value={invoiceForm.subtotal?.toString() || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, subtotal: e.target.value, total: Number(e.target.value) + Number(invoiceForm.taxAmount || 0) })} />
-									<Input type="number" label="Tax Amount" value={invoiceForm.taxAmount?.toString() || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, taxAmount: e.target.value, total: Number(invoiceForm.subtotal || 0) + Number(e.target.value) })} />
-                                </div>
-
-								{/* Tax Options — mirrors AP's Standard/Custom/No-Tax selector so a tax-exempt
-								    or non-standard-rate sale has a clean way in, not just hand-editing the amount. */}
-								<div className="grid grid-cols-2 gap-4 sm:grid-cols-4 p-3 mt-4 border rounded items-end">
-									<Select
-										label="Tax Type"
-										className="col-span-2"
-										selectedKeys={[invoiceForm.taxType || 'STANDARD']}
-										onSelectionChange={(keys) => {
-											const v = Array.from(keys)[0] as string;
-											if (v === 'NONE') {
-												const subtotal = Number(invoiceForm.subtotal || 0);
-												setInvoiceForm({ ...invoiceForm, taxType: 'NONE', taxAmount: 0, total: subtotal });
-											} else {
-												setInvoiceForm({ ...invoiceForm, taxType: v });
-											}
-										}}
-									>
-										<SelectItem key="STANDARD">Standard (Sales stack)</SelectItem>
-										<SelectItem key="CUSTOM">Custom Rate</SelectItem>
-										<SelectItem key="NONE">No Tax</SelectItem>
-									</Select>
-									{invoiceForm.taxType === 'CUSTOM' && (
-										<Input type="number" label="Custom Rate %" value={invoiceForm.customTaxPercent?.toString() || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, customTaxPercent: e.target.value })} />
-									)}
-									<Button
-										size="sm"
-										variant="bordered"
-										className={invoiceForm.taxType === 'CUSTOM' ? 'col-span-1' : 'col-span-2'}
-										onPress={() => {
-											const subtotal = Number(invoiceForm.subtotal || 0);
-											if (invoiceForm.taxType === 'NONE') {
-												setInvoiceForm({ ...invoiceForm, taxAmount: 0, total: subtotal });
-												return;
-											}
-											if (invoiceForm.taxType === 'CUSTOM') {
-												const taxAmount = +(subtotal * (Number(invoiceForm.customTaxPercent || 0) / 100)).toFixed(2);
-												setInvoiceForm({ ...invoiceForm, taxAmount, total: subtotal + taxAmount });
-												return;
-											}
-											const { totalTax } = computeSalesTax(subtotal);
-											setInvoiceForm({ ...invoiceForm, taxAmount: totalTax, total: subtotal + totalTax });
-										}}
-									>Apply Tax</Button>
-								</div>
-
-								<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mt-4">
-									<Input type="number" isReadOnly label="Total" value={(Number(invoiceForm.subtotal || 0) + Number(invoiceForm.taxAmount || 0)).toString()} description="Subtotal + Tax — not independently editable" />
-									<Input label="Description" value={invoiceForm.description || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, description: e.target.value })} />
-								</div>
-
-								{!invoiceForm.businessPartnerId && invoiceForm.customerName?.trim() && (
-									<div className="mt-4 p-3 bg-gray-50 rounded-lg">
-										<div className="text-sm font-medium text-gray-700 mb-3">
-											New customer — additional details (optional)
+				<ModalContent>
+					{(onClose) => {
+						const invoiceDue = Number(invoiceForm.subtotal || 0) + Number(invoiceForm.taxAmount || 0);
+						const selectedCustomer = customers.find((c) => c.id === invoiceForm.businessPartnerId);
+						return (
+						<>
+							<ModalHeader className="border-b bg-white px-4 py-2.5 pe-12">
+								<div className="flex justify-between items-start w-full gap-3">
+									<div>
+										<div className="flex items-center gap-2">
+											<h3 className="text-base font-bold text-gray-900">
+												{invoiceForm.isProforma ? 'PROFORMA INVOICE' : 'SALES INVOICE'}
+											</h3>
+											<Chip size="sm" variant="flat" color={editingInvoiceId ? 'primary' : invoiceForm.isProforma ? 'secondary' : 'default'}>
+												{editingInvoiceId ? 'EDITING' : invoiceForm.isProforma ? 'PROFORMA' : 'DRAFT'}
+											</Chip>
 										</div>
-										<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-											<Input label="Phone" value={invoiceForm.customerPhone || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, customerPhone: e.target.value })} />
-											<Input label="Email" value={invoiceForm.customerEmail || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, customerEmail: e.target.value })} />
-											<Input label="Address" value={invoiceForm.customerAddress || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, customerAddress: e.target.value })} className="col-span-2" />
-											<Input label="Tax ID (TIN)" value={invoiceForm.customerTaxNumber || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, customerTaxNumber: e.target.value })} />
-											<Input type="number" label="Credit Limit" value={invoiceForm.customerCreditLimit?.toString() || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, customerCreditLimit: e.target.value })} />
-											<Select
-												label="Payment Terms"
-												className="col-span-2"
-												selectedKeys={[invoiceForm.customerPaymentTerms || 'net30']}
-												onSelectionChange={(s) => {
-													const terms = Array.from(s)[0] as string;
-													setInvoiceForm((f: any) => ({
-														...f,
-														customerPaymentTerms: terms,
-														dueDate: dueDateFromTerms(f.date, f.businessPartnerId, terms),
-													}));
-												}}
-											>
-												<SelectItem key="immediate">Immediate</SelectItem>
-												<SelectItem key="net30">Net 30</SelectItem>
-												<SelectItem key="net60">Net 60</SelectItem>
-												<SelectItem key="net90">Net 90</SelectItem>
-											</Select>
+										<p className="text-sm text-gray-600 mt-0.5">
+											{selectedCustomer?.name || invoiceForm.customerName || 'Select a customer'}
+											{!selectedCustomer && invoiceForm.customerName?.trim() ? (
+												<span className="text-amber-600"> · new</span>
+											) : null}
+										</p>
+									</div>
+									<div className="text-right text-xs text-gray-600 leading-snug">
+										<div className="text-[11px] uppercase tracking-wide text-gray-400">
+											{invoiceForm.isProforma ? 'Proforma #' : 'Invoice #'}
+										</div>
+										<div className="font-mono text-sm text-gray-800">{invoiceForm.invoiceNumber || 'Auto on save'}</div>
+										<div className="tabular-nums font-semibold text-gray-900 mt-1">
+											{formatAccountingCurrency(invoiceDue)} due
 										</div>
 									</div>
-								)}
-                            </ModalBody>
-                            <ModalFooter>
-                                <Button variant="light" onPress={onClose}>Cancel</Button>
-								<Button color={invoiceForm.isProforma ? "secondary" : "primary"} onPress={saveInvoice}>
+								</div>
+							</ModalHeader>
+							<ModalBody className="px-4 py-3 bg-white">
+								{formError && <div className="text-red-600 text-sm mb-3 p-2 bg-red-50 rounded">{formError}</div>}
+								<div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-4 items-start">
+									<div className="space-y-4 min-w-0">
+										<section className="space-y-3">
+											<div className="flex items-center justify-between gap-2">
+												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Document</h4>
+												{!editingInvoiceId && (
+													<Checkbox
+														size="sm"
+														isSelected={invoiceForm.isProforma || false}
+														onValueChange={(v) => setInvoiceForm({ ...invoiceForm, isProforma: v })}
+													>
+														Proforma
+													</Checkbox>
+												)}
+											</div>
+											<div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+												<Autocomplete
+													size="sm"
+													label="Customer"
+													className="sm:col-span-2"
+													placeholder="Search or type a new customer..."
+													startContent={<span className="text-gray-400 text-sm">🔍</span>}
+													selectedKey={invoiceForm.businessPartnerId || null}
+													inputValue={invoiceForm.customerName || ''}
+													onInputChange={(v) =>
+														setInvoiceForm((f: any) => ({
+															...f,
+															customerName: v,
+															...(f.businessPartnerId && v !== customers.find((c) => c.id === f.businessPartnerId)?.name
+																? { businessPartnerId: '' }
+																: {}),
+														}))
+													}
+													onSelectionChange={(key) => {
+														const partner = customers.find((c) => c.id === key);
+														setInvoiceForm((f: any) => ({
+															...f,
+															businessPartnerId: (key as string) || '',
+															customerName: partner?.name || f.customerName,
+															dueDate: dueDateFromTerms(f.date, (key as string) || '', f.customerPaymentTerms),
+														}));
+													}}
+													allowsCustomValue
+													isRequired
+												>
+													{customers.map((c) => (
+														<AutocompleteItem key={c.id} textValue={c.name}>
+															<div className="flex flex-col">
+																<span className="font-medium">{c.name}</span>
+																<span className="text-xs text-gray-500">{c.id}</span>
+															</div>
+														</AutocompleteItem>
+													))}
+												</Autocomplete>
+												<Input size="sm" label={invoiceForm.isProforma ? 'Proforma number' : 'Invoice number'} value={invoiceForm.invoiceNumber || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, invoiceNumber: e.target.value })} placeholder="Auto-generated" />
+												<Input size="sm" label="Customer PO / reference" placeholder="Buyer's PO number (optional)" value={invoiceForm.poNumber || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, poNumber: e.target.value })} />
+												<PostingDateField size="sm" type="date" label={invoiceForm.isProforma ? 'Proforma date' : 'Invoice date'} value={invoiceForm.date || ''} onValueChange={(v) => setInvoiceForm((f: any) => ({ ...f, date: v, dueDate: dueDateFromTerms(v, f.businessPartnerId, f.customerPaymentTerms) }))} />
+												<Input size="sm" type="date" label={invoiceForm.isProforma ? 'Valid until' : 'Due date'} value={invoiceForm.dueDate || ''} onValueChange={(v) => setInvoiceForm({ ...invoiceForm, dueDate: v })} description="Auto-set from payment terms — editable" />
+												<Input size="sm" label="Description" value={invoiceForm.description || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, description: e.target.value })} className="sm:col-span-3" />
+											</div>
+											{!invoiceForm.businessPartnerId && invoiceForm.customerName?.trim() ? (
+												<div className="text-xs text-amber-700">New customer — will be created when you save this invoice</div>
+											) : null}
+										</section>
+
+										<section className="space-y-3">
+											<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Amounts</h4>
+											<div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+												<Input size="sm" type="number" label="Subtotal" value={invoiceForm.subtotal?.toString() || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, subtotal: e.target.value, total: Number(e.target.value) + Number(invoiceForm.taxAmount || 0) })} />
+												<Input size="sm" type="number" label="Tax amount" value={invoiceForm.taxAmount?.toString() || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, taxAmount: e.target.value, total: Number(invoiceForm.subtotal || 0) + Number(e.target.value) })} />
+												<Select
+													size="sm"
+													label="Tax type"
+													selectedKeys={[invoiceForm.taxType || 'STANDARD']}
+													onSelectionChange={(keys) => {
+														const v = Array.from(keys)[0] as string;
+														if (v === 'NONE') {
+															const subtotal = Number(invoiceForm.subtotal || 0);
+															setInvoiceForm({ ...invoiceForm, taxType: 'NONE', taxAmount: 0, total: subtotal });
+														} else {
+															setInvoiceForm({ ...invoiceForm, taxType: v });
+														}
+													}}
+												>
+													<SelectItem key="STANDARD">Standard (Sales stack)</SelectItem>
+													<SelectItem key="CUSTOM">Custom Rate</SelectItem>
+													<SelectItem key="NONE">No Tax</SelectItem>
+												</Select>
+												{invoiceForm.taxType === 'CUSTOM' && (
+													<Input size="sm" type="number" label="Custom rate %" value={invoiceForm.customTaxPercent?.toString() || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, customTaxPercent: e.target.value })} />
+												)}
+												<div className="flex items-end">
+													<Button
+														size="sm"
+														variant="bordered"
+														onPress={() => {
+															const subtotal = Number(invoiceForm.subtotal || 0);
+															if (invoiceForm.taxType === 'NONE') {
+																setInvoiceForm({ ...invoiceForm, taxAmount: 0, total: subtotal });
+																return;
+															}
+															if (invoiceForm.taxType === 'CUSTOM') {
+																const taxAmount = +(subtotal * (Number(invoiceForm.customTaxPercent || 0) / 100)).toFixed(2);
+																setInvoiceForm({ ...invoiceForm, taxAmount, total: subtotal + taxAmount });
+																return;
+															}
+															const { totalTax } = computeSalesTax(subtotal);
+															setInvoiceForm({ ...invoiceForm, taxAmount: totalTax, total: subtotal + totalTax });
+														}}
+													>Apply tax</Button>
+												</div>
+											</div>
+										</section>
+
+										{!invoiceForm.businessPartnerId && invoiceForm.customerName?.trim() && (
+											<section className="space-y-3">
+												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">New customer</h4>
+												<div className="grid grid-cols-2 sm:grid-cols-3 gap-3 rounded-lg border border-dashed border-gray-200 p-3">
+													<Input size="sm" label="Phone" value={invoiceForm.customerPhone || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, customerPhone: e.target.value })} />
+													<Input size="sm" label="Email" value={invoiceForm.customerEmail || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, customerEmail: e.target.value })} />
+													<Input size="sm" label="Tax ID / TIN" value={invoiceForm.customerTaxNumber || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, customerTaxNumber: e.target.value })} />
+													<Input size="sm" label="Address" value={invoiceForm.customerAddress || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, customerAddress: e.target.value })} className="sm:col-span-2" />
+													<Input size="sm" type="number" label="Credit limit" value={invoiceForm.customerCreditLimit?.toString() || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, customerCreditLimit: e.target.value })} />
+													<Select
+														size="sm"
+														label="Payment terms"
+														className="sm:col-span-2"
+														selectedKeys={[invoiceForm.customerPaymentTerms || 'net30']}
+														onSelectionChange={(s) => {
+															const terms = Array.from(s)[0] as string;
+															setInvoiceForm((f: any) => ({
+																...f,
+																customerPaymentTerms: terms,
+																dueDate: dueDateFromTerms(f.date, f.businessPartnerId, terms),
+															}));
+														}}
+													>
+														<SelectItem key="immediate">Immediate</SelectItem>
+														<SelectItem key="net30">Net 30</SelectItem>
+														<SelectItem key="net60">Net 60</SelectItem>
+														<SelectItem key="net90">Net 90</SelectItem>
+													</Select>
+												</div>
+											</section>
+										)}
+									</div>
+
+									<aside className="lg:sticky lg:top-2 rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2 text-sm">
+										<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Totals</h4>
+										<div className="flex justify-between text-gray-600">
+											<span>Subtotal</span>
+											<span className="tabular-nums">{formatAccountingCurrency(Number(invoiceForm.subtotal || 0))}</span>
+										</div>
+										<div className="flex justify-between text-gray-600">
+											<span>Tax</span>
+											<span className="tabular-nums">{formatAccountingCurrency(Number(invoiceForm.taxAmount || 0))}</span>
+										</div>
+										<Divider className="my-1" />
+										<div className="flex justify-between font-semibold text-gray-900">
+											<span>Amount due</span>
+											<span className="tabular-nums">{formatAccountingCurrency(invoiceDue)}</span>
+										</div>
+										<p className="text-[11px] text-gray-400 leading-snug pt-1">
+											Subtotal and tax update the amount due.
+										</p>
+									</aside>
+								</div>
+							</ModalBody>
+							<ModalFooter className="border-t bg-white">
+								<Button variant="light" onPress={onClose}>Cancel</Button>
+								<Button color="primary" onPress={saveInvoice}>
 									{editingInvoiceId
-										? (invoiceForm.isProforma ? 'Update Proforma' : 'Update Invoice')
-										: (invoiceForm.isProforma ? 'Save Proforma' : 'Save Invoice')}
+										? (invoiceForm.isProforma ? 'Update proforma' : 'Update invoice')
+										: (invoiceForm.isProforma ? 'Save proforma' : 'Save invoice')}
 								</Button>
-                            </ModalFooter>
-                        </>
-                    )}
-                </ModalContent>
-            </Modal>
+							</ModalFooter>
+						</>
+						);
+					}}
+				</ModalContent>
+			</Modal>
 
 			{/* Record Receipt Modal */}
 			<Modal
@@ -3659,51 +3887,87 @@ export default function AccountsReceivable() {
 					if (!open) {
 						setEditingReceiptId(null);
 						setFormError('');
+						setShowReceiptExtras(false);
 					}
 				}}
-				size="2xl"
+				size="3xl"
 				scrollBehavior="inside"
+				classNames={{ base: 'max-w-[720px]' }}
 			>
                 <ModalContent>
                     {(onClose) => (
                         <>
-							<ModalHeader className="flex items-center gap-2">
-								<span>
-									{editingReceiptId ? '✏️ Edit Customer Receipt' : '➕ Record Customer Receipt'}
-								</span>
-								<InfoTip label="Receipt form help">
-									<div className="space-y-2 text-left">
-										<p>
-											Apply to an <strong>in-house folio</strong> (guest checked in) or a{' '}
-											<strong>posted invoice</strong> (incl. front-office checkout).
+							<ModalHeader className="border-b bg-white px-4 py-2.5 pe-12">
+								<div className="flex justify-between items-start w-full gap-3">
+									<div>
+										<div className="flex items-center gap-2">
+											<h3 className="text-base font-bold text-gray-900">
+												{editingReceiptId ? 'EDIT RECEIPT' : 'RECORD RECEIPT'}
+											</h3>
+											<Chip size="sm" variant="flat" color={editingReceiptId ? 'primary' : 'success'}>
+												{editingReceiptId ? 'EDITING' : 'POST ON SAVE'}
+											</Chip>
+											<InfoTip label="Receipt form help">
+												<div className="space-y-2 text-left">
+													<p>
+														Apply to an <strong>in-house folio</strong> (guest checked in) or a{' '}
+														<strong>posted invoice</strong> (incl. front-office checkout).
+													</p>
+													<p>
+														Invoice payments post to GL; folio payments update the guest ledger until
+														checkout.
+													</p>
+													<p>
+														For corporate WHT, choose <strong>Net cash + WHT</strong> or{' '}
+														<strong>WHT certificate only</strong> under Payment type.
+													</p>
+													<p>
+														<strong>Revenue centre</strong> is optional — it tags the GL segment when
+														the receipt posts (suggested from the folio or invoice you select).
+													</p>
+													{editingReceiptId && (
+														<p className="text-amber-800">
+															Amount changes are blocked after GL posting — void and re-record instead.
+														</p>
+													)}
+												</div>
+											</InfoTip>
+										</div>
+										<p className="text-sm text-gray-600 mt-0.5">
+											{receiptForm.customerName || 'Select a customer'}
+											{selectedReceiptTarget ? (
+												<span className="text-gray-400"> · {selectedReceiptTarget.sourceBadge}</span>
+											) : !receiptForm.businessPartnerId && receiptForm.customerName?.trim() ? (
+												<span className="text-amber-600"> · new</span>
+											) : null}
 										</p>
-										<p>
-											Invoice payments post to GL; folio payments update the guest ledger until
-											checkout.
-										</p>
-										<p>
-											For corporate WHT, choose <strong>Net cash + WHT</strong> or{' '}
-											<strong>WHT certificate only</strong> under Payment type.
-										</p>
-										<p>
-											<strong>Revenue centre</strong> is optional — it tags the GL segment when
-											the receipt posts (suggested from the folio or invoice you select).
-										</p>
-										{editingReceiptId && (
-											<p className="text-amber-800">
-												Amount changes are blocked after GL posting — void and re-record instead.
-											</p>
+									</div>
+									<div className="text-right text-xs text-gray-600 leading-snug">
+										<div className="text-[11px] uppercase tracking-wide text-gray-400">Receiving</div>
+										<div className="tabular-nums font-semibold text-gray-900 text-sm">
+											{formatAccountingCurrency(Number(receiptForm.amount || 0))}
+										</div>
+										{(Number(receiptForm.whtAmount || 0) > 0 || Number(receiptForm.whtVatAmount || 0) > 0) && (
+											<div className="text-[11px] text-amber-700 mt-0.5">
+												+ {formatAccountingCurrency(Number(receiptForm.whtAmount || 0) + Number(receiptForm.whtVatAmount || 0))} withheld
+											</div>
 										)}
 									</div>
-								</InfoTip>
+								</div>
 							</ModalHeader>
-                            <ModalBody>
+							<ModalBody className="px-4 py-3 bg-white">
 								{formError && <div className="text-red-600 text-sm mb-3 p-2 bg-red-50 rounded">{formError}</div>}
 
-								<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mb-4">
+								<div className="grid grid-cols-1 sm:grid-cols-[1fr_200px] gap-4 items-start">
+								<div className="space-y-4 min-w-0">
+								<section className="space-y-3">
+								<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Receive from</h4>
+								<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
 									<Autocomplete
+										size="sm"
 										label="Customer"
-										placeholder="Search customer..."
+										placeholder="Search or type a new customer..."
+										startContent={<span className="text-gray-400 text-sm">🔍</span>}
 										selectedKey={receiptForm.businessPartnerId || null}
 										onSelectionChange={(key) => onReceiptCustomerSelect(key as string | null)}
 										inputValue={receiptForm.customerName || ''}
@@ -3726,8 +3990,17 @@ export default function AccountsReceivable() {
 										))}
 									</Autocomplete>
 
+									<PostingDateField
+										size="sm"
+										type="date"
+										label="Receipt date"
+										value={receiptForm.date || ''}
+										onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, date: v }))}
+									/>
 									<Select
+										size="sm"
 										label="Apply to folio or invoice"
+										className="sm:col-span-2"
 										placeholder="In-house guest or open invoice"
 										selectedKeys={receiptForm.targetKey ? [receiptForm.targetKey] : []}
 										onSelectionChange={(s) => onReceiptTargetSelect(Array.from(s)[0] as string | null)}
@@ -3744,16 +4017,28 @@ export default function AccountsReceivable() {
 									</Select>
 								</div>
 
+								{selectedReceiptTarget && (
+									<div className="text-xs text-gray-500 -mt-1">
+										{selectedReceiptTarget.label}
+										{selectedReceiptTarget.kind === 'folio' && (
+											<span> · posts to the in-house folio until checkout</span>
+										)}
+										{selectedReceiptInvoice?.sourceModule === 'front_office_checkout' && (
+											<span> · front office</span>
+										)}
+									</div>
+								)}
 								{(!editingReceiptId || activeRevenueCenters.length > 0) && (
-									<div className={`mb-4 grid grid-cols-1 gap-4 ${!editingReceiptId && activeRevenueCenters.length > 0 ? 'sm:grid-cols-2' : ''}`}>
+									<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
 										{!editingReceiptId && (
 											<Select
+												size="sm"
 												label="Payment type"
 												description={
 													selectedReceiptTarget?.kind !== 'invoice'
-														? 'Choose a posted invoice above. Withholding does not apply to an in-house folio.'
+														? 'Withholding applies to a posted invoice, not an in-house folio.'
 														: receiptWhtAvailable
-															? 'Net cash + WHT records the cash and the tax the customer withheld. WHT certificate only records the withheld tax when the cash is already on file.'
+															? 'Net cash + WHT, or the certificate only if cash is already on file.'
 															: 'This invoice has no withholding left to record.'
 												}
 												selectedKeys={[receiptForm.paymentKind || 'standard']}
@@ -3773,6 +4058,7 @@ export default function AccountsReceivable() {
 
 										{activeRevenueCenters.length > 0 && (
 											<Select
+												size="sm"
 												label="Revenue centre (optional)"
 												placeholder="Suggested when you pick folio or invoice"
 												selectedKeys={
@@ -3796,80 +4082,20 @@ export default function AccountsReceivable() {
 									</div>
 								)}
 
-								{selectedReceiptTarget?.kind === 'folio' && (
-									<Card className="mb-4 bg-emerald-50 border border-emerald-200">
-										<CardBody className="py-3">
-											<div className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-sm">
-												<div>
-													<div className="text-gray-500">Guest</div>
-													<div className="font-bold">{selectedReceiptTarget.customerName}</div>
-												</div>
-												{selectedReceiptTarget.roomNumber && (
-													<div>
-														<div className="text-gray-500">Room</div>
-														<div className="font-medium">{selectedReceiptTarget.roomNumber}</div>
-													</div>
-												)}
-												<div>
-													<div className="text-gray-500 inline-flex items-center gap-1">
-														Folio balance
-														<InfoTip label="Folio payment">
-															Posts to the in-house guest folio. Accounting invoice and GL are
-															created at checkout.
-														</InfoTip>
-													</div>
-													<div className="font-bold text-orange-600">{formatAccountingCurrency(receiptBalanceDue)}</div>
-												</div>
-											</div>
-										</CardBody>
-									</Card>
-								)}
+								</section>
 
-								{selectedReceiptInvoice && (
-									<Card className="mb-4 bg-blue-50 border border-blue-200">
-										<CardBody className="py-3">
-											<div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
-												<div>
-													<div className="text-gray-500">Invoice</div>
-													<div className="font-mono font-bold">{selectedReceiptInvoice.invoiceNumber}</div>
-													{selectedReceiptInvoice.sourceModule === 'front_office_checkout' && (
-														<Chip size="sm" variant="flat" color="secondary" className="mt-1">
-															Front office
-														</Chip>
-													)}
-												</div>
-												<div>
-													<div className="text-gray-500">Invoice total</div>
-													<div className="font-medium">{formatAccountingCurrency(Number(selectedReceiptInvoice.total || 0))}</div>
-												</div>
-												<div>
-													<div className="text-gray-500">Balance due</div>
-													<div className="font-bold text-orange-600">{formatAccountingCurrency(receiptBalanceDue)}</div>
-												</div>
-												<div>
-													<div className="text-gray-500">After this receipt</div>
-													<div className="font-bold text-green-700">
-														{formatAccountingCurrency(Math.max(0, receiptBalanceDue - roundMoney2(
-															Number(receiptForm.amount || 0) +
-															Number(receiptForm.whtAmount || 0) +
-															Number(receiptForm.whtVatAmount || 0)
-														)))}
-													</div>
-												</div>
-											</div>
-										</CardBody>
-									</Card>
-								)}
-
-								<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mb-4">
+								<section className="space-y-3">
+								<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Receipt</h4>
+								<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
 									{(receiptForm.paymentKind === 'standard' ||
 										selectedReceiptTarget?.kind !== 'invoice' ||
 										editingReceiptId) && (
 									<Input
+										size="sm"
 										type="number"
 										min={0}
 										step="0.01"
-										label="Amount received *"
+										label="Cash received"
 										placeholder="0.00"
 										value={receiptForm.amount?.toString() ?? ''}
 										onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, amount: v }))}
@@ -3894,6 +4120,7 @@ export default function AccountsReceivable() {
 										!editingReceiptId && (
 										<>
 											<Input
+												size="sm"
 												type="number"
 												min={0}
 												step="0.01"
@@ -3921,6 +4148,7 @@ export default function AccountsReceivable() {
 													Tax withheld (WHT)
 												</Checkbox>
 												<Input
+													size="sm"
 													type="number"
 													min={0}
 													step="0.01"
@@ -3945,6 +4173,7 @@ export default function AccountsReceivable() {
 													VAT withheld (WHT-VAT)
 												</Checkbox>
 												<Input
+													size="sm"
 													type="number"
 													min={0}
 													step="0.01"
@@ -3960,6 +4189,7 @@ export default function AccountsReceivable() {
 												/>
 											</div>
 											<Input
+												size="sm"
 												label="WHT certificate # (optional)"
 												placeholder="GRA cert number when received"
 												value={receiptForm.certificateNumber || ''}
@@ -3968,6 +4198,7 @@ export default function AccountsReceivable() {
 												}
 											/>
 											<Input
+												size="sm"
 												label="Withholding agent TIN (optional)"
 												value={receiptForm.withholdingAgentTIN || ''}
 												onValueChange={(v) =>
@@ -3977,14 +4208,9 @@ export default function AccountsReceivable() {
 										</>
 									)}
 
-									<PostingDateField
-										type="date"
-										label="Receipt date"
-										value={receiptForm.date || ''}
-										onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, date: v }))}
-									/>
 									<Select
-										label="Payment method"
+										size="sm"
+										label="Method"
 										selectedKeys={[receiptForm.paymentMethod || 'Bank']}
 										onSelectionChange={(s: any) =>
 											setReceiptForm((f: any) => ({
@@ -4004,7 +4230,8 @@ export default function AccountsReceivable() {
 									</Select>
 									{receiptNeedsBankAccount && activeBankAccounts.length > 0 && (
 										<Select
-											label="Deposit to account"
+											size="sm"
+											label="Bank account"
 											selectedKeys={receiptForm.bankAccountId ? [receiptForm.bankAccountId] : []}
 											onSelectionChange={(s: any) =>
 												setReceiptForm((f: any) => ({
@@ -4020,44 +4247,111 @@ export default function AccountsReceivable() {
 									)}
 									{receiptForm.paymentMethod === 'Cheque' && (
 										<Input
-											label="Cheque number *"
+											size="sm"
+											label="Cheque number"
 											value={receiptForm.checkNumber || ''}
 											onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, checkNumber: v }))}
 										/>
 									)}
-									<div className="col-span-2 grid gap-4" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 2fr)' }}>
-										<Input
-											label="Reference / transaction ID"
-											placeholder="Bank ref, MoMo txn…"
-											value={receiptForm.reference || ''}
-											onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, reference: v }))}
-										/>
-										<Input
-											label="Notes (optional)"
-											placeholder="Internal note"
-											value={receiptForm.notes || ''}
-											onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, notes: v }))}
-										/>
-									</div>
-									<AttachmentUpload
-										label="Attachments — bank slip, cheque photo, MoMo screenshot (optional)"
-										attachments={receiptForm.attachments || []}
-										onChange={(next) => setReceiptForm((f: any) => ({ ...f, attachments: next }))}
-										className="col-span-2"
+									<Input
+										size="sm"
+										label="Reference"
+										placeholder="Bank ref, MoMo txn…"
+										value={receiptForm.reference || ''}
+										onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, reference: v }))}
+										className="sm:col-span-2"
 									/>
 								</div>
+								</section>
+
+								<section className="space-y-3">
+									<button
+										type="button"
+										className="text-xs font-medium text-gray-500 hover:text-gray-800"
+										onClick={() => setShowReceiptExtras((v) => !v)}
+									>
+										{showReceiptExtras ? '▾ Hide notes & files' : '▸ Notes & files'}
+									</button>
+									{showReceiptExtras && (
+										<div className="space-y-3 rounded-lg border border-dashed border-gray-200 p-3">
+											<Input
+												size="sm"
+												label="Notes"
+												placeholder="Internal note"
+												value={receiptForm.notes || ''}
+												onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, notes: v }))}
+											/>
+											<AttachmentUpload
+												label="Bank slip, cheque photo, MoMo screenshot"
+												attachments={receiptForm.attachments || []}
+												onChange={(next) => setReceiptForm((f: any) => ({ ...f, attachments: next }))}
+											/>
+										</div>
+									)}
+								</section>
 
 								{!editingReceiptId && (
 									<Checkbox
+										size="sm"
 										isSelected={!!receiptForm.printAfterSave}
 										onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, printAfterSave: v }))}
-										className="mb-2"
 									>
-										Print receipt after posting (uses hotel receipt template)
+										Print receipt after posting
 									</Checkbox>
 								)}
+								</div>
+
+								<aside className="sm:sticky sm:top-2 rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2 text-sm">
+									<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Settlement</h4>
+									{selectedReceiptTarget ? (
+										<>
+											<div className="flex justify-between text-gray-600">
+												<span>{selectedReceiptTarget.kind === 'folio' ? 'Folio due' : 'Invoice due'}</span>
+												<span className="tabular-nums">{formatAccountingCurrency(receiptBalanceDue)}</span>
+											</div>
+											<div className="flex justify-between text-gray-600">
+												<span>Cash</span>
+												<span className="tabular-nums">−{formatAccountingCurrency(Number(receiptForm.amount || 0))}</span>
+											</div>
+											{Number(receiptForm.whtAmount || 0) > 0 && (
+												<div className="flex justify-between text-amber-700">
+													<span>WHT</span>
+													<span className="tabular-nums">−{formatAccountingCurrency(Number(receiptForm.whtAmount || 0))}</span>
+												</div>
+											)}
+											{Number(receiptForm.whtVatAmount || 0) > 0 && (
+												<div className="flex justify-between text-amber-700">
+													<span>WHT-VAT</span>
+													<span className="tabular-nums">−{formatAccountingCurrency(Number(receiptForm.whtVatAmount || 0))}</span>
+												</div>
+											)}
+											<Divider className="my-1" />
+											<div className="flex justify-between font-semibold text-gray-900">
+												<span>New balance</span>
+												<span className="tabular-nums">
+													{formatAccountingCurrency(Math.max(0, receiptBalanceDue - roundMoney2(
+														Number(receiptForm.amount || 0) +
+														Number(receiptForm.whtAmount || 0) +
+														Number(receiptForm.whtVatAmount || 0)
+													)))}
+												</span>
+											</div>
+										</>
+									) : (
+										<>
+											<div className="flex justify-between text-gray-600">
+												<span>Cash</span>
+												<span className="tabular-nums">{formatAccountingCurrency(Number(receiptForm.amount || 0))}</span>
+											</div>
+											<p className="text-[11px] text-gray-400 leading-snug pt-1">
+												Link a folio or invoice to see the balance.
+											</p>
+										</>
+									)}
+								</aside>
+								</div>
 							</ModalBody>
-							<ModalFooter>
+							<ModalFooter className="border-t bg-white">
 								<Button variant="light" onPress={onClose}>Cancel</Button>
 								<Button color="primary" onPress={saveReceipt}>
 									{editingReceiptId
@@ -4158,7 +4452,7 @@ export default function AccountsReceivable() {
 			</Modal>
 
 			{/* Invoice Detail Modal */}
-			<Modal isOpen={isDetailOpen} onOpenChange={setIsDetailOpen} size="3xl" scrollBehavior="inside">
+			<Modal isOpen={isDetailOpen} onOpenChange={(open) => { setIsDetailOpen(open); if (!open) setShowInvoiceCharges(false); }} size="3xl" scrollBehavior="inside">
 				<ModalContent className="max-w-[720px]">
 					{(onClose) => {
 						if (!selectedInvoice) return null;
@@ -4183,11 +4477,15 @@ export default function AccountsReceivable() {
 								rate: l.rate,
 								amount: l.amount,
 							})) : []);
+						const chargeLines = invoiceSourceLines(selectedInvoice, foReservations, foFolios);
+						const summaryText = selectedInvoice.description || 'Services/Products';
+						const chargesDiffer = chargeLines.length > 1 || chargeLines.some((line) =>
+							line.description.trim() !== String(summaryText).trim() || Math.abs(line.amount - subtotal) > 0.01,
+						);
 
 						const totalTaxRate = taxBreakdown.reduce((sum: number, t: any) => sum + t.rate, 0);
 						
 						// Line items
-						const lineItems = selectedInvoice.items || selectedInvoice.lineItems || [];
 						
                                                 return (
 							<>
@@ -4219,7 +4517,7 @@ export default function AccountsReceivable() {
 													<div className="font-semibold text-gray-900">{selectedInvoice.customerName || 'Walk-in Customer'}</div>
 													{selectedInvoice.customerEmail && <div className="text-gray-600 text-xs">{selectedInvoice.customerEmail}</div>}
 													{selectedInvoice.customerPhone && <div className="text-gray-600 text-xs">{selectedInvoice.customerPhone}</div>}
-													<div className="text-gray-500 font-mono text-xs mt-1">ID: {selectedInvoice.businessPartnerId}</div>
+													<div className="text-gray-500 font-mono text-xs mt-1">ID: {partyDisplayId(selectedInvoice.businessPartnerId, foGuests, foReservations) || '—'}</div>
                                     </div>
                                 </div>
 
@@ -4238,7 +4536,7 @@ export default function AccountsReceivable() {
 											<div>
 												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Processed By</h4>
 												<div className="text-sm space-y-0.5">
-													<div className="flex justify-between gap-2"><span className="text-gray-500">Staff:</span><span className="font-medium">{selectedInvoice.staffName || 'System'}</span></div>
+													<div className="flex justify-between gap-2"><span className="text-gray-500">Staff:</span><span className="font-medium">{selectedInvoice.staffName && !/^system$/i.test(selectedInvoice.staffName) ? selectedInvoice.staffName : '—'}</span></div>
 													<div className="flex justify-between gap-2"><span className="text-gray-500">Staff ID:</span><span className="font-mono text-xs">{selectedInvoice.staffId || '-'}</span></div>
 													<div className="flex justify-between gap-2"><span className="text-gray-500">Role:</span><span>{selectedInvoice.staffRole || 'Staff'}</span></div>
 													<div className="flex justify-between gap-2"><span className="text-gray-500">Department:</span><span>{source.label}</span></div>
@@ -4260,9 +4558,19 @@ export default function AccountsReceivable() {
 											</div>
 										)}
 
-										{/* Line Items Table */}
 										<div className="pb-3 border-b">
-											<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Line Items</h4>
+											<div className="flex items-center justify-between mb-1.5">
+												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Line Items</h4>
+												{chargesDiffer && (
+													<button
+														type="button"
+														className="text-xs text-blue-600 hover:underline"
+														onClick={() => setShowInvoiceCharges((open) => !open)}
+													>
+														{showInvoiceCharges ? 'Show summary' : 'View charges'}
+													</button>
+												)}
+											</div>
 											<table className="w-full text-sm">
 												<thead>
 													<tr className="border-b border-gray-200">
@@ -4274,18 +4582,18 @@ export default function AccountsReceivable() {
 													</tr>
 												</thead>
 												<tbody>
-													{lineItems.length > 0 ? lineItems.map((item: any, idx: number) => (
+													{showInvoiceCharges && chargesDiffer ? chargeLines.map((item, idx) => (
 														<tr key={idx} className="border-b border-gray-100">
 															<td className="py-1 text-gray-500">{idx + 1}</td>
-															<td className="py-1">{item.description || item.name}</td>
-															<td className="py-1 text-right">{item.quantity || item.qty || 1}</td>
-															<td className="py-1 text-right">{formatAccountingCurrency(Number(item.unitPrice || item.price || 0))}</td>
-															<td className="py-1 text-right font-medium">{formatAccountingCurrency(Number((item.quantity || item.qty || 1) * (item.unitPrice || item.price || 0)))}</td>
+															<td className="py-1">{item.description}</td>
+															<td className="py-1 text-right">{item.quantity}</td>
+															<td className="py-1 text-right">{formatAccountingCurrency(item.unitPrice)}</td>
+															<td className="py-1 text-right font-medium">{formatAccountingCurrency(item.amount)}</td>
 														</tr>
 													)) : (
 														<tr className="border-b border-gray-100">
 															<td className="py-1 text-gray-500">1</td>
-															<td className="py-1">{selectedInvoice.description || 'Services/Products'}</td>
+															<td className="py-1">{summaryText}</td>
 															<td className="py-1 text-right">1</td>
 															<td className="py-1 text-right">{formatAccountingCurrency(subtotal)}</td>
 															<td className="py-1 text-right font-medium">{formatAccountingCurrency(subtotal)}</td>
@@ -4497,7 +4805,7 @@ export default function AccountsReceivable() {
 												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Received From</h4>
 												<div className="text-sm space-y-0.5">
 													<div className="font-semibold text-gray-900">{selectedReceipt.customerName || 'Walk-in Customer'}</div>
-													<div className="text-gray-500 font-mono text-xs mt-1">ID: {selectedReceipt.businessPartnerId || '-'}</div>
+													<div className="text-gray-500 font-mono text-xs mt-1">ID: {partyDisplayId(selectedReceipt.businessPartnerId, foGuests, foReservations) || '—'}</div>
 												</div>
 											</div>
 											
@@ -4505,77 +4813,81 @@ export default function AccountsReceivable() {
 											<div>
 												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Processed By</h4>
 												<div className="text-sm space-y-0.5">
-													<div className="flex justify-between gap-2"><span className="text-gray-500">Staff:</span><span className="font-medium">{selectedReceipt.staffName || 'System'}</span></div>
-													<div className="flex justify-between gap-2"><span className="text-gray-500">Staff ID:</span><span className="font-mono text-xs">{selectedReceipt.staffId || '-'}</span></div>
-													<div className="flex justify-between gap-2"><span className="text-gray-500">Role:</span><span>{selectedReceipt.staffRole || 'Staff'}</span></div>
+													<div className="flex justify-between gap-2"><span className="text-gray-500">Staff:</span><span className="font-medium">{receiptStaffName(selectedReceipt, foFolios, salesInvoices) || '—'}</span></div>
+													{selectedReceipt.staffId ? (
+														<div className="flex justify-between gap-2"><span className="text-gray-500">Staff ID:</span><span className="font-mono text-xs">{selectedReceipt.staffId}</span></div>
+													) : null}
+													{selectedReceipt.staffRole ? (
+														<div className="flex justify-between gap-2"><span className="text-gray-500">Role:</span><span>{selectedReceipt.staffRole}</span></div>
+													) : null}
 													<div className="flex justify-between gap-2"><span className="text-gray-500">Department:</span><span>{source.label}</span></div>
 												</div>
 											</div>
 										</div>
 
-										{/* Payment Details */}
-										<div className="pb-3 border-b">
-											<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Payment Details</h4>
-											<div className="bg-gray-50 rounded-md p-2.5 text-sm">
-												<table className="w-full">
-													<tbody>
-														<tr className="border-b border-gray-200">
-															<td className="py-1 text-gray-600">Payment Method</td>
-															<td className="py-1 text-right font-medium">{selectedReceipt.paymentMethod || 'Cash'}</td>
-														</tr>
-														<tr className="border-b border-gray-200">
-															<td className="py-1 text-gray-600">Transaction Date</td>
-															<td className="py-1 text-right">{new Date(selectedReceipt.date).toLocaleDateString()}</td>
-														</tr>
-														<tr className="border-b border-gray-200">
-															<td className="py-1 text-gray-600">Transaction Time</td>
-															<td className="py-1 text-right">{new Date(selectedReceipt.date).toLocaleTimeString()}</td>
-														</tr>
-														<tr className="border-b border-gray-200">
-															<td className="py-1 text-gray-600">Reference</td>
-															<td className="py-1 text-right font-mono text-xs">{selectedReceipt.reference || '-'}</td>
-														</tr>
-														<tr className="border-b border-gray-200">
-															<td className="py-1 text-gray-600">Currency</td>
-															<td className="py-1 text-right">{selectedReceipt.currency || 'GHS'}</td>
-														</tr>
-														<tr className="font-semibold">
-															<td className="py-1 text-gray-800">Amount</td>
-															<td className={`py-1 text-right font-mono ${selectedReceipt.status === 'Void' ? 'text-slate-400 line-through' : 'text-green-700'}`}>{formatAccountingCurrency(Number(selectedReceipt.amount || 0))}</td>
-														</tr>
-													</tbody>
-												</table>
-											</div>
-										</div>
-
-										{/* Linked Invoice */}
-										{linkedInvoice && (
-											<div className="pb-3 border-b">
-												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Applied To Invoice</h4>
-												<div className="bg-gray-50 rounded-md p-2.5 text-sm">
+										<div className={`grid grid-cols-1 gap-3 pb-3 border-b ${linkedInvoice ? 'md:grid-cols-2' : ''}`}>
+											<div>
+												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Payment Details</h4>
+												<div className="bg-gray-50 rounded-md p-2.5 text-sm h-full">
 													<table className="w-full">
 														<tbody>
 															<tr className="border-b border-gray-200">
-																<td className="py-1 text-gray-600">Invoice Number</td>
-																<td className="py-1 text-right font-mono">{(linkedInvoice as any).invoiceNumber || linkedInvoice.id}</td>
+																<td className="py-1 text-gray-600">Payment Method</td>
+																<td className="py-1 text-right font-medium">{selectedReceipt.paymentMethod || 'Cash'}</td>
 															</tr>
 															<tr className="border-b border-gray-200">
-																<td className="py-1 text-gray-600">Invoice Total</td>
-																<td className="py-1 text-right font-mono">{formatAccountingCurrency(Number(linkedInvoice.total || 0))}</td>
+																<td className="py-1 text-gray-600">Transaction Date</td>
+																<td className="py-1 text-right">{new Date(selectedReceipt.date).toLocaleDateString()}</td>
 															</tr>
 															<tr className="border-b border-gray-200">
-																<td className="py-1 text-gray-600">Total Paid (incl. this receipt)</td>
-																<td className="py-1 text-right font-mono text-green-700">{formatAccountingCurrency(Number(linkedInvoice.paidAmount || 0))}</td>
+																<td className="py-1 text-gray-600">Transaction Time</td>
+																<td className="py-1 text-right">{new Date(selectedReceipt.date).toLocaleTimeString()}</td>
 															</tr>
-															<tr className={`font-semibold ${invoiceBalance > 0 ? 'text-red-700' : 'text-green-700'}`}>
-																<td className="py-1">Invoice Balance</td>
-																<td className="py-1 text-right font-mono">{formatAccountingCurrency(invoiceBalance)}</td>
+															<tr className="border-b border-gray-200">
+																<td className="py-1 text-gray-600">Reference</td>
+																<td className="py-1 text-right font-mono text-xs">{selectedReceipt.reference || '-'}</td>
+															</tr>
+															<tr className="border-b border-gray-200">
+																<td className="py-1 text-gray-600">Currency</td>
+																<td className="py-1 text-right">{selectedReceipt.currency || 'GHS'}</td>
+															</tr>
+															<tr className="font-semibold">
+																<td className="py-1 text-gray-800">Amount</td>
+																<td className={`py-1 text-right font-mono ${selectedReceipt.status === 'Void' ? 'text-slate-400 line-through' : 'text-green-700'}`}>{formatAccountingCurrency(Number(selectedReceipt.amount || 0))}</td>
 															</tr>
 														</tbody>
 													</table>
 												</div>
 											</div>
-										)}
+
+											{linkedInvoice && (
+												<div>
+													<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Applied To Invoice</h4>
+													<div className="bg-gray-50 rounded-md p-2.5 text-sm h-full">
+														<table className="w-full">
+															<tbody>
+																<tr className="border-b border-gray-200">
+																	<td className="py-1 pe-2 text-gray-600">Invoice Number</td>
+																	<td className="py-1 text-right font-mono">{(linkedInvoice as any).invoiceNumber || linkedInvoice.id}</td>
+																</tr>
+																<tr className="border-b border-gray-200">
+																	<td className="py-1 pe-2 text-gray-600">Invoice Total</td>
+																	<td className="py-1 text-right font-mono">{formatAccountingCurrency(Number(linkedInvoice.total || 0))}</td>
+																</tr>
+																<tr className="border-b border-gray-200">
+																	<td className="py-1 pe-2 text-gray-600">Total Paid (incl. this receipt)</td>
+																	<td className="py-1 text-right font-mono text-green-700 whitespace-nowrap">{formatAccountingCurrency(Number(linkedInvoice.paidAmount || 0))}</td>
+																</tr>
+																<tr className={`font-semibold ${invoiceBalance > 0 ? 'text-red-700' : 'text-green-700'}`}>
+																	<td className="py-1 pe-2">Invoice Balance</td>
+																	<td className="py-1 text-right font-mono">{formatAccountingCurrency(invoiceBalance)}</td>
+																</tr>
+															</tbody>
+														</table>
+													</div>
+												</div>
+											)}
+										</div>
 
 										{/* Description / Notes */}
 										{selectedReceipt.description && (

@@ -1,10 +1,224 @@
 'use client';
 
 import { Badge, Button, Card, CardBody, CardHeader, Chip, Divider, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Pagination, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, Textarea, Tooltip } from '@heroui/react';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { SortHeader, deskTableCardBodyClassName, deskTableCardClassName, deskTableClassNames, toggleColumnSort } from '../dashboard/deskTableUi';
 import { sizedTableClassNames } from '../frontoffice/columnResize';
+import { trackEvent } from '../../lib/analytics/trackEvent';
+import type { Supplier } from '../../lib/inventory/models';
+import { useSupplierStore } from '../../lib/inventory/supplierStore';
 import { useInventoryScreen } from './inventoryScreenContext';
+
+function blankSupplierForm(code: string): Partial<Supplier> {
+  return {
+    code,
+    name: '',
+    contactPerson: '',
+    email: '',
+    phone: '',
+    address: '',
+    city: '',
+    country: 'Ghana',
+    postalCode: '',
+    taxId: '',
+    paymentTerms: 'net30',
+    creditLimit: 0,
+    currentBalance: 0,
+    rating: 0,
+    categories: [],
+    isActive: true,
+    contractStartDate: new Date(),
+    performance: {
+      onTimeDelivery: 0,
+      qualityRating: 0,
+      responseTime: 0,
+      totalOrders: 0,
+    },
+  };
+}
+
+/** The inventory supplier form. Accounting opens this same dialog. */
+export function SupplierFormModal({
+  isOpen,
+  editing = null,
+  onClose,
+}: {
+  isOpen: boolean;
+  editing?: Supplier | null;
+  onClose: () => void;
+}) {
+  const addSupplier = useSupplierStore((s) => s.addSupplier);
+  const updateSupplier = useSupplierStore((s) => s.updateSupplier);
+  const generateNextSupplierCode = useSupplierStore((s) => s.generateNextSupplierCode);
+  const [form, setForm] = useState<Partial<Supplier>>({});
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (editing) setForm({ ...editing });
+    else setForm(blankSupplierForm(generateNextSupplierCode()));
+  }, [isOpen, editing, generateNextSupplierCode]);
+
+  const handleSave = () => {
+    if (!String(form.name || '').trim()) {
+      alert('Supplier name is required.');
+      return;
+    }
+    if (editing) {
+      updateSupplier(editing.id, form as Partial<Supplier>);
+      trackEvent('Stores.Issued', { action: 'update_supplier', supplierCode: editing.code });
+    } else {
+      const created: Supplier = {
+        ...blankSupplierForm(form.code || generateNextSupplierCode()),
+        ...form,
+        id: Date.now().toString(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        code: form.code || '',
+        name: form.name || '',
+        contactPerson: form.contactPerson || '',
+        email: form.email || '',
+        phone: form.phone || '',
+        address: form.address || '',
+        city: form.city || '',
+        country: form.country || 'Ghana',
+        postalCode: form.postalCode || '',
+        taxId: form.taxId || '',
+        paymentTerms: form.paymentTerms || 'net30',
+        creditLimit: form.creditLimit || 0,
+        currentBalance: form.currentBalance || 0,
+        rating: form.rating || 0,
+        categories: form.categories || [],
+        isActive: form.isActive !== false,
+        contractStartDate: form.contractStartDate || new Date(),
+        performance: form.performance || {
+          onTimeDelivery: 0,
+          qualityRating: 0,
+          responseTime: 0,
+          totalOrders: 0,
+        },
+      };
+      addSupplier(created);
+      trackEvent('Stores.Issued', { action: 'add_supplier', supplierCode: created.code });
+    }
+    onClose();
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} size="3xl" scrollBehavior="inside">
+      <ModalContent>
+        <ModalHeader>{editing ? 'Edit Supplier' : 'Add Supplier'}</ModalHeader>
+        <ModalBody>
+          <p className="text-sm text-slate-500 -mt-1 mb-2">
+            Who you buy from. Rating and balance stay on View / Accounting.
+          </p>
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label="Supplier Code"
+              value={form.code || ''}
+              onChange={(e) => setForm({ ...form, code: e.target.value })}
+              placeholder="Auto-generated"
+              isDisabled={!editing}
+              description={editing ? 'Code can be edited' : 'Auto-generated'}
+              isRequired
+            />
+            <Input
+              label="Supplier Name"
+              value={form.name || ''}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="e.g. Accra Fresh Foods Ltd"
+              isRequired
+              classNames={{ input: 'font-medium' }}
+            />
+            <Input
+              label="Contact Person"
+              value={form.contactPerson || ''}
+              onChange={(e) => setForm({ ...form, contactPerson: e.target.value })}
+              placeholder="Who we call"
+            />
+            <Input
+              label="Phone"
+              value={form.phone || ''}
+              onChange={(e) => setForm({ ...form, phone: e.target.value })}
+              placeholder="+233 XX XXX XXXX"
+            />
+            <Input
+              label="Email"
+              type="email"
+              value={form.email || ''}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              placeholder="supplier@email.com"
+              className="col-span-2"
+            />
+            <Textarea
+              label="Address"
+              value={form.address || ''}
+              onChange={(e) => setForm({ ...form, address: e.target.value })}
+              placeholder="Street / building"
+              className="col-span-2"
+              minRows={2}
+            />
+            <Input
+              label="City"
+              value={form.city || ''}
+              onChange={(e) => setForm({ ...form, city: e.target.value })}
+              placeholder="e.g. Accra"
+            />
+            <Input
+              label="Category — what they’re into"
+              value={form.categories?.join(', ') || ''}
+              onChange={(e) => setForm({
+                ...form,
+                categories: e.target.value.split(',').map((c) => c.trim()).filter(Boolean),
+              })}
+              placeholder="e.g. food, cleaning, linens"
+              description="Separate with commas — shows as chips in the table"
+            />
+            <Select
+              label="Payment Terms"
+              selectedKeys={form.paymentTerms ? [form.paymentTerms] : ['net30']}
+              onSelectionChange={(keys) => setForm({ ...form, paymentTerms: Array.from(keys)[0] as Supplier['paymentTerms'] })}
+            >
+              <SelectItem key="immediate">Immediate</SelectItem>
+              <SelectItem key="net30">Net 30</SelectItem>
+              <SelectItem key="net60">Net 60</SelectItem>
+              <SelectItem key="net90">Net 90</SelectItem>
+            </Select>
+            <Input
+              label="Credit Limit (₵)"
+              type="number"
+              value={form.creditLimit?.toString() || '0'}
+              onChange={(e) => setForm({ ...form, creditLimit: parseFloat(e.target.value) || 0 })}
+              description="Optional"
+            />
+            <Input
+              label="Tax ID / TIN"
+              value={form.taxId || ''}
+              onChange={(e) => setForm({ ...form, taxId: e.target.value })}
+              placeholder="e.g. GH123456789"
+              className="col-span-2"
+            />
+            <div className="col-span-2">
+              <Chip
+                color={form.isActive !== false ? 'success' : 'warning'}
+                variant="flat"
+                onClick={() => setForm({ ...form, isActive: !(form.isActive !== false) })}
+                className="cursor-pointer"
+              >
+                {form.isActive !== false ? '✓ Active — ready to buy from' : 'Inactive — paused'}
+              </Chip>
+            </div>
+          </div>
+        </ModalBody>
+        <ModalFooter>
+          <Button variant="bordered" onPress={onClose}>Cancel</Button>
+          <Button color="primary" className="bg-blue-500" onPress={handleSave}>
+            {editing ? 'Update' : 'Add'} Supplier
+          </Button>
+        </ModalFooter>
+      </ModalContent>
+    </Modal>
+  );
+}
 
 /** Inventory → Suppliers. Supplier table. */
 export function SuppliersTable() {
@@ -194,122 +408,11 @@ export function SupplierModals() {
         {/* Supplier Modals - rendered outside conditional to avoid hook issues */}
         {inventoryScreen.selectedTab === 'suppliers' && (
           <>
-            {/* Add/Edit Supplier Modal */}
-            <Modal isOpen={inventoryScreen.isSupplierModalOpen} onClose={inventoryScreen.onSupplierModalClose} size="3xl" scrollBehavior="inside">
-              <ModalContent>
-                <ModalHeader>
-                  {inventoryScreen.editingSupplier ? 'Edit Supplier' : 'Add Supplier'}
-                </ModalHeader>
-                <ModalBody>
-                  <p className="text-sm text-slate-500 -mt-1 mb-2">
-                    Who you buy from. Rating and balance stay on View / Accounting.
-                  </p>
-                  <div className="grid grid-cols-2 gap-4">
-                    <Input
-                      label="Supplier Code"
-                      value={inventoryScreen.supplierFormData.code || ''}
-                      onChange={(e) => inventoryScreen.setSupplierFormData({ ...inventoryScreen.supplierFormData, code: e.target.value })}
-                      placeholder="Auto-generated"
-                      isDisabled={!inventoryScreen.editingSupplier}
-                      description={inventoryScreen.editingSupplier ? 'Code can be edited' : 'Auto-generated'}
-                      isRequired
-                    />
-                    <Input
-                      label="Supplier Name"
-                      value={inventoryScreen.supplierFormData.name || ''}
-                      onChange={(e) => inventoryScreen.setSupplierFormData({ ...inventoryScreen.supplierFormData, name: e.target.value })}
-                      placeholder="e.g. Accra Fresh Foods Ltd"
-                      isRequired
-                      classNames={{ input: 'font-medium' }}
-                    />
-                    <Input
-                      label="Contact Person"
-                      value={inventoryScreen.supplierFormData.contactPerson || ''}
-                      onChange={(e) => inventoryScreen.setSupplierFormData({ ...inventoryScreen.supplierFormData, contactPerson: e.target.value })}
-                      placeholder="Who we call"
-                    />
-                    <Input
-                      label="Phone"
-                      value={inventoryScreen.supplierFormData.phone || ''}
-                      onChange={(e) => inventoryScreen.setSupplierFormData({ ...inventoryScreen.supplierFormData, phone: e.target.value })}
-                      placeholder="+233 XX XXX XXXX"
-                    />
-                    <Input
-                      label="Email"
-                      type="email"
-                      value={inventoryScreen.supplierFormData.email || ''}
-                      onChange={(e) => inventoryScreen.setSupplierFormData({ ...inventoryScreen.supplierFormData, email: e.target.value })}
-                      placeholder="supplier@email.com"
-                      className="col-span-2"
-                    />
-                    <Textarea
-                      label="Address"
-                      value={inventoryScreen.supplierFormData.address || ''}
-                      onChange={(e) => inventoryScreen.setSupplierFormData({ ...inventoryScreen.supplierFormData, address: e.target.value })}
-                      placeholder="Street / building"
-                      className="col-span-2"
-                      minRows={2}
-                    />
-                    <Input
-                      label="City"
-                      value={inventoryScreen.supplierFormData.city || ''}
-                      onChange={(e) => inventoryScreen.setSupplierFormData({ ...inventoryScreen.supplierFormData, city: e.target.value })}
-                      placeholder="e.g. Accra"
-                    />
-                    <Input
-                      label="Category — what they’re into"
-                      value={inventoryScreen.supplierFormData.categories?.join(', ') || ''}
-                      onChange={(e) => inventoryScreen.setSupplierFormData({
-                        ...inventoryScreen.supplierFormData,
-                        categories: e.target.value.split(',').map(c => c.trim()).filter(Boolean),
-                      })}
-                      placeholder="e.g. food, cleaning, linens"
-                      description="Separate with commas — shows as chips in the table"
-                    />
-                    <Select
-                      label="Payment Terms"
-                      selectedKeys={inventoryScreen.supplierFormData.paymentTerms ? [inventoryScreen.supplierFormData.paymentTerms] : ['net30']}
-                      onSelectionChange={(keys) => inventoryScreen.setSupplierFormData({ ...inventoryScreen.supplierFormData, paymentTerms: Array.from(keys)[0] as any })}
-                    >
-                      <SelectItem key="immediate">Immediate</SelectItem>
-                      <SelectItem key="net30">Net 30</SelectItem>
-                      <SelectItem key="net60">Net 60</SelectItem>
-                      <SelectItem key="net90">Net 90</SelectItem>
-                    </Select>
-                    <Input
-                      label="Credit Limit (₵)"
-                      type="number"
-                      value={inventoryScreen.supplierFormData.creditLimit?.toString() || '0'}
-                      onChange={(e) => inventoryScreen.setSupplierFormData({ ...inventoryScreen.supplierFormData, creditLimit: parseFloat(e.target.value) || 0 })}
-                      description="Optional"
-                    />
-                    <Input
-                      label="Tax ID / TIN"
-                      value={inventoryScreen.supplierFormData.taxId || ''}
-                      onChange={(e) => inventoryScreen.setSupplierFormData({ ...inventoryScreen.supplierFormData, taxId: e.target.value })}
-                      placeholder="e.g. GH123456789"
-                      className="col-span-2"
-                    />
-                    <div className="col-span-2">
-                      <Chip
-                        color={inventoryScreen.supplierFormData.isActive !== false ? 'success' : 'warning'}
-                        variant="flat"
-                        onClick={() => inventoryScreen.setSupplierFormData({ ...inventoryScreen.supplierFormData, isActive: !(inventoryScreen.supplierFormData.isActive !== false) })}
-                        className="cursor-pointer"
-                      >
-                        {inventoryScreen.supplierFormData.isActive !== false ? '✓ Active — ready to buy from' : 'Inactive — paused'}
-                      </Chip>
-                    </div>
-                  </div>
-                </ModalBody>
-                <ModalFooter>
-                  <Button variant="bordered" onPress={inventoryScreen.onSupplierModalClose}>Cancel</Button>
-                  <Button color="primary" className="bg-blue-500" onPress={inventoryScreen.handleSaveSupplier}>
-                    {inventoryScreen.editingSupplier ? 'Update' : 'Add'} Supplier
-                  </Button>
-                </ModalFooter>
-              </ModalContent>
-            </Modal>
+            <SupplierFormModal
+              isOpen={inventoryScreen.isSupplierModalOpen}
+              editing={inventoryScreen.editingSupplier}
+              onClose={inventoryScreen.onSupplierModalClose}
+            />
 
             {/* View Supplier Details Modal */}
             <Modal isOpen={inventoryScreen.supplierViewOpen} onClose={() => inventoryScreen.setSupplierViewOpen(false)} size="2xl" scrollBehavior="inside">

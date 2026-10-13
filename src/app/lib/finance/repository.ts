@@ -45,24 +45,6 @@ export async function upsertAccount(params: {
 	});
 }
 
-export async function upsertTax(params: {
-	tenantId: string;
-	code: string;
-	name: string;
-	rate: any;
-	type: string;
-	isInclusive?: boolean;
-	isActive?: boolean;
-}) {
-	console.log('[finance][upsertTax]', params);
-	const { tenantId, code, ...rest } = params;
-	return prisma.tax.upsert({
-		where: { tenantId_code: { tenantId, code } },
-		update: { ...rest },
-		create: { tenantId, code, ...rest },
-	});
-}
-
 export async function upsertPaymentMethod(params: {
 	tenantId: string;
 	code: string;

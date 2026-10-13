@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant';
 import { requireAuth } from '@/app/lib/api/auth-guard';
-import { listAccountingAuditTrail } from '@/app/lib/accounting/auditTrailList';
 import {
   listBankAccounts,
-  listBankTransactions,
   listBusinessPartners,
   listChartOfAccounts,
   listCostCenters,
   listInvoices,
-  listJournalEntries,
   listPayments,
   listRevenueCenters,
 } from '@/app/lib/accounting/repository';
@@ -28,8 +25,8 @@ export async function GET(request: NextRequest) {
     if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
 
     const tenantId = ctx.tenantId;
+    // Journal lines, the cashbook, and the activity log load when those desks open.
     const [
-      journalEntries,
       invoices,
       payments,
       chartOfAccounts,
@@ -37,10 +34,7 @@ export async function GET(request: NextRequest) {
       costCenters,
       revenueCenters,
       businessPartners,
-      bankTransactions,
-      auditTrail,
     ] = await Promise.all([
-      listJournalEntries(tenantId),
       listInvoices(tenantId),
       listPayments(tenantId),
       listChartOfAccounts(tenantId),
@@ -48,12 +42,9 @@ export async function GET(request: NextRequest) {
       listCostCenters(tenantId),
       listRevenueCenters(tenantId),
       listBusinessPartners(tenantId),
-      listBankTransactions(tenantId),
-      listAccountingAuditTrail(tenantId),
     ]);
 
     return NextResponse.json({
-      journalEntries,
       invoices,
       payments,
       chartOfAccounts,
@@ -61,8 +52,6 @@ export async function GET(request: NextRequest) {
       costCenters,
       revenueCenters,
       businessPartners,
-      bankTransactions,
-      auditTrail,
     });
   } catch (error) {
     console.error('[accounting/bootstrap][GET] error', error);

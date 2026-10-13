@@ -10,6 +10,7 @@ export const GL_ACCOUNTS = {
   // Assets
   CASH: '1110',
   BANK: '1120',
+  MOBILE_MONEY: '1130',
   ACCOUNTS_RECEIVABLE: '1210',
 
   // Liabilities
@@ -46,11 +47,32 @@ export const REVENUE_CENTERS = {
   SERVICE_CHARGES: 'SC',
 } as const;
 
+/** Department that earned a folio charge. Cash and bank settlement lines stay untagged. */
+export function revenueCenterForGl(glCode: string): string | null {
+  switch ((glCode || '').trim()) {
+    case GL_ACCOUNTS.ROOM_REVENUE:
+      return REVENUE_CENTERS.ROOM;
+    case GL_ACCOUNTS.FB_REVENUE:
+    case GL_ACCOUNTS.FB_REVENUE_RESTAURANT:
+      return REVENUE_CENTERS.RESTAURANT;
+    case GL_ACCOUNTS.FB_REVENUE_BAR:
+      return REVENUE_CENTERS.BAR;
+    case GL_ACCOUNTS.FB_REVENUE_ROOM_SERVICE:
+      return REVENUE_CENTERS.ROOM_SERVICE;
+    case GL_ACCOUNTS.CONFERENCE_REVENUE:
+      return REVENUE_CENTERS.CONFERENCE;
+    case GL_ACCOUNTS.SERVICE_CHARGES:
+      return REVENUE_CENTERS.SERVICE_CHARGES;
+    default:
+      return null;
+  }
+}
+
 /** Payment method → cash/bank leaf. Shared by integration, simpleFlow, invoicePostingBridge. */
 export const PAYMENT_GL_MAP: Record<string, string> = {
   Cash: GL_ACCOUNTS.CASH,
   Card: GL_ACCOUNTS.BANK,
-  'Mobile Money': GL_ACCOUNTS.BANK,
+  'Mobile Money': GL_ACCOUNTS.MOBILE_MONEY,
   'Bank Transfer': GL_ACCOUNTS.BANK,
   Bank: GL_ACCOUNTS.BANK,
   Cheque: GL_ACCOUNTS.BANK,

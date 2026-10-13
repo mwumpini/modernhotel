@@ -110,6 +110,9 @@ function blockedByBackdateLock(record: { date?: unknown; sourceModule?: unknown 
 
 let ledgerRefreshInFlight: Promise<void> | null = null;
 let accountingInitInFlight: Promise<void> | null = null;
+let journalHydrateInFlight: Promise<void> | null = null;
+let bankTxnHydrateInFlight: Promise<void> | null = null;
+let auditHydrateInFlight: Promise<void> | null = null;
 
 interface AccountingState {
   // Chart of Accounts
@@ -118,6 +121,9 @@ interface AccountingState {
   
   // Journal Entries
   journalEntries: JournalEntry[];
+  journalHydrated: boolean;
+  bankTransactionsHydrated: boolean;
+  auditHydrated: boolean;
   currentJournalEntry: JournalEntry | null;
   
   // General Ledger
@@ -368,8 +374,14 @@ interface AccountingState {
   
   // Initialize
   initializeAccounting: () => Promise<void>;
-  /** Re-read invoices, receipts, and journal entries already saved on the server. */
-  refreshLedgerFromServer: () => Promise<void>;
+  /** Journal lines. Loaded when the journal, statements, reports, or bank desk opens. */
+  ensureJournalEntries: (options?: { refresh?: boolean }) => Promise<void>;
+  /** Cashbook lines. Loaded when Bank & Cash opens, or the cash summary is on screen. */
+  ensureBankTransactions: () => Promise<void>;
+  /** Activity log. Loaded when that desk opens. */
+  ensureAuditTrail: () => Promise<void>;
+  /** Re-read invoices and receipts. Pass journal: true only while a desk that uses the journal is open. */
+  refreshLedgerFromServer: (options?: { journal?: boolean }) => Promise<void>;
 }
 
 export const useAccountingStore = create<AccountingState>((set, get) => ({
@@ -378,6 +390,9 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   _syncingToInventory: false,
   selectedAccount: null,
   journalEntries: [],
+  journalHydrated: false,
+  bankTransactionsHydrated: false,
+  auditHydrated: false,
   currentJournalEntry: null,
   glBalances: [],
   currentPeriod: new Date().toISOString().slice(0, 7), // YYYY-MM
@@ -3312,17 +3327,76 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   setLoading: (loading) => set({ isLoading: loading }),
   setError: (error) => set({ error }),
 
-  refreshLedgerFromServer: () => {
+  ensureJournalEntries: (options) => {
+    const refresh = options?.refresh === true;
+    if (!refresh && get().journalHydrated) return Promise.resolve();
+    if (!refresh && journalHydrateInFlight) return journalHydrateInFlight;
+    const job = (async () => {
+      const rows = await fetchJournalEntries();
+      if (!rows) return;
+      const demoMode = isAccountingDemoMode();
+      set((s) => {
+        const merged = mergeServerRecordsByRecency(s.journalEntries, rows);
+        return {
+          journalEntries: demoMode ? merged : keepServerOrFresh(merged, rows),
+          journalHydrated: true,
+        };
+      });
+    })();
+    journalHydrateInFlight = job;
+    void job.finally(() => {
+      if (journalHydrateInFlight === job) journalHydrateInFlight = null;
+    });
+    return job;
+  },
+
+  ensureBankTransactions: () => {
+    if (get().bankTransactionsHydrated) return Promise.resolve();
+    if (bankTxnHydrateInFlight) return bankTxnHydrateInFlight;
+    bankTxnHydrateInFlight = (async () => {
+      const rows = await fetchBankTransactions();
+      if (!rows) return;
+      set({
+        bankTransactions: rows.length > 0 || !isAccountingDemoMode() ? rows : get().bankTransactions,
+        bankTransactionsHydrated: true,
+      });
+    })().finally(() => {
+      bankTxnHydrateInFlight = null;
+    });
+    return bankTxnHydrateInFlight;
+  },
+
+  ensureAuditTrail: () => {
+    if (get().auditHydrated) return Promise.resolve();
+    if (auditHydrateInFlight) return auditHydrateInFlight;
+    auditHydrateInFlight = (async () => {
+      const rows = await fetchAccountingAuditTrail();
+      if (!rows) return;
+      set({
+        auditTrail: rows.length > 0 || !isAccountingDemoMode() ? rows : get().auditTrail,
+        auditHydrated: true,
+      });
+    })().finally(() => {
+      auditHydrateInFlight = null;
+    });
+    return auditHydrateInFlight;
+  },
+
+  refreshLedgerFromServer: (options) => {
     if (ledgerRefreshInFlight) return ledgerRefreshInFlight;
     let job!: Promise<void>;
     job = (async () => {
+      const wantJournal = options?.journal === true && get().journalHydrated;
       const [serverJEs, serverInvoices, serverPayments] = await Promise.all([
-        fetchJournalEntries(),
+        wantJournal ? fetchJournalEntries() : Promise.resolve(null),
         fetchInvoices(),
         fetchPayments(),
       ]);
-      if (serverJEs && serverJEs.length > 0) {
-        set((s) => ({ journalEntries: mergeServerRecordsByRecency(s.journalEntries, serverJEs) }));
+      if (wantJournal && serverJEs && serverJEs.length > 0) {
+        set((s) => {
+          const merged = mergeServerRecordsByRecency(s.journalEntries, serverJEs);
+          return { journalEntries: isAccountingDemoMode() ? merged : keepServerOrFresh(merged, serverJEs) };
+        });
       }
       if (serverInvoices && serverInvoices.length > 0) {
         set((s) => {
@@ -3444,6 +3518,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       const BACKFILL_COA_CODES = [
         '5680', // Miscellaneous Expenses — catch-all posting target
         '2205', // Trade Accounts Payable — the postable leaf under 2200 (was missing; postings had nowhere to go but the header)
+        '1130', // Mobile Money — own till, beside cash 1110 and bank 1120
       ];
 
       /** First visit: load prebuilt COA. After that: keep user edits (incl. deletions), backfilling only newly-added default codes. */
@@ -3504,8 +3579,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       // to the individual reads so a fresh deploy still opens.
       const boot = await fetchAccountingBootstrap();
       const loaded = boot ?? await (async () => {
-        const [serverJEs, serverInvoices, serverPayments, serverCoa, serverBankAccounts, serverCostCenters, serverRevenueCenters, serverPartners, serverBankTxns, serverAudit] = await Promise.all([
-          fetchJournalEntries(),
+        const [serverInvoices, serverPayments, serverCoa, serverBankAccounts, serverCostCenters, serverRevenueCenters, serverPartners] = await Promise.all([
           fetchInvoices(),
           fetchPayments(),
           fetchChartOfAccounts(),
@@ -3513,11 +3587,9 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
           fetchCostCenters(),
           fetchRevenueCenters(),
           fetchBusinessPartners(),
-          fetchBankTransactions(),
-          fetchAccountingAuditTrail(),
         ]);
         return {
-          journalEntries: serverJEs,
+          journalEntries: null,
           invoices: serverInvoices,
           payments: serverPayments,
           chartOfAccounts: serverCoa,
@@ -3525,8 +3597,8 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
           costCenters: serverCostCenters,
           revenueCenters: serverRevenueCenters,
           businessPartners: serverPartners,
-          bankTransactions: serverBankTxns,
-          auditTrail: serverAudit,
+          bankTransactions: null,
+          auditTrail: null,
         };
       })();
       const serverJEs = loaded.journalEntries;

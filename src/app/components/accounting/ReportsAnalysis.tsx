@@ -233,7 +233,12 @@ export default function ReportsAnalysis({ embedded = false }: { embedded?: boole
 
   useEffect(() => {
     setGeneratedAt(new Date().toLocaleString());
-    initializeAccounting().catch(() => {});
+    void initializeAccounting()
+      .then(() => Promise.all([
+        useAccountingStore.getState().ensureJournalEntries(),
+        useAccountingStore.getState().ensureBankTransactions(),
+      ]))
+      .catch(() => {});
     try {
       const kpis = localStorage.getItem('accounting.report-summary-preferences');
       const columns = localStorage.getItem('accounting.report-column-preferences');
@@ -319,7 +324,12 @@ export default function ReportsAnalysis({ embedded = false }: { embedded?: boole
 
   const handleRefresh = () => {
     setGeneratedAt(new Date().toLocaleString());
-    initializeAccounting().catch(() => {});
+    void initializeAccounting()
+      .then(() => Promise.all([
+        useAccountingStore.getState().ensureJournalEntries({ refresh: true }),
+        useAccountingStore.getState().ensureBankTransactions(),
+      ]))
+      .catch(() => {});
   };
 
   const exportRows = rows.map((row) => {

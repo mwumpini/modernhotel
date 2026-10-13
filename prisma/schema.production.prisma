@@ -1196,6 +1196,8 @@ model FBMenuItem {
   venue         String
   route         String   @default("kitchen")
   unitPrice     Decimal  @db.Decimal(10, 2)
+  /// True: unitPrice is what the guest pays. False: tax is added on top.
+  priceIncludesTax Boolean @default(true)
   costPrice     Decimal  @default(0) @db.Decimal(10, 2)
   glAccountCode String   @default("4200")
   isAvailable   Boolean  @default(true)

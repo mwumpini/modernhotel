@@ -68,12 +68,13 @@ const FoodBeverageMainDashboard = lazyRetry(() => import('./FoodBeverageMainDash
 const FoodBeverageKitchen = lazyRetry(() => import('./FoodBeverageKitchen'));
 const DepartmentActivityLog = lazyRetry(() => import('./DepartmentActivityLog').then(module => ({ default: module.default })));
 const FrontOfficeReportsAnalysis = lazyRetry(() => import('./FrontOfficeReportsAnalysis'));
+const UserManagementUnified = lazyRetry(() => import('./UserManagementUnified'));
 
 interface NavigationProps {
   onLogout: () => void;
 }
 
-type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'restaurant' | 'kitchen' | 'pos' | 'security' | 'hr' | 'accounting' | 'settings' | 'compliance' | 'inventory' | 'rooms-bookings' | 'invoices-payments' | 'clients-services' | 'events-conferences' | 'events-conferences-standalone' | 'events-conferences-analytics' | 'events-conferences-preferences' | 'food-beverage' | 'fb-analytics' | 'fb-preferences' | 'accounting-management' | 'hr-payroll-management' | 'security-compliance' | 'inventory-supply-chain' | 'reports-analytics' | 'fb-pos' | 'fb-restaurant-bar' | 'fb-kitchen' | 'fb-menu-inventory' | 'fb-staff-reports' | 'housekeeping-analytics' | 'housekeeping-preferences' | 'inventory-analytics' | 'inventory-preferences' | 'security-analytics' | 'security-preferences' | 'hr-analytics' | 'hr-preferences' | 'frontdesk-activities' | 'fb-activities' | 'housekeeping-activities' | 'inventory-activities' | 'security-activities' | 'hr-activities' | 'accounting-activities' | 'chart-of-accounts' | 'bank-cash-management' | 'accounts-payable' | 'inventory-fixed-assets' | 'financial-reports' | 'audit-controls' | 'check-ins' | 'in-house' | 'check-outs' | 'executive-approvals';
+type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'restaurant' | 'kitchen' | 'pos' | 'security' | 'hr' | 'accounting' | 'settings' | 'my-profile' | 'compliance' | 'inventory' | 'rooms-bookings' | 'invoices-payments' | 'clients-services' | 'events-conferences' | 'events-conferences-standalone' | 'events-conferences-analytics' | 'events-conferences-preferences' | 'food-beverage' | 'fb-analytics' | 'fb-preferences' | 'accounting-management' | 'hr-payroll-management' | 'security-compliance' | 'inventory-supply-chain' | 'reports-analytics' | 'fb-pos' | 'fb-restaurant-bar' | 'fb-kitchen' | 'fb-menu-inventory' | 'fb-staff-reports' | 'housekeeping-analytics' | 'housekeeping-preferences' | 'inventory-analytics' | 'inventory-preferences' | 'security-analytics' | 'security-preferences' | 'hr-analytics' | 'hr-preferences' | 'frontdesk-activities' | 'fb-activities' | 'housekeeping-activities' | 'inventory-activities' | 'security-activities' | 'hr-activities' | 'accounting-activities' | 'chart-of-accounts' | 'bank-cash-management' | 'accounts-payable' | 'inventory-fixed-assets' | 'financial-reports' | 'audit-controls' | 'check-ins' | 'in-house' | 'check-outs' | 'executive-approvals';
 
 /** Maps any ActiveSection (including deep sub-pages) to the top-level module key used for
  *  nav-menu access control (navigationSections[].key / hasModuleAccess). */
@@ -93,7 +94,7 @@ function sectionToModuleKey(section: ActiveSection): string {
   const accounting = new Set(['accounting', 'accounting-management', 'accounting-activities', 'chart-of-accounts', 'bank-cash-management', 'accounts-payable', 'inventory-fixed-assets', 'financial-reports', 'audit-controls']);
   const compliance = new Set(['compliance', 'reports-analytics']);
 
-  if (section === 'dashboard') return 'dashboard';
+  if (section === 'dashboard' || section === 'my-profile') return 'dashboard';
   if (frontdesk.has(section)) return 'frontdesk';
   if (events.has(section)) return 'events-conferences';
   if (restaurant.has(section)) return 'restaurant';
@@ -116,11 +117,7 @@ function resolveNavSection(target: string): ActiveSection {
       try { localStorage.setItem('settings.tab', 'users'); } catch {}
       return 'settings';
     case 'user-preferences':
-      try {
-        localStorage.setItem('settings.tab', 'users');
-        localStorage.setItem('settings.usersSubTab', 'preferences');
-      } catch {}
-      return 'settings';
+      return 'my-profile';
     case 'room-configuration':
       try { localStorage.setItem('settings.tab', 'rooms'); } catch {}
       return 'settings';
@@ -444,6 +441,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
   // instead of silently continuing to render restricted content.
   React.useEffect(() => {
     if (!settingsHydrated) return;
+    // Own profile is not a module. A front-office-only user still opens it from their name.
+    if (activeSection === 'my-profile') return;
     const activeModuleKey = sectionToModuleKey(activeSection);
     const allowed = hasModuleAccess(activeModuleKey) && moduleEnabled(activeModuleKey, moduleSettings);
     const desk = useSettingsStore.getState().hasPermission('housekeeping.assign-task')
@@ -806,6 +805,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading Accounting Activities...</div>}><DepartmentActivityLog area="accounting" title="Accounting - View Activities" /></Suspense>;
       case 'settings':
         return <Suspense fallback={<div className="p-6 text-center">Loading System Settings...</div>}><SystemSettingsMainDashboard /></Suspense>;
+      case 'my-profile':
+        return <Suspense fallback={<div className="p-6 text-center">Loading your profile...</div>}><div className="p-6"><UserManagementUnified selfService /></div></Suspense>;
       case 'compliance':
         return <Suspense fallback={<div className="p-6 text-center">Loading Compliance Dashboard...</div>}><AutoComplianceMainDashboard /></Suspense>;
       case 'inventory':
@@ -940,13 +941,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
               className="flex items-center mb-4 cursor-pointer"
               role="button"
               aria-label="Go to user profile and preferences"
-              onClick={() => {
-                try {
-                  localStorage.setItem('settings.tab', 'users');
-                  localStorage.setItem('settings.usersSubTab', 'preferences');
-                } catch {}
-                setActiveSection('settings');
-              }}
+              onClick={() => setActiveSection('my-profile')}
             >
               <Avatar
                 name={currentUserName}

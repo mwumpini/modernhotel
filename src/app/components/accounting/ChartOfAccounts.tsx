@@ -499,7 +499,7 @@ export default function ChartOfAccountsPage() {
   return (
     <div className="px-3 pt-2 pb-3 md:px-4 md:pt-3 md:pb-4 w-full">
       <div className="mb-2 flex items-center gap-1.5">
-        <h1 className="text-lg md:text-xl font-bold text-gray-800">Books</h1>
+        <h1 className="text-lg md:text-xl font-bold text-gray-800">Chart of Accounts</h1>
         <HeadingInfo label="About the books">
           The list of accounts money posts to. Bank, invoices, and journals all point here.
         </HeadingInfo>

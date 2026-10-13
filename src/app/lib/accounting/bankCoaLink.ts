@@ -3,6 +3,7 @@ import { collectDescendantIds, generateCoaCode, mapCoaTypeToRollup } from './coa
 
 export const GL_CASH_IN_HAND = '1110';
 export const GL_BANK_ACCOUNTS = '1120';
+export const GL_MOBILE_MONEY = '1130';
 export const GL_CASH_EQUIVALENTS = '1100';
 
 const CASH_BANK_HEADER_CODES = new Set(['1000', '1100']);
@@ -11,11 +12,17 @@ const CASH_BANK_HEADER_CODES = new Set(['1000', '1100']);
 export function isBankOrCashGlCode(code: string): boolean {
   if (!code) return false;
   const c = code.trim();
-  if (c === '1000' || c === GL_CASH_EQUIVALENTS || c === GL_CASH_IN_HAND || c === GL_BANK_ACCOUNTS) {
+  if (
+    c === '1000' ||
+    c === GL_CASH_EQUIVALENTS ||
+    c === GL_CASH_IN_HAND ||
+    c === GL_BANK_ACCOUNTS ||
+    c === GL_MOBILE_MONEY
+  ) {
     return true;
   }
   const n = parseInt(c, 10);
-  return !isNaN(n) && n >= 1121 && n <= 1199;
+  return !isNaN(n) && n >= 1121 && n <= 1199 && c !== GL_MOBILE_MONEY;
 }
 
 export function isPettyCashAccount(accountName?: string, bankName?: string): boolean {
@@ -89,6 +96,7 @@ export function generateBankSubAccountCode(chart: ChartOfAccounts[], bankParentI
   }
   for (let n = max + 1; n < 1200; n++) {
     const code = String(n);
+    if (code === GL_MOBILE_MONEY) continue;
     if (!used.has(code)) return code;
   }
   return generateCoaCode('Asset', chart);

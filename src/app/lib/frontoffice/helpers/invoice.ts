@@ -149,9 +149,12 @@ export function generateAccountingInvoiceForReservation(self: StoreLike, reserva
         date: p.date,
         type: 'Receipt',
         businessPartnerId: partnerId,
+        customerName: reservation.guestName,
+        reservationId,
         invoiceId: newId,
         reference: p.ref,
         description: isRefund ? `Refund — ${invNumber}` : `Payment for ${invNumber}`,
+        staffName: p.processedBy || undefined,
         amount: amt,
         currency: 'GHS',
         paymentMethod: method as any,
@@ -257,7 +260,7 @@ export function retryPendingGlPost(self: StoreLike, reservationId: string): bool
  * alone never reaches Receipts, so write the cash receipt against that invoice now.
  * Payments already on the folio at checkout are posted with the invoice instead.
  */
-export function postFolioReceiptAfterInvoice(self: StoreLike, reservationId: string, payment: { id: string; amount?: number; method?: string; date?: string; status?: string; ref?: string }) {
+export function postFolioReceiptAfterInvoice(self: StoreLike, reservationId: string, payment: { id: string; amount?: number; method?: string; date?: string; status?: string; ref?: string; processedBy?: string }) {
   const reservation = self.reservations.find((r: any) => r.id === reservationId);
   if (!reservation?.invoiceGenerated) return;
   if (payment.status && payment.status !== 'completed') return;
@@ -306,7 +309,9 @@ export function postFolioReceiptAfterInvoice(self: StoreLike, reservationId: str
     createdAt: now,
     updatedAt: now,
     sourceModule: 'front_office',
+    reservationId,
     folioPaymentId: payment.id,
+    staffName: payment.processedBy || undefined,
   } as any);
 }
 

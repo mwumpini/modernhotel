@@ -6,22 +6,19 @@ import { SampleCtx, prisma, round2 } from './common'
  * activity. Every entry id starts with the sample prefix, so removal finds exactly these.
  */
 
-// Ghana's sales-tax stack as the app applies it: levies on the net amount, VAT on net + levies.
-const LEVIES: Array<[string, string, number]> = [
+// Same flat stack Compliance uses: NHIL, GETFund, Tourism, and VAT each on the net amount.
+const SALES: Array<[string, string, number]> = [
   ['2120', 'National Health Insurance Levy', 0.025],
   ['2130', 'GETFund Levy', 0.025],
   ['2150', 'Tourism Development Levy', 0.01],
+  ['2110', 'Value Added Tax', 0.15],
 ]
-const VAT_RATE = 0.15
 
 export type TaxLine = { accountCode: string; name: string; amount: number }
 
-/** The tax lines on a tax-exclusive amount (≈ 21.9% in total). */
+/** Sample-data tax on a tax-exclusive amount (21% when the Ghana sales rules are unchanged). */
 export function salesTax(net: number): { lines: TaxLine[]; total: number } {
-  const levyLines = LEVIES.map(([accountCode, name, rate]) => ({ accountCode, name, amount: round2(net * rate) }))
-  const levyTotal = levyLines.reduce((s, l) => s + l.amount, 0)
-  const vat = { accountCode: '2110', name: 'Value Added Tax', amount: round2((net + levyTotal) * VAT_RATE) }
-  const lines = [...levyLines, vat]
+  const lines = SALES.map(([accountCode, name, rate]) => ({ accountCode, name, amount: round2(net * rate) }))
   return { lines, total: round2(lines.reduce((s, l) => s + l.amount, 0)) }
 }
 

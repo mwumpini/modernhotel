@@ -1103,6 +1103,19 @@ export function buildDemoTransactionSeed(): DemoTransactionSeed {
           isActive: true,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
+        },
+        {
+          id: 'reg-momo-1130',
+          accountNumber: '1130-0001',
+          accountName: 'Mobile Money',
+          bankName: 'Mobile Money',
+          currency: 'GHS',
+          glAccountCode: '1130',
+          openingBalance: 0,
+          currentBalance: 0,
+          isActive: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         }
       ];
 

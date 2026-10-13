@@ -200,7 +200,7 @@ function SwatchRow({
   );
 }
 
-export default function UserManagementUnified() {
+export default function UserManagementUnified({ selfService = false }: { selfService?: boolean } = {}) {
   const { users, roles, addUser, updateUser, deleteUser, currentUser, updateUserProfile, updateUserPreferences, changePassword, addRole, updateRole, deleteRole, hasPermission } = useSettingsStore();
   const signedInRoleId = useSettingsStore((s) => s.sessionRoleId) ?? currentUser?.roleId;
   // Department/Position options come from the same HR data source as the New
@@ -283,6 +283,21 @@ export default function UserManagementUnified() {
     email: currentUser?.email || '',
     phone: currentUser?.profile?.phone || '',
   });
+
+  // The signed-in user often arrives after this screen mounts (the user list
+  // loads from the server). Fill the boxes once, and leave later edits alone.
+  useEffect(() => {
+    if (!currentUser) return;
+    setProfileForm((prev) => {
+      if (prev.firstName || prev.lastName || prev.email || prev.phone) return prev;
+      return {
+        firstName: currentUser.firstName || '',
+        lastName: currentUser.lastName || '',
+        email: currentUser.email || '',
+        phone: currentUser.profile?.phone || '',
+      };
+    });
+  }, [currentUser]);
 
   // Get user preferences from current user, with fallback defaults
   const userPreferences = currentUser?.preferences || {
@@ -1090,8 +1105,12 @@ export default function UserManagementUnified() {
       <div className="mb-3 flex items-center justify-between gap-2">
         <div>
           <div className="flex items-center gap-1.5">
-            <h1 className="text-xl font-bold text-ghana-black">👥 User Management & Preferences</h1>
-            <HeadingInfo label="About user management">Complete user lifecycle management with Ghana compliance, role-based access control, and personalized preferences</HeadingInfo>
+            <h1 className="text-xl font-bold text-ghana-black">{selfService ? 'Your profile' : '👥 User Management & Preferences'}</h1>
+            <HeadingInfo label={selfService ? 'About your profile' : 'About user management'}>
+              {selfService
+                ? 'Your name, contact, theme, and password. Every signed-in user has this, whatever modules their role opens.'
+                : 'Complete user lifecycle management with Ghana compliance, role-based access control, and personalized preferences'}
+            </HeadingInfo>
           </div>
         </div>
                  <div className="flex items-center space-x-2">
@@ -1109,6 +1128,7 @@ export default function UserManagementUnified() {
          </div>
       </div>
 
+      {!selfService && (
       <Tabs 
         selectedKey={selectedTab} 
         onSelectionChange={(key) => {
@@ -1126,12 +1146,16 @@ export default function UserManagementUnified() {
         <Tab key="roles" title="Role Management" />
         <Tab key="preferences" title="User Preferences" />
       </Tabs>
+      )}
 
       <div className="mt-3">
-        {selectedTab === 'overview' && renderOverview()}
-        {selectedTab === 'users' && renderUserManagement()}
-        {selectedTab === 'roles' && renderRoleManagement()}
-        {selectedTab === 'preferences' && renderUserPreferences()}
+        {selfService || selectedTab === 'preferences'
+          ? renderUserPreferences()
+          : selectedTab === 'overview'
+            ? renderOverview()
+            : selectedTab === 'users'
+              ? renderUserManagement()
+              : renderRoleManagement()}
       </div>
 
       {/* User Modal */}

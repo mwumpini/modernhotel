@@ -464,16 +464,21 @@ export default function ExecutiveManagementDashboard() {
     // Real GL-posted revenue for this date, straight from the Chart of Accounts /
     // journal entries — the same computation Financial Reports and the Chart of
     // Accounts screen use, so this figure always ties out to the books.
-    try {
-      const { chartOfAccounts, journalEntries } = useAccountingStore.getState();
-      const rollup = toRollupCoa(chartOfAccounts as any);
-      const dayDate = new Date(isoDate);
-      const tree = buildFinancialAccountTree(rollup, journalEntries, { kind: 'period', startDate: dayDate, endDate: dayDate });
-      const revenueForDay = tree.filter(n => n.type === 'Revenue').reduce((s, n) => s + n.balance, 0);
-      setPostedRevenue(Number.isFinite(revenueForDay) ? revenueForDay : 0);
-    } catch {
-      setPostedRevenue(0);
-    }
+    void (async () => {
+      try {
+        const store = useAccountingStore.getState();
+        await store.initializeAccounting();
+        await store.ensureJournalEntries();
+        const { chartOfAccounts, journalEntries } = useAccountingStore.getState();
+        const rollup = toRollupCoa(chartOfAccounts as any);
+        const dayDate = new Date(isoDate);
+        const tree = buildFinancialAccountTree(rollup, journalEntries, { kind: 'period', startDate: dayDate, endDate: dayDate });
+        const revenueForDay = tree.filter(n => n.type === 'Revenue').reduce((s, n) => s + n.balance, 0);
+        setPostedRevenue(Number.isFinite(revenueForDay) ? revenueForDay : 0);
+      } catch {
+        /* posted revenue stays at the last figure */
+      }
+    })();
 
     // Live operations snapshot — the same definitions as the Daily Flash report, so every screen agrees.
     try {
