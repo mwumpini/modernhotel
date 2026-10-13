@@ -19,7 +19,7 @@ const globalForPrisma = globalThis as unknown as {
  * One connection per copy keeps them inside the limit; a request waits briefly instead.
  */
 function serverlessDatabaseUrl(): string | undefined {
-  const url = process.env.DATABASE_URL
+  const url = process.env.AGM_DB_POSTGRES_URL || process.env.DATABASE_URL
   if (!process.env.VERCEL || !url || !/^postgres(ql)?:\/\//.test(url) || /[?&]connection_limit=/.test(url)) return undefined
   return `${url}${url.includes('?') ? '&' : '?'}connection_limit=1&pool_timeout=20`
 }
