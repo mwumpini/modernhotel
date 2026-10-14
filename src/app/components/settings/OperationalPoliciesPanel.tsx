@@ -1,40 +1,86 @@
 'use client';
 
 import React from 'react';
-import { Card, CardBody, CardHeader, Switch } from '@heroui/react';
+import { Switch } from '@heroui/react';
+import { BookOpen, Building2, CalendarClock, CalendarX2, Clock, Moon, Smartphone, type LucideIcon } from 'lucide-react';
 import { useSettingsStore } from '../../lib/settings/store';
 import { normalizeGuestPaymentService } from '../../lib/payments/guestCollection';
 import { hourStamp } from '../../lib/frontoffice/operationalPolicies';
+import CompanyYearPanel from './CompanyYearPanel';
 
-const policyInput = 'mt-1 w-full h-9 rounded-lg border border-gray-300 px-3 text-sm';
+const policyInput = 'mt-1 w-full h-10 rounded-lg border border-default-300 bg-transparent px-3 text-sm transition-colors focus:border-ghana-green focus:outline-none focus:ring-2 focus:ring-ghana-green/20';
 const policyLabel = 'text-xs font-medium text-gray-500';
 
-function PolicyGroup({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+const SECTIONS: Array<{ id: string; label: string; icon: LucideIcon }> = [
+  { id: 'policy-posting', label: 'Posting dates', icon: CalendarClock },
+  { id: 'policy-checkin', label: 'Check-in & checkout', icon: Clock },
+  { id: 'policy-company', label: 'Company accounts', icon: Building2 },
+  { id: 'policy-booking', label: 'Booking changes', icon: CalendarX2 },
+  { id: 'policy-audit', label: 'Night audit & billing', icon: Moon },
+  { id: 'policy-payments', label: 'Payments', icon: Smartphone },
+  { id: 'policy-year', label: 'Accounting year', icon: BookOpen },
+];
+
+function SectionNav() {
   return (
-    <section className="space-y-3">
-      <div>
-        <h3 className="text-base font-semibold text-ghana-black">{title}</h3>
-        <p className="text-sm text-gray-500">{description}</p>
+    <nav aria-label="Policy sections" className="-mx-1 flex gap-2 overflow-x-auto px-1 py-1">
+      {SECTIONS.map(({ id, label, icon: Icon }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          className="flex shrink-0 items-center gap-1.5 rounded-full border border-default-200 bg-[var(--card-background,white)] px-3 py-1.5 text-xs font-medium text-default-700 transition-colors hover:border-ghana-green hover:text-ghana-green"
+        >
+          <Icon size={14} aria-hidden />
+          {label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function PolicyGroup({ id, title, description, children }: { id: string; title: string; description: string; children: React.ReactNode }) {
+  const Icon = SECTIONS.find((s) => s.id === id)?.icon ?? CalendarClock;
+  return (
+    <section id={id} className="scroll-mt-16 rounded-2xl border border-default-200 bg-[var(--card-background,white)] p-4 shadow-sm sm:p-5">
+      <div className="mb-4 flex items-start gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-ghana-green/10 text-ghana-green">
+          <Icon size={18} aria-hidden />
+        </span>
+        <div>
+          <h3 className="text-base font-semibold text-ghana-black">{title}</h3>
+          <p className="text-sm text-gray-500">{description}</p>
+        </div>
       </div>
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">{children}</div>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">{children}</div>
     </section>
   );
 }
 
-function PolicyCard({ title, children, wide }: { title: string; children: React.ReactNode; wide?: boolean }) {
+function PolicyCard({ title, children, wide, on }: { title: string; children: React.ReactNode; wide?: boolean; on?: boolean }) {
   return (
-    <Card className={`border-0 shadow-md ${wide ? 'xl:col-span-2' : ''}`}>
-      <CardHeader className="pb-1">
+    <div className={`rounded-xl border border-default-200 p-4 ${wide ? 'xl:col-span-2' : ''}`}>
+      <div className="mb-1 flex items-center justify-between gap-2">
         <h4 className="text-sm font-semibold text-ghana-black">{title}</h4>
-      </CardHeader>
-      <CardBody className="pt-0">{children}</CardBody>
-    </Card>
+        {on !== undefined && (
+          <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${on ? 'bg-ghana-green/10 text-ghana-green' : 'bg-default-100 text-default-500'}`}>
+            {on ? 'On' : 'Off'}
+          </span>
+        )}
+      </div>
+      {children}
+    </div>
   );
+}
+
+/** Fields that only matter while their rule is on: still editable, but dimmed when off. */
+function RuleFields({ active, children, className = '' }: { active: boolean; children: React.ReactNode; className?: string }) {
+  return <div className={`transition-opacity ${active ? '' : 'opacity-60'} ${className}`}>{children}</div>;
 }
 
 function PolicyRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-2 py-3 border-b border-gray-200 last:border-0 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-2 py-3 border-b border-default-200 last:border-0 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-[10rem] flex-1 sm:pr-4">
         <div className="text-sm font-medium text-ghana-black">{label}</div>
         {hint ? <p className="text-xs text-gray-500 mt-0.5">{hint}</p> : null}
@@ -49,15 +95,16 @@ export default function OperationalPoliciesPanel() {
   const roleId = settingsStore.sessionRoleId ?? settingsStore.currentUser?.roleId;
   const canAllowBackdating = roleId === 'admin' || roleId === 'manager';
   return (
-<div className="space-y-8">
-  <p className="text-sm text-gray-500">Front desk rules for arrival, departure, booking changes, company accounts, night audit, and whether a posting can use an earlier date. Each change saves immediately.</p>
-  <PolicyGroup title="Posting dates" description="Payments, charges, journals, bills, goods received, stock movements, payroll pay dates, overtime, a new stay's arrival, a table booking, and a new event's check-in. Report date ranges stay free.">
-    <PolicyCard title="Backdating" wide>
+<div className="space-y-5">
+  <p className="text-sm text-gray-500">The hotel's house rules. Each change saves immediately.</p>
+  <SectionNav />
+  <PolicyGroup id="policy-posting" title="Posting dates" description="Whether payments, charges, journals, stock, payroll and new bookings can use a date before today. Report date ranges are never limited.">
+    <PolicyCard title="Backdating" wide on={settingsStore.roomManagement.allowBackdating === true}>
       <PolicyRow
         label="Allow backdating"
         hint={canAllowBackdating
-          ? 'Off: a new posting, a payroll pay date, an overtime date, a new booking\'s arrival, a table booking, and a new event\'s check-in cannot be earlier than today. A stay, table booking, or event can still start yesterday while night audit has not closed. On: those forms accept an earlier date. Turn it off again after the correction.'
-          : 'Only an admin or a manager can change this. While it is off, a new posting, a payroll pay date, an overtime date, a new booking\'s arrival, a table booking, or a new event\'s check-in cannot be dated before today.'}
+          ? 'Off: nothing new can be dated before today (arrivals may still use yesterday until night audit closes). On: earlier dates are allowed. Turn it off again once the correction is done.'
+          : 'Only an admin or a manager can change this. While it is off, nothing new can be dated before today.'}
       >
         <Switch
           isSelected={settingsStore.roomManagement.allowBackdating === true}
@@ -69,7 +116,7 @@ export default function OperationalPoliciesPanel() {
       </PolicyRow>
     </PolicyCard>
   </PolicyGroup>
-  <PolicyGroup title="Check-in and checkout" description="Standard arrival and departure times, and what happens when a guest leaves early or stays past checkout.">
+  <PolicyGroup id="policy-checkin" title="Check-in and checkout" description="Standard arrival and departure times, and what happens when a guest leaves early or stays past checkout.">
     <PolicyCard title="Standard times">
       <div className="grid grid-cols-2 gap-3 max-w-md">
         <div>
@@ -83,7 +130,7 @@ export default function OperationalPoliciesPanel() {
       </div>
     </PolicyCard>
 
-    <PolicyCard title="Late checkout">
+    <PolicyCard title="Late checkout" on={!!settingsStore.roomManagement.lateCheckoutFeeEnabled}>
       <PolicyRow label="Late checkout fee" hint="Charge a guest who stays past the grace period.">
         <Switch
           isSelected={!!settingsStore.roomManagement.lateCheckoutFeeEnabled}
@@ -92,7 +139,7 @@ export default function OperationalPoliciesPanel() {
           {settingsStore.roomManagement.lateCheckoutFeeEnabled ? 'Enabled' : 'Disabled'}
         </Switch>
       </PolicyRow>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3">
+      <RuleFields active={!!settingsStore.roomManagement.lateCheckoutFeeEnabled} className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3">
         <div>
           <label className={policyLabel}>Grace minutes</label>
           <input type="number" className={policyInput} value={(settingsStore.roomManagement.lateCheckoutGraceMinutes ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.lateCheckoutGraceMinutes', Math.max(0, parseInt(e.target.value||'0')))} />
@@ -108,10 +155,10 @@ export default function OperationalPoliciesPanel() {
           <label className={policyLabel}>Fee value</label>
           <input type="number" className={policyInput} value={(settingsStore.roomManagement.lateCheckoutFeeValue ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.lateCheckoutFeeValue', Math.max(0, Number(e.target.value||'0')))} />
         </div>
-      </div>
+      </RuleFields>
     </PolicyCard>
 
-    <PolicyCard title="Early checkout" wide>
+    <PolicyCard title="Early checkout" wide on={!!settingsStore.roomManagement.earlyCheckoutPolicyEnabled}>
       <PolicyRow label="Remove unused nights" hint="When on, unused nights come off the folio if the guest leaves before the scheduled departure. No extra charge is added.">
         <Switch
           isSelected={!!settingsStore.roomManagement.earlyCheckoutPolicyEnabled}
@@ -153,7 +200,7 @@ export default function OperationalPoliciesPanel() {
     </PolicyCard>
   </PolicyGroup>
 
-  <PolicyGroup title="Company accounts" description="Who can leave without paying immediately, and the terms written on a corporate invoice.">
+  <PolicyGroup id="policy-company" title="Company accounts" description="Who can leave without paying immediately, and the terms written on a corporate invoice.">
     <PolicyCard title="Pay later and credit" wide>
       <PolicyRow label="Who can pay later" hint="Guests allowed to check out without immediate payment.">
         <select
@@ -185,14 +232,14 @@ export default function OperationalPoliciesPanel() {
     </PolicyCard>
   </PolicyGroup>
 
-  <PolicyGroup title="Booking changes" description="What the hotel charges when a guest does not arrive, cancels late, or must put down a deposit.">
-    <PolicyCard title="No-show">
+  <PolicyGroup id="policy-booking" title="Booking changes" description="What the hotel charges when a guest does not arrive, cancels late, or must put down a deposit.">
+    <PolicyCard title="No-show" on={!!settingsStore.roomManagement.noShowPolicyEnabled}>
       <PolicyRow label="No-show charge" hint="Applied when the guest has not arrived by the cutoff.">
         <Switch isSelected={!!settingsStore.roomManagement.noShowPolicyEnabled} onValueChange={(v)=> settingsStore.updateNestedSetting('roomManagement.noShowPolicyEnabled', v)}>
           {settingsStore.roomManagement.noShowPolicyEnabled ? 'Enabled' : 'Disabled'}
         </Switch>
       </PolicyRow>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3">
+      <RuleFields active={!!settingsStore.roomManagement.noShowPolicyEnabled} className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3">
         <div>
           <label className={policyLabel}>Charge type</label>
           <select className={policyInput} value={settingsStore.roomManagement.noShowChargeType || 'first_night'} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.noShowChargeType', e.target.value)}>
@@ -209,16 +256,16 @@ export default function OperationalPoliciesPanel() {
           <label className={policyLabel}>Cutoff hour (24h)</label>
           <input type="number" className={policyInput} value={(settingsStore.roomManagement.noShowCutoffHour ?? 23).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.noShowCutoffHour', Math.max(0, Math.min(23, Number(e.target.value||'0'))))} />
         </div>
-      </div>
+      </RuleFields>
     </PolicyCard>
 
-    <PolicyCard title="Cancellation">
+    <PolicyCard title="Cancellation" on={!!settingsStore.roomManagement.cancellationPolicyEnabled}>
       <PolicyRow label="Cancellation fee" hint="Free until the hours-before-arrival window closes, then the late fee applies.">
         <Switch isSelected={!!settingsStore.roomManagement.cancellationPolicyEnabled} onValueChange={(v)=> settingsStore.updateNestedSetting('roomManagement.cancellationPolicyEnabled', v)}>
           {settingsStore.roomManagement.cancellationPolicyEnabled ? 'Enabled' : 'Disabled'}
         </Switch>
       </PolicyRow>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3">
+      <RuleFields active={!!settingsStore.roomManagement.cancellationPolicyEnabled} className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3">
         <div>
           <label className={policyLabel}>Free window (hours before arrival)</label>
           <input type="number" className={policyInput} value={(settingsStore.roomManagement.freeCancellationHours ?? 24).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.freeCancellationHours', Math.max(0, Number(e.target.value||'0')))} />
@@ -235,16 +282,16 @@ export default function OperationalPoliciesPanel() {
           <label className={policyLabel}>Late fee value</label>
           <input type="number" className={policyInput} value={(settingsStore.roomManagement.lateCancellationFeeValue ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.lateCancellationFeeValue', Math.max(0, Number(e.target.value||'0')))} />
         </div>
-      </div>
+      </RuleFields>
     </PolicyCard>
 
-    <PolicyCard title="Deposit" wide>
+    <PolicyCard title="Deposit" wide on={!!settingsStore.roomManagement.depositPolicyEnabled}>
       <PolicyRow label="Require a deposit" hint="How much is collected to hold the reservation.">
         <Switch isSelected={!!settingsStore.roomManagement.depositPolicyEnabled} onValueChange={(v)=> settingsStore.updateNestedSetting('roomManagement.depositPolicyEnabled', v)}>
           {settingsStore.roomManagement.depositPolicyEnabled ? 'Enabled' : 'Disabled'}
         </Switch>
       </PolicyRow>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3">
+      <RuleFields active={!!settingsStore.roomManagement.depositPolicyEnabled} className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3">
         <div>
           <label className={policyLabel}>Deposit type</label>
           <select className={policyInput} value={settingsStore.roomManagement.depositType || 'percent'} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.depositType', e.target.value)}>
@@ -262,11 +309,11 @@ export default function OperationalPoliciesPanel() {
             Required to confirm
           </label>
         </div>
-      </div>
+      </RuleFields>
     </PolicyCard>
   </PolicyGroup>
 
-  <PolicyGroup title="Night audit and billing" description="When room charges post, and how invoice totals are rounded.">
+  <PolicyGroup id="policy-audit" title="Night audit and billing" description="When room charges post, and how invoice totals are rounded.">
     <PolicyCard title="Room charges">
       <PolicyRow label="Post the first night at check-in" hint="The folio shows the first night right away. Night audit will not post that night a second time.">
         <Switch
@@ -304,7 +351,7 @@ export default function OperationalPoliciesPanel() {
           <label className={policyLabel}>Round the amount due to</label>
           <div className="mt-1 flex gap-2">
             <select
-              className="h-9 flex-1 rounded-lg border border-gray-300 px-3 text-sm"
+              className="h-10 flex-1 rounded-lg border border-default-300 bg-transparent px-3 text-sm focus:border-ghana-green focus:outline-none focus:ring-2 focus:ring-ghana-green/20"
               value={(() => {
                 const presets: Array<[string, number]> = [['0', 0], ['0.01', 0.01], ['0.05', 0.05], ['0.10', 0.1], ['0.50', 0.5], ['1.00', 1]];
                 const current = Number(settingsStore.financialSettings.roundToNearest ?? 0.5);
@@ -328,7 +375,7 @@ export default function OperationalPoliciesPanel() {
               type="number"
               step="0.01"
               min="0"
-              className="h-9 w-24 rounded-lg border border-gray-300 px-3 text-sm"
+              className="h-10 w-24 rounded-lg border border-default-300 bg-transparent px-3 text-sm focus:border-ghana-green focus:outline-none focus:ring-2 focus:ring-ghana-green/20"
               value={settingsStore.financialSettings.roundToNearest ?? 0.5}
               onChange={(e) => settingsStore.updateNestedSetting('financialSettings.roundToNearest', Math.max(0, Number(e.target.value || '0')))}
             />
@@ -341,7 +388,7 @@ export default function OperationalPoliciesPanel() {
     </PolicyCard>
   </PolicyGroup>
 
-  <PolicyGroup title="Phone and card payments" description="Cash and mobile money stay on the desk. A payments service can be connected later so the guest approves on their phone and the amount posts to the folio.">
+  <PolicyGroup id="policy-payments" title="Phone and card payments" description="Cash and mobile money stay on the desk. A payments service can be connected later so the guest approves on their phone and the amount posts to the folio.">
     <PolicyCard title="Ghana payments service" wide>
       <PolicyRow label="Service" hint="Saved for later. Staff still record card and mobile money by hand.">
         <select
@@ -354,6 +401,12 @@ export default function OperationalPoliciesPanel() {
           <option value="paystack">Paystack</option>
         </select>
       </PolicyRow>
+    </PolicyCard>
+  </PolicyGroup>
+
+  <PolicyGroup id="policy-year" title="Accounting year" description="The day the books open each year. Reports, quarters, and filings due after the year ends follow it.">
+    <PolicyCard title="Opening day" wide>
+      <CompanyYearPanel bare />
     </PolicyCard>
   </PolicyGroup>
 </div>

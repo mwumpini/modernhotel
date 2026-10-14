@@ -181,7 +181,7 @@ export default function PublicSpacesStatusGrid() {
 
   return (
     <div className="space-y-3">
-      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <Input
           size="sm"
           placeholder="Search public spaces..."

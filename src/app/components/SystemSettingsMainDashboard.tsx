@@ -23,22 +23,26 @@ import StockLocationsPanel from './settings/StockLocationsPanel';
 import SampleDataPanel from './settings/SampleDataPanel';
 import SecurityPolicyPanel from './settings/SecurityPolicyPanel';
 import OperationalPoliciesPanel from './settings/OperationalPoliciesPanel';
-import CompanyYearPanel from './settings/CompanyYearPanel';
 import TillManagementPanel from './settings/TillManagementPanel';
 import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 import { useSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
 import { SummaryToggle } from './dashboard/SummaryToggle';
 
-const VALID_TABS = ['users', 'rooms', 'policies', 'company-year', 'tills', 'numbering', 'templates', 'locations', 'security', 'approvals', 'modules', 'sample-data', 'audit'] as const;
+const VALID_TABS = ['users', 'rooms', 'policies', 'tills', 'numbering', 'templates', 'locations', 'security', 'approvals', 'modules', 'sample-data', 'audit'] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
 
+// The accounting year now sits at the bottom of Operational Policies; old links still land there.
+const TAB_ALIASES: Record<string, SettingsTab> = { 'company-year': 'policies' };
+
 function resolveInitialTab(searchParams: URLSearchParams): SettingsTab {
-  const fromUrl = searchParams.get('tab');
+  const rawUrl = searchParams.get('tab');
+  const fromUrl = rawUrl ? TAB_ALIASES[rawUrl] || rawUrl : rawUrl;
   if (fromUrl && VALID_TABS.includes(fromUrl as SettingsTab)) {
     return fromUrl as SettingsTab;
   }
   try {
-    const stored = localStorage.getItem('settings.tab');
+    const rawStored = localStorage.getItem('settings.tab');
+    const stored = rawStored ? TAB_ALIASES[rawStored] || rawStored : rawStored;
     if (stored && VALID_TABS.includes(stored as SettingsTab)) {
       localStorage.removeItem('settings.tab');
       return stored as SettingsTab;
@@ -160,10 +164,6 @@ export default function SystemSettingsMainDashboard() {
 
             <Tab key="policies" title="Operational Policies">
               <OperationalPoliciesPanel />
-            </Tab>
-
-            <Tab key="company-year" title="Accounting year">
-              <CompanyYearPanel />
             </Tab>
 
             <Tab key="tills" title="Till management">

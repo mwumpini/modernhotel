@@ -1534,10 +1534,10 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   };
 
   return (
-    <div className={embed ? '' : 'space-y-6'}>
+    <div className={embed ? '' : 'space-y-3'}>
       {!embed && <>
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <h2 className="text-xl sm:text-2xl font-bold text-ghana-black">📅 Reservations & Bookings</h2>
           <HeadingInfo label="About reservations">Create, view, and manage room reservations and bookings</HeadingInfo>
@@ -1550,7 +1550,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
             color="primary"
             variant="flat"
             onClick={handleCreateReservation}
-            className="text-sm sm:text-base px-3 sm:px-4 py-2 sm:py-3"
+            className="text-sm px-3 sm:px-4"
           >
             ➕ New Reservation
           </Button>
@@ -1592,7 +1592,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       )}
 
       {/* Filters — wrap on phone / zoom; date chips → Select under lg */}
-      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+      <div className="mb-1 flex flex-wrap items-center gap-2">
         <Input
           size="sm"
           aria-label="Search reservations"

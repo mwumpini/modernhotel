@@ -655,7 +655,7 @@ function CompanyFinancials({
   const infrastructureTotal = expenses.reduce((sum, row) => sum + row.amount, 0);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <div>
         <h2 className="text-2xl font-semibold text-ghana-black">Company financials</h2>
         <p className="mt-1 text-sm text-gray-600">Fees the hotels pay this company, and what the company pays for cloud and other infrastructure.</p>

@@ -140,7 +140,7 @@ export default function DepartmentShiftsPanel({
   return (
     <div className="space-y-3">
       <Card className="border border-slate-200 shadow-sm">
-        <CardHeader className="mb-[18px] flex flex-nowrap items-center justify-between gap-2 overflow-x-auto">
+        <CardHeader className="mb-2 flex flex-nowrap items-center justify-between gap-2 overflow-x-auto">
           <div className="font-medium text-slate-900 shrink-0 whitespace-nowrap">
             Shift roster — {dayLabel(week)} to {dayLabel(addDays(week, 6))}
           </div>

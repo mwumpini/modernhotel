@@ -544,7 +544,7 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
             {(!embedded || panel === 'menu') && (
             <Tab key="menu" title="🍽️ Menu Management">
               <div className="px-2 pb-3">
-                <div className="mb-[18px] flex flex-wrap items-center gap-2">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
                   <Input
                     aria-label="Search menu"
                     placeholder="Search menu"
@@ -695,7 +695,7 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
             {(!embedded || panel === 'requisitions') && (
             <Tab key="requisitions" title="📝 Requisitions">
               <div className="px-2 pb-3">
-                <div className="mb-[18px] flex flex-wrap items-center gap-2">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
                   <Input
                     aria-label="Search requisitions"
                     placeholder="Search requisitions"

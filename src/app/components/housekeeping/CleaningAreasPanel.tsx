@@ -167,7 +167,7 @@ export default function CleaningAreasPanel() {
 
   return (
     <div className="space-y-3">
-      <div className="mb-[18px] flex flex-wrap items-center justify-between gap-2">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-base font-semibold text-ghana-black shrink-0">Cleaning areas</h3>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button size="sm" variant="flat" className="min-h-10" onPress={() => setShowInactive((v) => !v)}>

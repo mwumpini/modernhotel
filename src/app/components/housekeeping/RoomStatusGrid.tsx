@@ -435,7 +435,7 @@ export default function RoomStatusGrid({ attendant = false }: { attendant?: bool
       )}
       {/* Filters and Search — wrap on phone / zoomed tablet */}
       {!attendant && (
-      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <Input
           size="sm"
           placeholder="Search room numbers..."

@@ -742,7 +742,7 @@ export default function FoodBeverageKitchen({
                 {suppliesView === 'stock-count' && <DepartmentStockCountPanel department="kitchen" />}
                 {suppliesView === 'requisitions' && (
                   <div className="space-y-4">
-                    <div className="mb-[18px] flex flex-wrap items-center gap-2">
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
                       <Select
                         aria-label="Filter requisitions by status"
                         placeholder="All statuses"
@@ -828,7 +828,7 @@ export default function FoodBeverageKitchen({
 
             {selectedTab === 'recipes' && (
               <div className="space-y-4">
-                <div className="mb-[18px] flex flex-wrap items-center gap-2">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
                   <h3 className="text-lg font-semibold text-ghana-black">Recipe Management</h3>
                   <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                     <Button
@@ -1253,7 +1253,7 @@ function KitchenOpsLog({ orders = [] }: { orders?: FbOrderDto[] }) {
         </div>
       </div>
 
-      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <Input
           aria-label="Search kitchen log"
           placeholder="Search order, item, cook…"

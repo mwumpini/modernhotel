@@ -357,7 +357,7 @@ export default function ActivityLog() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       {/* Header */}
       <div className="bg-white border p-4 mb-4">
         <div className="flex items-center justify-between">

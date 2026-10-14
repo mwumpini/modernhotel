@@ -651,7 +651,7 @@ export default function CheckOutsPage() {
           </div>
           )}
 
-          <div className="mb-[18px] flex flex-wrap items-center gap-2">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
             <Input
               size="sm"
               aria-label="Search check-outs"

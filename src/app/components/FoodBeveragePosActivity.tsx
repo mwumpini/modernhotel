@@ -240,7 +240,7 @@ export default function FoodBeveragePosActivity({
     <div className="px-2 pb-2">
       <Card className="border-0 shadow-lg">
         <CardBody className="overflow-x-hidden px-2 py-3">
-          <div className="mb-[18px] flex flex-wrap items-center gap-2">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
             <Input
               aria-label="Search transactions"
               placeholder="Search ticket, item, table"

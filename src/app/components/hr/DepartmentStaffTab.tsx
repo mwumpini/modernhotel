@@ -139,7 +139,7 @@ export default function DepartmentStaffTab({
       {section === 'list' && (
         <Card className={deskTableCardClassName}>
           <CardBody className={deskTableCardBodyClassName}>
-            <div className="mb-[18px] flex flex-wrap items-center justify-end gap-2">
+            <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
               <Button size="sm" variant="bordered" className="shrink-0" onPress={printStaffList}>Print</Button>
             </div>
             <div ref={cols.frameRef} style={cols.frameStyle}>

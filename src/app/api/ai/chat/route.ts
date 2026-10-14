@@ -74,7 +74,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const prompt = String(body?.prompt || '');
     const desk = String(body?.desk || 'this desk');
-    const snapshot = asLines(body?.snapshot, 6);
+    // The desk plus every module the person can open (see buildDeskBrief).
+    const snapshot = asLines(body?.snapshot, 12);
     const notices = asLines(body?.notices, 5);
     const help = isHelpQuestion(prompt) ? findHelp(prompt, String(body?.deskKey || '')) : [];
     const system = [

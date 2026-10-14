@@ -44,7 +44,7 @@ export function SupplierInvoicesTable() {
   const paginatedInvoices = sorted.slice((invoicePageSafe - 1) * inventoryScreen.invoiceRowsPerPage, invoicePageSafe * inventoryScreen.invoiceRowsPerPage);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <Card className={deskTableCardClassName}>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between w-full">

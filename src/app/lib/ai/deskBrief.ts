@@ -198,11 +198,37 @@ function noticeLines(desk: DepartmentKey): string[] {
   }
 }
 
-export function buildDeskBrief(desk: DepartmentKey): DeskBrief {
+/** Every module's counts, by the permission prefix that opens that module. */
+const MODULE_LINES: Array<[string, () => string[]]> = [
+  ['frontdesk', () => [roomLine(), stayLine()].filter((x): x is string => !!x)],
+  ['housekeeping', () => [roomLine()].filter((x): x is string => !!x)],
+  ['inventory', () => [stockLine()].filter((x): x is string => !!x)],
+  ['hr', () => [staffLine(), payrollLine()].filter((x): x is string => !!x)],
+  ['accounting', () => [invoiceLine()].filter((x): x is string => !!x)],
+  ['restaurant', () => [orderLine()].filter((x): x is string => !!x)],
+  ['kitchen', () => [orderLine()].filter((x): x is string => !!x)],
+  ['security', () => securityLines()],
+];
+
+/** Most lines sent to the assistant: every module's counts fit with room to spare. */
+export const MAX_SNAPSHOT_LINES = 12;
+
+/**
+ * The counts Ask Mamani answers from: this desk's, plus every other module the person
+ * can open (`canOpen`, by permission prefix). Someone with full control can ask about any
+ * module from any desk; someone with one module still sees only that one.
+ */
+export function buildDeskBrief(desk: DepartmentKey, canOpen?: (modulePrefix: string) => boolean): DeskBrief {
+  const own = linesFor(desk);
+  const others = canOpen
+    ? MODULE_LINES.filter(([prefix]) => {
+        try { return canOpen(prefix); } catch { return false; }
+      }).flatMap(([, lines]) => lines())
+    : [];
   return {
     desk,
     label: LABELS[desk] || desk,
-    snapshot: linesFor(desk).slice(0, 6),
+    snapshot: Array.from(new Set([...own, ...others])).slice(0, MAX_SNAPSHOT_LINES),
     notices: noticeLines(desk),
     prompts: PROMPTS[desk] || PROMPTS.all,
   };

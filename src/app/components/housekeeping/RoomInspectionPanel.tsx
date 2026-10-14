@@ -267,7 +267,7 @@ export default function RoomInspectionPanel({
   return (
     <div className="space-y-3">
       {/* Header and Actions */}
-      <div className="mb-[18px] flex flex-wrap items-center justify-between gap-2">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold text-ghana-black shrink-0">Room Inspections</h2>
         <Button
           size="sm"
@@ -326,7 +326,7 @@ export default function RoomInspectionPanel({
       )}
 
       {/* Filters — wrap on phone / zoomed screens */}
-      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <Input
           size="sm"
           aria-label="Search room numbers"

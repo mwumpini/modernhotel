@@ -126,7 +126,7 @@ export default function DepartmentOvertimePanel({
     <div className="space-y-3">
       <Card className={deskTableCardClassName}>
         <CardBody className={deskTableCardBodyClassName}>
-          <div className="mb-[18px] flex flex-nowrap items-center justify-between gap-2 overflow-x-auto">
+          <div className="mb-2 flex flex-nowrap items-center justify-between gap-2 overflow-x-auto">
             <h3 className="text-base font-semibold text-slate-800 shrink-0">Overtime</h3>
             <Button size="sm" variant="bordered" onPress={printRecords}>Print</Button>
           </div>

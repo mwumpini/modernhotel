@@ -117,7 +117,7 @@ function BackgroundPicker({
   const showLight = theme !== 'dark';
   const showDark = theme !== 'light';
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <div className="space-y-4">
         <p className="text-sm text-default-500">
           The color behind the cards. White is hard on some eyes, so the page can be a softer color.

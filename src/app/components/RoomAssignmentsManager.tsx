@@ -382,7 +382,7 @@ export default function RoomAssignmentsManager({ onNewReservation }: { onNewRese
       )}
 
       {/* Enhanced Filters — wrap on phone / zoom */}
-      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+      <div className="mb-1 flex flex-wrap items-center gap-2">
         <Input
           size="sm"
           aria-label="Search rooms"
@@ -468,8 +468,8 @@ export default function RoomAssignmentsManager({ onNewReservation }: { onNewRese
       {/* Room Assignments Display */}
       {viewMode === 'table' ? (
         <Card className="border-0 shadow-lg">
-          <CardHeader className="pb-3">
-            <h3 className="text-xl font-semibold text-ghana-black">Room Assignments Table</h3>
+          <CardHeader className="px-4 pt-3 pb-0">
+            <h3 className="text-base font-semibold text-ghana-black">Room Assignments Table</h3>
           </CardHeader>
           <CardBody className="px-2 py-3">
             <Table aria-label="Room assignments table" removeWrapper classNames={worksheetTableClassNames}>
@@ -615,10 +615,10 @@ export default function RoomAssignmentsManager({ onNewReservation }: { onNewRese
         </Card>
       ) : (
         <Card className="border-0 shadow-lg">
-          <CardHeader className="pb-3">
-            <h3 className="text-xl font-semibold text-ghana-black">Room Assignments Grid</h3>
+          <CardHeader className="px-4 pt-3 pb-0">
+            <h3 className="text-base font-semibold text-ghana-black">Room Assignments Grid</h3>
           </CardHeader>
-          <CardBody>
+          <CardBody className="pt-2">
             <div className={`grid grid-cols-1 gap-4 ${statusFilters.length === 1 && statusFilters[0] === 'reserved' ? '' : 'lg:grid-cols-3'}`}>
               {(statusFilters.length === 1 && statusFilters[0] === 'reserved'
                 ? [{ title: 'Reserved', tone: 'text-blue-800', rooms: filteredAssignments }]

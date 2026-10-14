@@ -504,7 +504,7 @@ export default function DepartmentStockCountPanel({
 
   return (
     <div className="space-y-3">
-      <div className="mb-[18px] flex flex-wrap items-center justify-between gap-2">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-lg font-semibold text-ghana-black shrink-0">Stock Count</h3>
         {canRun && (
           <Button size="sm" color="primary" className="min-h-10 bg-ghana-gold text-white" variant="flat" onPress={openNew}>
@@ -513,7 +513,7 @@ export default function DepartmentStockCountPanel({
         )}
       </div>
 
-      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <Input
           size="sm"
           placeholder="Search count # or location..."

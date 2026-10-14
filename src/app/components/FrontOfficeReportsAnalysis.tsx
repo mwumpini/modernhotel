@@ -72,7 +72,7 @@ function ReportSummarySection({ data }: { data: Record<string, unknown> }) {
   const arrays = entries.filter(([, v]) => Array.isArray(v));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       {primitives.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
           {primitives.map(([key, value]) => (

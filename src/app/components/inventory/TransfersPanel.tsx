@@ -35,7 +35,7 @@ export function TransfersTable() {
   const paged = sorted.slice((pageSafe - 1) * DESK_PAGE_SIZE, pageSafe * DESK_PAGE_SIZE);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <Card className={deskTableCardClassName}>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between w-full">

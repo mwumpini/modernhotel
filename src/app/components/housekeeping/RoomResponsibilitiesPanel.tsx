@@ -239,7 +239,7 @@ export default function RoomResponsibilitiesPanel({ staff }: { staff: Department
 
   return (
     <div className="space-y-3">
-      <div className="mb-[18px] flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-slate-500">
           Set who is <span className="font-medium text-slate-700">responsible for</span> which rooms on
           each shift.

@@ -530,7 +530,7 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
             {(!embedded || panel === 'tables') && (
             <Tab key="tables" title="🪑 Table Management">
               <div className={embedded ? 'px-2 pb-3' : 'p-6'}>
-                <div className="mb-[18px] flex flex-wrap items-center gap-2">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
                   <Input
                     aria-label="Search tables"
                     placeholder="Search tables"
@@ -652,7 +652,7 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
             {(!embedded || panel === 'reservations') && (
             <Tab key="reservations" title="📅 Reservations">
               <div className="px-2 pb-3">
-                <div className="mb-[18px] flex flex-wrap items-center gap-2">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
                   <Input
                     aria-label="Search reservations"
                     placeholder="Search reservations"

@@ -66,7 +66,7 @@ export function ReceiveAndReconTable() {
   const countPaged = countSorted.slice((countPageSafe - 1) * DESK_PAGE_SIZE, countPageSafe * DESK_PAGE_SIZE);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <Tabs
         selectedKey={activeOpTab}
         onSelectionChange={(key) => inventoryScreen.setStockOpSubTab(key as string)}

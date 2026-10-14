@@ -808,7 +808,7 @@ export default function ServiceChargesPage() {
   };
 
   return (
-    <div className="min-w-0 space-y-6">
+    <div className="min-w-0 space-y-3">
       {/* Header */}
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-1.5">

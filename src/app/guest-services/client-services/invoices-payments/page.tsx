@@ -1004,7 +1004,7 @@ export default function InvoicesPaymentsPage() {
 
           {activeTab === 'invoices' ? (
             <>
-            <div className="mb-[18px] flex flex-wrap items-center gap-2">
+            <div className="mb-1 flex flex-wrap items-center gap-2">
               <Input
                 size="sm"
                 aria-label="Search invoices"
@@ -1113,7 +1113,7 @@ export default function InvoicesPaymentsPage() {
             </>
           ) : activeTab === 'payments' ? (
             <>
-            <div className="mb-[18px] flex flex-wrap items-center gap-2">
+            <div className="mb-1 flex flex-wrap items-center gap-2">
               <Input
                 size="sm"
                 aria-label="Search payments"
@@ -1213,7 +1213,7 @@ export default function InvoicesPaymentsPage() {
             </>
           ) : activeTab === 'folios' ? (
             <>
-            <div className="mb-[18px] flex flex-wrap items-center gap-2">
+            <div className="mb-1 flex flex-wrap items-center gap-2">
               <Input
                 size="sm"
                 aria-label="Search folios"

@@ -439,7 +439,7 @@ function CheckInsSection() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       {inlineNotification && (
         <div className={`px-4 py-3 rounded-lg text-sm font-medium flex items-center gap-2 ${inlineNotification.type === 'success' ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-200'}`}>
           {inlineNotification.type === 'success' ? '✅' : '❌'} {inlineNotification.message}
@@ -480,7 +480,7 @@ function CheckInsSection() {
         </div>
         )}
 
-      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <Input
           size="sm"
           aria-label="Search in-house guests"

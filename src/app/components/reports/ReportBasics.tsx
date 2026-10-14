@@ -77,7 +77,7 @@ export function ReportSummarySection({ data }: { data: Record<string, unknown> }
   const arrays = entries.filter(([, v]) => Array.isArray(v));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       {primitives.length > 0 && (
         <SortableReportTable
           ariaLabel="Report summary"

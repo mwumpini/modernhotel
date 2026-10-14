@@ -1025,7 +1025,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 		<>
 			<div className={embedded ? '' : 'py-8 px-6'}>
 				<div className={embedded ? '' : 'max-w-[1800px] mx-auto'}>
-					<div className="mb-[18px] flex flex-wrap items-center justify-between gap-2">
+					<div className="mb-2 flex flex-wrap items-center justify-between gap-2">
 						<div className="flex min-w-0 items-center gap-1.5">
 							{!embedded && <FrontOfficeBackButton />}
 							<h2 className="text-lg font-semibold text-ghana-black">Clients</h2>
@@ -1198,7 +1198,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                         </div>
                     </div>
 
-					<div className="flex flex-col gap-2 mb-[18px]">
+					<div className="flex flex-col gap-2 mb-2">
 					<div className="flex flex-wrap items-center gap-2">
 						<Input
 							size="sm"

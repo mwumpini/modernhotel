@@ -102,12 +102,12 @@ export default function HousekeepingRequisitionsPanel() {
 
   return (
     <div className="space-y-3">
-      <div className="mb-[18px] flex flex-wrap items-center justify-between gap-2">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-base font-semibold text-ghana-black shrink-0">Requisitions</h3>
         <Button size="sm" color="primary" onPress={() => setOpen(true)} className="min-h-10 shrink-0">+ Request Stock</Button>
       </div>
 
-      <div className="mb-[18px] flex flex-wrap items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <Select
           size="sm"
           placeholder="Filter by status"

@@ -224,7 +224,7 @@ export function SupplierFormModal({
 export function SuppliersTable() {
   const inventoryScreen = useInventoryScreen();
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       {/* Filters and Search */}
       <Card className="border-0 shadow-lg">
         <CardBody>

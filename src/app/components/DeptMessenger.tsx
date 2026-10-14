@@ -9,6 +9,7 @@ import { useSession } from 'next-auth/react';
 import { dmStore } from '../lib/communications/dmStore';
 import { buildDeskBrief } from '../lib/ai/deskBrief';
 import { localMamaniReply } from '../lib/ai/mamaniReply';
+import { useSettingsStore } from '../lib/settings/store';
 import { findHelp, isHelpQuestion, type HelpMatch } from '../lib/ai/helpSearch';
 
 interface DeptMessengerProps {
@@ -179,7 +180,8 @@ export default function DeptMessenger({ from, mode = 'inline' }: DeptMessengerPr
     if (!content || aiLoading) return;
     const matches = isHelpQuestion(content) ? findHelp(content, from) : [];
     const helpLink = matches[0];
-    const brief = buildDeskBrief(from);
+    // This desk plus every module this person can open, so full control can ask about anything.
+    const brief = buildDeskBrief(from, (prefix) => useSettingsStore.getState().hasModuleAccess(prefix));
     const replyBrief = { ...brief, help: matches.map((m) => m.text) };
     const userMsg: ChatMsg = { id: `u-${Date.now()}`, role: 'user', content, at: new Date().toISOString() };
     const pushAssistant = (reply: string) => {
@@ -451,7 +453,7 @@ export default function DeptMessenger({ from, mode = 'inline' }: DeptMessengerPr
     setIsOpen(false);
   };
 
-  const deskBrief = buildDeskBrief(from);
+  const deskBrief = buildDeskBrief(from, (prefix) => useSettingsStore.getState().hasModuleAccess(prefix));
   const renderAi = (fill: boolean) => (
     <div className={fill ? 'flex min-h-0 flex-1 flex-col' : 'flex max-h-[32rem] flex-col'}>
       <div className={`min-h-0 flex-1 overflow-y-auto px-4 py-3 ${fill ? '' : 'max-h-64'}`}>
