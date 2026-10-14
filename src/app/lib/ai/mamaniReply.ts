@@ -38,7 +38,7 @@ function asksForLiveStatus(prompt: string): boolean {
   if (/\bhow\s+(many|much)\b/i.test(prompt)) return true;
   if (/\b(summarize|summary|status|overview|briefing|how are we)\b/i.test(prompt)) return true;
   if (/\b(how do|how to|where|steps|show me|can i|can't|cannot)\b/i.test(prompt)) return false;
-  return /\b(occupancy|occupied|vacant|dirty|clean rooms|arriving|checked in|out of stock|reorder|on leave|on duty|incidents?|notices?)\b/i.test(prompt);
+  return /\b(occup\w*|vacan\w*|dirty|clean rooms|arriv\w*|checked in|out of stock|reorder\w*|on leave|on duty|incidents?|notices?)\b/i.test(prompt);
 }
 
 function parseSnapshot(lines: string[]): Facts {
@@ -135,10 +135,10 @@ function roomAnswer(prompt: string, rooms: Rooms): string {
       : `${n} of ${rooms.total} rooms ${be(n)} ${word}.${aside(rooms, skip)}`
   );
   if (/\bdirty\b/i.test(prompt)) return lead(rooms.dirty, 'dirty', 'dirty');
-  if (/\bvacant\b/i.test(prompt)) return lead(rooms.vacant, 'vacant', 'vacant');
+  if (/\bvacan\w*/i.test(prompt)) return lead(rooms.vacant, 'vacant', 'vacant');
   if (/\boccup/i.test(prompt)) return lead(rooms.occupied, 'occupied', 'occupied');
   if (/\bclean\b/i.test(prompt) && !/\bhousekeep/i.test(prompt)) return lead(rooms.clean, 'clean', 'clean');
-  if (/\bmaintenance\b/i.test(prompt)) return lead(rooms.maintenance, 'in maintenance', 'maintenance');
+  if (/\bmaint\w*/i.test(prompt)) return lead(rooms.maintenance, 'in maintenance', 'maintenance');
   const listed = ['occupied', 'vacant', 'dirty', 'clean', 'in maintenance']
     .map((word, i) => {
       const key = (['occupied', 'vacant', 'dirty', 'clean', 'maintenance'] as const)[i];
@@ -229,33 +229,33 @@ function briefing(facts: Facts, label: string): string {
 
 function draftNotice(prompt: string, facts: Facts, notices: string[]): string {
   const lines: string[] = [];
-  if (/\b(arrival|arriving|front office|frontdesk)\b/i.test(prompt) && facts.stays) {
+  if (/\b(arriv\w*|front office|frontdesk)\b/i.test(prompt) && facts.stays) {
     lines.push(facts.stays.arriving === 0
       ? 'Front office: no arrivals are booked today.'
       : `Front office: ${count(facts.stays.arriving, 'guest')} ${be(facts.stays.arriving)} arriving today.`);
     lines.push(`${count(facts.stays.inHouse, 'guest')} ${be(facts.stays.inHouse)} already checked in.`);
-  } else if (/\b(clean|dirty|housekeep|maintenance)\b/i.test(prompt) && facts.rooms) {
+  } else if (/\b(clean\w*|dirty|housekeep\w*|maint\w*|rooms?)\b/i.test(prompt) && facts.rooms) {
     lines.push(facts.rooms.dirty === 0
       ? 'Housekeeping: no rooms are waiting on a clean.'
       : `Housekeeping: ${count(facts.rooms.dirty, 'room')} still ${facts.rooms.dirty === 1 ? 'needs' : 'need'} cleaning.`);
     if (facts.rooms.maintenance > 0) lines.push(`${count(facts.rooms.maintenance, 'room')} ${be(facts.rooms.maintenance)} in maintenance.`);
-  } else if (/\b(stock|inventory|reorder|low)\b/i.test(prompt) && facts.stock) {
+  } else if (/\b(stock\w*|inventor\w*|reorder\w*|low)\b/i.test(prompt) && facts.stock) {
     const names = facts.stock.names.length ? ` (${list(facts.stock.names)})` : '';
     lines.push(`Stores: ${count(facts.stock.out, 'item')} ${be(facts.stock.out)} out of stock${names}. ${count(facts.stock.low, 'item')} ${be(facts.stock.low)} at or below reorder.`);
-  } else if (/\b(payroll|leave|staff)\b/i.test(prompt) && (facts.staff || facts.payrollOpen !== undefined)) {
+  } else if (/\b(payroll\w*|leave|staff|employees?)\b/i.test(prompt) && (facts.staff || facts.payrollOpen !== undefined)) {
     if (facts.staff) lines.push(`HR: ${staffAnswer(facts.staff)}`);
     if (facts.payrollOpen !== undefined) {
       lines.push(facts.payrollOpen === 0
         ? 'No payroll period is waiting.'
         : `${count(facts.payrollOpen, 'payroll period')} still need attention.`);
     }
-  } else if (/\b(incident|security|duty|patrol)\b/i.test(prompt)) {
+  } else if (/\b(incidents?|security|duty|patrols?)\b/i.test(prompt)) {
     lines.push(`Security: ${securityAnswer(facts) || 'no duty or incident totals are loaded.'}`);
-  } else if (/\b(kitchen|order|restaurant)\b/i.test(prompt) && facts.ordersOpen !== undefined) {
+  } else if (/\b(kitchens?|orders?|restaurants?)\b/i.test(prompt) && facts.ordersOpen !== undefined) {
     lines.push(facts.ordersOpen === 0
       ? 'Kitchen: no restaurant orders are open.'
       : `Kitchen: ${count(facts.ordersOpen, 'order')} ${be(facts.ordersOpen)} still open.`);
-  } else if (/\b(invoice|bill|end-of-day|accounting)\b/i.test(prompt) && facts.invoices) {
+  } else if (/\b(invoices?|bills?|end-of-day|accounting)\b/i.test(prompt) && facts.invoices) {
     lines.push(`Accounts: ${count(facts.invoices.sales, 'sales invoice')} open and ${count(facts.invoices.bills, 'supplier bill')} unpaid.`);
   } else {
     lines.push(briefing(facts, 'hotel'));
@@ -266,16 +266,16 @@ function draftNotice(prompt: string, facts: Facts, notices: string[]): string {
 
 function answerFromFacts(prompt: string, facts: Facts, notices: string[], label: string): string {
   const parts: string[] = [];
-  if (/\b(room|dirty|clean|occupan|vacant|housekeep|maintenance)\b/i.test(prompt) && facts.rooms) {
+  if (/\b(rooms?|dirty|clean\w*|occup\w*|vacan\w*|housekeep\w*|maint\w*)\b/i.test(prompt) && facts.rooms) {
     parts.push(roomAnswer(prompt, facts.rooms));
   }
-  if (/\b(arriv|checked in|check-in|guest|reservation)\b/i.test(prompt) && facts.stays) {
+  if (/\b(arriv\w*|checked in|check-ins?|guests?|reservations?|in-house|in house)\b/i.test(prompt) && facts.stays) {
     parts.push(stayAnswer(facts.stays));
   }
-  if (/\b(stock|inventory|reorder)\b/i.test(prompt) && facts.stock) {
+  if (/\b(stock\w*|inventor\w*|reorder\w*)\b/i.test(prompt) && facts.stock) {
     parts.push(stockAnswer(prompt, facts.stock));
   }
-  if (/\b(staff|employee|leave|payroll)\b/i.test(prompt)) {
+  if (/\b(staff|employees?|leave|payroll\w*)\b/i.test(prompt)) {
     if (facts.staff) parts.push(staffAnswer(facts.staff));
     if (facts.payrollOpen !== undefined) {
       parts.push(facts.payrollOpen === 0
@@ -283,16 +283,16 @@ function answerFromFacts(prompt: string, facts: Facts, notices: string[], label:
         : `${count(facts.payrollOpen, 'payroll period')} ${be(facts.payrollOpen)} still draft or processing.`);
     }
   }
-  if (/\b(security|incident|patrol|duty)\b/i.test(prompt)) {
+  if (/\b(security|incidents?|patrols?|duty)\b/i.test(prompt)) {
     const security = securityAnswer(facts);
     if (security) parts.push(security);
   }
-  if (/\b(order|restaurant|kitchen|\bbar\b)\b/i.test(prompt) && facts.ordersOpen !== undefined) {
+  if (/\b(orders?|restaurants?|kitchens?|bar)\b/i.test(prompt) && facts.ordersOpen !== undefined) {
     parts.push(facts.ordersOpen === 0
       ? 'No restaurant orders are open.'
       : `${count(facts.ordersOpen, 'restaurant order')} ${be(facts.ordersOpen)} open.`);
   }
-  if (/\b(invoice|bill)\b/i.test(prompt) && facts.invoices) {
+  if (/\b(invoices?|bills?)\b/i.test(prompt) && facts.invoices) {
     parts.push(`${count(facts.invoices.sales, 'sales invoice')} ${be(facts.invoices.sales)} still open, and ${count(facts.invoices.bills, 'supplier bill')} ${be(facts.invoices.bills)} unpaid.`);
   }
   if (/\bnotices?\b/i.test(prompt)) parts.push(noticeAnswer(notices));
