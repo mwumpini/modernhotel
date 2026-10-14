@@ -42,6 +42,8 @@ const SYNONYMS: Record<string, string> = {
 };
 
 export function isHelpQuestion(prompt: string): boolean {
+  // "How many rooms are dirty?" is a count, not a how-to.
+  if (/\bhow\s+(many|much)\b/i.test(prompt)) return false;
   return /\b(how|where|which|help|configure|configuration|setup|set up|shortcut|f12|f1|what is|what's|show me|steps|can i|can't|cannot|why)\b/i.test(prompt);
 }
 

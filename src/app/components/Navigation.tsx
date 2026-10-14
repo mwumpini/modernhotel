@@ -2,7 +2,7 @@
 
 import React, { Suspense, lazy } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { MessageSquare } from 'lucide-react';
+import { LogOut, MessageSquare } from 'lucide-react';
 import { Button, Accordion, AccordionItem, Avatar, Tooltip } from "@heroui/react";
 import { useSession } from 'next-auth/react';
 import { useComplianceStore } from '../lib/compliance/store';
@@ -840,23 +840,57 @@ export default function Navigation({ onLogout }: NavigationProps) {
         </>
       )}
       {/* Sidebar */}
-      <nav className={`${sidebarCollapsed ? 'w-14' : 'w-80'} ${narrow && !sidebarCollapsed ? 'fixed inset-y-0 left-0 z-40 max-w-[85vw]' : ''} shrink-0 bg-white shadow-xl h-dvh overflow-y-auto overflow-x-hidden transition-[width] duration-200`}>
+      <nav className={`${sidebarCollapsed ? 'flex w-14 flex-col overflow-hidden' : 'w-80 overflow-y-auto overflow-x-hidden'} ${narrow && !sidebarCollapsed ? 'fixed inset-y-0 left-0 z-40 max-w-[85vw]' : ''} shrink-0 bg-white shadow-xl h-dvh transition-[width] duration-200`}>
         {sidebarCollapsed ? (
-          <div className="flex flex-col items-center gap-1 py-3">
-            <Tooltip content="Show side pane (Ctrl+B)" placement="right">
-              <Button isIconOnly size="sm" variant="flat" aria-label="Show side pane" onPress={toggleSidebar}>»</Button>
-            </Tooltip>
-            {visibleNavigationSections.map((section) => (
-              <Tooltip key={section.key} content={section.title.replace(/^[^\s]+\s/, '')} placement="right">
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto py-3">
+              <Tooltip content="Show side pane (Ctrl+B)" placement="right">
+                <Button isIconOnly size="sm" variant="flat" aria-label="Show side pane" onPress={toggleSidebar}>»</Button>
+              </Tooltip>
+              {visibleNavigationSections.map((section) => (
+                <Tooltip key={section.key} content={section.title.replace(/^[^\s]+\s/, '')} placement="right">
+                  <button
+                    className="h-10 w-10 rounded-lg text-lg hover:bg-ghana-gold/20 transition-colors"
+                    aria-label={section.title.replace(/^[^\s]+\s/, '')}
+                    onClick={() => handleSectionClick(section.key, undefined)}
+                  >
+                    {section.icon}
+                  </button>
+                </Tooltip>
+              ))}
+            </div>
+            <div className="flex shrink-0 flex-col items-center gap-1 border-t border-gray-200 py-2">
+              <Tooltip content={`${currentUserName}${currentUserRoleLabel ? ` — ${currentUserRoleLabel}` : ''}`} placement="right">
                 <button
-                  className="h-10 w-10 rounded-lg text-lg hover:bg-ghana-gold/20 transition-colors"
-                  aria-label={section.title.replace(/^[^\s]+\s/, '')}
-                  onClick={() => handleSectionClick(section.key, undefined)}
+                  className="flex h-10 w-10 items-center justify-center rounded-lg hover:bg-ghana-gold/20 transition-colors"
+                  aria-label="Go to user profile and preferences"
+                  onClick={() => setActiveSection('my-profile')}
                 >
-                  {section.icon}
+                  <Avatar
+                    name={currentUserName}
+                    className="h-8 w-8 bg-gradient-to-br from-ghana-green to-ghana-gold text-tiny text-white"
+                  />
                 </button>
               </Tooltip>
-            ))}
+              <Tooltip content="Messenger (Ctrl+M)" placement="right">
+                <button
+                  className="flex h-10 w-10 items-center justify-center rounded-lg text-ghana-green hover:bg-ghana-gold/20 transition-colors"
+                  aria-label="Messenger"
+                  onClick={() => openMessengerFromShell(router, pathname || '/')}
+                >
+                  <MessageSquare className="h-5 w-5" aria-hidden />
+                </button>
+              </Tooltip>
+              <Tooltip content="Sign Out" placement="right">
+                <button
+                  className="flex h-10 w-10 items-center justify-center rounded-lg text-ghana-red hover:bg-ghana-red/10 transition-colors"
+                  aria-label="Sign Out"
+                  onClick={onLogout}
+                >
+                  <LogOut className="h-5 w-5" aria-hidden />
+                </button>
+              </Tooltip>
+            </div>
           </div>
         ) : (
         <div className="p-6 w-80">
