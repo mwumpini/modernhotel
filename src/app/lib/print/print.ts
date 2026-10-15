@@ -32,8 +32,10 @@ export function printHtml(title: string, bodyHtml: string) {
       th, td { padding: 6px 0; }
       .totals td { padding-top: 8px; }
       .line { border-top: 1px dashed #aaa; margin: 8px 0; }
+      @page { size: 80mm auto; margin: 0; }
       @media print {
         body { margin: 0; }
+        .receipt { width: 72mm; margin: 0 auto; }
       }
     </style>
   `;
@@ -134,7 +136,8 @@ const SLIP_PREVIEW_CSS = `
   .item { display:flex; gap:12px; margin:4px 0; text-transform:uppercase; }
   .qty { width:1.6rem; text-align:right; font-variant-numeric:tabular-nums; }
   .notes { font-size:13px; }
-  @media print { body { background:#fff; } .slip { margin:0; box-shadow:none; } }
+  @page { size: 80mm auto; margin: 0; }
+  @media print { body { background:#fff; } .slip { width:72mm; margin:0 auto; padding:2mm 0 4mm; box-shadow:none; } }
 `;
 
 /** Full page for the preview window, so the slip sits centered instead of stretching. */

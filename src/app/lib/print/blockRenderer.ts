@@ -5,6 +5,7 @@ import { amountInWords } from './amountInWords';
 import { computeTotalsBreakdown } from './taxBreakdown';
 import { renderRetailSlipDocument } from './retailSlip';
 import { renderNodaBillDocument } from './nodaBill';
+import { formatHotelDate } from '../settings/hotelDates';
 
 const ROMAN_LOWER = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x', 'xi', 'xii', 'xiii', 'xiv', 'xv'];
 function roman(n: number): string {
@@ -52,6 +53,7 @@ function logoSizePx(s: TemplateStyle['logoSize']): string {
   switch (s) {
     case 'sm': return '48px';
     case 'lg': return '96px';
+    case 'xl': return '120px';
     default: return '72px';
   }
 }
@@ -74,7 +76,8 @@ function headerFlexDirection(pos: TemplateStyle['logoPosition']): string {
   return 'row';
 }
 
-function styleBlock(style: TemplateStyle): string {
+function styleBlock(style: TemplateStyle, hotelLogoSize?: TemplateStyle['logoSize']): string {
+  const logoH = logoSizePx(hotelLogoSize || style.logoSize);
   const bw = borderWidthPx(style.borderWidth);
   const narrow = style.pageWidth === 'narrow';
   return `
@@ -86,7 +89,7 @@ function styleBlock(style: TemplateStyle): string {
     body > * { flex-shrink:0; }
     h1,h2,h3,h4 { margin:0; }
     .header { display:flex; flex-direction:${narrow ? 'column' : headerFlexDirection(style.logoPosition)}; align-items:center; ${style.logoPosition === 'center' || narrow ? 'text-align:center;' : ''} gap:16px; border-bottom:calc(var(--bw) + 1px) solid var(--brand); padding-bottom:12px; }
-    .logo { width:${logoSizePx(style.logoSize)}; height:${logoSizePx(style.logoSize)}; object-fit:contain; }
+    .logo { height:${logoH}; width:auto; max-width:calc(${logoH} * 3); object-fit:contain; }
     .meta { ${style.logoPosition === 'center' || narrow ? '' : 'margin-left:auto;'} text-align:${narrow ? 'center' : 'right'}; font-size:0.9em; color:var(--muted); }
     .doc-title { margin:12px 0 8px; font-size:1.55em; font-weight:700; color:var(--brand); }
     .grid { display:grid; grid-template-columns: ${narrow ? '1fr' : '1fr 1fr'}; gap:12px; }
@@ -118,10 +121,10 @@ function styleBlock(style: TemplateStyle): string {
     .sign-line { border-bottom:1px solid var(--border); height:28px; }
     .custom-text { margin:12px 0; }
     .avoid-break { page-break-inside:avoid; break-inside:avoid; }
-    @page { size: ${narrow ? '80mm auto' : 'A4'}; margin: ${narrow ? '3mm' : '12mm'}; }
+    @page { size: ${narrow ? '80mm auto' : 'A4'}; margin: ${narrow ? '0' : '12mm'}; }
     @media print {
       html, body { height:auto; }
-      body { padding:0; min-height:${narrow ? '0' : '260mm'}; }
+      body { padding:0; min-height:${narrow ? '0' : '260mm'}; ${narrow ? 'width:72mm; max-width:72mm; padding:2mm 0 4mm;' : ''} }
       .no-print { display:none !important; }
     }
   </style>`;
@@ -152,7 +155,7 @@ function renderDocMeta(block: BlockConfig, data: PrintData): string {
   return `
   <div class="meta">
     ${data.docNumber ? `<div><span class="badge">${block.docNumberLabel || 'No.'}</span> ${data.docNumber}</div>` : ''}
-    ${data.docDate ? `<div>${new Date(data.docDate).toLocaleDateString()}</div>` : ''}
+    ${data.docDate ? `<div>${formatHotelDate(data.docDate)}</div>` : ''}
   </div>`;
 }
 
@@ -196,7 +199,7 @@ function renderRecipientInfo(block: BlockConfig, data: PrintData): string {
     <div class="box"${boxStyle}>
       <div style="font-weight:600; margin-bottom:6px;">Stay Details</div>
       <div>Room: ${guest.roomNumber || ''} • ${guest.roomType || ''}</div>
-      <div>Arrival: ${guest.arrivalDate ? new Date(guest.arrivalDate).toLocaleDateString() : ''} • Departure: ${guest.departureDate ? new Date(guest.departureDate).toLocaleDateString() : ''} • Nights: ${guest.nights ?? ''}</div>
+      <div>Arrival: ${guest.arrivalDate ? formatHotelDate(guest.arrivalDate) : ''} • Departure: ${guest.departureDate ? formatHotelDate(guest.departureDate) : ''} • Nights: ${guest.nights ?? ''}</div>
     </div>` : ''}
   </div>`;
 }
@@ -243,7 +246,7 @@ function renderScheduleTable(_block: BlockConfig, data: PrintData, currency: str
     return g.entries.map((e, ei) => `<tr>
       ${ei === 0 ? `<td rowspan="${span}">${gi + 1}</td><td rowspan="${span}">${g.description}${renderBullets(g.bullets)}</td>` : ''}
       <td>${e.day}</td>
-      <td>${e.date ? new Date(e.date).toLocaleDateString() : ''}</td>
+      <td>${e.date ? formatHotelDate(e.date) : ''}</td>
       <td class="right">${e.qty ?? ''}</td>
       <td class="right">${e.unitPrice != null ? money(e.unitPrice, currency) : ''}</td>
       <td class="right">${money(e.total, currency)}</td>
@@ -312,7 +315,7 @@ function renderLineItemsTable(block: BlockConfig, data: PrintData, currency: str
       const bits = [it.description];
       if (showQty && it.qty != null) bits.push(`${it.qty}${showUnit && it.unit ? ` ${it.unit}` : ''}`);
       if (showRate && it.unitPrice != null) bits.push(`@ ${money(it.unitPrice, currency)}`);
-      if (cols.includes('date') && it.date) bits.push(new Date(it.date).toLocaleDateString());
+      if (cols.includes('date') && it.date) bits.push(formatHotelDate(it.date));
       return headingHtml + bulletsHtml + leaderLine(bits.join(' — '), money(it.amount, currency));
     }).join('');
   }
@@ -323,7 +326,7 @@ function renderLineItemsTable(block: BlockConfig, data: PrintData, currency: str
       <td>
         ${it.heading ? `<div style="font-weight:700;">${it.heading}</div>` : ''}
         ${renderBullets(it.bullets)}
-        ${it.description}${cols.includes('date') && it.date ? ` <span style="color:#777;">(${new Date(it.date).toLocaleDateString()})</span>` : ''}
+        ${it.description}${cols.includes('date') && it.date ? ` <span style="color:#777;">(${formatHotelDate(it.date)})</span>` : ''}
       </td>
       ${showQty ? `<td class="right">${it.qty ?? ''}</td>` : ''}
       ${showUnit ? `<td>${it.unit || ''}</td>` : ''}
@@ -352,7 +355,7 @@ function renderEmployeeDetails(block: BlockConfig, data: PrintData): string {
   if (!e) return '';
   const boxStyle = boxBorderStyle(block.border);
   const left: Array<[string, string]> = [
-    ['Date of Joining', e.dateOfJoining ? new Date(e.dateOfJoining).toLocaleDateString() : ''],
+    ['Date of Joining', e.dateOfJoining ? formatHotelDate(e.dateOfJoining) : ''],
     ['Pay Period', e.payPeriod || ''],
     ['Worked Days', e.workedDays != null ? String(e.workedDays) : ''],
   ];
@@ -582,7 +585,7 @@ function renderDocDate(block: BlockConfig, data: PrintData): string {
     const ref = data.docNumber ? `&nbsp;&nbsp;${data.docNumber}` : '';
     return `<div>${day} ${date}&nbsp;&nbsp;${time}${ref}</div><div style="border-top:1px dashed #888; margin-top:8px;"></div>`;
   }
-  return `<div>${block.heading ? `${block.heading} ` : ''}${when.toLocaleDateString()}</div>`;
+  return `<div>${block.heading ? `${block.heading} ` : ''}${formatHotelDate(when)}</div>`;
 }
 
 function renderCompanyName(_block: BlockConfig, data: PrintData): string {
@@ -642,8 +645,8 @@ function renderStayDetails(block: BlockConfig, data: PrintData, currency: string
     ];
     const right: Array<[string, string]> = [
       ['Room Rate', guest.roomRate != null ? money(guest.roomRate, currency) : ''],
-      ['Arrival Date', guest.arrivalDate ? new Date(guest.arrivalDate).toLocaleDateString() : ''],
-      ['Departure Date', guest.departureDate ? new Date(guest.departureDate).toLocaleDateString() : ''],
+      ['Arrival Date', guest.arrivalDate ? formatHotelDate(guest.arrivalDate) : ''],
+      ['Departure Date', guest.departureDate ? formatHotelDate(guest.departureDate) : ''],
     ];
     const col = (rows: Array<[string, string]>) => rows.map(([label, val]) => `<div>${label} : ${val}</div>`).join('');
     return `
@@ -660,7 +663,7 @@ function renderStayDetails(block: BlockConfig, data: PrintData, currency: string
   <div class="box"${boxStyle}>
     <div style="font-weight:600; margin-bottom:6px;">${block.heading || 'Stay Details'}</div>
     <div>Room: ${guest.roomNumber || ''} • ${guest.roomType || ''}</div>
-    <div>Arrival: ${guest.arrivalDate ? new Date(guest.arrivalDate).toLocaleDateString() : ''} • Departure: ${guest.departureDate ? new Date(guest.departureDate).toLocaleDateString() : ''} • Nights: ${guest.nights ?? ''}</div>
+    <div>Arrival: ${guest.arrivalDate ? formatHotelDate(guest.arrivalDate) : ''} • Departure: ${guest.departureDate ? formatHotelDate(guest.departureDate) : ''} • Nights: ${guest.nights ?? ''}</div>
   </div>`;
 }
 
@@ -754,7 +757,7 @@ function renderSignatureBlock(block: BlockConfig, data: PrintData): string {
         <div class="sign-line"></div>
         ${e.name ? `<div style="margin-top:2px;">${e.name}</div>` : ''}
         ${e.role ? `<div style="font-size:12px; color:#555;">${e.role}</div>` : ''}
-        ${e.signedDate ? `<div style="font-size:12px; color:#555;">${new Date(e.signedDate).toLocaleDateString()}</div>` : ''}
+        ${e.signedDate ? `<div style="font-size:12px; color:#555;">${formatHotelDate(e.signedDate)}</div>` : ''}
         ${i === 0 && block.signatureNote ? `<div style="margin-top:10px;">${block.signatureNote}</div>` : ''}
       </div>`).join('')}</div>`;
 }
@@ -783,10 +786,11 @@ function interpolate(text: string, data: PrintData): string {
   const dict: Record<string, string> = {
     'org.name': data.org.name || '',
     'docNumber': data.docNumber || '',
-    'docDate': data.docDate ? new Date(data.docDate).toLocaleDateString() : '',
+    'docDate': data.docDate ? formatHotelDate(data.docDate) : '',
     'guest.name': data.guest.name || '',
     'totals.grandTotal': data.totals.grandTotal != null ? money(data.totals.grandTotal, data.currency) : '',
     'paymentTerms': data.paymentTerms || '',
+    'userName': data.userName || '',
   };
   return text.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_m, key) => (key in dict ? dict[key] : ''));
 }
@@ -862,6 +866,15 @@ function renderContainer(block: BlockConfig, data: PrintData, currency: string):
   if (block.joinTable) {
     const joined = renderJoinedTable(children, data, currency);
     if (joined) return joined;
+  }
+  // The letterhead follows the hotel's logo position (Company Profile): beside the name, or on top.
+  if (block.id === 'letterhead-row') {
+    const pos = data.org.logoPosition || 'left';
+    if (pos === 'center') {
+      const stacked = children.map(child => wrapBlock(renderBlock({ ...child, align: child.type === 'logo' ? 'center' : child.align }, data, currency), { ...child, align: child.type === 'logo' ? 'center' : child.align })).filter(Boolean);
+      return `<div style="display:flex; flex-direction:column; gap:4px; align-items:stretch;">${stacked.map(h => `<div>${h}</div>`).join('')}</div>`;
+    }
+    if (pos === 'right') children.reverse();
   }
   const direction = block.direction || 'row';
   const gap = gapPx(block.gap) ?? '16px';
@@ -1064,7 +1077,7 @@ export function renderBlockTemplate(template: BlockTemplate, data: PrintData): s
   return `
   <!doctype html><html><head><meta charset="utf-8" />
   <title>${data.title || template.name}</title>
-  ${styleBlock(style)}
+  ${styleBlock(style, data.org.logoSize)}
   </head><body>
     ${watermarkHtml}
     ${headerHtml}

@@ -58,10 +58,10 @@ export const configurationGuide = {
     'Hotel setup is split on purpose. Use the area that owns the data — do not duplicate settings across screens.',
   areas: [
     {
-      name: 'System Setup (/setup)',
-      owns: 'Company legal name, address, tax ID, country, currency, date/time formats, initial security defaults.',
-      notHere: 'Day-to-day room rates, VAT percentages, or staff accounts after first run.',
-      href: '/setup' as const,
+      name: 'Settings → Company Profile',
+      owns: 'Hotel name, legal name, logo (position and size on documents), TIN, registration number, address, contacts, timezone, date and time formats.',
+      notHere: 'Country and currency (set once when the hotel first opens) or VAT percentages (Compliance).',
+      section: 'settings' as const,
     },
     {
       name: 'Settings → System Settings',
@@ -148,7 +148,7 @@ export const helpTopics: HelpTopic[] = [
     keywords: ['where', 'configure', 'setup', 'settings', 'compliance', 'map', 'boundaries'],
     category: 'configuration',
     steps: [
-      'First visit: complete System Setup (/setup) for company, country, and currency.',
+      'First visit: the setup wizard asks once for the company, country, and currency. Afterwards, change company details in Settings → Company Profile.',
       'Ongoing: use Settings for users, rooms & rate plans, numbering, and security.',
       'Tax rates and filing: use Compliance → Tax rules, Payroll tax, or Reports & Filing.',
     ],

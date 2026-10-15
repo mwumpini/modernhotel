@@ -218,62 +218,27 @@ function nodaScheduleBlocks(signatures: Array<{ label: string; role?: string }>)
 }
 
 /**
- * A guest's individual checkout bill: "Billing Person" (when a company is
- * settling for them) / guest name up top, a labeled document number, dual
- * Guest/Receptionist sign-off, and a settle-before-vacating reminder — matches
- * how several Ghanaian hotels (e.g. Noda Hotel) format a check-out bill.
- */
-function checkoutBillBlocks(): BlockConfig[] {
-  return [
-    letterheadHeaderRow(0),
-    block({ id: 'doc-title', type: 'doc-title', order: 1, align: 'center', spacing: 'medium' }),
-    // Billing party on the left (2x wider), CheckOut No. on the right — a
-    // Layout Container so they sit on one row without forcing an even split.
-    block({
-      id: 'header-row', type: 'container', order: 2, direction: 'row', gap: 'large',
-      children: [
-        block({ id: 'guest-details', type: 'guest-details', order: 0, flexWeight: 2, border: 'none' }),
-        block({ id: 'doc-number', type: 'doc-number', order: 1, flexWeight: 1, align: 'right', docNumberLabel: 'CheckOut No.', style: { bold: true } }),
-      ],
-    }),
-    block({ id: 'doc-date', type: 'doc-date', order: 3, align: 'right' }),
-    block({ id: 'stay-details', type: 'stay-details', order: 4, border: 'thin', spacing: 'small', stayDetailsDisplay: 'grid' }),
-    block({ id: 'line-items-table', type: 'line-items-table', order: 5, lineItemsDisplay: 'simple', spacing: 'medium' }),
-    // Taxes get their own box, right-aligned under the table — subtotal/net
-    // total/payments/balance stay plain lines around it (matches a plain
-    // hand-typed bill: only the statutory tax breakdown is boxed).
-    block({
-      id: 'totals-column', type: 'container', order: 6, direction: 'column', gap: 'small',
-      children: [
-        block({ id: 'totals-subtotal', type: 'totals-subtotal', order: 0, align: 'right' }),
-        block({ id: 'totals-taxes', type: 'totals-taxes', order: 1, align: 'right', border: 'thin' }),
-        block({ id: 'totals-grandtotal', type: 'totals-grandtotal', order: 2, align: 'right', heading: 'Net Total', showAmountInWords: true }),
-        block({ id: 'totals-payments', type: 'totals-payments', order: 3, align: 'right' }),
-        block({ id: 'totals-balance', type: 'totals-balance', order: 4, align: 'right', border: 'thin' }),
-      ],
-    }),
-    block({ id: 'signature-block', type: 'signature-block', order: 7, spacing: 'medium', signatureDisplay: 'line', signatures: [{ label: 'Guest Sign' }, { label: 'Receptionist Sign' }] }),
-    block({ id: 'phone-line', type: 'custom-text', order: 8, spacing: 'none', text: 'Phone No: _______________________' }),
-    block({ id: 'notes-text', type: 'notes-text', order: 9 }),
-    // custom-text (unlike notes-text) always renders, regardless of what footer
-    // notes the print call supplies — right for a fixed policy reminder like this.
-    block({
-      id: 'settle-notice', type: 'custom-text', order: 10, align: 'center', spacing: 'small', style: { fontSize: 'sm', bold: true },
-      text: 'Accounts must be settled before vacating room.\nPlease leave key with the receptionist before vacating.\n<<<<<<< Service Next to None >>>>>>>',
-    }),
-  ];
-}
-
-/**
  * The typed Noda-style check-out bill: centered letterhead, billing lines beside
  * the checkout number, a stay box, a charges box, a right-hand tax grid, then
  * guest and receptionist lines with the settle-before-leaving notice at the bottom.
  */
-function rukyBlocks(): BlockConfig[] {
+function checkoutBillBlocks(): BlockConfig[] {
   return [
-    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', underline: true, spacing: 'none', style: { fontSize: 'lg', bold: true } }),
-    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center', spacing: 'none' }),
-    block({ id: 'company-contact', type: 'company-contact', order: 2, align: 'center', spacing: 'none' }),
+    // Logo on the left, on the same row as the centred name, address and contacts.
+    block({
+      id: 'letterhead-row', type: 'container', order: 0, direction: 'row', gap: 'small', spacing: 'none',
+      children: [
+        block({ id: 'logo', type: 'logo', order: 0, flexWeight: 0, align: 'left' }),
+        block({
+          id: 'letterhead-text', type: 'container', order: 1, direction: 'column', gap: 'none', flexWeight: 1,
+          children: [
+            block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', underline: true, spacing: 'none', style: { fontSize: 'lg', bold: true } }),
+            block({ id: 'company-address', type: 'company-address', order: 1, align: 'center', spacing: 'none' }),
+            block({ id: 'company-contact', type: 'company-contact', order: 2, align: 'center', spacing: 'none' }),
+          ],
+        }),
+      ],
+    }),
     block({ id: 'doc-title', type: 'doc-title', order: 3, heading: 'CHECK OUT BILL', align: 'center', underline: true, spacing: 'medium' }),
     block({
       id: 'billing-row', type: 'container', order: 4, direction: 'row', gap: 'large', spacing: 'small',
@@ -293,6 +258,175 @@ function rukyBlocks(): BlockConfig[] {
         block({ id: 'totals-payments', type: 'totals-payments', order: 3, totalsDisplay: 'grid', heading: 'Advance' }),
       ],
     }),
+    block({
+      id: 'sign-off', type: 'container', order: 11, direction: 'column', gap: 'small', spacing: 'bottom',
+      children: [
+        block({
+          id: 'signature-block', type: 'signature-block', order: 0, spacing: 'none',
+          signatureDisplay: 'line', signatureParties: 'staff-guest', guestSignature: 'auto',
+          guestSignLabel: 'Guest Sign', staffSignLabel: 'Receptionist Sign', signatureNote: 'Phone No:',
+        }),
+        block({
+          id: 'settle-notice', type: 'custom-text', order: 1, align: 'center', spacing: 'small', style: { bold: true },
+          text: 'Accounts must be settled before vacating room.\nPlease Leave Key with The Receptionist Before vacating.\n<<<<<<<< Service Next to None >>>>>>>>',
+        }),
+      ],
+    }),
+  ];
+}
+
+/**
+ * The Noda check-out bill's look for a proforma or quotation: the same letterhead,
+ * stay box (only when rooms are quoted), charges box and tax grid, titled with the
+ * document's own name and signed by whoever prepared it and the client accepting it.
+ */
+function nodaProformaBlocks(): BlockConfig[] {
+  return [
+    // Logo on the left, on the same row as the centred name, address and contacts.
+    block({
+      id: 'letterhead-row', type: 'container', order: 0, direction: 'row', gap: 'small', spacing: 'none',
+      children: [
+        block({ id: 'logo', type: 'logo', order: 0, flexWeight: 0, align: 'left' }),
+        block({
+          id: 'letterhead-text', type: 'container', order: 1, direction: 'column', gap: 'none', flexWeight: 1,
+          children: [
+            block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', underline: true, spacing: 'none', style: { fontSize: 'lg', bold: true } }),
+            block({ id: 'company-address', type: 'company-address', order: 1, align: 'center', spacing: 'none' }),
+            block({ id: 'company-contact', type: 'company-contact', order: 2, align: 'center', spacing: 'none' }),
+          ],
+        }),
+      ],
+    }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, align: 'center', underline: true, spacing: 'medium' }),
+    block({
+      id: 'billing-row', type: 'container', order: 4, direction: 'row', gap: 'large', spacing: 'small',
+      children: [
+        block({ id: 'guest-details', type: 'guest-details', order: 0, flexWeight: 2, border: 'none', guestDetailsDisplay: 'lines', heading: 'Billing Person' }),
+        block({
+          id: 'number-date-col', type: 'container', order: 1, direction: 'column', gap: 'none', flexWeight: 1,
+          children: [
+            block({ id: 'doc-number', type: 'doc-number', order: 0, align: 'right', border: 'none', docNumberLabel: 'Ref No :', style: { bold: true } }),
+            block({ id: 'doc-date', type: 'doc-date', order: 1, align: 'right' }),
+          ],
+        }),
+      ],
+    }),
+    block({ id: 'stay-details', type: 'stay-details', order: 5, border: 'thin', spacing: 'small', stayDetailsDisplay: 'grid' }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 6, lineItemsDisplay: 'simple', border: 'thin', spacing: 'small' }),
+    block({
+      id: 'totals-grid', type: 'container', order: 7, direction: 'column', gap: 'none', spacing: 'small', joinTable: true,
+      children: [
+        block({ id: 'totals-subtotal', type: 'totals-subtotal', order: 0, totalsDisplay: 'grid' }),
+        block({ id: 'totals-taxes', type: 'totals-taxes', order: 1, totalsDisplay: 'grid' }),
+        block({ id: 'totals-grandtotal', type: 'totals-grandtotal', order: 2, totalsDisplay: 'grid', heading: 'Net Total', showAmountInWords: true, align: 'center' }),
+      ],
+    }),
+    block({ id: 'notes-text', type: 'notes-text', order: 8 }),
+    block({
+      id: 'sign-off', type: 'container', order: 11, direction: 'column', gap: 'small', spacing: 'bottom',
+      children: [
+        block({
+          id: 'signature-block', type: 'signature-block', order: 0, spacing: 'none',
+          signatureDisplay: 'line', signatureParties: 'staff-guest', guestSignature: 'auto',
+          guestSignLabel: 'Client Acceptance', staffSignLabel: 'Prepared By',
+        }),
+        block({
+          id: 'quote-notice', type: 'custom-text', order: 1, align: 'center', spacing: 'small', style: { bold: true },
+          text: 'This is a quotation, not a receipt.\n<<<<<<<< Service Next to None >>>>>>>>',
+        }),
+      ],
+    }),
+  ];
+}
+
+/** The Noda letterhead: centred underlined name, address and contact, then the underlined title. */
+function nodaHeaderBlocks(): BlockConfig[] {
+  return [
+    // Logo on the left, on the same row as the centred name, address and contacts.
+    block({
+      id: 'letterhead-row', type: 'container', order: 0, direction: 'row', gap: 'small', spacing: 'none',
+      children: [
+        block({ id: 'logo', type: 'logo', order: 0, flexWeight: 0, align: 'left' }),
+        block({
+          id: 'letterhead-text', type: 'container', order: 1, direction: 'column', gap: 'none', flexWeight: 1,
+          children: [
+            block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', underline: true, spacing: 'none', style: { fontSize: 'lg', bold: true } }),
+            block({ id: 'company-address', type: 'company-address', order: 1, align: 'center', spacing: 'none' }),
+            block({ id: 'company-contact', type: 'company-contact', order: 2, align: 'center', spacing: 'none' }),
+          ],
+        }),
+      ],
+    }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, align: 'center', underline: true, spacing: 'medium' }),
+  ];
+}
+
+/** Billing lines on the left; the labelled number and the date on the right. */
+function nodaBillingRow(numberLabel: string): BlockConfig {
+  return block({
+    id: 'billing-row', type: 'container', order: 4, direction: 'row', gap: 'large', spacing: 'small',
+    children: [
+      block({ id: 'guest-details', type: 'guest-details', order: 0, flexWeight: 2, border: 'none', guestDetailsDisplay: 'lines', heading: 'Billing Person' }),
+      block({
+        id: 'number-date-col', type: 'container', order: 1, direction: 'column', gap: 'none', flexWeight: 1,
+        children: [
+          block({ id: 'doc-number', type: 'doc-number', order: 0, align: 'right', border: 'none', docNumberLabel: numberLabel, style: { bold: true } }),
+          block({ id: 'doc-date', type: 'doc-date', order: 1, align: 'right' }),
+        ],
+      }),
+    ],
+  });
+}
+
+/**
+ * The Noda look for a payment receipt: the check-out bill's letterhead, stay box and
+ * tax grid, then what was paid and what is still owed, signed by guest and cashier.
+ */
+function nodaReceiptBlocks(): BlockConfig[] {
+  return [
+    ...nodaHeaderBlocks(),
+    nodaBillingRow('Receipt No :'),
+    block({ id: 'stay-details', type: 'stay-details', order: 5, border: 'thin', spacing: 'small', stayDetailsDisplay: 'grid' }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 6, lineItemsDisplay: 'simple', border: 'thin', spacing: 'small' }),
+    block({
+      id: 'totals-grid', type: 'container', order: 7, direction: 'column', gap: 'none', spacing: 'small', joinTable: true,
+      children: [
+        block({ id: 'totals-subtotal', type: 'totals-subtotal', order: 0, totalsDisplay: 'grid' }),
+        block({ id: 'totals-taxes', type: 'totals-taxes', order: 1, totalsDisplay: 'grid' }),
+        block({ id: 'totals-grandtotal', type: 'totals-grandtotal', order: 2, totalsDisplay: 'grid', heading: 'Net Total', showAmountInWords: true, align: 'center' }),
+        block({ id: 'totals-payments', type: 'totals-payments', order: 3, totalsDisplay: 'grid', heading: 'Amount Paid' }),
+        block({ id: 'totals-balance', type: 'totals-balance', order: 4, totalsDisplay: 'grid' }),
+      ],
+    }),
+    block({ id: 'notes-text', type: 'notes-text', order: 8 }),
+    // A receipt needs no signatures: the cashier's printed name is enough.
+    block({
+      id: 'sign-off', type: 'container', order: 11, direction: 'column', gap: 'small', spacing: 'bottom',
+      children: [
+        block({ id: 'received-by', type: 'custom-text', order: 0, spacing: 'none', text: 'Received by: {{userName}}' }),
+        block({
+          id: 'thanks-notice', type: 'custom-text', order: 1, align: 'center', spacing: 'small', style: { bold: true },
+          text: 'Thank you for your payment.\n<<<<<<<< Service Next to None >>>>>>>>',
+        }),
+      ],
+    }),
+  ];
+}
+
+/**
+ * The Noda look for the card signed at check-in: letterhead, guest lines beside the
+ * reservation number, the stay box, the guest's agreement, and both sign lines.
+ */
+function nodaRegistrationCardBlocks(): BlockConfig[] {
+  return [
+    ...nodaHeaderBlocks(),
+    nodaBillingRow('Reservation No :'),
+    block({ id: 'stay-details', type: 'stay-details', order: 5, border: 'thin', spacing: 'small', stayDetailsDisplay: 'grid' }),
+    block({
+      id: 'acknowledgement', type: 'custom-text', order: 6, spacing: 'medium',
+      text: 'I confirm the above booking details are correct and agree to settle all charges upon checkout.',
+    }),
+    block({ id: 'notes-text', type: 'notes-text', order: 7 }),
     block({
       id: 'sign-off', type: 'container', order: 11, direction: 'column', gap: 'small', spacing: 'bottom',
       children: [
@@ -1231,14 +1365,16 @@ function template(id: string, docType: PrintType, name: string, blocks: BlockCon
   };
 }
 
+/** The Noda check-out bill prints in a typed, black-and-white serif look. */
+const CHECKOUT_BILL_STYLE: Partial<TemplateStyle> = { fontFamily: 'serif', borderColor: '#000000', corners: 'square', primaryColor: '#111111' };
+
 export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
   invoice: [
     template('builtin-invoice-standard', 'invoice', 'Standard', standardBlocks('Guest / Client')),
     template('builtin-invoice-premium', 'invoice', 'Premium', premiumBlocks('Guest / Client', [
       { label: 'Guest Signature' }, { label: 'Cashier Signature' },
     ]), { showWatermark: true, watermarkText: 'INVOICE' }),
-    template('builtin-invoice-checkout-bill', 'invoice', 'Checkout Bill', checkoutBillBlocks()),
-    template('builtin-invoice-ruky', 'invoice', 'Ruky', rukyBlocks(), { fontFamily: 'serif', borderColor: '#000000', corners: 'square', primaryColor: '#111111' }),
+    template('builtin-invoice-checkout-bill', 'invoice', 'Checkout Bill', checkoutBillBlocks(), CHECKOUT_BILL_STYLE),
     template('builtin-invoice-modern-banner', 'invoice', 'Mamani', modernBannerBlocks('Guest / Client')),
     template('builtin-invoice-statement', 'invoice', 'Statement (corporate account)', statementBlocks('Guest / Client')),
     template('builtin-invoice-tax-invoice', 'invoice', 'Tax Invoice (GRA compliance)', taxInvoiceBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
@@ -1249,7 +1385,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-receipt-premium', 'receipt', 'Premium', premiumBlocks('Guest / Client', [
       { label: 'Guest Signature' }, { label: 'Cashier Signature' },
     ]), { showWatermark: true, watermarkText: 'RECEIPT' }),
-    template('builtin-receipt-checkout-bill', 'receipt', 'Checkout Bill', checkoutBillBlocks()),
+    template('builtin-receipt-checkout-bill', 'receipt', 'Noda Receipt', nodaReceiptBlocks(), CHECKOUT_BILL_STYLE),
     template('builtin-receipt-thermal', 'receipt', 'Thermal / POS Slip (80mm)', thermalReceiptBlocks('Guest / Client'), { fontFamily: 'mono', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm' }),
     template('builtin-receipt-thank-you', 'receipt', 'Wumpini', thankYouReceiptBlocks('Guest / Client'), { showWatermark: true, watermarkText: 'PAID', primaryColor: '#0A7D34' }),
     template('builtin-receipt-corporate', 'receipt', 'Corporate (for expense reports)', corporateReceiptBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
@@ -1257,6 +1393,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
   ],
   proforma: [
     template('builtin-proforma-standard', 'proforma', 'Standard', standardBlocks('Client')),
+    template('builtin-proforma-noda', 'proforma', 'Noda Quotation', nodaProformaBlocks(), CHECKOUT_BILL_STYLE),
     template('builtin-proforma-premium', 'proforma', 'Premium', premiumBlocks('Client', [
       { label: 'Prepared By' }, { label: 'Client Acceptance' },
     ]), { showWatermark: true, watermarkText: 'PROFORMA' }),
@@ -1276,6 +1413,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
   // template can never bleed into front-desk or Conference/Event documents.
   'accommodation-proforma': [
     template('builtin-accommodation-proforma-standard', 'accommodation-proforma', 'Standard', standardBlocks('Client')),
+    template('builtin-accommodation-proforma-noda', 'accommodation-proforma', 'Noda Quotation', nodaProformaBlocks(), CHECKOUT_BILL_STYLE),
     template('builtin-accommodation-proforma-premium', 'accommodation-proforma', 'Premium', premiumBlocks('Client', [
       { label: 'Prepared By' }, { label: 'Client Acceptance' },
     ]), { showWatermark: true, watermarkText: 'PROFORMA' }),
@@ -1302,6 +1440,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
   ],
   'accommodation-receipt': [
     template('builtin-accommodation-receipt-standard', 'accommodation-receipt', 'Standard', standardBlocks('Guest / Client')),
+    template('builtin-accommodation-receipt-noda', 'accommodation-receipt', 'Noda Receipt', nodaReceiptBlocks(), CHECKOUT_BILL_STYLE),
     template('builtin-accommodation-receipt-premium', 'accommodation-receipt', 'Premium', premiumBlocks('Guest / Client', [
       { label: 'Guest Signature' }, { label: 'Cashier Signature' },
     ]), { showWatermark: true, watermarkText: 'RECEIPT' }),
@@ -1313,6 +1452,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
   // Events & Conferences — Conference/Catering leg.
   'event-proforma': [
     template('builtin-event-proforma-standard', 'event-proforma', 'Standard', standardBlocks('Client')),
+    template('builtin-event-proforma-noda', 'event-proforma', 'Noda Quotation', nodaProformaBlocks(), CHECKOUT_BILL_STYLE),
     template('builtin-event-proforma-premium', 'event-proforma', 'Premium', premiumBlocks('Client', [
       { label: 'Prepared By' }, { label: 'Client Acceptance' },
     ]), { showWatermark: true, watermarkText: 'PROFORMA' }),
@@ -1346,6 +1486,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
   ],
   'event-receipt': [
     template('builtin-event-receipt-standard', 'event-receipt', 'Standard', standardBlocks('Guest / Client')),
+    template('builtin-event-receipt-noda', 'event-receipt', 'Noda Receipt', nodaReceiptBlocks(), CHECKOUT_BILL_STYLE),
     template('builtin-event-receipt-premium', 'event-receipt', 'Premium', premiumBlocks('Guest / Client', [
       { label: 'Guest Signature' }, { label: 'Cashier Signature' },
     ]), { showWatermark: true, watermarkText: 'RECEIPT' }),
@@ -1391,6 +1532,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
   ],
   'registration-card': [
     template('builtin-registration-card-standard', 'registration-card', 'Standard', registrationCardBlocks()),
+    template('builtin-registration-card-noda', 'registration-card', 'Noda Registration Card', nodaRegistrationCardBlocks(), CHECKOUT_BILL_STYLE),
     template('builtin-registration-card-banner', 'registration-card', 'Modern Banner', registrationCardBannerBlocks()),
     template('builtin-registration-card-welcome', 'registration-card', 'Wumpini', welcomeCardBlocks()),
     template('builtin-registration-card-compact', 'registration-card', 'Compact (small front-desk printout)', compactRegistrationCardBlocks(), { pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm' }),
@@ -1423,7 +1565,13 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
   ],
 };
 
+/** Built-ins folded into another: a hotel that chose the old one gets the new one. */
+const RETIRED_BUILT_INS: Record<string, string> = {
+  'builtin-invoice-ruky': 'builtin-invoice-checkout-bill',
+};
+
 export function getBuiltInTemplate(id: string): BlockTemplate | undefined {
+  id = RETIRED_BUILT_INS[id] || id;
   for (const list of Object.values(builtInTemplates)) {
     const found = list.find(t => t.id === id);
     if (found) return found;

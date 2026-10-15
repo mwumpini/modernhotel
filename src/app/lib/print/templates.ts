@@ -1,5 +1,6 @@
 import type { TaxLabelStyle } from '../tax/displayLines';
 import { computeTotalsBreakdown } from './taxBreakdown';
+import { formatHotelDate } from '../settings/hotelDates';
 
 export type PrintType =
   | 'receipt'
@@ -38,6 +39,10 @@ export interface PrintOrgInfo {
   email?: string;
   taxId?: string;
   logoUrl?: string;
+  /** Where the logo sits beside the hotel name: left or right of it, or centred on top. */
+  logoPosition?: 'left' | 'center' | 'right';
+  /** The hotel's chosen logo size (Company Profile); a template's own size applies when unset. */
+  logoSize?: 'sm' | 'md' | 'lg' | 'xl';
 }
 
 export interface PrintGuestInfo {
@@ -305,7 +310,7 @@ function header(org: PrintOrgInfo, title: string, docNumber?: string, docDate?: 
     </div>
     <div class="meta">
       ${docNumber ? `<div><span class="badge">No.</span> ${docNumber}</div>` : ''}
-      ${docDate ? `<div>${new Date(docDate).toLocaleDateString()}</div>` : ''}
+      ${docDate ? `<div>${formatHotelDate(docDate)}</div>` : ''}
     </div>
   </div>
   <div class="doc-title">${title}</div>`;
@@ -322,7 +327,7 @@ function guestBlock(guest: PrintGuestInfo) {
     <div class="box">
       <div style="font-weight:600; margin-bottom:6px;">Stay Details</div>
       <div>Room: ${guest.roomNumber || ''} • ${guest.roomType || ''}</div>
-      <div>Arrival: ${guest.arrivalDate ? new Date(guest.arrivalDate).toLocaleDateString() : ''} • Departure: ${guest.departureDate ? new Date(guest.departureDate).toLocaleDateString() : ''} • Nights: ${guest.nights ?? ''}</div>
+      <div>Arrival: ${guest.arrivalDate ? formatHotelDate(guest.arrivalDate) : ''} • Departure: ${guest.departureDate ? formatHotelDate(guest.departureDate) : ''} • Nights: ${guest.nights ?? ''}</div>
     </div>
   </div>`;
 }
@@ -331,7 +336,7 @@ function itemsTable(items: PrintLineItem[], currency: string) {
   const rows = items.map((it, idx) => `
     <tr>
       <td>${idx + 1}</td>
-      <td>${it.description}${it.date ? ` <span style="color:#777;">(${new Date(it.date).toLocaleDateString()})</span>` : ''}</td>
+      <td>${it.description}${it.date ? ` <span style="color:#777;">(${formatHotelDate(it.date)})</span>` : ''}</td>
       <td class="right">${it.qty ?? ''}</td>
       <td>${it.unit || ''}</td>
       <td class="right">${it.unitPrice != null ? money(it.unitPrice, currency) : ''}</td>

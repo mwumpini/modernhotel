@@ -28,7 +28,7 @@ export function renderRetailSlipDocument(data: PrintData): string {
   return `<!doctype html><html><head><meta charset="utf-8" />
 <title>${esc(data.title || 'Receipt')}</title>
 <style>
-  @page { size: 80mm auto; margin: 4mm; }
+  @page { size: 80mm auto; margin: 0; }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: #e7e5e4; color: #111; }
   .slip {
@@ -77,7 +77,7 @@ export function renderRetailSlipDocument(data: PrintData): string {
   }
   @media print {
     html, body { background: #fff; }
-    .slip { margin: 0 auto; box-shadow: none; }
+    .slip { width: 72mm; max-width: 72mm; margin: 0 auto; padding: 2mm 0 4mm; box-shadow: none; }
   }
 </style>
 </head><body>

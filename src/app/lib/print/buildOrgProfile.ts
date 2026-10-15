@@ -17,5 +17,7 @@ export function buildOrgProfile(settings: SystemSettings): PrintOrgInfo {
     email: c?.contact?.email,
     taxId: c?.taxId,
     logoUrl: c?.logoUrl,
+    logoPosition: settings.saasSettings?.customBranding?.logoPosition,
+    logoSize: settings.saasSettings?.customBranding?.logoSize,
   };
 }

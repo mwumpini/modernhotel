@@ -116,10 +116,10 @@ function passwordSummary(policy: {
 }
 
 export default function SecurityPolicyPanel({
-  onOpenSetup,
+  onOpenProfile,
   onOpenTax,
 }: {
-  onOpenSetup: () => void;
+  onOpenProfile: () => void;
   onOpenTax: () => void;
 }) {
   const security = useSettingsStore((s) => s.security);
@@ -169,9 +169,9 @@ export default function SecurityPolicyPanel({
       <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-background)] px-4 py-3">
         <p className="text-sm font-semibold text-ghana-black">Staff sign-in rules</p>
         <p className="mt-1 text-xs leading-relaxed text-slate-600">
-          Password, session, and PIN rules apply to every staff account. Company name, country, and currency are in{' '}
-          <Button size="sm" variant="light" className="inline h-auto min-h-0 p-0 align-baseline text-xs text-ghana-green" onPress={onOpenSetup}>
-            System Setup
+          Password, session, and PIN rules apply to every staff account. The hotel's name, logo, TIN and contacts are in{' '}
+          <Button size="sm" variant="light" className="inline h-auto min-h-0 p-0 align-baseline text-xs text-ghana-green" onPress={onOpenProfile}>
+            Company Profile
           </Button>
           . Tax rates are in{' '}
           <Button size="sm" variant="light" className="inline h-auto min-h-0 p-0 align-baseline text-xs text-ghana-green" onPress={onOpenTax}>

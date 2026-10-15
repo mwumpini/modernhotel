@@ -84,7 +84,7 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
           { description: 'Conference Hall (Full Day)', qty: 1, unit: 'day', unitPrice: 2500, amount: 2500 },
           { description: 'Lunch Package', qty: 40, unit: 'pax', unitPrice: 85, amount: 3400 },
         ],
-        totals: { subTotal: 5900, taxes: { vat: 1180, nhil: 147.5, levy: 59 }, grandTotal: 7286.5 },
+        totals: { subTotal: 5900, taxes: { nhil: 295, vat: 885, levy: 59 }, grandTotal: 7139 },
         footerNotes: ['This is a proforma invoice — not a demand for payment. Valid for 14 days.'],
         currency: '₵',
       };
@@ -118,7 +118,7 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
         items: [
           { description: 'Standard Rooms', qty: 15, unit: 'rooms', unitPrice: 350, amount: 5250, date: new Date().toISOString() },
         ],
-        totals: { subTotal: 5250, taxes: { vat: 1050, nhil: 131.25, levy: 52.5 }, grandTotal: 6483.75 },
+        totals: { subTotal: 5250, taxes: { nhil: 262.5, vat: 787.5, levy: 52.5 }, grandTotal: 6352.5 },
         footerNotes: ['This is a proforma invoice — not a demand for payment. Valid for 14 days.'],
         currency: '₵',
       };
@@ -132,7 +132,7 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
         items: [
           { description: 'Standard Rooms', qty: 15, unit: 'rooms', unitPrice: 350, amount: 5250, date: new Date().toISOString() },
         ],
-        totals: { subTotal: 5250, taxes: { vat: 1050, nhil: 131.25, levy: 52.5 }, payments: 3000, balance: 3483.75, grandTotal: 6483.75 },
+        totals: { subTotal: 5250, taxes: { nhil: 262.5, vat: 787.5, levy: 52.5 }, payments: 3000, balance: 3352.5, grandTotal: 6352.5 },
         footerNotes: ['Generated via Events & Conferences workflow.'],
         currency: '₵',
       };
@@ -205,7 +205,7 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
             },
           ],
         },
-        totals: { subTotal: 5900, taxes: { vat: 1180, nhil: 147.5, levy: 59 }, grandTotal: 7286.5 },
+        totals: { subTotal: 5900, taxes: { nhil: 295, vat: 885, levy: 59 }, grandTotal: 7139 },
         footerNotes: ['This is a proforma invoice — not a demand for payment. Valid for 14 days.'],
         currency: '₵',
       };
@@ -225,7 +225,7 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
           },
           { description: 'Lunch Package', qty: 40, unit: 'pax', unitPrice: 85, amount: 3400 },
         ],
-        totals: { subTotal: 5900, taxes: { vat: 1180, nhil: 147.5, levy: 59 }, payments: 4000, balance: 3286.5, grandTotal: 7286.5 },
+        totals: { subTotal: 5900, taxes: { nhil: 295, vat: 885, levy: 59 }, payments: 4000, balance: 3139, grandTotal: 7139 },
         footerNotes: ['Generated via Events & Conferences workflow.'],
         currency: '₵',
       };
@@ -360,7 +360,7 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
           { description: 'Room Charge', qty: 1, unit: 'night', unitPrice: 500, amount: 500, date: new Date().toISOString() },
           { description: 'Restaurant', amount: 120, date: new Date().toISOString() },
         ],
-        totals: { subTotal: 620, taxes: { vat: 97.65, nhil: 15.5, levy: 6.2 }, payments: 0, balance: 739.35, grandTotal: 739.35 },
+        totals: { subTotal: 620, taxes: { nhil: 31, vat: 93, levy: 6.2 }, payments: 0, balance: 750.2, grandTotal: 750.2 },
         footerNotes: ['Thank you for staying with us.'],
         currency: '₵',
       };

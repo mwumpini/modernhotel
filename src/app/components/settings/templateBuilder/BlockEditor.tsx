@@ -114,7 +114,7 @@ const DATA_HINT: Partial<Record<BlockType, string>> = {
   'payslip-summary': 'Prints net pay.',
   'bank-details': 'Prints the bank or payment details stored for the property.',
   'notes-text': 'Prints the document’s footer notes. If there are none, the text below is used.',
-  'custom-text': 'A line you write. Add as many as you need. Tokens: {{org.name}}, {{docNumber}}, {{docDate}}, {{guest.name}}, {{totals.grandTotal}}, {{paymentTerms}}.',
+  'custom-text': 'A line you write. Add as many as you need. Tokens: {{org.name}}, {{docNumber}}, {{docDate}}, {{guest.name}}, {{totals.grandTotal}}, {{paymentTerms}}, {{userName}} (the staff member printing).',
   'container': 'A layout only — it does not print text. Put fields inside it, side by side or stacked.',
   'signature-block': 'Staff is the person signed in. The guest line can use the guest on the document, or just their name.',
   'terms-conditions': 'Your terms. They print above the footer, after the signatures.',
@@ -649,7 +649,7 @@ function PageStyleFields({ style, onChange }: { style: TemplateStyle; onChange: 
       <StyleColor label="Primary color" value={style.primaryColor} onChange={(primaryColor) => onChange({ primaryColor })} />
       <StyleColor label="Text color" value={style.textColor} onChange={(textColor) => onChange({ textColor })} />
       <StyleSelect label="Font" value={style.fontFamily} onChange={(fontFamily) => onChange({ fontFamily: fontFamily as TemplateStyle['fontFamily'] })} options={[['sans', 'Sans-serif'], ['serif', 'Serif'], ['mono', 'Monospace']]} />
-      <StyleSelect label="Document font size" value={style.bodyFontSize} onChange={(bodyFontSize) => onChange({ bodyFontSize: bodyFontSize as TemplateStyle['bodyFontSize'] })} options={[['sm', 'Small'], ['md', 'Medium'], ['lg', 'Large']]} />
+      <StyleSelect label="Document font size" value={style.bodyFontSize} onChange={(bodyFontSize) => onChange({ bodyFontSize: bodyFontSize as TemplateStyle['bodyFontSize'] })} options={[['sm', 'Small'], ['md', 'Medium'], ['lg', 'Large'], ['xl', 'Extra large']]} />
       <StyleColor label="Border color" value={style.borderColor} onChange={(borderColor) => onChange({ borderColor })} />
       <StyleSelect label="Border width" value={style.borderWidth} onChange={(borderWidth) => onChange({ borderWidth: borderWidth as TemplateStyle['borderWidth'] })} options={[['thin', 'Thin'], ['thick', 'Thick']]} />
       <StyleSelect label="Logo position" value={style.logoPosition} onChange={(logoPosition) => onChange({ logoPosition: logoPosition as TemplateStyle['logoPosition'] })} options={[['left', 'Left'], ['center', 'Center'], ['right', 'Right']]} />

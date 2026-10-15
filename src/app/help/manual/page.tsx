@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import BrandLogo from '../../components/BrandLogo';
 import {
@@ -22,7 +22,48 @@ const shortcuts = keyboardShortcuts;
 
 const anchor = (id: string) => `topic-${id}`;
 
+/** Picture as a data: URL, so a downloaded copy shows it with no internet or sign-in. */
+async function inlineImage(src: string): Promise<string> {
+  try {
+    const blob = await (await fetch(src)).blob();
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => resolve(src);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return src;
+  }
+}
+
+/**
+ * One self-contained .html file of the manual (styles and pictures inside), to send on
+ * WhatsApp or email. It opens in any browser, offline, and can still be printed to PDF.
+ */
+async function downloadManualFile(root: HTMLElement) {
+  const copy = root.cloneNode(true) as HTMLElement;
+  copy.querySelector('.bar')?.remove();
+  const images = Array.from(copy.querySelectorAll('img'));
+  await Promise.all(images.map(async (img) => {
+    const src = img.getAttribute('src');
+    if (src && !src.startsWith('data:')) img.setAttribute('src', await inlineImage(new URL(src, window.location.href).href));
+    img.removeAttribute('srcset');
+  }));
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>AGM Sync User Manual</title></head><body style="margin:0">${copy.outerHTML}</body></html>`;
+  const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `AGM-Sync-User-Manual-${new Date().toLocaleDateString('en-CA')}.html`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
 export default function HelpManualPage() {
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  const [saving, setSaving] = useState(false);
   const groups = CATEGORY_ORDER.map((category) => ({
     category,
     topics: helpTopics.filter((t) => t.category === category && t.id !== 'help-maintain'),
@@ -39,7 +80,7 @@ export default function HelpManualPage() {
   const today = new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
 
   return (
-    <div className="manual">
+    <div className="manual" ref={rootRef}>
       <style>{`
         .manual { --ink:#1d2330; --muted:#5b6475; --line:#e3e6ec; --accent:#1f6feb; --soft:#f4f6fa; --warn:#fff6db;
           color:var(--ink); background:#fff; font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; min-height:100vh; }
@@ -48,6 +89,8 @@ export default function HelpManualPage() {
         .manual .bar a, .manual .bar button { font:inherit; font-size:14px; padding:7px 14px; border-radius:10px; border:1px solid var(--line);
           background:#fff; color:var(--ink); text-decoration:none; cursor:pointer; }
         .manual .bar button { background:var(--accent); border-color:var(--accent); color:#fff; }
+        .manual .bar button.secondary { background:#fff; color:var(--accent); }
+        .manual .bar button:disabled { opacity:.6; cursor:wait; }
         .manual main { max-width:820px; margin:0 auto; padding:24px 16px 60px; }
         .manual .cover { padding:60px 0 40px; border-bottom:4px solid var(--accent); margin-bottom:24px; }
         .manual .cover h1 { font-size:34px; margin:0 0 8px; }
@@ -69,6 +112,8 @@ export default function HelpManualPage() {
         @media (max-width:600px) { .manual .toc { columns:1; } .manual .cover h1 { font-size:26px; } }
         @media print {
           @page { size:A4; margin:16mm 14mm; }
+          /* The app-wide print rule hides everything outside #report-print-area; the manual is all content. */
+          .manual, .manual * { visibility: visible !important; }
           .manual .bar { display:none; }
           .manual main { max-width:none; padding:0; }
           .manual h2 { break-before:page; }
@@ -79,7 +124,21 @@ export default function HelpManualPage() {
 
       <div className="bar">
         <Link href="/help">← Back to Help</Link>
-        <button type="button" onClick={() => window.print()}>Download / print (Save as PDF)</button>
+        <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="secondary"
+            disabled={saving}
+            onClick={async () => {
+              if (!rootRef.current) return;
+              setSaving(true);
+              try { await downloadManualFile(rootRef.current); } finally { setSaving(false); }
+            }}
+          >
+            {saving ? 'Preparing…' : 'Download file (to share)'}
+          </button>
+          <button type="button" onClick={() => window.print()}>Print / Save as PDF</button>
+        </span>
       </div>
 
       <main>

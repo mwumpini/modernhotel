@@ -853,7 +853,7 @@ export default function CheckOutsPage() {
                         // above, which already includes billing company, guest address, and
                         // room rate (this used to be a separate, drifted rebuild of the same data).
                         const live = useSettingsStore.getState();
-                        openPrintPreview('invoice' as any, live.printing.invoice || 'builtin-invoice-ruky', buildPrintData(checkOut, 'invoice'));
+                        openPrintPreview('invoice' as any, live.printing.invoice || 'builtin-invoice-checkout-bill', buildPrintData(checkOut, 'invoice'));
                       }}
                       >
                         Print

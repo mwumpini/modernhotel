@@ -426,12 +426,12 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: '⚙️ System Settings',
       icon: '⚙️',
       items: [
+        { title: '🏢 Company Profile', href: '#' },
         { title: '👥 People', href: '#' },
         { title: '🛏️ Rooms', href: '#' },
         { title: '📄 Documents', href: '#' },
         { title: '📦 Stock', href: '#' },
         { title: '🔒 Security', href: '#' },
-        { title: '⚙️ System Setup', href: '#' },
       ]
     }
   ];
@@ -697,15 +697,14 @@ export default function Navigation({ onLogout }: NavigationProps) {
       }
     } else if (sectionKey === 'settings' && itemTitle) {
       const settingsTab =
-        itemTitle === '👥 People' ? 'users'
+        itemTitle === '🏢 Company Profile' ? 'profile'
+        : itemTitle === '👥 People' ? 'users'
         : itemTitle === '🛏️ Rooms' ? 'rooms'
         : itemTitle === '📄 Documents' ? 'numbering'
         : itemTitle === '📦 Stock' ? 'locations'
         : itemTitle === '🔒 Security' ? 'security'
         : null;
-      if (itemTitle === '⚙️ System Setup' || itemTitle === '🏢 Setup' || itemTitle === 'System Setup Wizard') {
-        try { window.location.href = '/setup'; } catch {}
-      } else if (itemTitle === 'Reports & Analytics') {
+      if (itemTitle === 'Reports & Analytics') {
         setActiveSection('reports-analytics');
       } else if (settingsTab) {
         openStoredTab('settings', 'settings.tab', settingsTab, 'settings-navigate');

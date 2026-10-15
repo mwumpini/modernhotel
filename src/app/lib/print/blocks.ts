@@ -184,7 +184,7 @@ export interface TemplateStyle {
   /** Base body text size — per-block `style.fontSize` overrides this for that block. */
   bodyFontSize: 'sm' | 'md' | 'lg';
   logoPosition: 'left' | 'center' | 'right';
-  logoSize: 'sm' | 'md' | 'lg';
+  logoSize: 'sm' | 'md' | 'lg' | 'xl';
   pageMargin: 'compact' | 'normal' | 'spacious';
   borderColor: string;
   borderWidth: 'thin' | 'thick';

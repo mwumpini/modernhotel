@@ -1117,6 +1117,8 @@ export interface SystemSettings {
       supportEmail: string;
       supportPhone: string;
     logoPosition?: 'left' | 'center' | 'right';
+    /** How large the logo prints on documents (Company Profile). */
+    logoSize?: 'sm' | 'md' | 'lg' | 'xl';
     };
   };
 }

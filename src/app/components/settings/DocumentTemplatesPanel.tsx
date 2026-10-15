@@ -225,6 +225,11 @@ export default function DocumentTemplatesPanel() {
         </p>
       </div>
 
+      <p className="text-xs text-gray-600">
+        The logo, name, address and TIN on every document come from{' '}
+        <button type="button" className="font-medium text-teal-700 underline underline-offset-2" onClick={() => { try { localStorage.setItem('settings.tab', 'profile'); window.dispatchEvent(new Event('settings-navigate')); } catch { /* ignore */ } }}>Company Profile</button>.
+      </p>
+
       <div className="space-y-2 border-b pb-3">
         <Tabs
           aria-label="Document family"

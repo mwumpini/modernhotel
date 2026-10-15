@@ -202,20 +202,14 @@ export default function HelpPage() {
                     {area.notHere}
                   </p>
                   <div className="mt-3">
-                    {'href' in area && area.href ? (
-                      <Button size="sm" variant="flat" color="primary" as={Link} href={area.href}>
-                        Open
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="flat"
-                        color="primary"
-                        onPress={() => goToAppSection(router, { section: area.section })}
-                      >
-                        Open in app
-                      </Button>
-                    )}
+                    <Button
+                      size="sm"
+                      variant="flat"
+                      color="primary"
+                      onPress={() => goToAppSection(router, { section: area.section })}
+                    >
+                      Open in app
+                    </Button>
                   </div>
                 </div>
               ))}

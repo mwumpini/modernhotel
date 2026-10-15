@@ -38,7 +38,7 @@ export function renderNodaBillDocument(data: PrintData): string {
   return `<!doctype html><html><head><meta charset="utf-8" />
 <title>${esc(data.title || 'Restaurant Bill')}</title>
 <style>
-  @page { size: 80mm auto; margin: 2mm; }
+  @page { size: 80mm auto; margin: 0; }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: #e7e5e4; color: #000; }
   .sheet {
@@ -162,7 +162,7 @@ export function renderNodaBillDocument(data: PrintData): string {
   .signdate { margin-top: 6px; font-size: 10px; }
   @media print {
     html, body { background: #fff; }
-    .sheet { margin: 0; }
+    .sheet { width: 72mm; max-width: 72mm; margin: 0 auto; padding: 2mm 0 4mm; }
   }
 </style>
 </head><body>
