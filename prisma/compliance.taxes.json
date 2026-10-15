@@ -69,7 +69,8 @@
       "ROOM",
       "HOTEL",
       "FOOD",
-      "EVENT"
+      "EVENT",
+      "SERVICE"
     ],
     "description": "Tourism Development Levy (L.I. 2185) — 1% of the bill, separate from VAT. Not claimable.",
     "enabled": true,

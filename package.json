@@ -25,7 +25,8 @@
     "vercel-build": "prisma generate --schema=prisma/schema.production.prisma && prisma db push --schema=prisma/schema.production.prisma && (tsx prisma/seed.ts || echo 'Seed step failed or already applied — continuing build') && next build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:regression": "tsx scripts/test-fo-night-audit.ts && tsx scripts/test-accounting-process.ts && tsx scripts/test-bank-recon-calculations.ts"
+    "test:regression": "tsx scripts/test-fo-night-audit.ts && tsx scripts/test-accounting-process.ts && tsx scripts/test-bank-recon-calculations.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.10.0",
@@ -56,6 +57,7 @@
   "devDependencies": {
     "@csstools/postcss-oklab-function": "^5.0.15",
     "@eslint/eslintrc": "^3",
+    "@playwright/test": "^1.56.1",
     "@tailwindcss/postcss": "^4.1.13",
     "@types/node": "^20",
     "@types/react": "^18",

@@ -176,5 +176,23 @@
     "description": "Growth & Sustainability Levy — Category C (hotels) 2.5% of PBT; due last day of each calendar quarter.",
     "isActive": true,
     "lastUpdated": "2026-08-30T08:04:44.984Z"
+  },
+  {
+    "id": "gh-getfund",
+    "countryCode": "GH",
+    "reportType": "GETFund",
+    "frequency": "Monthly",
+    "fieldsRequired": [
+      "getfundOnSales",
+      "getfundDue"
+    ],
+    "dueDay": 15,
+    "dueRule": {
+      "type": "dayOfFollowingMonth",
+      "day": 15
+    },
+    "description": "GETFund levy — filed with the VAT stack returns under Act 1151.",
+    "isActive": true,
+    "lastUpdated": "2026-10-15T09:54:12.203Z"
   }
 ]

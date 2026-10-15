@@ -9,8 +9,12 @@ if (!process.env.SQLITE_DATABASE_URL) {
 }
 
 const hotelBuild = process.env.HOTEL_BUILD === "1";
+// The end-to-end test server builds into its own folder so it never shares .next with
+// a running dev server (two servers on one .next corrupt each other's cache).
+const testDistDir = process.env.NEXT_DIST_DIR;
 
 const nextConfig: NextConfig = {
+  ...(testDistDir && !hotelBuild ? { distDir: testDistDir } : {}),
   ...(hotelBuild
     ? {
         output: "standalone" as const,
