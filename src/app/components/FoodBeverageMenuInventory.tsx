@@ -796,24 +796,24 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
               <Input label="Item name" placeholder="Jollof rice & chicken" value={menuForm.name} onChange={(e) => setMenuForm({ ...menuForm, name: e.target.value })} />
               <Input label="Alias" placeholder="jollof, jollof rice" description="Short names, separated by commas" value={menuForm.alias} onChange={(e) => setMenuForm({ ...menuForm, alias: e.target.value })} />
               <Input label="Item code" placeholder="Filled in automatically if left blank" value={menuForm.code} onChange={(e) => setMenuForm({ ...menuForm, code: e.target.value })} />
-              <Select label="Category" selectedKeys={[menuForm.category]} onSelectionChange={(k) => setMenuForm({ ...menuForm, category: (Array.from(k)[0] as string) || 'food' })}>
+              <Select disallowEmptySelection label="Category" selectedKeys={[menuForm.category]} onSelectionChange={(k) => setMenuForm({ ...menuForm, category: (Array.from(k)[0] as string) || 'food' })}>
                 <SelectItem key="food">Food</SelectItem>
                 <SelectItem key="beverage">Beverage</SelectItem>
                 <SelectItem key="dessert">Dessert</SelectItem>
                 <SelectItem key="snack">Snack</SelectItem>
                 <SelectItem key="special">Special</SelectItem>
               </Select>
-              <Select label="Venue" selectedKeys={[menuForm.venue]} onSelectionChange={(k) => setMenuForm({ ...menuForm, venue: (Array.from(k)[0] as string) || 'restaurant' })}>
+              <Select disallowEmptySelection label="Venue" selectedKeys={[menuForm.venue]} onSelectionChange={(k) => setMenuForm({ ...menuForm, venue: (Array.from(k)[0] as string) || 'restaurant' })}>
                 <SelectItem key="restaurant">Restaurant</SelectItem>
                 <SelectItem key="bar">Bar</SelectItem>
                 <SelectItem key="room_service">Room service</SelectItem>
                 <SelectItem key="all">All venues</SelectItem>
               </Select>
-              <Select label="Sent to" selectedKeys={[menuForm.route]} onSelectionChange={(k) => setMenuForm({ ...menuForm, route: (Array.from(k)[0] as string) || 'kitchen' })}>
+              <Select disallowEmptySelection label="Sent to" selectedKeys={[menuForm.route]} onSelectionChange={(k) => setMenuForm({ ...menuForm, route: (Array.from(k)[0] as string) || 'kitchen' })}>
                 <SelectItem key="kitchen">Kitchen</SelectItem>
                 <SelectItem key="bar">Bar</SelectItem>
               </Select>
-              <Select label="Selling unit" selectedKeys={[menuForm.unit]} onSelectionChange={(k) => setMenuForm({ ...menuForm, unit: (Array.from(k)[0] as string) || 'portion' })}>
+              <Select disallowEmptySelection label="Selling unit" selectedKeys={[menuForm.unit]} onSelectionChange={(k) => setMenuForm({ ...menuForm, unit: (Array.from(k)[0] as string) || 'portion' })}>
                 {MENU_UNITS.map((unit) => (
                   <SelectItem key={unit}>{unitLabel(unit)}</SelectItem>
                 ))}

@@ -7,10 +7,13 @@ const money = (text: string) => Number((text.match(/[\d,]+\.\d{2}/)?.[0] || '0')
 // calls "billed today" must be exactly the charges the hotel's folios really hold for today.
 test('Financial Pulse shows only real charges', async ({ page }) => {
   await uiSignIn(page);
-  const line = page.getByText(/Billed today, not yet posted/).first();
+  const line = page.getByText(/Billed on guest folios today/).first();
   await expect(line).toBeVisible({ timeout: 60_000 });
 
-  const today = new Date().toISOString().slice(0, 10);
+  // The dashboard shows the hotel's business date, which the night audit moves on; compare that day.
+  const dateInput = page.locator('input[type="date"]').first();
+  await expect(dateInput).not.toHaveValue('');
+  const today = await dateInput.inputValue();
   const res = await page.request.get('/api/folios', { headers: { 'x-tenant-subdomain': 'demo' } });
   expect(res.ok()).toBeTruthy();
   const folios = ((await res.json()).folios || []) as Array<{ charges?: Array<{ date?: string; amount?: number; tax?: number }> }>;

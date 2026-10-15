@@ -8,10 +8,12 @@
  * balances, charges, payments and inter-folio movements, and bridge to accounting
  * and audit modules. No UI concerns live here.
  * 
- * ACCOUNTING (simple flow):
- * Folio holds charges and payments during the stay. Sales invoices, receipts, and
- * GL journal entries are posted once at checkout via generateAccountingInvoiceForReservation.
- * Other modules (e.g. events) still use accounting/integration.ts directly.
+ * ACCOUNTING (IFRS 15):
+ * Every saved folio change is posted to the general ledger by the server as it happens
+ * (accounting/folioLedgerServer.ts): charges as revenue on their own day, payments when
+ * taken, deposits as a liability until check-in. Checkout creates the sales invoice and
+ * receipts for Accounts Receivable and moves what is still owed from the guest ledger
+ * to receivables. Other modules (e.g. events) still use accounting/integration.ts directly.
  */
 
 import { trackEvent } from '../../analytics/trackEvent';
@@ -29,60 +31,19 @@ import {
   roundCents,
   roundFolioTotal,
   type FolioRounding,
+  FB_KEYWORDS,
+  OTHER_SERVICE_KEYWORDS,
+  isRoomCharge,
+  isServiceCharge,
+  matchesKeyword,
+  folioChargeGlCode,
 } from '../folioLedger';
+
+export { folioChargeGlCode };
 
 type StoreLike = any;
 
-const FB_KEYWORDS = [
-	'restaurant', 'bar', 'room service', 'minibar', 'breakfast', 'lunch',
-	'dinner', 'snack', 'beverage', 'drink', 'food', 'meal',
-];
-
-const OTHER_SERVICE_KEYWORDS = [
-	'swimming', 'laundry', 'pool', 'spa', 'gym', 'parking', 'wifi', 'internet',
-	'service',
-];
-
 export { calculateStayNights } from './rates';
-
-function isRoomCharge(description?: string) {
-	const desc = (description || '').toLowerCase();
-	// Excludes service charges whose description happens to contain "room" (e.g.
-	// "Room Service") — otherwise those get double-counted as both a room charge
-	// and a service charge in getFolioDisplayTotals's independent filters below.
-	return desc.includes('room') && !isServiceCharge(description);
-}
-
-/** Map folio charge to GL revenue account at checkout (simpleFlow). */
-export function folioChargeGlCode(charge: {
-	description?: string;
-	category?: string;
-	/** Prefer venue leaf written at bill time (4210/4220/4230). */
-	glAccountCode?: string;
-}): string {
-	const stored = String(charge.glAccountCode || '').trim();
-	if (/^\d{4}$/.test(stored)) return stored;
-	const cat = (charge.category || '').toLowerCase();
-	// F&B keyword check (includes the phrase "room service") must run before the
-	// generic room-charge check below — "room service" contains "room" as a plain
-	// substring, so checking room-charge first was misrouting Room Service charges
-	// to Room Revenue (4100) instead of Food & Beverage (4200).
-	if (cat === 'f&b' || cat === 'fb' || matchesKeyword(charge.description, FB_KEYWORDS)) return '4200';
-	if (isRoomCharge(charge.description) || cat === 'room') return '4100';
-	if (cat === 'conference' || (charge.description || '').toLowerCase().includes('conference')) return '4320';
-	if (matchesKeyword(charge.description, OTHER_SERVICE_KEYWORDS)) return '4400';
-	return '4330';
-}
-
-function matchesKeyword(description: string | undefined, keywords: string[]) {
-	const desc = (description || '').toLowerCase();
-	return keywords.some((k) => desc.includes(k));
-}
-
-/** Non-room charge (F&B or other service) — used for billing-screen subtotal grouping, not GL routing. */
-function isServiceCharge(description?: string) {
-	return matchesKeyword(description, FB_KEYWORDS) || matchesKeyword(description, OTHER_SERVICE_KEYWORDS);
-}
 
 const SALES_TAX_CONTEXT = { domain: 'sales' as const, operation: 'external' as const };
 
@@ -555,7 +516,8 @@ export function postCorporateReceipt(self: StoreLike, payer: string, reservation
 		if (bal <= 0) continue;
 		const apply = Math.min(remaining, bal);
 		if (apply > 0) {
-			addPayment(self, id, 'Corporate Account', apply, {
+			// Money actually received from the company, so it is a bank receipt, not "billed to company".
+			addPayment(self, id, 'Bank Transfer', apply, {
 				notes: `Corporate receipt from ${payer}${reference ? ` (${reference})` : ''}`,
 				processedBy: processedBy || 'Front Desk',
 				ref: reference

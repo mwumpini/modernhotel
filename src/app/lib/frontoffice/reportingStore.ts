@@ -493,8 +493,9 @@ function stayChargeSplit(reservationId: string, startDate: string, endDate: stri
     round2(charges.filter((c) => match(folioChargeGlCode(c))).reduce((sum, c) => sum + c.amount + (c.tax || 0), 0));
   return {
     roomRevenue: gross((g) => g === '4100'),
-    foodBeverage: gross((g) => g === '4200'),
-    otherCharges: gross((g) => g !== '4100' && g !== '4200'),
+    // Food and drink is every 42xx account (restaurant 4210, bar 4220, room service 4230).
+    foodBeverage: gross((g) => g.startsWith('42')),
+    otherCharges: gross((g) => g !== '4100' && !g.startsWith('42')),
   };
 }
 
@@ -1117,10 +1118,10 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       .filter(c => folioChargeGlCode(c) === '4100')
       .reduce((s, c) => s + c.amount + (c.tax || 0), 0);
     const foodBeverageRevenue = chargesToday
-      .filter(c => folioChargeGlCode(c) === '4200')
+      .filter(c => folioChargeGlCode(c).startsWith('42'))
       .reduce((s, c) => s + c.amount + (c.tax || 0), 0);
     const otherRevenue = chargesToday
-      .filter(c => folioChargeGlCode(c) !== '4100' && folioChargeGlCode(c) !== '4200')
+      .filter(c => folioChargeGlCode(c) !== '4100' && !folioChargeGlCode(c).startsWith('42'))
       .reduce((s, c) => s + c.amount + (c.tax || 0), 0);
     const totalRevenue = roomRevenue + foodBeverageRevenue + otherRevenue;
     const totalPayments = paymentsToday.reduce((s, p) => s + p.amount, 0);

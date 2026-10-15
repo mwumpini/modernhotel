@@ -247,3 +247,59 @@ export function previousCalendarDate(isoDate: string): string {
 export function isMainFolioRow(row: { type?: string | null }): boolean {
   return row.type !== 'split'
 }
+
+// ---- Revenue account for a folio charge (shared by checkout, reports and the server ledger) ----
+
+export const FB_KEYWORDS = [
+	'restaurant', 'bar', 'room service', 'minibar', 'breakfast', 'lunch',
+	'dinner', 'snack', 'beverage', 'drink', 'food', 'meal',
+];
+
+export const OTHER_SERVICE_KEYWORDS = [
+	'swimming', 'laundry', 'pool', 'spa', 'gym', 'parking', 'wifi', 'internet',
+	'service',
+];
+
+
+export function isRoomCharge(description?: string) {
+	const desc = (description || '').toLowerCase();
+	// Excludes service charges whose description happens to contain "room" (e.g.
+	// "Room Service") — otherwise those get double-counted as both a room charge
+	// and a service charge in getFolioDisplayTotals's independent filters below.
+	return desc.includes('room') && !isServiceCharge(description);
+}
+
+/** Map folio charge to GL revenue account at checkout (simpleFlow). */
+export function folioChargeGlCode(charge: {
+	description?: string;
+	category?: string;
+	/** Prefer venue leaf written at bill time (4210/4220/4230). */
+	glAccountCode?: string;
+}): string {
+	const stored = String(charge.glAccountCode || '').trim();
+	if (/^\d{4}$/.test(stored)) return stored;
+	const cat = (charge.category || '').toLowerCase();
+	// F&B keyword check (includes the phrase "room service") must run before the
+	// generic room-charge check below — "room service" contains "room" as a plain
+	// substring, so checking room-charge first was misrouting Room Service charges
+	// to Room Revenue (4100) instead of Food & Beverage (4200).
+	// 4200 is a heading; post to its detail accounts (room service 4230, otherwise restaurant 4210).
+	if (cat === 'f&b' || cat === 'fb' || matchesKeyword(charge.description, FB_KEYWORDS)) {
+		return (charge.description || '').toLowerCase().includes('room service') ? '4230' : '4210';
+	}
+	if (isRoomCharge(charge.description) || cat === 'room') return '4100';
+	if (cat === 'conference' || (charge.description || '').toLowerCase().includes('conference')) return '4320';
+	if (matchesKeyword(charge.description, OTHER_SERVICE_KEYWORDS)) return '4400';
+	return '4330';
+}
+
+export function matchesKeyword(description: string | undefined, keywords: string[]) {
+	const desc = (description || '').toLowerCase();
+	return keywords.some((k) => desc.includes(k));
+}
+
+/** Non-room charge (F&B or other service) — used for billing-screen subtotal grouping, not GL routing. */
+export function isServiceCharge(description?: string) {
+	return matchesKeyword(description, FB_KEYWORDS) || matchesKeyword(description, OTHER_SERVICE_KEYWORDS);
+}
+

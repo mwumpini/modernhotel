@@ -180,7 +180,7 @@ export default function LeaveManagementPanel() {
             >
               {(item: any) => <SelectItem key={item.id}>{item.name}</SelectItem>}
             </Select>
-            <Select size="sm" selectedKeys={[typeFilter]} onSelectionChange={(k) => setTypeFilter(Array.from(k)[0] as string)} className="w-36" variant="bordered" aria-label="Leave type">
+            <Select disallowEmptySelection size="sm" selectedKeys={[typeFilter]} onSelectionChange={(k) => setTypeFilter(Array.from(k)[0] as string)} className="w-36" variant="bordered" aria-label="Leave type">
               <SelectItem key="all">All types</SelectItem>
               <SelectItem key="annual">Annual</SelectItem>
               <SelectItem key="sick">Sick</SelectItem>
@@ -189,7 +189,7 @@ export default function LeaveManagementPanel() {
               <SelectItem key="paternity">Paternity</SelectItem>
               <SelectItem key="bereavement">Bereavement</SelectItem>
             </Select>
-            <Select size="sm" selectedKeys={[status]} onSelectionChange={(k) => setStatus(Array.from(k)[0] as any)} className="w-36" variant="bordered" aria-label="Status">
+            <Select disallowEmptySelection size="sm" selectedKeys={[status]} onSelectionChange={(k) => setStatus(Array.from(k)[0] as any)} className="w-36" variant="bordered" aria-label="Status">
               <SelectItem key="all">All status</SelectItem>
               <SelectItem key="pending">Pending</SelectItem>
               <SelectItem key="approved">Approved</SelectItem>
@@ -272,7 +272,7 @@ export default function LeaveManagementPanel() {
                   >
                     {(item: any) => <SelectItem key={item.id}>{item.name}</SelectItem>}
                   </Select>
-                  <Select label="Type" selectedKeys={[form.leaveType]} onSelectionChange={(k) => setForm({ ...form, leaveType: Array.from(k)[0] as LeaveRequest['leaveType'] })} variant="bordered">
+                  <Select disallowEmptySelection label="Type" selectedKeys={[form.leaveType]} onSelectionChange={(k) => setForm({ ...form, leaveType: Array.from(k)[0] as LeaveRequest['leaveType'] })} variant="bordered">
                     <SelectItem key="annual">Annual</SelectItem>
                     <SelectItem key="sick">Sick</SelectItem>
                     <SelectItem key="personal">Personal</SelectItem>

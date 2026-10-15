@@ -790,7 +790,7 @@ export default function ExecutiveManagementDashboard() {
       if (!isHidden('financial')) {
         measure(isTodaySelected || !date ? "Today's financial pulse" : `Financial pulse — ${date}`, [
           ['Revenue posted to the books', formatCurrency(postedRevenue)],
-          ['Billed, not yet posted', formatCurrency(revenueToday)],
+          ['Billed on guest folios', formatCurrency(revenueToday)],
           ['ADR', formatCurrency(adr)],
           ['RevPAR', formatCurrency(revpar)],
           ['Room revenue', formatCurrency(revenueSplit.room)],
@@ -1143,8 +1143,8 @@ export default function ExecutiveManagementDashboard() {
               <div className="rounded-xl bg-gray-50 p-4">
                 <div className="text-xs font-medium text-gray-600">Revenue posted to GL</div>
                 <div className="mt-1 text-2xl font-semibold tracking-tight text-ghana-black">{formatCurrency(postedRevenue)}</div>
-                <div className="mt-1 text-xs text-gray-600" title="Room/F&B charges accrued on guest folios today, before checkout posts them to the ledger">
-                  Billed today, not yet posted: {formatCurrency(revenueToday)}
+                <div className="mt-1 text-xs text-gray-600" title="Room, F&B and other charges added to guest folios today. Each one is posted to the books as it is added.">
+                  Billed on guest folios today: {formatCurrency(revenueToday)}
                 </div>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-gray-50 p-4 sm:gap-4">

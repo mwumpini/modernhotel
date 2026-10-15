@@ -64,6 +64,17 @@ export async function upsertFolioViaApi(_self: StoreLike, tenantSubdomain: strin
   return saved;
 }
 
+/** Checkout: the server closes the stay in the books (rounding, then what is still owed to receivables). */
+export async function postCheckoutLedgerViaApi(tenantSubdomain: string, reservationId: string, roundingAdjustment: number) {
+  const res = await fetch('/api/frontoffice/folio-ledger', {
+    method: 'POST',
+    headers: tenantHeaders(tenantSubdomain),
+    body: JSON.stringify({ reservationId, roundingAdjustment, checkout: true }),
+  });
+  if (!res.ok) throw await errorFrom(res, 'Failed to post checkout to the books');
+  return res.json();
+}
+
 export async function syncGuestsFromApi(self: StoreLike, tenantSubdomain: string) {
   try {
     const res = await fetch('/api/guests?includeInactive=true', {

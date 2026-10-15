@@ -186,7 +186,7 @@ export default function OvertimeManagementPanel() {
           <div className="font-medium">Overtime management</div>
           <div className="flex flex-wrap items-center gap-2">
             <Input size="sm" placeholder="Search employee or timesheet" value={q} onChange={(e) => setQ(e.target.value)} variant="bordered" className="w-52" />
-            <Select size="sm" selectedKeys={[filter]} onSelectionChange={(k) => setFilter(Array.from(k)[0] as typeof filter)} className="w-40" variant="bordered" aria-label="Status">
+            <Select disallowEmptySelection size="sm" selectedKeys={[filter]} onSelectionChange={(k) => setFilter(Array.from(k)[0] as typeof filter)} className="w-40" variant="bordered" aria-label="Status">
               <SelectItem key="all">All</SelectItem>
               <SelectItem key="pending">Pending approval</SelectItem>
               <SelectItem key="approved">Approved</SelectItem>

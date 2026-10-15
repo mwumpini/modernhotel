@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { syncReservationFolioToLedger } from '@/app/lib/accounting/folioLedgerServer'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
@@ -158,6 +159,7 @@ export async function PATCH(
             chargeId: `FB-${existing.orderNumber}`,
             reason: body.refundReason || 'F&B refund',
           })
+          await syncReservationFolioToLedger(ctx.tenantId, existing.reservationId, { postedBy: sessionUserName || undefined })
         } catch (folioErr) {
           console.error('[fb/orders/[id]] folio void failed', folioErr)
         }
@@ -233,6 +235,9 @@ export async function PATCH(
             where: { id },
             data: { folioId, billedAt: now, reservationId },
           })
+          // The meal is revenue now, on the guest ledger, not at checkout (IFRS 15).
+          await syncReservationFolioToLedger(ctx.tenantId, reservationId, { postedBy: sessionUserName || undefined })
+            .catch((e) => console.error('[fb/orders/[id]] ledger sync failed', e))
 
           await createAuditLog(
             ctx.tenantId, sessionUserId ?? null,

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, GoodsReceiptNote, SupplierInvoice, QualityCheck } from './models';
 import type { BusinessPartner } from '../accounting/models';
-import { GL_ACCOUNTS } from '../accounting/glAccounts';
+import { GL_ACCOUNTS, inventoryGlForCategory } from '../accounting/glAccounts';
 import { useStockStore } from './stockStore';
 import { computePurchaseTax } from '../tax/engine';
 import { getClientTenantSubdomain } from '../api/clientTenant';
@@ -1797,6 +1797,19 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
         const now = new Date().toISOString();
         const entryId = `JE-GRN-${grn.id}`;
         const amount = Math.round(grn.totalValue * 100) / 100;
+        // Each item goes to the stock account for its category; any rounding gap sits on the largest line.
+        const byGl = new Map<string, number>();
+        grn.items.forEach((item, i) => {
+          const gl = inventoryGlForCategory(itemCategories[i]);
+          byGl.set(gl, (byGl.get(gl) || 0) + (Number(item.totalValue) || 0));
+        });
+        if (byGl.size === 0) byGl.set(GL_ACCOUNTS.FB_INVENTORY, amount);
+        const debitLines = [...byGl.entries()].map(([gl, v]) => [gl, Math.round(v * 100) / 100] as [string, number]);
+        const gap = Math.round((amount - debitLines.reduce((t, [, v]) => t + v, 0)) * 100) / 100;
+        if (gap !== 0) {
+          const largest = debitLines.reduce((best, line) => (line[1] > best[1] ? line : best), debitLines[0]);
+          largest[1] = Math.round((largest[1] + gap) * 100) / 100;
+        }
         accountingStore.addJournalEntry({
           id: entryId,
           entryNumber: `JE-GRN-${grn.grnNumber}`,
@@ -1814,20 +1827,20 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
           sourceModule: 'inventory_grn',
           sourceTransactionId: grn.id,
           lines: [
-            {
-              id: `JL-${entryId}-dr`,
+            ...debitLines.map(([glCode, value]) => ({
+              id: `JL-${entryId}-dr-${glCode}`,
               journalEntryId: entryId,
-              accountCode: '1300', // Inventory
+              accountCode: glCode,
               description: `Goods received from ${grn.supplierName}`,
-              debit: amount,
+              debit: value,
               credit: 0,
               currency: 'GHS',
               reference: grn.grnNumber,
-            },
+            })),
             {
               id: `JL-${entryId}-cr`,
               journalEntryId: entryId,
-              accountCode: '2000', // Accounts Payable
+              accountCode: GL_ACCOUNTS.ACCOUNTS_PAYABLE,
               description: `Payable to ${grn.supplierName}`,
               debit: 0,
               credit: amount,

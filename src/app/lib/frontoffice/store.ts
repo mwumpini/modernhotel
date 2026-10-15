@@ -288,6 +288,37 @@ class FrontOfficeStore {
     this.enqueueWrite(() => apiHelpers.createReservationViaApi(this as any, t, r));
   }
 
+  /**
+   * Checkout in the books. Runs in the same queue as folio saves, so the server sees the
+   * final folio. A failure leaves the stay marked gl_pending for retryPendingGlPost.
+   */
+  postCheckoutToLedger(reservationId: string, roundingAdjustment: number) {
+    const t = this.tenant(); if (!t) return;
+    this.enqueueWrite(async () => {
+      const reservation = this.reservations.find((r) => r.id === reservationId) as any;
+      try {
+        await apiHelpers.postCheckoutLedgerViaApi(t, reservationId, roundingAdjustment);
+      } catch (e) {
+        if (reservation && reservation.invoiceStatus !== 'gl_pending') {
+          reservation.pendingGlPost = { serverCheckout: true, reservationId, roundingAdjustment, previousInvoiceStatus: reservation.invoiceStatus };
+          reservation.invoiceStatus = 'gl_pending';
+          this.notify();
+        }
+        throw e;
+      }
+      if (reservation?.pendingGlPost?.serverCheckout) {
+        reservation.invoiceStatus = reservation.pendingGlPost.previousInvoiceStatus || 'sent';
+        reservation.pendingGlPost = null;
+        this.notify();
+        this.persistReservationPatch(reservationId, { invoiceStatus: reservation.invoiceStatus, pendingGlPost: null } as any);
+      }
+      try {
+        const { useAccountingStore } = await import('../accounting/store');
+        void useAccountingStore.getState().refreshLedgerFromServer();
+      } catch {}
+    });
+  }
+
   private persistReservationPatch(id: string, patch: Partial<Reservation>) {
     const t = this.tenant(); if (!t) return;
     this.enqueueWrite(() => apiHelpers.updateReservationViaApi(this as any, t, id, patch));
@@ -406,8 +437,12 @@ class FrontOfficeStore {
     try { await this.writeQueue; } catch {}
     const writesAtStart = this.writesStarted;
     const savedMeanwhile = () => this.writesStarted !== writesAtStart;
+    // A pull made before sign-in finishes (e.g. on the sign-in page) gets 401 for everything.
+    // Remember it and pull again shortly, or the screens stay empty until a reload.
+    let unauthorized = false;
+    const seen = (res: Response) => { if (res.status === 401) unauthorized = true; return res; };
     try {
-      const res = await fetch('/api/reservations', { headers: { 'x-tenant-subdomain': t } });
+      const res = seen(await fetch('/api/reservations', { headers: { 'x-tenant-subdomain': t } }));
       if (res.ok && !savedMeanwhile()) {
         const data = await res.json();
         if (Array.isArray(data.reservations)) {
@@ -439,7 +474,7 @@ class FrontOfficeStore {
       }
     } catch (e) { console.warn('FO: reservation sync failed', e); }
     try {
-      const res = await fetch('/api/guests?includeInactive=true', { headers: { 'x-tenant-subdomain': t } });
+      const res = seen(await fetch('/api/guests?includeInactive=true', { headers: { 'x-tenant-subdomain': t } }));
       if (res.ok && !savedMeanwhile()) {
         const data = await res.json();
         if (Array.isArray(data.guests)) {
@@ -454,7 +489,7 @@ class FrontOfficeStore {
       }
     } catch (e) { console.warn('FO: guest sync failed', e); }
     try {
-      const res = await fetch('/api/folios', { headers: { 'x-tenant-subdomain': t } });
+      const res = seen(await fetch('/api/folios', { headers: { 'x-tenant-subdomain': t } }));
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.folios)) {
@@ -529,7 +564,14 @@ class FrontOfficeStore {
     // A prior checkout may have failed only at the GL-post step (invoiceStatus
     // stuck at 'gl_pending'); retry those now that folios/reservations are fresh.
     try { this.retryAllPendingGlPosts(); } catch (e) { console.warn('FO: retryAllPendingGlPosts failed', e); }
+    if (unauthorized && this.unauthorizedRetries < 20) {
+      this.unauthorizedRetries += 1;
+      window.setTimeout(() => { void this.pullFromApi(true); }, 3000);
+    } else if (!unauthorized) {
+      this.unauthorizedRetries = 0;
+    }
   }
+  private unauthorizedRetries = 0;
 
   // Hydrate once on the client, then keep fresh when the tab regains focus so
   // multiple front-desk terminals converge on the database state.

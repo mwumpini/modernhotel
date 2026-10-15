@@ -138,7 +138,7 @@ export default function LeaveBalancesTab() {
           >
             {(item: any) => <SelectItem key={item.id}>{item.name}</SelectItem>}
           </Select>
-          <Select size="sm" aria-label="Year" className="w-28" variant="bordered" selectedKeys={[String(year)]} onSelectionChange={(k) => setYear(Number(Array.from(k)[0]))}>
+          <Select disallowEmptySelection size="sm" aria-label="Year" className="w-28" variant="bordered" selectedKeys={[String(year)]} onSelectionChange={(k) => setYear(Number(Array.from(k)[0]))}>
             {[thisYear - 1, thisYear, thisYear + 1].map((y) => <SelectItem key={String(y)}>{String(y)}</SelectItem>)}
           </Select>
           <ExportButtons onDownload={download} />

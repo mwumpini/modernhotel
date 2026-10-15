@@ -186,13 +186,13 @@ export default function StaffDebtsPanel() {
         <CardBody className="space-y-3">
           <div className="flex flex-wrap gap-2">
             <Input size="sm" placeholder="Search staff or reason" value={q} onChange={(e) => setQ(e.target.value)} variant="bordered" className="w-52" />
-            <Select size="sm" selectedKeys={[typeFilter]} onSelectionChange={(k) => setTypeFilter(String(Array.from(k)[0] || 'all'))} className="w-36" variant="bordered" aria-label="Type">
+            <Select disallowEmptySelection size="sm" selectedKeys={[typeFilter]} onSelectionChange={(k) => setTypeFilter(String(Array.from(k)[0] || 'all'))} className="w-36" variant="bordered" aria-label="Type">
               <SelectItem key="all">All types</SelectItem>
               <SelectItem key="loan">Loan</SelectItem>
               <SelectItem key="iou">IOU</SelectItem>
               <SelectItem key="surcharge">Surcharge</SelectItem>
             </Select>
-            <Select size="sm" selectedKeys={[statusFilter]} onSelectionChange={(k) => setStatusFilter(String(Array.from(k)[0] || 'all'))} className="w-36" variant="bordered" aria-label="Status">
+            <Select disallowEmptySelection size="sm" selectedKeys={[statusFilter]} onSelectionChange={(k) => setStatusFilter(String(Array.from(k)[0] || 'all'))} className="w-36" variant="bordered" aria-label="Status">
               <SelectItem key="all">All status</SelectItem>
               <SelectItem key="active">Active</SelectItem>
               <SelectItem key="cleared">Cleared</SelectItem>

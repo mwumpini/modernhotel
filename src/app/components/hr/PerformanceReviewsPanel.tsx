@@ -190,7 +190,7 @@ export default function PerformanceReviewsPanel() {
           <div className="font-medium">Performance Reviews</div>
           <div className="flex items-center gap-2">
             <Input size="sm" placeholder="Search employee" value={q} onChange={(e) => setQ(e.target.value)} variant="bordered" className="w-56" />
-            <Select size="sm" selectedKeys={[status]} onSelectionChange={(k) => setStatus(Array.from(k)[0] as string)} className="w-40" variant="bordered" aria-label="Status">
+            <Select disallowEmptySelection size="sm" selectedKeys={[status]} onSelectionChange={(k) => setStatus(Array.from(k)[0] as string)} className="w-40" variant="bordered" aria-label="Status">
               <SelectItem key="all">All</SelectItem>
               <SelectItem key="draft">Draft</SelectItem>
               <SelectItem key="submitted">Submitted</SelectItem>
@@ -247,13 +247,13 @@ export default function PerformanceReviewsPanel() {
               <ModalHeader>New Performance Review</ModalHeader>
               <ModalBody>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <Select label="Employee" selectedKeys={form.employeeId ? [form.employeeId] : []} onSelectionChange={(k) => setForm({ ...form, employeeId: (Array.from(k)[0] as string) || '' })} variant="bordered">
+                  <Select disallowEmptySelection label="Employee" selectedKeys={form.employeeId ? [form.employeeId] : []} onSelectionChange={(k) => setForm({ ...form, employeeId: (Array.from(k)[0] as string) || '' })} variant="bordered">
                     {current.map((e) => <SelectItem key={e.id} textValue={`${e.firstName} ${e.lastName}`}>{`${e.firstName} ${e.lastName}`}</SelectItem>)}
                   </Select>
                   <Input label="Review Period" description="e.g. 2026-Q3" value={form.reviewPeriod} onChange={(e) => setForm({ ...form, reviewPeriod: e.target.value })} variant="bordered" />
                   <Input label="Review Date" type="date" value={form.reviewDate} onChange={(e) => setForm({ ...form, reviewDate: e.target.value })} variant="bordered" />
                   <Input label="Reviewer" value={form.reviewerName} onChange={(e) => setForm({ ...form, reviewerName: e.target.value })} variant="bordered" />
-                  <Select label="Status" selectedKeys={[form.status]} onSelectionChange={(k) => setForm({ ...form, status: Array.from(k)[0] as PerformanceReview['status'] })} variant="bordered">
+                  <Select disallowEmptySelection label="Status" selectedKeys={[form.status]} onSelectionChange={(k) => setForm({ ...form, status: Array.from(k)[0] as PerformanceReview['status'] })} variant="bordered">
                     <SelectItem key="draft">Draft</SelectItem>
                     <SelectItem key="submitted">Submitted</SelectItem>
                     <SelectItem key="reviewed">Reviewed</SelectItem>

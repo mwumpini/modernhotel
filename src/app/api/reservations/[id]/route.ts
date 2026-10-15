@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { syncReservationFolioToLedger } from '@/app/lib/accounting/folioLedgerServer'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { updateReservationRow, deleteReservationRow, isRoomAvailable, GuestNotInHotelError } from '@/app/lib/frontoffice/repository'
@@ -71,6 +72,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (!reservation) return NextResponse.json({ error: 'Reservation not found' }, { status: 404 })
     const sessionUserId = (auth.session as any).user?.id
     await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'RESERVATION_UPDATED', 'Reservation', id, undefined, { status: reservation.status, roomId: reservation.roomId }, request)
+    // On check-in, deposits held as a liability start counting against the stay.
+    if (reservation.status === 'checked-in') {
+      await syncReservationFolioToLedger(ctx.tenantId, id, { postedBy: sessionUserId ?? undefined })
+        .catch((e) => console.error('[reservations/:id][PATCH] ledger sync failed', e))
+    }
     return NextResponse.json({ reservation })
   } catch (error) {
     console.error('[reservations/:id][PATCH] error', error)

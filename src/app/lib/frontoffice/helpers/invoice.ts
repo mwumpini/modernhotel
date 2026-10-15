@@ -29,7 +29,7 @@ export function generateAccountingInvoiceForReservation(self: StoreLike, reserva
   // Canonical aggregation (folio.ts) instead of re-deriving from folio.charges here —
   // this is the same subtotal/tax/total math getFolioDisplayTotals already does for
   // every other folio screen.
-  const { subtotal, taxTotal: taxAmount, totalCharges: total, roundingAdjustment, totalPayments: paid, outstandingBalance: balance } = getFolioDisplayTotals(folio);
+  const { subtotal, taxTotal: taxAmount, totalCharges: total, roundingAdjustment, outstandingBalance: balance } = getFolioDisplayTotals(folio);
 
   if (total <= 0) {
     folio.status = 'closed';
@@ -116,7 +116,6 @@ export function generateAccountingInvoiceForReservation(self: StoreLike, reserva
   (reservation as any).invoiceGeneratedDate = invoice.date;
   try { accounting.addInvoice(invoice); } catch (e) { console.warn('FO: addInvoice failed', e); }
 
-  const paymentRows: Array<{ amount: number; method: string; date: string; paymentId: string }> = [];
   try {
     (folio.payments || []).forEach((p: any, idx: number) => {
       // Only post payments the folio balance itself counts as paid (status === 'completed',
@@ -125,6 +124,8 @@ export function generateAccountingInvoiceForReservation(self: StoreLike, reserva
       if (p.status && p.status !== 'completed') return;
       const amt = typeof p.amount === 'number' ? p.amount : 0;
       if (amt === 0 || Number.isNaN(amt)) return;
+      // Billed to the company: nothing was received, so the bill stays open in receivables.
+      if (p.method === 'Corporate Account') return;
       const method =
         p.method === 'Card' || p.method === 'Mobile Money'
           ? p.method
@@ -132,17 +133,12 @@ export function generateAccountingInvoiceForReservation(self: StoreLike, reserva
             ? 'Bank Transfer'
             : p.method === 'Check'
               ? 'Cheque'
-              : p.method === 'Corporate Account' || p.method === 'Credit'
-                ? 'Bank Transfer'
+              : p.method === 'Credit'
+                ? 'Credit'
                 : 'Cash';
       const isRefund = amt < 0;
       const payId = `A-PAY-${newId}-${idx}-${Math.random().toString(36).slice(2, 10)}`;
-      paymentRows.push({
-        amount: amt,
-        method,
-        date: p.date || new Date().toISOString(),
-        paymentId: payId,
-      });
+      // A receipt record only: the money itself was posted when it was taken.
       accounting.addPayment({
         id: payId,
         paymentNumber: isRefund ? `RFD-${invNumber}-${idx + 1}` : `PAY-${invNumber}-${idx + 1}`,
@@ -167,43 +163,10 @@ export function generateAccountingInvoiceForReservation(self: StoreLike, reserva
     });
   } catch {}
 
-  const glPostParams = {
-    invoiceId: newId,
-    invoiceNumber: invNumber,
-    reference: String(reservation.resId || reservation.id),
-    guestLabel: reservation.guestName || 'Guest',
-    reservationId,
-    lines: invoice.lines.map((l: any) => ({
-      amount: l.amount,
-      glAccountCode: l.glAccountCode || '4100',
-    })),
-    subtotal,
-    taxAmount,
-    total,
-    roundingAdjustment,
-    payments: paymentRows,
-  };
-
-  let glPosted = false;
-  try {
-    const glResult = postGuestFolioCheckoutToLedger(glPostParams);
-    glPosted = !!glResult;
-    if (!glResult) {
-      console.error('[FO Invoice] GL post failed or unbalanced for', reservationId);
-    }
-  } catch (e) {
-    console.warn('[FO Invoice] postGuestFolioCheckoutToLedger failed', e);
-  }
-
-  if (!glPosted && total > 0) {
-    // The invoice/payment records above are already persisted; only the GL post
-    // failed. Keep the exact posting payload so retryPendingGlPost can re-attempt
-    // it without recreating the invoice (which would otherwise duplicate it).
-    (reservation as any).invoiceStatus = 'gl_pending';
-    (reservation as any).pendingGlPost = { ...glPostParams, balance };
-    self.notify();
-    return;
-  }
+  // IFRS 15: each charge and payment reached the books on its own day (the server posts
+  // them as the folio changes). Checkout only closes the stay there: cash rounding, then
+  // whatever is still owed moves from the guest ledger to receivables.
+  self.postCheckoutToLedger(reservationId, roundingAdjustment || 0);
 
   (reservation as any).invoiceGenerated = true;
   (reservation as any).invoiceGeneratedDate = new Date().toISOString();
@@ -223,6 +186,11 @@ export function retryPendingGlPost(self: StoreLike, reservationId: string): bool
   if (!reservation || reservation.invoiceStatus !== 'gl_pending') return false;
   const pending = (reservation as any).pendingGlPost;
   if (!pending) return false;
+  // Checkout under IFRS 15 only needs the server close; it clears gl_pending itself.
+  if (pending.serverCheckout) {
+    self.postCheckoutToLedger(reservationId, Number(pending.roundingAdjustment) || 0);
+    return true;
+  }
 
   try {
     const glResult = postGuestFolioCheckoutToLedger(pending);

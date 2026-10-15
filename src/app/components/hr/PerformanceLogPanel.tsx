@@ -143,19 +143,19 @@ export default function PerformanceLogPanel() {
           <div className="text-xs text-gray-500">Record good and bad moments as they happen — scored −5 to −1 or +1 to +5 ({SCORE_GUIDE}).</div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select size="sm" aria-label="Staff" className="w-44" variant="bordered" selectedKeys={[staff]} onSelectionChange={(k) => setStaff(Array.from(k)[0] as string)}
+          <Select disallowEmptySelection size="sm" aria-label="Staff" className="w-44" variant="bordered" selectedKeys={[staff]} onSelectionChange={(k) => setStaff(Array.from(k)[0] as string)}
             items={[{ id: 'all', name: 'All staff' }, ...current.map((e) => ({ id: e.id, name: `${e.firstName} ${e.lastName}` }))]}>
             {(item: any) => <SelectItem key={item.id}>{item.name}</SelectItem>}
           </Select>
-          <Select size="sm" aria-label="Category" className="w-44" variant="bordered" selectedKeys={[category]} onSelectionChange={(k) => setCategory(Array.from(k)[0] as string)}>
+          <Select disallowEmptySelection size="sm" aria-label="Category" className="w-44" variant="bordered" selectedKeys={[category]} onSelectionChange={(k) => setCategory(Array.from(k)[0] as string)}>
             {[<SelectItem key="all">All categories</SelectItem>, ...Object.entries(LOG_CATEGORIES).map(([k, l]) => <SelectItem key={k}>{l}</SelectItem>)]}
           </Select>
-          <Select size="sm" aria-label="Type" className="w-36" variant="bordered" selectedKeys={[kind]} onSelectionChange={(k) => setKind(Array.from(k)[0] as string)}>
+          <Select disallowEmptySelection size="sm" aria-label="Type" className="w-36" variant="bordered" selectedKeys={[kind]} onSelectionChange={(k) => setKind(Array.from(k)[0] as string)}>
             <SelectItem key="all">Good and bad</SelectItem>
             <SelectItem key="good">Good only</SelectItem>
             <SelectItem key="bad">Concerns only</SelectItem>
           </Select>
-          <Select size="sm" aria-label="Period" className="w-36" variant="bordered" selectedKeys={[period]} onSelectionChange={(k) => setPeriod(Array.from(k)[0] as string)}>
+          <Select disallowEmptySelection size="sm" aria-label="Period" className="w-36" variant="bordered" selectedKeys={[period]} onSelectionChange={(k) => setPeriod(Array.from(k)[0] as string)}>
             {Object.entries(PERIODS).map(([k, p]) => <SelectItem key={k}>{p.label}</SelectItem>)}
           </Select>
           <Checkbox size="sm" isSelected={showVoided} onValueChange={setShowVoided}>Show voided</Checkbox>
@@ -217,7 +217,7 @@ export default function PerformanceLogPanel() {
               <ModalHeader>Record a performance entry</ModalHeader>
               <ModalBody>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <Select label="Staff" isRequired selectedKeys={form.employeeId ? [form.employeeId] : []} onSelectionChange={(k) => setForm({ ...form, employeeId: (Array.from(k)[0] as string) || '' })} variant="bordered"
+                  <Select disallowEmptySelection label="Staff" isRequired selectedKeys={form.employeeId ? [form.employeeId] : []} onSelectionChange={(k) => setForm({ ...form, employeeId: (Array.from(k)[0] as string) || '' })} variant="bordered"
                     items={current.map((e) => ({ id: e.id, name: `${e.firstName} ${e.lastName}` }))}>
                     {(item: any) => <SelectItem key={item.id}>{item.name}</SelectItem>}
                   </Select>
@@ -234,7 +234,7 @@ export default function PerformanceLogPanel() {
                   </div>
                   <div className="text-xs text-gray-500 mt-1">{SCORE_GUIDE}. Red = a concern, green = a commendation.</div>
                 </div>
-                <Select label="Category" selectedKeys={[form.category]} onSelectionChange={(k) => setForm({ ...form, category: Array.from(k)[0] as string })} variant="bordered">
+                <Select disallowEmptySelection label="Category" selectedKeys={[form.category]} onSelectionChange={(k) => setForm({ ...form, category: Array.from(k)[0] as string })} variant="bordered">
                   {Object.entries(LOG_CATEGORIES).map(([k, l]) => <SelectItem key={k}>{l}</SelectItem>)}
                 </Select>
                 <Textarea label="What happened" isRequired minRows={3} placeholder="Be specific: what was done or said, where, and who was affected." value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} variant="bordered" />

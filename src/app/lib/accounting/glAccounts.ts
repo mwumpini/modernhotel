@@ -12,6 +12,8 @@ export const GL_ACCOUNTS = {
   BANK: '1120',
   MOBILE_MONEY: '1130',
   ACCOUNTS_RECEIVABLE: '1210',
+  /** In-house guests: charges and payments post here during the stay (IFRS 15, revenue as each night is delivered). */
+  GUEST_LEDGER: '1215',
 
   // Liabilities
   // 2200 is the "Accounts Payable" category HEADER (see GHANA_CHART_OF_ACCOUNTS in
@@ -20,6 +22,8 @@ export const GL_ACCOUNTS = {
   // 2205 is the actual postable leaf for supplier invoices/payments.
   ACCOUNTS_PAYABLE: '2205',
   DEFERRED_REVENUE: '2400',
+  /** Money received before arrival: a liability until the guest checks in (IFRS 15 contract liability). */
+  GUEST_DEPOSITS: '2450',
 
   // Revenue
   ROOM_REVENUE: '4100',
@@ -32,11 +36,29 @@ export const GL_ACCOUNTS = {
   SERVICE_CHARGES: '4400',
   OTHER_REVENUE: '4330',
   ROUNDING_ADJUSTMENT: '4900',
+  ALLOWANCES: '4950',
 
   // Inventory / COGS (F&B stock issue on bill)
   FB_INVENTORY: '1310',
+  HOUSEKEEPING_SUPPLIES: '1320',
+  OPERATING_SUPPLIES: '1330',
   FB_COGS: '5110',
 } as const;
+
+/** Stock category → inventory leaf. Food and drink share 1310 because bar and kitchen COGS is taken from 1310. */
+export function inventoryGlForCategory(category?: string | null): string {
+  switch ((category || '').toLowerCase()) {
+    case 'cleaning':
+    case 'linens':
+    case 'amenities':
+      return GL_ACCOUNTS.HOUSEKEEPING_SUPPLIES;
+    case 'maintenance':
+    case 'office':
+      return GL_ACCOUNTS.OPERATING_SUPPLIES;
+    default:
+      return GL_ACCOUNTS.FB_INVENTORY;
+  }
+}
 
 export const REVENUE_CENTERS = {
   ROOM: 'RM',
@@ -77,6 +99,9 @@ export const PAYMENT_GL_MAP: Record<string, string> = {
   Bank: GL_ACCOUNTS.BANK,
   Cheque: GL_ACCOUNTS.BANK,
   Check: GL_ACCOUNTS.BANK,
-  Credit: GL_ACCOUNTS.BANK,
-  'Corporate Account': GL_ACCOUNTS.BANK,
+  // A folio "credit" is a reduction of the bill, not money: it reduces revenue.
+  Credit: GL_ACCOUNTS.ALLOWANCES,
+  // Billed to the company: no money moved. Folio sync skips it (the balance reaches
+  // receivables at checkout); elsewhere it nets to nothing against receivables.
+  'Corporate Account': GL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
 };

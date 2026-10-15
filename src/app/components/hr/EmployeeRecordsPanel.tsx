@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { estimateMonthlyPay } from '@/app/lib/payroll/estimate';
 import { Button, Card, CardBody, CardHeader, Chip, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Pagination, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, Textarea, Checkbox } from '@heroui/react';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { useEmployeeChangesStore } from '@/app/lib/hr/employeeChangesStore';
@@ -273,6 +274,7 @@ export default function EmployeeRecordsPanel() {
       residencyStatus: 'resident',
       employmentClass: 'regular',
       secondEmployment: 'no',
+      payeEnrolled: 'yes',
       ssnitEnrolled: 'yes',
       tier2Enrolled: 'yes',
       tier3Enrolled: 'no',
@@ -339,7 +341,7 @@ export default function EmployeeRecordsPanel() {
       residencyStatus: (e as any).residencyStatus || 'resident',
       employmentClass: (e as any).employmentClass || 'regular',
       secondEmployment: (e as any).secondEmployment ? 'yes' : 'no',
-      payeEnrolled: (e as any).payeEnrolled !== false ? 'yes' : 'no',
+      payeEnrolled: (e as any).incomeTaxDeductible !== false ? 'yes' : 'no',
       ssnitEnrolled: (e as any).ssnitEnrolled ? 'yes' : 'no',
       tier2Enrolled: (e as any).tier2Enrolled ? 'yes' : 'no',
       tier3Enrolled: (e as any).tier3Enrolled ? 'yes' : 'no',
@@ -479,6 +481,7 @@ export default function EmployeeRecordsPanel() {
         residencyStatus: form.residencyStatus,
         employmentClass: form.employmentClass,
         secondEmployment: form.secondEmployment === 'yes',
+        incomeTaxDeductible: form.payeEnrolled !== 'no',
         ssnitEnrolled: form.ssnitEnrolled === 'yes',
         tier2Enrolled: form.tier2Enrolled === 'yes',
         tier3Enrolled: form.tier3Enrolled === 'yes',
@@ -583,6 +586,7 @@ export default function EmployeeRecordsPanel() {
         residencyStatus: form.residencyStatus,
         employmentClass: form.employmentClass,
         secondEmployment: form.secondEmployment === 'yes',
+        incomeTaxDeductible: form.payeEnrolled !== 'no',
         ssnitEnrolled: form.ssnitEnrolled === 'yes',
         tier2Enrolled: form.tier2Enrolled === 'yes',
         tier3Enrolled: form.tier3Enrolled === 'yes',
@@ -646,6 +650,7 @@ export default function EmployeeRecordsPanel() {
       residencyStatus: 'resident',
       employmentClass: 'regular',
       secondEmployment: 'no',
+      payeEnrolled: 'yes',
       ssnitEnrolled: 'yes',
       tier2Enrolled: 'yes',
       tier3Enrolled: 'no',
@@ -926,7 +931,7 @@ export default function EmployeeRecordsPanel() {
             >
               {(item: any) => <SelectItem key={item.id} textValue={item.name}>{item.name}</SelectItem>}
             </Select>
-            <Select size="sm" selectedKeys={[statusFilter]} onSelectionChange={(k) => setStatusFilter(Array.from(k)[0] as string)} className="w-40" variant="bordered" aria-label="Status">
+            <Select disallowEmptySelection size="sm" selectedKeys={[statusFilter]} onSelectionChange={(k) => setStatusFilter(Array.from(k)[0] as string)} className="w-40" variant="bordered" aria-label="Status">
               <SelectItem key="all" textValue="All Status">All Status</SelectItem>
               <SelectItem key="active" textValue="Active">Active</SelectItem>
               <SelectItem key="inactive" textValue="Inactive">Inactive</SelectItem>
@@ -983,8 +988,12 @@ export default function EmployeeRecordsPanel() {
                   .sort((a, b) => (b.paidAt?.getTime() || 0) - (a.paidAt?.getTime() || 0))[0];
                 
                 const fmtAmount = (n: number) => formatMoney(Number(n || 0));
-                const paidAmount = (value?: number) =>
-                  latestPayrollRecord ? fmtAmount(Number(value || 0)) : '—';
+                // Before any paid month, show today's estimate (same as the Payroll preview), in grey.
+                const est = latestPayrollRecord ? null : estimateMonthlyPay(e as any, { tier1: tier1Rule, tier2: tier2Rule });
+                const paidAmount = (value?: number, estimate?: number) =>
+                  latestPayrollRecord
+                    ? fmtAmount(Number(value || 0))
+                    : <span className="text-gray-400" title="Estimate at today's rates. No paid payroll yet.">{fmtAmount(Number(estimate || 0))}</span>;
                 const storedBenefit = (value?: number) =>
                   Number(value || 0) > 0 ? fmtAmount(Number(value)) : '—';
                 
@@ -1012,15 +1021,15 @@ export default function EmployeeRecordsPanel() {
                     <TableCell className={visibleColumns.has('type') ? '' : 'hidden'}>{e.employmentType}</TableCell>
                     <TableCell className={visibleColumns.has('secondEmployment') ? '' : 'hidden'}>{(e as any).secondEmployment ? 'Y' : 'N'}</TableCell>
                     <TableCell className={visibleColumns.has('basicSalary') ? 'text-right tabular-nums' : 'hidden'}>{fmtAmount((e as any).basicSalary ?? salary)}</TableCell>
-                    <TableCell className={visibleColumns.has('socialSecurity') ? 'text-right tabular-nums' : 'hidden'}>{paidAmount(latestPayrollRecord?.deductions?.socialSecurity)}</TableCell>
-                    <TableCell className={visibleColumns.has('tier2') ? 'text-right tabular-nums' : 'hidden'}>{paidAmount(latestPayrollRecord?.deductions?.pension)}</TableCell>
-                    <TableCell className={visibleColumns.has('tier3') ? 'text-right tabular-nums' : 'hidden'}>{paidAmount((latestPayrollRecord as any)?.deductions?.tier3)}</TableCell>
+                    <TableCell className={visibleColumns.has('socialSecurity') ? 'text-right tabular-nums' : 'hidden'}>{paidAmount(latestPayrollRecord?.deductions?.socialSecurity, est?.tier1)}</TableCell>
+                    <TableCell className={visibleColumns.has('tier2') ? 'text-right tabular-nums' : 'hidden'}>{paidAmount(latestPayrollRecord?.deductions?.pension, est?.tier2)}</TableCell>
+                    <TableCell className={visibleColumns.has('tier3') ? 'text-right tabular-nums' : 'hidden'}>{paidAmount((latestPayrollRecord as any)?.deductions?.tier3, est?.tier3)}</TableCell>
                     <TableCell className={visibleColumns.has('allowances') ? 'text-right tabular-nums' : 'hidden'}>{fmtAmount((e as any).allowances ?? 0)}</TableCell>
                     <TableCell className={visibleColumns.has('vehicleBenefit') ? 'text-right tabular-nums' : 'hidden'}>{storedBenefit((e as any).vehicleBenefit)}</TableCell>
                     <TableCell className={visibleColumns.has('housingBenefit') ? 'text-right tabular-nums' : 'hidden'}>{storedBenefit((e as any).housingBenefit)}</TableCell>
                     <TableCell className={visibleColumns.has('otherNonCash') ? 'text-right tabular-nums' : 'hidden'}>{storedBenefit((e as any).otherNonCashBenefits)}</TableCell>
-                    <TableCell className={visibleColumns.has('incomeTax') ? 'text-right tabular-nums' : 'hidden'}>{paidAmount(latestPayrollRecord?.deductions?.tax)}</TableCell>
-                    <TableCell className={visibleColumns.has('netSalary') ? 'text-right tabular-nums font-semibold' : 'hidden'}>{paidAmount(latestPayrollRecord?.netPay)}</TableCell>
+                    <TableCell className={visibleColumns.has('incomeTax') ? 'text-right tabular-nums' : 'hidden'}>{paidAmount(latestPayrollRecord?.deductions?.tax, est?.tax)}</TableCell>
+                    <TableCell className={visibleColumns.has('netSalary') ? 'text-right tabular-nums font-semibold' : 'hidden'}>{paidAmount(latestPayrollRecord?.netPay, est?.net)}</TableCell>
                     <TableCell className={visibleColumns.has('actions') ? '' : 'hidden'} onClick={(ev) => ev.stopPropagation()}>
                       <Button size="sm" variant="flat" onPress={() => openView(e.id)}>View</Button>
                     </TableCell>
@@ -1136,25 +1145,26 @@ export default function EmployeeRecordsPanel() {
                       3. Docs & Compliance
                     </button>
                   </div>
+                  <p className="-mt-2 mb-1 text-xs text-gray-500"><span className="text-danger">*</span> Required</p>
 
                   {step === 1 && (
                   <div>
                     <div className="text-sm font-medium mb-2">Personal Info</div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <Input label="Staff No." value={form.employeeNumber} onChange={(e) => setForm({ ...form, employeeNumber: e.target.value })} variant="bordered" />
-                      <Input label="First Name" value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} variant="bordered" />
-                      <Input label="Last Name" value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} variant="bordered" />
-                      <Input label="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} variant="bordered" />
+                      <Input isRequired label="Staff No." value={form.employeeNumber} onChange={(e) => setForm({ ...form, employeeNumber: e.target.value })} variant="bordered" />
+                      <Input isRequired label="First Name" value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} variant="bordered" />
+                      <Input isRequired label="Last Name" value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} variant="bordered" />
+                      <Input isRequired label="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} variant="bordered" />
                       <Input label="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} variant="bordered" />
                       <Input label="Date of Birth" type="date" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} variant="bordered" />
-                      <Select label="Gender" selectedKeys={[form.gender || 'unspecified']} onSelectionChange={(k) => setForm({ ...form, gender: (Array.from(k)[0] as string) === 'unspecified' ? '' : (Array.from(k)[0] as string) })} variant="bordered">
+                      <Select disallowEmptySelection label="Gender" selectedKeys={[form.gender || 'unspecified']} onSelectionChange={(k) => setForm({ ...form, gender: (Array.from(k)[0] as string) === 'unspecified' ? '' : (Array.from(k)[0] as string) })} variant="bordered">
                         <SelectItem key="unspecified">Unspecified</SelectItem>
                         <SelectItem key="male">Male</SelectItem>
                         <SelectItem key="female">Female</SelectItem>
                         <SelectItem key="other">Other</SelectItem>
                       </Select>
                       <Input label="Nationality" value={form.nationality} onChange={(e) => setForm({ ...form, nationality: e.target.value })} variant="bordered" />
-                      <Select label="Marital Status" selectedKeys={[form.maritalStatus || 'unspecified']} onSelectionChange={(k) => setForm({ ...form, maritalStatus: (Array.from(k)[0] as string) === 'unspecified' ? '' : (Array.from(k)[0] as string) })} variant="bordered">
+                      <Select disallowEmptySelection label="Marital Status" selectedKeys={[form.maritalStatus || 'unspecified']} onSelectionChange={(k) => setForm({ ...form, maritalStatus: (Array.from(k)[0] as string) === 'unspecified' ? '' : (Array.from(k)[0] as string) })} variant="bordered">
                         <SelectItem key="unspecified">Unspecified</SelectItem>
                         <SelectItem key="single">Single</SelectItem>
                         <SelectItem key="married">Married</SelectItem>
@@ -1216,11 +1226,11 @@ export default function EmployeeRecordsPanel() {
                   <div>
                     <div className="text-sm font-medium mb-2">Employment</div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <Input label="Hire Date" type="date" value={form.hireDate} onChange={(e) => setForm({ ...form, hireDate: e.target.value })} variant="bordered" />
-                      <Select label="Department" selectedKeys={[form.departmentId]} onSelectionChange={(k) => setForm({ ...form, departmentId: Array.from(k)[0] as string })} variant="bordered">
+                      <Input isRequired label="Hire Date" type="date" value={form.hireDate} onChange={(e) => setForm({ ...form, hireDate: e.target.value })} variant="bordered" />
+                      <Select isRequired disallowEmptySelection label="Department" selectedKeys={[form.departmentId]} onSelectionChange={(k) => setForm({ ...form, departmentId: Array.from(k)[0] as string })} variant="bordered">
                         {departments.map((d) => <SelectItem key={d.id}>{d.name}</SelectItem>)}
                       </Select>
-                      <Select label="Position" selectedKeys={[form.positionId]} onSelectionChange={(k) => setForm({ ...form, positionId: Array.from(k)[0] as string })} variant="bordered">
+                      <Select isRequired disallowEmptySelection label="Position" selectedKeys={[form.positionId]} onSelectionChange={(k) => setForm({ ...form, positionId: Array.from(k)[0] as string })} variant="bordered">
                         {positions.filter((p) => p.departmentId === form.departmentId).map((p) => <SelectItem key={p.id}>{p.title}</SelectItem>)}
                       </Select>
                       <Select
@@ -1233,45 +1243,45 @@ export default function EmployeeRecordsPanel() {
                         {(item: any) => <SelectItem key={item.id}>{item.label}</SelectItem>}
                       </Select>
                       <Input label="Work Location" value={form.workLocation} onChange={(e) => setForm({ ...form, workLocation: e.target.value })} variant="bordered" />
-                      <Select label="Status" selectedKeys={[form.status]} onSelectionChange={(k) => setForm({ ...form, status: Array.from(k)[0] as string })} variant="bordered">
+                      <Select disallowEmptySelection label="Status" selectedKeys={[form.status]} onSelectionChange={(k) => setForm({ ...form, status: Array.from(k)[0] as string })} variant="bordered">
                         <SelectItem key="active">Active</SelectItem>
                         <SelectItem key="inactive">Inactive</SelectItem>
                         <SelectItem key="on_leave">On Leave</SelectItem>
                         <SelectItem key="terminated">Terminated</SelectItem>
                       </Select>
-                      <Select label="Employment Type" selectedKeys={[form.employmentType]} onSelectionChange={(k) => setForm({ ...form, employmentType: Array.from(k)[0] as string })} variant="bordered">
+                      <Select disallowEmptySelection label="Employment Type" selectedKeys={[form.employmentType]} onSelectionChange={(k) => setForm({ ...form, employmentType: Array.from(k)[0] as string })} variant="bordered">
                         <SelectItem key="full_time">Full Time</SelectItem>
                         <SelectItem key="part_time">Part Time</SelectItem>
                         <SelectItem key="contract">Contract</SelectItem>
                         <SelectItem key="temporary">Temporary</SelectItem>
                         <SelectItem key="intern">Intern</SelectItem>
                       </Select>
-                      <Select label="Residency Status" selectedKeys={[form.residencyStatus]} onSelectionChange={(k) => setForm({ ...form, residencyStatus: Array.from(k)[0] as string })} variant="bordered">
+                      <Select disallowEmptySelection label="Residency Status" selectedKeys={[form.residencyStatus]} onSelectionChange={(k) => setForm({ ...form, residencyStatus: Array.from(k)[0] as string })} variant="bordered">
                         <SelectItem key="resident">Resident</SelectItem>
                         <SelectItem key="non_resident">Non Resident</SelectItem>
                       </Select>
-                      <Select label="Employment Class" selectedKeys={[form.employmentClass]} onSelectionChange={(k) => setForm({ ...form, employmentClass: Array.from(k)[0] as string })} variant="bordered">
+                      <Select disallowEmptySelection label="Employment Class" selectedKeys={[form.employmentClass]} onSelectionChange={(k) => setForm({ ...form, employmentClass: Array.from(k)[0] as string })} variant="bordered">
                         <SelectItem key="regular">Regular</SelectItem>
                         <SelectItem key="part_time">Part-time</SelectItem>
                         <SelectItem key="casual">Casual</SelectItem>
                       </Select>
-                      <Select label="Secondary Employment" selectedKeys={[form.secondEmployment]} onSelectionChange={(k) => setForm({ ...form, secondEmployment: Array.from(k)[0] as string })} variant="bordered">
+                      <Select disallowEmptySelection label="Secondary Employment" selectedKeys={[form.secondEmployment]} onSelectionChange={(k) => setForm({ ...form, secondEmployment: Array.from(k)[0] as string })} variant="bordered">
                         <SelectItem key="no">No</SelectItem>
                         <SelectItem key="yes">Yes</SelectItem>
                       </Select>
-                      <Select label="Income Tax (PAYE/Withholding)" selectedKeys={[form.payeEnrolled]} onSelectionChange={(k) => setForm({ ...form, payeEnrolled: Array.from(k)[0] as string })} variant="bordered">
+                      <Select disallowEmptySelection label="Income Tax (PAYE/Withholding)" selectedKeys={[form.payeEnrolled]} onSelectionChange={(k) => setForm({ ...form, payeEnrolled: Array.from(k)[0] as string })} variant="bordered">
                         <SelectItem key="yes">Yes</SelectItem>
                         <SelectItem key="no">No</SelectItem>
                       </Select>
-                      <Select label="Social Security (Tier 1)" selectedKeys={[form.ssnitEnrolled]} onSelectionChange={(k) => setForm({ ...form, ssnitEnrolled: Array.from(k)[0] as string })} variant="bordered">
+                      <Select disallowEmptySelection label="Social Security (Tier 1)" selectedKeys={[form.ssnitEnrolled]} onSelectionChange={(k) => setForm({ ...form, ssnitEnrolled: Array.from(k)[0] as string })} variant="bordered">
                         <SelectItem key="yes">Yes</SelectItem>
                         <SelectItem key="no">No</SelectItem>
                       </Select>
-                      <Select label="Tier 2 Pension" selectedKeys={[form.tier2Enrolled]} onSelectionChange={(k) => setForm({ ...form, tier2Enrolled: Array.from(k)[0] as string })} variant="bordered">
+                      <Select disallowEmptySelection label="Tier 2 Pension" selectedKeys={[form.tier2Enrolled]} onSelectionChange={(k) => setForm({ ...form, tier2Enrolled: Array.from(k)[0] as string })} variant="bordered">
                         <SelectItem key="yes">Yes</SelectItem>
                         <SelectItem key="no">No</SelectItem>
                       </Select>
-                      <Select label="Third Tier Pension" selectedKeys={[form.tier3Enrolled]} onSelectionChange={(k) => setForm({ ...form, tier3Enrolled: Array.from(k)[0] as string })} variant="bordered">
+                      <Select disallowEmptySelection label="Third Tier Pension" selectedKeys={[form.tier3Enrolled]} onSelectionChange={(k) => setForm({ ...form, tier3Enrolled: Array.from(k)[0] as string })} variant="bordered">
                         <SelectItem key="no">No</SelectItem>
                         <SelectItem key="yes">Yes</SelectItem>
                       </Select>
@@ -1293,7 +1303,7 @@ export default function EmployeeRecordsPanel() {
                   <div>
                     <div className="text-sm font-medium mb-2">Compensation</div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <Select label="Compensation Type" selectedKeys={[form.compensationType]} onSelectionChange={(k) => setForm({ ...form, compensationType: Array.from(k)[0] as string })} variant="bordered">
+                      <Select disallowEmptySelection label="Compensation Type" selectedKeys={[form.compensationType]} onSelectionChange={(k) => setForm({ ...form, compensationType: Array.from(k)[0] as string })} variant="bordered">
                         <SelectItem key="monthly">Monthly</SelectItem>
                         <SelectItem key="hourly">Hourly</SelectItem>
                       </Select>
@@ -1309,7 +1319,7 @@ export default function EmployeeRecordsPanel() {
                           <Input label="Overtime Rate" type="number" value={String(form.overtimeRate)} onChange={(e) => setForm({ ...form, overtimeRate: e.target.value })} variant="bordered" />
                         </>
                       )}
-                      <Select label="Payment Frequency" selectedKeys={[form.paymentFrequency]} onSelectionChange={(k) => setForm({ ...form, paymentFrequency: Array.from(k)[0] as string })} variant="bordered">
+                      <Select disallowEmptySelection label="Payment Frequency" selectedKeys={[form.paymentFrequency]} onSelectionChange={(k) => setForm({ ...form, paymentFrequency: Array.from(k)[0] as string })} variant="bordered">
                         <SelectItem key="monthly">Monthly</SelectItem>
                         <SelectItem key="biweekly">Biweekly</SelectItem>
                         <SelectItem key="weekly">Weekly</SelectItem>
@@ -1367,7 +1377,7 @@ export default function EmployeeRecordsPanel() {
                     <div className="text-sm font-medium mb-2">Tax & IDs</div>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                       <Input label="TIN" value={form.taxWithholding.tin} onChange={(e) => setForm({ ...form, taxWithholding: { ...form.taxWithholding, tin: e.target.value } })} variant="bordered" />
-                      <Select label="Filing Status" selectedKeys={[form.taxWithholding.filingStatus]} onSelectionChange={(k) => setForm({ ...form, taxWithholding: { ...form.taxWithholding, filingStatus: Array.from(k)[0] as string } })} variant="bordered">
+                      <Select disallowEmptySelection label="Filing Status" selectedKeys={[form.taxWithholding.filingStatus]} onSelectionChange={(k) => setForm({ ...form, taxWithholding: { ...form.taxWithholding, filingStatus: Array.from(k)[0] as string } })} variant="bordered">
                         <SelectItem key="single">Single</SelectItem>
                         <SelectItem key="married">Married</SelectItem>
                         <SelectItem key="head_of_household">Head of Household</SelectItem>
@@ -1410,7 +1420,7 @@ export default function EmployeeRecordsPanel() {
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <Input label="Start Date" type="date" value={form.probation.startDate} onChange={(e) => setForm({ ...form, probation: { ...form.probation, startDate: e.target.value } })} variant="bordered" />
                       <Input label="End Date" type="date" value={form.probation.endDate} onChange={(e) => setForm({ ...form, probation: { ...form.probation, endDate: e.target.value } })} variant="bordered" />
-                      <Select label="Status" selectedKeys={[form.probation.status]} onSelectionChange={(k) => setForm({ ...form, probation: { ...form.probation, status: Array.from(k)[0] as string } })} variant="bordered">
+                      <Select disallowEmptySelection label="Status" selectedKeys={[form.probation.status]} onSelectionChange={(k) => setForm({ ...form, probation: { ...form.probation, status: Array.from(k)[0] as string } })} variant="bordered">
                         <SelectItem key="active">Active</SelectItem>
                         <SelectItem key="confirmed">Confirmed</SelectItem>
                         <SelectItem key="extended">Extended</SelectItem>

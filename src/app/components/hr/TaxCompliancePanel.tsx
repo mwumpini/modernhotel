@@ -67,7 +67,7 @@ export default function TaxCompliancePanel() {
         <CardHeader className="justify-between">
           <div className="font-medium">Tax Compliance — Payroll Withholding Preview</div>
           <div className="flex items-center gap-2">
-            <Select label="Country" selectedKeys={[country]} onSelectionChange={(k) => setCountry(Array.from(k)[0] as string)} variant="bordered" className="w-40">
+            <Select disallowEmptySelection label="Country" selectedKeys={[country]} onSelectionChange={(k) => setCountry(Array.from(k)[0] as string)} variant="bordered" className="w-40">
               <SelectItem key="GH">Ghana</SelectItem>
               <SelectItem key="NG">Nigeria</SelectItem>
               <SelectItem key="ZA">South Africa</SelectItem>

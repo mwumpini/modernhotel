@@ -1520,7 +1520,7 @@ export default function PpeAssetRegisterPage() {
                 <Input type="number" min="0" step="0.01" label="Unit price (GHS)" isRequired isInvalid={!!fieldErrors.unitPrice} value={String(form.unitPrice)} onValueChange={(v) => setForm({ ...form, unitPrice: Number(v) || 0 })} />
                 {fieldErrors.unitPrice && <div className="text-xs text-danger mt-1">{fieldErrors.unitPrice}</div>}
               </div>
-              <Select label="Status" selectedKeys={[form.capExp]} onSelectionChange={(k) => setForm({ ...form, capExp: Array.from(k)[0] as CapExpStatus })}>
+              <Select disallowEmptySelection label="Status" selectedKeys={[form.capExp]} onSelectionChange={(k) => setForm({ ...form, capExp: Array.from(k)[0] as CapExpStatus })}>
                 {CAP_EXP_OPTIONS.map((o) => <SelectItem key={o}>{statusLabel(o)}</SelectItem>)}
               </Select>
               {form.capExp === 'Disposed' && (

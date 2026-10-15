@@ -784,7 +784,7 @@ export default function FrontofficeEventsConferences() {
               <Input label="Name" value={hallForm.name} onChange={(e) => setHallForm({ ...hallForm, name: e.target.value })} />
               <div className="grid grid-cols-2 gap-3">
                 <Input label="Capacity" type="number" value={hallForm.capacity} onChange={(e) => setHallForm({ ...hallForm, capacity: e.target.value })} />
-                <Select label="Type" selectedKeys={[hallForm.type]} onSelectionChange={(k) => setHallForm({ ...hallForm, type: (Array.from(k)[0] as any) || 'meeting' })}>
+                <Select disallowEmptySelection label="Type" selectedKeys={[hallForm.type]} onSelectionChange={(k) => setHallForm({ ...hallForm, type: (Array.from(k)[0] as any) || 'meeting' })}>
                   <SelectItem key="conference">Conference</SelectItem>
                   <SelectItem key="meeting">Meeting</SelectItem>
                   <SelectItem key="banquet">Banquet</SelectItem>
@@ -809,7 +809,7 @@ export default function FrontofficeEventsConferences() {
               <Textarea label="Description" value={cateringForm.description} onChange={(e) => setCateringForm({ ...cateringForm, description: e.target.value })} />
               <div className="grid grid-cols-2 gap-3">
                 <Input label="Price per person (₵)" type="number" value={cateringForm.price} onChange={(e) => setCateringForm({ ...cateringForm, price: e.target.value })} />
-                <Select label="Category" selectedKeys={[cateringForm.category]} onSelectionChange={(k) => setCateringForm({ ...cateringForm, category: (Array.from(k)[0] as any) || 'breakfast' })}>
+                <Select disallowEmptySelection label="Category" selectedKeys={[cateringForm.category]} onSelectionChange={(k) => setCateringForm({ ...cateringForm, category: (Array.from(k)[0] as any) || 'breakfast' })}>
                   <SelectItem key="breakfast">Breakfast</SelectItem>
                   <SelectItem key="lunch">Lunch</SelectItem>
                   <SelectItem key="dinner">Dinner</SelectItem>

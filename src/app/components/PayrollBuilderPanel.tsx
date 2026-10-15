@@ -242,7 +242,7 @@ export default function PayrollBuilderPanel() {
         <div className="flex items-center justify-between w-full">
           <h4 className="font-semibold">Income tax &amp; payroll</h4>
           <div className="flex gap-2">
-            <Select selectedKeys={[selectedTemplate]} onSelectionChange={(k) => setSelectedTemplate(Array.from(k)[0] as string)} className="w-48" variant="bordered">
+            <Select disallowEmptySelection selectedKeys={[selectedTemplate]} onSelectionChange={(k) => setSelectedTemplate(Array.from(k)[0] as string)} className="w-48" variant="bordered">
               {templateOptions.map((t) => (
                 <SelectItem key={t.country}>{t.name}</SelectItem>
               ))}
@@ -276,7 +276,7 @@ export default function PayrollBuilderPanel() {
               </CardHeader>
               <CardBody>
                 <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
-                  <Select label="Month" selectedKeys={[String(runMonth)]} onSelectionChange={(k) => setRunMonth(parseInt(String(Array.from(k)[0]), 10))} variant="bordered">
+                  <Select disallowEmptySelection label="Month" selectedKeys={[String(runMonth)]} onSelectionChange={(k) => setRunMonth(parseInt(String(Array.from(k)[0]), 10))} variant="bordered">
                     {Array.from({ length: 12 }).map((_, i) => (
                       <SelectItem key={String(i + 1)}>{new Date(2000, i, 1).toLocaleString(undefined, { month: 'long' })}</SelectItem>
                     ))}
@@ -452,7 +452,7 @@ export default function PayrollBuilderPanel() {
                               {earningOptions.map(opt => (<SelectItem key={opt.name}>{opt.name}</SelectItem>))}
                             </Select>
                             <Input type="number" value={String(e.amount || 0)} onChange={(ev) => updateEarning(idx, 'amount', parseFloat(ev.target.value || '0'))} variant="bordered" />
-                            <Select selectedKeys={[e.taxable ? 'yes' : 'no']} onSelectionChange={(k) => updateEarning(idx, 'taxable', Array.from(k)[0] === 'yes')} variant="bordered">
+                            <Select disallowEmptySelection selectedKeys={[e.taxable ? 'yes' : 'no']} onSelectionChange={(k) => updateEarning(idx, 'taxable', Array.from(k)[0] === 'yes')} variant="bordered">
                               <SelectItem key="yes">Taxable</SelectItem>
                               <SelectItem key="no">Non-taxable</SelectItem>
                             </Select>
@@ -478,7 +478,7 @@ export default function PayrollBuilderPanel() {
                               {deductionOptions.map(opt => (<SelectItem key={opt.name}>{opt.name}</SelectItem>))}
                             </Select>
                             <Input type="number" value={String(d.rate || 0)} onChange={(ev) => updateDeduction(idx, 'rate', parseFloat(ev.target.value || '0'))} variant="bordered" />
-                            <Select selectedKeys={[d.base || 'gross']} onSelectionChange={(k) => updateDeduction(idx, 'base', Array.from(k)[0])} variant="bordered">
+                            <Select disallowEmptySelection selectedKeys={[d.base || 'gross']} onSelectionChange={(k) => updateDeduction(idx, 'base', Array.from(k)[0])} variant="bordered">
                               <SelectItem key="gross">Gross</SelectItem>
                               <SelectItem key="taxable">Taxable</SelectItem>
                               <SelectItem key="net">Net</SelectItem>

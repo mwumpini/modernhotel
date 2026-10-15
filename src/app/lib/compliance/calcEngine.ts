@@ -102,7 +102,11 @@ export function computeTaxStack(
     const applies = !r.appliesTo || r.appliesTo.includes('ALL') || r.appliesTo.includes(category);
     const roomOk = !r.scope?.roomTypes || !context.roomType || r.scope.roomTypes.includes(context.roomType);
     const guestOk = !r.scope?.guestTypes || !context.guestType || r.scope.guestTypes.includes(context.guestType);
-    const domainOk = !r.domain || r.domain === (context.domain || 'sales') || r.domain === 'custom';
+    // Salaries are only ever taxed by rules made for payroll. A sales rule set to "custom"
+    // (or with no domain) must never put VAT/NHIL/GETFund on someone's pay.
+    const domainOk = context.domain === 'payroll'
+      ? r.domain === 'payroll'
+      : !r.domain || r.domain === (context.domain || 'sales') || r.domain === 'custom';
     const op = (r.operation || 'both');
     const opKind = (context.operation || 'external');
     const operationOk = op === 'both' || op === opKind;

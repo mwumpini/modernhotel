@@ -1161,7 +1161,7 @@ export default function TaxRateBuilder() {
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                 <Input label="Amount" type="number" value={String(sim.amount)} onChange={(e) => setSim({ ...sim, amount: parseFloat(e.target.value || '0') })} variant="bordered" size="sm" />
                 <Input label="Category" value={sim.category} onChange={(e) => setSim({ ...sim, category: e.target.value })} variant="bordered" size="sm" />
-                <Select label="Tax Area" selectedKeys={[sim.domain]} onSelectionChange={(k) => setSim({ ...sim, domain: Array.from(k)[0] as any })} variant="bordered" size="sm">
+                <Select disallowEmptySelection label="Tax Area" selectedKeys={[sim.domain]} onSelectionChange={(k) => setSim({ ...sim, domain: Array.from(k)[0] as any })} variant="bordered" size="sm">
                   <SelectItem key="sales">Sales only</SelectItem>
                   <SelectItem key="purchases">Purchases only</SelectItem>
                 </Select>
@@ -1223,7 +1223,7 @@ export default function TaxRateBuilder() {
                 </div>
                 <div>
                   <label className="text-sm font-medium">Tax Area <span className="text-danger-600">*</span></label>
-                  <Select selectedKeys={[typeForm.domain]} onSelectionChange={(k) => setTypeForm(prev => ({ ...prev, domain: Array.from(k)[0] as any }))} isRequired variant="bordered">
+                  <Select disallowEmptySelection selectedKeys={[typeForm.domain]} onSelectionChange={(k) => setTypeForm(prev => ({ ...prev, domain: Array.from(k)[0] as any }))} isRequired variant="bordered">
                     <SelectItem key="custom">Both sales and purchases</SelectItem>
                     <SelectItem key="sales">Sales only</SelectItem>
                     <SelectItem key="purchases">Purchases only</SelectItem>

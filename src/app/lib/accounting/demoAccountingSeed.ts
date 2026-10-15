@@ -43,7 +43,7 @@ export function buildDemoTransactionSeed(): DemoTransactionSeed {
             {
               id: '1',
               journalEntryId: 'je-sample-1',
-              accountCode: '1100',
+              accountCode: '1110',
               description: 'Guest receivable',
               debit: 1500.00,
               credit: 0.00,
@@ -52,7 +52,7 @@ export function buildDemoTransactionSeed(): DemoTransactionSeed {
             {
               id: '2',
               journalEntryId: 'je-sample-1',
-              accountCode: '4000',
+              accountCode: '4100',
               description: 'Room revenue',
               debit: 0.00,
               credit: 1500.00,

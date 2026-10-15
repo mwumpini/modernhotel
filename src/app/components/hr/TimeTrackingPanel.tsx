@@ -218,7 +218,7 @@ export default function TimeTrackingPanel() {
             <div className="text-sm font-semibold text-gray-800">Today — {now.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
             <div className="flex flex-wrap items-center gap-2">
               {filters}
-              <Select size="sm" aria-label="Status" className="w-36" variant="bordered" selectedKeys={[statusFilter]} onSelectionChange={(k) => setStatusFilter(Array.from(k)[0] as any)}>
+              <Select disallowEmptySelection size="sm" aria-label="Status" className="w-36" variant="bordered" selectedKeys={[statusFilter]} onSelectionChange={(k) => setStatusFilter(Array.from(k)[0] as any)}>
                 <SelectItem key="all">All status</SelectItem>
                 <SelectItem key="expected">Expected</SelectItem>
                 <SelectItem key="on_duty">On duty</SelectItem>
@@ -226,7 +226,7 @@ export default function TimeTrackingPanel() {
                 <SelectItem key="no_show">No-show</SelectItem>
                 <SelectItem key="leave">On leave</SelectItem>
               </Select>
-              <Select label="Quick clock" size="sm" selectedKeys={[employeeId]} onSelectionChange={(k) => setEmployeeId(Array.from(k)[0] as string)} variant="bordered" items={staff.map((e) => ({ id: e.id, name: `${e.firstName} ${e.lastName}` }))} className="w-48">
+              <Select disallowEmptySelection label="Quick clock" size="sm" selectedKeys={[employeeId]} onSelectionChange={(k) => setEmployeeId(Array.from(k)[0] as string)} variant="bordered" items={staff.map((e) => ({ id: e.id, name: `${e.firstName} ${e.lastName}` }))} className="w-48">
                 {(item: any) => <SelectItem key={item.id}>{item.name}</SelectItem>}
               </Select>
               <Button color="primary" onPress={() => clockIn(employeeId)}>Clock In</Button>

@@ -90,7 +90,7 @@ export default function ShiftSchedulingPanel() {
       <CardHeader className="justify-between gap-2 flex-wrap">
         <div className="font-medium">Shift Roster — {dayLabel(week)} to {dayLabel(addDays(week, 6))}</div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Select size="sm" aria-label="Department" className="w-48" variant="bordered" selectedKeys={[dept]} onSelectionChange={(k) => setDept(Array.from(k)[0] as string)}
+          <Select disallowEmptySelection size="sm" aria-label="Department" className="w-48" variant="bordered" selectedKeys={[dept]} onSelectionChange={(k) => setDept(Array.from(k)[0] as string)}
             items={[{ id: 'all', name: 'All Departments' }, ...departments.map((d) => ({ id: d.id, name: d.name }))]}>
             {(item: any) => <SelectItem key={item.id}>{item.name}</SelectItem>}
           </Select>

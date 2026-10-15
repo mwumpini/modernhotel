@@ -8,6 +8,8 @@ import {
   Chip, Tabs, Tab, Pagination,
 } from '@heroui/react';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
+import { useSettingsStore } from '@/app/lib/settings/store';
+import { notifySuccess } from '@/app/lib/notifications/notify';
 import type { Department, Position } from '@/app/lib/hr/models';
 import { formatGhs, formatMoney } from '@/app/lib/format/currency';
 import { printDetailSheet } from '@/app/lib/print/simpleReport';
@@ -297,13 +299,31 @@ export default function DepartmentsPositionsPanel() {
             <div className="flex justify-between gap-2 flex-wrap mb-2 mt-0 px-3">
               <div className="flex flex-wrap gap-2">
                 <Input size="sm" placeholder="Search name or code" value={deptQ} onChange={(e) => setDeptQ(e.target.value)} variant="bordered" className="w-48" />
-                <Select size="sm" selectedKeys={[deptStatus]} onSelectionChange={(k) => setDeptStatus(Array.from(k)[0] as 'all' | 'active' | 'inactive')} className="w-36" variant="bordered" aria-label="Status">
+                <Select disallowEmptySelection size="sm" selectedKeys={[deptStatus]} onSelectionChange={(k) => setDeptStatus(Array.from(k)[0] as 'all' | 'active' | 'inactive')} className="w-36" variant="bordered" aria-label="Status">
                   <SelectItem key="all">All status</SelectItem>
                   <SelectItem key="active">Active</SelectItem>
                   <SelectItem key="inactive">Inactive</SelectItem>
                 </Select>
               </div>
-              <Button color="primary" size="sm" onPress={openNewDepartment}>+ Add Department</Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="flat"
+                  title="Adds the usual departments and positions for the modules switched on in Settings. Ones you already have are skipped."
+                  onPress={() => {
+                    const added = useEmployeeStore.getState().addStandardDepartments(useSettingsStore.getState().moduleSettings);
+                    notifySuccess(
+                      added.departments || added.positions
+                        ? `Added ${added.departments} department${added.departments === 1 ? '' : 's'} and ${added.positions} position${added.positions === 1 ? '' : 's'}.`
+                        : 'You already have all the standard departments and positions.',
+                      'Standard departments',
+                    );
+                  }}
+                >
+                  Add standard departments
+                </Button>
+                <Button color="primary" size="sm" onPress={openNewDepartment}>+ Add Department</Button>
+              </div>
             </div>
             <div ref={deptCols.frameRef} style={deptCols.frameStyle}>
               <Table aria-label="Departments table" removeWrapper classNames={deskResizableTableClassNames()}>
@@ -347,10 +367,10 @@ export default function DepartmentsPositionsPanel() {
             <div className="flex justify-between gap-2 flex-wrap mb-2 mt-0 px-3">
               <div className="flex flex-wrap gap-2">
                 <Input size="sm" placeholder="Search title or code" value={posQ} onChange={(e) => setPosQ(e.target.value)} variant="bordered" className="w-48" />
-                <Select size="sm" selectedKeys={[posDept]} onSelectionChange={(k) => setPosDept(Array.from(k)[0] as string)} className="w-44" variant="bordered" aria-label="Department" items={[{ id: 'all', name: 'All departments' }, ...departments.map((d) => ({ id: d.id, name: d.name }))]}>
+                <Select disallowEmptySelection size="sm" selectedKeys={[posDept]} onSelectionChange={(k) => setPosDept(Array.from(k)[0] as string)} className="w-44" variant="bordered" aria-label="Department" items={[{ id: 'all', name: 'All departments' }, ...departments.map((d) => ({ id: d.id, name: d.name }))]}>
                   {(item: { id: string; name: string }) => <SelectItem key={item.id}>{item.name}</SelectItem>}
                 </Select>
-                <Select size="sm" selectedKeys={[posStatus]} onSelectionChange={(k) => setPosStatus(Array.from(k)[0] as 'all' | 'active' | 'inactive')} className="w-36" variant="bordered" aria-label="Status">
+                <Select disallowEmptySelection size="sm" selectedKeys={[posStatus]} onSelectionChange={(k) => setPosStatus(Array.from(k)[0] as 'all' | 'active' | 'inactive')} className="w-36" variant="bordered" aria-label="Status">
                   <SelectItem key="all">All status</SelectItem>
                   <SelectItem key="active">Active</SelectItem>
                   <SelectItem key="inactive">Inactive</SelectItem>

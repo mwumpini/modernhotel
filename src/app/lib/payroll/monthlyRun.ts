@@ -176,6 +176,10 @@ function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number
       Number((emp as any).housingBenefit || 0) +
       Number((emp as any).otherNonCashBenefits || 0),
     bonusEarlierThisYear,
+    // Only an explicit "No" on the staff file skips a contribution or PAYE.
+    ssnitEnrolled: (emp as any).ssnitEnrolled,
+    tier2Enrolled: (emp as any).tier2Enrolled,
+    payeEnrolled: (emp as any).incomeTaxDeductible,
   };
 
   // Pay comes from the staff file. Drop template placeholders (a flat transport line, a second

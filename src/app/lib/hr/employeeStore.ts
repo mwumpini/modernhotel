@@ -3,6 +3,8 @@ import { Employee, Department, Position } from './models';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
 import { newId } from './newId';
+import { planStandardDepartments } from './standardDepartments';
+import type { ModuleSettings } from '../settings/store';
 
 function hrTenantHeaders(): HeadersInit {
   const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
@@ -132,6 +134,8 @@ interface EmployeeStore {
 
   // Persistence — pulls real data from the database, replacing the in-memory seed.
   hydrateFromApi: () => Promise<void>;
+  /** Add the standard departments and positions for the switched-on modules that are missing. */
+  addStandardDepartments: (modules: Partial<ModuleSettings> | undefined) => { departments: number; positions: number };
 }
 
 export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
@@ -353,6 +357,21 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
   // Dates come back over JSON as ISO strings (the wire format); the store's types expect
   // real Date objects — convert on the way in, mirroring the numeric-string handling the
   // inventory/bank-recon hydration functions do for Prisma Decimal fields.
+  addStandardDepartments: (modules) => {
+    const state = get();
+    const plan = planStandardDepartments({
+      tenant: normalizeTenantSubdomain(getClientTenantSubdomain() || ''),
+      modules,
+      departments: state.departments,
+      positions: state.positions,
+    });
+    if (plan.departments.length === 0 && plan.positions.length === 0) return { departments: 0, positions: 0 };
+    set({ departments: [...state.departments, ...plan.departments], positions: [...state.positions, ...plan.positions] });
+    plan.departments.forEach((d) => syncDepartmentToApi(d));
+    plan.positions.forEach((p) => syncPositionToApi(p));
+    return { departments: plan.departments.length, positions: plan.positions.length };
+  },
+
   hydrateFromApi: async () => {
     if (typeof window === 'undefined') return;
     try {
@@ -392,6 +411,17 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
       const current = get();
       const collapsed = collapseSameNameDepartments(current.departments, current.employees, current.positions);
       if (collapsed.departments.length !== current.departments.length) set(collapsed);
+      // A new business (no departments, no staff yet) starts with the standard set for the
+      // modules it uses, so staff can be added straight away. Read once settings have loaded.
+      const loadedAll = empRes.ok && deptRes.ok && posRes.ok;
+      if (loadedAll && get().departments.length === 0 && get().employees.length === 0) {
+        const { useSettingsStore } = await import('../settings/store');
+        const seed = () => get().addStandardDepartments(useSettingsStore.getState().moduleSettings);
+        if (useSettingsStore.getState().hydrated) seed();
+        else {
+          const stop = useSettingsStore.subscribe((st) => { if (st.hydrated) { stop(); seed(); } });
+        }
+      }
     } catch (e) {
       console.warn('[HR] Failed to hydrate employees/departments/positions from server:', e);
     }

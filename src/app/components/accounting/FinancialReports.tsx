@@ -30,6 +30,7 @@ import {
   type RollupCoa,
 } from '@/app/lib/accounting/financialReportRollup';
 import { buildStatementOfChangesInEquity } from '@/app/lib/accounting/statementOfChangesInEquity';
+import { orderAssetsForStatement, orderLiabilitiesForStatement } from '@/app/lib/accounting/statementLayout';
 import {
   buildProfitLossCloseEntry,
   hasPeriodCloseForDate,
@@ -442,14 +443,15 @@ export default function FinancialReportsPage() {
     [rollupCoa, journalEntries]
   );
 
-  const assetAccounts = useMemo(() => getAccountsByType(accountTreeCumulative, 'Asset'), [accountTreeCumulative, getAccountsByType]);
-  const liabilityAccounts = useMemo(() => getAccountsByType(accountTreeCumulative, 'Liability'), [accountTreeCumulative, getAccountsByType]);
+  // IFRS order: non-current before current, least liquid first; totals are unaffected.
+  const assetAccounts = useMemo(() => orderAssetsForStatement(getAccountsByType(accountTreeCumulative, 'Asset')), [accountTreeCumulative, getAccountsByType]);
+  const liabilityAccounts = useMemo(() => orderLiabilitiesForStatement(getAccountsByType(accountTreeCumulative, 'Liability')), [accountTreeCumulative, getAccountsByType]);
   const equityAccounts = useMemo(() => getAccountsByType(accountTreeCumulative, 'Equity'), [accountTreeCumulative, getAccountsByType]);
   const revenueAccounts = useMemo(() => getAccountsByType(accountTreePeriod, 'Revenue'), [accountTreePeriod, getAccountsByType]);
   const expenseAccounts = useMemo(() => getAccountsByType(accountTreePeriod, 'Expense'), [accountTreePeriod, getAccountsByType]);
 
-  const assetAccountsPrior = useMemo(() => getAccountsByType(accountTreeCumulativePrior, 'Asset'), [accountTreeCumulativePrior, getAccountsByType]);
-  const liabilityAccountsPrior = useMemo(() => getAccountsByType(accountTreeCumulativePrior, 'Liability'), [accountTreeCumulativePrior, getAccountsByType]);
+  const assetAccountsPrior = useMemo(() => orderAssetsForStatement(getAccountsByType(accountTreeCumulativePrior, 'Asset')), [accountTreeCumulativePrior, getAccountsByType]);
+  const liabilityAccountsPrior = useMemo(() => orderLiabilitiesForStatement(getAccountsByType(accountTreeCumulativePrior, 'Liability')), [accountTreeCumulativePrior, getAccountsByType]);
   const equityAccountsPrior = useMemo(() => getAccountsByType(accountTreeCumulativePrior, 'Equity'), [accountTreeCumulativePrior, getAccountsByType]);
   const revenueAccountsPrior = useMemo(() => getAccountsByType(accountTreePeriodPrior, 'Revenue'), [accountTreePeriodPrior, getAccountsByType]);
   const expenseAccountsPrior = useMemo(() => getAccountsByType(accountTreePeriodPrior, 'Expense'), [accountTreePeriodPrior, getAccountsByType]);
@@ -575,14 +577,24 @@ export default function FinancialReportsPage() {
   // print preview so neither can silently stop at a shallower depth than the on-screen
   // Detailed view, or disagree on the "accumulated results" plug row.
   const balanceSheetRows = useMemo(() => {
-    const rows = [
-      ...flattenStatement(assetAccounts, 'Asset'),
-      ...flattenStatement(liabilityAccounts, 'Liability'),
-      ...flattenStatement(equityAccounts, 'Equity'),
-    ];
+    // Same IFRS order and group totals as the screen: assets, then equity, then liabilities.
+    const withGroupTotals = (nodes: AccountNode[], section: string) =>
+      nodes.flatMap((node) => {
+        const lines = flattenStatement([node], section);
+        if (node.children.length > 0 && isSectionExpanded(node.code)) {
+          lines.push({ section, code: '', name: `Total ${node.name}`, level: 0, amount: node.balance, heading: false });
+        }
+        return lines;
+      });
+    const equityRows = flattenStatement(equityAccounts, 'Equity');
     if (Math.abs(totals.unclosedProfit) >= 0.01 || Math.abs(totalsPrior.unclosedProfit) >= 0.01) {
-      rows.push({ section: 'Equity', code: '', name: 'Unclosed profit / (loss)', level: 1, amount: totals.unclosedProfit, heading: false });
+      equityRows.push({ section: 'Equity', code: '', name: 'Unclosed profit / (loss)', level: 1, amount: totals.unclosedProfit, heading: false });
     }
+    const rows = [
+      ...withGroupTotals(assetAccounts, 'Asset'),
+      ...equityRows,
+      ...withGroupTotals(liabilityAccounts, 'Liability'),
+    ];
     if (Math.abs(totals.unexplainedDifference) >= 0.01) {
       rows.push({
         section: 'Difference',
@@ -594,7 +606,7 @@ export default function FinancialReportsPage() {
       });
     }
     return rows;
-  }, [flattenStatement, assetAccounts, liabilityAccounts, equityAccounts, totals.unclosedProfit, totals.unexplainedDifference, totalsPrior.unclosedProfit, totalsPrior.unexplainedDifference]);
+  }, [flattenStatement, isSectionExpanded, assetAccounts, liabilityAccounts, equityAccounts, totals.unclosedProfit, totals.unexplainedDifference, totalsPrior.unclosedProfit, totalsPrior.unexplainedDifference]);
 
   useEffect(() => {
     if (!closeDateEdited) setCloseAsOfDate(formatLocalIsoDate(endDate));
@@ -692,7 +704,7 @@ export default function FinancialReportsPage() {
   // Sheet only — Trial Balance never passes it). Flattened once into a code lookup up front
   // rather than re-searched per node, since both trees are built from the same rollupCoa and
   // every code in `nodes` is either present once in `priorNodes` or didn't exist that year.
-  const renderAccountRows = useCallback((nodes: AccountNode[], showDebitCredit = false, priorNodes?: AccountNode[]): JSX.Element[] => {
+  const renderAccountRows = useCallback((nodes: AccountNode[], showDebitCredit = false, priorNodes?: AccountNode[], withSubtotals = false): JSX.Element[] => {
     const rows: JSX.Element[] = [];
 
     const priorByCode = new Map<string, AccountNode>();
@@ -803,6 +815,18 @@ export default function FinancialReportsPage() {
           );
         }
         node.children.forEach(child => renderNode(child, indent + 1));
+        // Balance sheet: an open top-level group (e.g. Non-Current Assets) closes with its own total.
+        if (withSubtotals && indent === 0) {
+          rows.push(
+            <TableRow key={`${node.code}-total`} className="bg-slate-100">
+              <TableCell className="font-semibold text-gray-900">Total {node.name}</TableCell>
+              <TableCell className="text-right font-mono text-sm font-semibold border-t border-slate-300">{formatCurrencyWithSign(node.balance)}</TableCell>
+              <TableCell className={`text-right font-mono text-sm text-gray-500 border-t border-slate-300 ${!priorNodes ? 'hidden' : ''}`}>
+                {priorNodes ? formatCurrencyWithSign(priorBalance ?? 0) : ''}
+              </TableCell>
+            </TableRow>
+          );
+        }
       }
     };
     
@@ -928,7 +952,7 @@ export default function FinancialReportsPage() {
         .map((row) => {
           const levelClass = row.level === 0 ? 'level-1' : row.level === 1 ? 'level-2' : 'level-3';
           const indent = '&nbsp;'.repeat(row.level * 6);
-          const label = row.code ? `${row.code} ${row.name}` : `<em>${row.name}</em>`;
+          const label = row.code ? `${row.code} ${row.name}` : row.name.startsWith('Total ') ? `<strong>${row.name}</strong>` : `<em>${row.name}</em>`;
           return `<tr class="${levelClass}"><td>${indent}${label}</td><td class="text-right font-mono">${row.amount == null ? '' : formatCurrencyWithSign(row.amount)}</td></tr>`;
         })
         .join('');
@@ -942,17 +966,17 @@ export default function FinancialReportsPage() {
         </tbody></table>
       </div>
       <div class="section">
-        <div class="section-title">Liabilities</div>
-        <table><tbody>${renderRows('Liability')}
-          <tr class="subtotal-row"><td class="font-bold">Total Liabilities</td><td class="text-right font-mono font-bold underline">${formatCurrencyWithSign(totals.totalLiabilities)}</td></tr>
-        </tbody></table>
-      </div>
-      <div class="section">
         <div class="section-title">Equity</div>
         <table><tbody>${renderRows('Equity')}
           <tr class="level-2"><td colspan="2" style="font-size:9px;color:#666">Profit/(loss) for the selected period: ${formatCurrencyWithSign(totals.netIncome)}. Unclosed profit above is everything still open on revenue and expense accounts through the reporting date.</td></tr>
           <tr class="subtotal-row"><td class="font-bold">Total Equity</td><td class="text-right font-mono font-bold underline">${formatCurrencyWithSign(totals.totalEquity)}</td></tr>
-          <tr class="total-row"><td class="font-bold">TOTAL LIABILITIES AND EQUITY</td><td class="text-right font-mono font-bold double-underline">${formatCurrencyWithSign(totals.totalLiabAndEquity)}</td></tr>
+        </tbody></table>
+      </div>
+      <div class="section">
+        <div class="section-title">Liabilities</div>
+        <table><tbody>${renderRows('Liability')}
+          <tr class="subtotal-row"><td class="font-bold">Total Liabilities</td><td class="text-right font-mono font-bold underline">${formatCurrencyWithSign(totals.totalLiabilities)}</td></tr>
+          <tr class="total-row"><td class="font-bold">TOTAL EQUITY AND LIABILITIES</td><td class="text-right font-mono font-bold double-underline">${formatCurrencyWithSign(totals.totalLiabAndEquity)}</td></tr>
           ${Math.abs(totals.unexplainedDifference) >= 0.01 ? `<tr><td>Assets minus liabilities minus equity</td><td class="text-right font-mono">${formatCurrencyWithSign(totals.unexplainedDifference)}</td></tr>` : ''}
         </tbody></table>
       </div>
@@ -1603,7 +1627,7 @@ export default function FinancialReportsPage() {
                             <TableColumn width={120} className="text-right">{compareWithPriorYear ? balanceSheetColumnLabels.current : 'Amount'}</TableColumn>
                             <TableColumn width={120} className={compareWithPriorYear ? "text-right" : "hidden"}>{balanceSheetColumnLabels.prior}</TableColumn>
                           </TableHeader>
-                          <TableBody emptyContent="No asset accounts.">{renderAccountRows(assetAccounts, false, compareWithPriorYear ? assetAccountsPrior : undefined)}</TableBody>
+                          <TableBody emptyContent="No asset accounts.">{renderAccountRows(assetAccounts, false, compareWithPriorYear ? assetAccountsPrior : undefined, true)}</TableBody>
                         </Table>
                       </div>
                       {/* mt-auto only does anything in Account Form's flex column (h-full/flex-1
@@ -1620,31 +1644,10 @@ export default function FinancialReportsPage() {
                     </CardBody>
                   </Card>
 
-                  {/* Liabilities & Equity */}
+                  {/* Equity & Liabilities (IFRS order) */}
                   <Card className={`shadow-none border overflow-hidden ${balanceSheetForm === 'account' ? 'h-full flex flex-col' : ''}`}>
-                    <CardHeader className="bg-slate-100 py-2 border-b"><h4 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Liabilities & Equity</h4></CardHeader>
+                    <CardHeader className="bg-slate-100 py-2 border-b"><h4 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Equity & Liabilities</h4></CardHeader>
                     <CardBody className={`p-0 ${balanceSheetForm === 'account' ? 'flex-1 flex flex-col' : ''}`}>
-                      {/* Liabilities */}
-                      <div className="border-b">
-                        <div className="bg-slate-50 px-4 py-1 font-medium text-gray-600 text-xs uppercase">Liabilities</div>
-                        <div className="overflow-x-auto">
-                          <Table removeWrapper aria-label="Liabilities" classNames={reportTableClassNamesNested}>
-                            <TableHeader>
-                              <TableColumn>Account</TableColumn>
-                              <TableColumn width={120} className="text-right">{compareWithPriorYear ? balanceSheetColumnLabels.current : 'Amount'}</TableColumn>
-                              <TableColumn width={120} className={compareWithPriorYear ? "text-right" : "hidden"}>{balanceSheetColumnLabels.prior}</TableColumn>
-                            </TableHeader>
-                            <TableBody emptyContent="No liabilities.">{renderAccountRows(liabilityAccounts, false, compareWithPriorYear ? liabilityAccountsPrior : undefined)}</TableBody>
-                          </Table>
-                        </div>
-                        <div className="bg-slate-100 px-4 py-1 flex justify-between font-semibold text-sm">
-                          <span>Total Liabilities</span>
-                          <span className="flex gap-6">
-                            <span className="font-mono w-[120px] text-right">{formatCurrencyWithSign(totals.totalLiabilities, true)}</span>
-                            {compareWithPriorYear && <span className="font-mono w-[120px] text-right text-gray-500 font-normal">{formatCurrencyWithSign(totalsPrior.totalLiabilities, true)}</span>}
-                          </span>
-                        </div>
-                      </div>
                       {/* Equity */}
                       <div className="border-b">
                         <div className="bg-slate-50 px-4 py-1 font-medium text-gray-600 text-xs uppercase">Equity</div>
@@ -1691,8 +1694,29 @@ export default function FinancialReportsPage() {
                           </span>
                         </div>
                       </div>
+                      {/* Liabilities */}
+                      <div className="border-b">
+                        <div className="bg-slate-50 px-4 py-1 font-medium text-gray-600 text-xs uppercase">Liabilities</div>
+                        <div className="overflow-x-auto">
+                          <Table removeWrapper aria-label="Liabilities" classNames={reportTableClassNamesNested}>
+                            <TableHeader>
+                              <TableColumn>Account</TableColumn>
+                              <TableColumn width={120} className="text-right">{compareWithPriorYear ? balanceSheetColumnLabels.current : 'Amount'}</TableColumn>
+                              <TableColumn width={120} className={compareWithPriorYear ? "text-right" : "hidden"}>{balanceSheetColumnLabels.prior}</TableColumn>
+                            </TableHeader>
+                            <TableBody emptyContent="No liabilities.">{renderAccountRows(liabilityAccounts, false, compareWithPriorYear ? liabilityAccountsPrior : undefined, true)}</TableBody>
+                          </Table>
+                        </div>
+                        <div className="bg-slate-100 px-4 py-1 flex justify-between font-semibold text-sm">
+                          <span>Total Liabilities</span>
+                          <span className="flex gap-6">
+                            <span className="font-mono w-[120px] text-right">{formatCurrencyWithSign(totals.totalLiabilities, true)}</span>
+                            {compareWithPriorYear && <span className="font-mono w-[120px] text-right text-gray-500 font-normal">{formatCurrencyWithSign(totalsPrior.totalLiabilities, true)}</span>}
+                          </span>
+                        </div>
+                      </div>
                       <div className="bg-slate-200 px-4 py-2 flex justify-between font-bold border-t-2 border-slate-300 mt-auto">
-                        <span>TOTAL LIABILITIES & EQUITY</span>
+                        <span>TOTAL EQUITY & LIABILITIES</span>
                         <span className="flex gap-6">
                           <span className="font-mono w-[120px] text-right">{formatCurrencyWithSign(totals.totalLiabAndEquity, true)}</span>
                           {compareWithPriorYear && <span className="font-mono w-[120px] text-right text-gray-500 font-normal">{formatCurrencyWithSign(totalsPrior.totalLiabAndEquity, true)}</span>}

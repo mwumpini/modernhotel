@@ -15,6 +15,7 @@ import { useLeaveAttendanceStore } from '@/app/lib/hr/leaveAttendanceStore';
 import UniversalPayrollBuilder from '@/app/lib/payroll/builder';
 import { approvedOvertimeFor, buildPayrollJournal, monthYearOf, prepareBuilderForRun, readAdjustments, readEmployerContribution, recalculateStaffLine, runMonthlyPayroll } from '@/app/lib/payroll/monthlyRun';
 import { notifyError, notifySuccess } from '@/app/lib/notifications/notify';
+import { estimateMonthlyPay } from '@/app/lib/payroll/estimate';
 import ExportButtons from '@/app/components/ExportButtons';
 import type { PayrollPeriod, PayrollRecord } from '@/app/lib/hr/models';
 import type { ExportFormat } from '@/app/lib/frontoffice/reportExportFormat';
@@ -365,25 +366,10 @@ export default function PayrollProcessingPanel() {
       });
     }
     return employees.map((e) => {
-      const salary = (e as any).salary ?? (e as any).baseSalary ?? 0;
-      const basic = (e as any).basicSalary ?? salary;
-      const allowances = (e as any).allowances ?? 0;
-      const gross = basic + allowances;
-      // Tier 1's base is basic salary only (allowances/bonus/overtime excluded per its
-      // insurable-earnings definition), at the live rate from Settings → Tax Rate Builder.
-      // It is a pre-tax deduction, so it comes off before PAYE is estimated.
-      const tier1 = (e as any).ssnitEnrolled === true ? basic * ((tier1Rule?.rate ?? 5.5) / 100) : 0;
-      // PAYE runs the same live rule through the same compliance engine the payroll run uses.
-      const tax = (e as any).payeEnrolled !== false
-        ? useComplianceStore.getState().calculateTax(Math.max(0, gross - tier1), 'PAYE', { domain: 'payroll', operation: 'internal' }).taxes.reduce((s, t) => s + t.amount, 0)
-        : 0;
-      // Tier 2 is a separate, fully employer-funded rule (0% employee rate by default).
-      const tier2 = (e as any).tier2Enrolled === true ? basic * ((tier2Rule?.rate ?? 0) / 100) : 0;
-      // Tier 3 is the employee's own voluntary rate.
-      const tier3 = (e as any).tier3Enrolled === true ? gross * (Number((e as any).tier3ContributionPct || 0) / 100) : 0;
+      const { basic, allowances, gross, tax, tier1, tier2, tier3, net } = estimateMonthlyPay(e as any, { tier1: tier1Rule, tier2: tier2Rule });
       return {
         key: e.id, e, staffNo: e.employeeNumber, name: `${e.firstName} ${e.lastName}`, deptName: getDepartment(e.departmentId)?.name || '-', posTitle: getPosition(e.positionId)?.title || '-',
-        basic, allowances, overtime: 0, gross, tax, tier1, tier2, tier3, other: 0, net: gross - tax - tier1 - tier2 - tier3,
+        basic, allowances, overtime: 0, gross, tax, tier1, tier2, tier3, other: 0, net,
         pay: 'estimate' as PayStatus,
       };
     });
@@ -621,7 +607,7 @@ export default function PayrollProcessingPanel() {
       >
         {(item: any) => <SelectItem key={item.id}>{item.name}</SelectItem>}
       </Select>
-      <Select size="sm" selectedKeys={[statusFilter]} onSelectionChange={(k) => setStatusFilter(Array.from(k)[0] as string)} className="w-40" variant="bordered" aria-label="Status">
+      <Select disallowEmptySelection size="sm" selectedKeys={[statusFilter]} onSelectionChange={(k) => setStatusFilter(Array.from(k)[0] as string)} className="w-40" variant="bordered" aria-label="Status">
         <SelectItem key="all">All Status</SelectItem>
         <SelectItem key="active">Active</SelectItem>
         <SelectItem key="inactive">Inactive</SelectItem>
@@ -636,7 +622,7 @@ export default function PayrollProcessingPanel() {
   const monthSelect = (
     items: Array<{ id: string; name: string }>, selected: string, onChange: (id: string) => void, className = 'w-72',
   ) => (
-    <Select size="sm" aria-label="Payroll month" className={className} variant="bordered" selectedKeys={selected ? [selected] : []} onSelectionChange={(k) => onChange((Array.from(k)[0] as string) || '')} items={items}>
+    <Select disallowEmptySelection size="sm" aria-label="Payroll month" className={className} variant="bordered" selectedKeys={selected ? [selected] : []} onSelectionChange={(k) => onChange((Array.from(k)[0] as string) || '')} items={items}>
       {(item: any) => <SelectItem key={item.id} textValue={item.name}>{item.name}</SelectItem>}
     </Select>
   );
@@ -1388,7 +1374,7 @@ export default function PayrollProcessingPanel() {
                     : ' Approval is off in Settings — the month will be ready to pay on Payment Advice.'}
                 </p>
                 <div className="grid grid-cols-2 gap-3">
-                  <Select label="Month" selectedKeys={[String(prepMonth)]} onSelectionChange={(k) => setPrepMonth(Number(Array.from(k)[0]) || 1)} variant="bordered">
+                  <Select disallowEmptySelection label="Month" selectedKeys={[String(prepMonth)]} onSelectionChange={(k) => setPrepMonth(Number(Array.from(k)[0]) || 1)} variant="bordered">
                     {MONTHS.map((m, i) => <SelectItem key={String(i + 1)}>{m}</SelectItem>)}
                   </Select>
                   <Input label="Year" type="number" value={String(prepYear)} onChange={(e) => setPrepYear(Number(e.target.value) || new Date().getFullYear())} variant="bordered" />

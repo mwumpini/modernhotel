@@ -45,6 +45,7 @@ import {
 } from './coaTree';
 import type { CoaAccountType } from './models';
 import { buildChartOfAccountsFromTemplate, resolveAccountingCountryCode, getChartTemplate } from './chartOfAccountsTemplates';
+import { syncChartWithTemplate } from './coaTemplateSync';
 import { buildOperationalAccountingSeed, EMPTY_TRANSACTION_SEED } from './operationalSeed';
 import { buildDemoTransactionSeed } from './demoAccountingSeed';
 import { computeCostCenterActual, computeRevenueCenterActual } from './costRevenueRollup';
@@ -1580,7 +1581,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     if (added && added.status === 'Posted') {
       const src = added.sourceModule;
       // front_office is a cash receipt taken after checkout. Checkout's own
-      // receipts use front_office_checkout and are posted with the sales entry.
+      // receipts use front_office_checkout: the money was posted when it was taken.
       if (!src || src === 'manual' || src === 'manual_ar_ap' || src === 'front_office') {
         const partner = state.businessPartners.find(p => p.id === added.businessPartnerId);
         syncPaymentToLedger(added, partner, get());
@@ -3649,11 +3650,17 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         const seeded = get().bankTransactions;
         seeded.forEach((t) => persistBankTransaction(t));
       }
+      // Standard accounts added to the template since this business first saved its chart
+      // (e.g. Non-Current Liabilities, Guest Deposits) are added here; their own accounts stay.
+      const coaSync = serverCoa && serverCoa.length > 0
+        ? syncChartWithTemplate(serverCoa, buildChartOfAccountsFromTemplate(resolveAccountingCountryCode()))
+        : null;
+      coaSync?.changed.forEach(({ account, parentCode }) => persistChartOfAccount(account, parentCode));
       // One paint for the whole book. Separate updates were re-rendering every
       // accounting screen once per list, which is what made the click feel stuck.
       set((s) => {
         const next: Partial<typeof s> = {};
-        if (serverCoa && serverCoa.length > 0) next.chartOfAccounts = normalizeCoaList(serverCoa);
+        if (coaSync) next.chartOfAccounts = normalizeCoaList(coaSync.accounts);
         if (serverBankAccounts && serverBankAccounts.length > 0) next.bankAccounts = serverBankAccounts;
         if (serverCostCenters && serverCostCenters.length > 0) next.costCenters = serverCostCenters;
         if (serverRevenueCenters && serverRevenueCenters.length > 0) next.revenueCenters = serverRevenueCenters;

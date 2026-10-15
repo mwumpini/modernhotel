@@ -231,7 +231,7 @@ export default function BenefitsManagementPanel() {
               <ModalBody>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <Input label="Name" value={pkgForm.name} onChange={(e) => setPkgForm({ ...pkgForm, name: e.target.value })} variant="bordered" />
-                  <Select label="Type" selectedKeys={[pkgForm.type]} onSelectionChange={(k) => setPkgForm({ ...pkgForm, type: Array.from(k)[0] as string })} variant="bordered">
+                  <Select disallowEmptySelection label="Type" selectedKeys={[pkgForm.type]} onSelectionChange={(k) => setPkgForm({ ...pkgForm, type: Array.from(k)[0] as string })} variant="bordered">
                     <SelectItem key="health">Health</SelectItem>
                     <SelectItem key="dental">Dental</SelectItem>
                     <SelectItem key="vision">Vision</SelectItem>
@@ -262,10 +262,10 @@ export default function BenefitsManagementPanel() {
             <>
               <ModalHeader>Enroll employee</ModalHeader>
               <ModalBody className="space-y-3">
-                <Select label="Employee" selectedKeys={enrForm.employeeId ? [enrForm.employeeId] : []} onSelectionChange={(k) => setEnrForm({ ...enrForm, employeeId: (Array.from(k)[0] as string) || '' })} variant="bordered">
+                <Select disallowEmptySelection label="Employee" selectedKeys={enrForm.employeeId ? [enrForm.employeeId] : []} onSelectionChange={(k) => setEnrForm({ ...enrForm, employeeId: (Array.from(k)[0] as string) || '' })} variant="bordered">
                   {employees.map((e) => <SelectItem key={e.id} textValue={`${e.firstName} ${e.lastName}`}>{e.firstName} {e.lastName}</SelectItem>)}
                 </Select>
-                <Select label="Package" selectedKeys={enrForm.benefitsPackageId ? [enrForm.benefitsPackageId] : []} onSelectionChange={(k) => setEnrForm({ ...enrForm, benefitsPackageId: (Array.from(k)[0] as string) || '' })} variant="bordered">
+                <Select disallowEmptySelection label="Package" selectedKeys={enrForm.benefitsPackageId ? [enrForm.benefitsPackageId] : []} onSelectionChange={(k) => setEnrForm({ ...enrForm, benefitsPackageId: (Array.from(k)[0] as string) || '' })} variant="bordered">
                   {packages.map((p) => <SelectItem key={p.id} textValue={p.name}>{p.name}</SelectItem>)}
                 </Select>
                 <Input label="Enrollment date" type="date" value={enrForm.enrollmentDate} onChange={(e) => setEnrForm({ ...enrForm, enrollmentDate: e.target.value })} variant="bordered" />

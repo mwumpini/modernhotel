@@ -321,7 +321,7 @@ export default function TrainingProgramsPanel() {
                 >
                   {(item: { id: string; label: string }) => <SelectItem key={item.id}>{item.label}</SelectItem>}
                 </Select>
-                <Select size="sm" selectedKeys={[pMandatory]} onSelectionChange={(k) => setPMandatory(Array.from(k)[0] as 'all' | 'yes' | 'no')} className="w-36" variant="bordered" aria-label="Mandatory">
+                <Select disallowEmptySelection size="sm" selectedKeys={[pMandatory]} onSelectionChange={(k) => setPMandatory(Array.from(k)[0] as 'all' | 'yes' | 'no')} className="w-36" variant="bordered" aria-label="Mandatory">
                   <SelectItem key="all">All</SelectItem>
                   <SelectItem key="yes">Mandatory</SelectItem>
                   <SelectItem key="no">Optional</SelectItem>
@@ -381,10 +381,10 @@ export default function TrainingProgramsPanel() {
               <div className="text-sm font-semibold text-gray-800">Enrollments</div>
               <div className="flex items-center gap-2 flex-wrap">
                 <Input size="sm" placeholder="Search employee or program" value={eQ} onChange={(e) => setEQ(e.target.value)} variant="bordered" className="w-52" />
-                <Select size="sm" selectedKeys={[eProgram]} onSelectionChange={(k) => setEProgram(Array.from(k)[0] as string)} className="w-48" variant="bordered" aria-label="Program" items={[{ id: 'all', title: 'All programs' }, ...programs.map((p) => ({ id: p.id, title: p.title }))]}>
+                <Select disallowEmptySelection size="sm" selectedKeys={[eProgram]} onSelectionChange={(k) => setEProgram(Array.from(k)[0] as string)} className="w-48" variant="bordered" aria-label="Program" items={[{ id: 'all', title: 'All programs' }, ...programs.map((p) => ({ id: p.id, title: p.title }))]}>
                   {(item: { id: string; title: string }) => <SelectItem key={item.id}>{item.title}</SelectItem>}
                 </Select>
-                <Select size="sm" selectedKeys={[eStatus]} onSelectionChange={(k) => setEStatus(Array.from(k)[0] as string)} className="w-36" variant="bordered" aria-label="Status">
+                <Select disallowEmptySelection size="sm" selectedKeys={[eStatus]} onSelectionChange={(k) => setEStatus(Array.from(k)[0] as string)} className="w-36" variant="bordered" aria-label="Status">
                   <SelectItem key="all">All status</SelectItem>
                   <SelectItem key="enrolled">Enrolled</SelectItem>
                   <SelectItem key="in_progress">In progress</SelectItem>
@@ -446,7 +446,7 @@ export default function TrainingProgramsPanel() {
               <ModalBody>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <Input className="md:col-span-2" label="Title" isRequired value={pForm.title} onChange={(e) => setPForm({ ...pForm, title: e.target.value })} variant="bordered" />
-                  <Select label="Category" selectedKeys={[pForm.category]} onSelectionChange={(k) => setPForm({ ...pForm, category: Array.from(k)[0] as string })} variant="bordered">
+                  <Select disallowEmptySelection label="Category" selectedKeys={[pForm.category]} onSelectionChange={(k) => setPForm({ ...pForm, category: Array.from(k)[0] as string })} variant="bordered">
                     {Object.entries(CATEGORIES).map(([key, label]) => <SelectItem key={key}>{label}</SelectItem>)}
                   </Select>
                   <Input label="Duration (hrs)" type="number" min={0} placeholder="8" value={pForm.duration} onChange={(e) => setPForm({ ...pForm, duration: e.target.value })} variant="bordered" />
@@ -475,7 +475,7 @@ export default function TrainingProgramsPanel() {
               <ModalHeader>Enroll Staff</ModalHeader>
               <ModalBody>
                 <div className="grid grid-cols-1 gap-3">
-                  <Select label="Program" selectedKeys={eForm.programId ? [eForm.programId] : []} onSelectionChange={(k) => setEForm({ ...eForm, programId: (Array.from(k)[0] as string) || '' })} variant="bordered" items={programs.map((p) => ({ id: p.id, title: p.title }))}>
+                  <Select disallowEmptySelection label="Program" selectedKeys={eForm.programId ? [eForm.programId] : []} onSelectionChange={(k) => setEForm({ ...eForm, programId: (Array.from(k)[0] as string) || '' })} variant="bordered" items={programs.map((p) => ({ id: p.id, title: p.title }))}>
                     {(item: any) => <SelectItem key={item.id} textValue={item.title}>{item.title}</SelectItem>}
                   </Select>
                   <Select label="Staff" selectionMode="multiple" selectedKeys={new Set(eForm.employeeIds)} onSelectionChange={(k) => setEForm({ ...eForm, employeeIds: Array.from(k as Set<string>) })} variant="bordered" items={employees.map((e) => ({ id: e.id, name: `${e.firstName} ${e.lastName}` }))}>

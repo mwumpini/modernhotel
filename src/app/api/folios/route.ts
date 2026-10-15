@@ -3,6 +3,7 @@ import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/li
 import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { listFolios, upsertFolio } from '@/app/lib/frontoffice/repository'
 import { prisma } from '@/app/lib/database/client'
+import { syncReservationFolioToLedger } from '@/app/lib/accounting/folioLedgerServer'
 
 export async function GET(request: NextRequest) {
   try {
@@ -88,6 +89,10 @@ export async function PUT(request: NextRequest) {
       details.discountAmount = discountCharge.amount
     }
     await createAuditLog(ctx.tenantId, sessionUserId ?? null, action, 'Folio', folio.id, undefined, details, request)
+    // Charges and payments reach the books as they happen (IFRS 15). A failure here never
+    // loses the folio save; the next save or the night audit posts the difference.
+    await syncReservationFolioToLedger(ctx.tenantId, folio.reservationId, { postedBy: sessionUserId ?? undefined })
+      .catch((e) => console.error('[folios][PUT] ledger sync failed', e))
     return NextResponse.json({ folio })
   } catch (error) {
     console.error('[folios][PUT] error', error)

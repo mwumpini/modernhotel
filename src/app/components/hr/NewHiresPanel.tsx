@@ -108,7 +108,7 @@ export default function NewHiresPanel() {
           <div className="font-medium">New Hires</div>
           <div className="flex items-center gap-2">
             <Input size="sm" placeholder="Search name/number" value={q} onChange={(e) => setQ(e.target.value)} variant="bordered" className="w-56" />
-            <Select size="sm" selectedKeys={[String(days)]} onSelectionChange={(k) => setDays(parseInt(Array.from(k)[0] as string, 10))} className="w-32" variant="bordered" aria-label="Period">
+            <Select disallowEmptySelection size="sm" selectedKeys={[String(days)]} onSelectionChange={(k) => setDays(parseInt(Array.from(k)[0] as string, 10))} className="w-32" variant="bordered" aria-label="Period">
               <SelectItem key="7">7 days</SelectItem>
               <SelectItem key="14">14 days</SelectItem>
               <SelectItem key="30">30 days</SelectItem>

@@ -13,10 +13,13 @@ import {
   reconstructTenantDay,
   setFrontOfficeBusinessDate,
 } from './folioServer'
+import { syncReservationFolioToLedger } from '../accounting/folioLedgerServer'
 
 // Leaf GL codes — 1100/1200 are chart headers, not postable accounts.
 const GL = {
   CASH: '1110',
+  // A card guarantee settles to the bank, not the cash drawer.
+  BANK: '1120',
   AR: '1210',
   ROOM_REVENUE: '4100',
 }
@@ -147,6 +150,9 @@ export async function runTenantNightAudit(params: {
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
 
       if (posted) roomChargesPosted += 1
+      // The night is revenue today (IFRS 15); this also posts anything a save missed.
+      await syncReservationFolioToLedger(params.tenantId, reservation.id, { postedBy: params.runBy || 'night-audit' })
+        .catch((e) => errors.push(`Ledger for ${reservation.id}: ${e}`))
     } catch (folioErr) {
       errors.push(`Reservation ${reservation.id}: ${folioErr}`)
     }
@@ -292,7 +298,7 @@ export async function runTenantNightAudit(params: {
                     sourceTransactionId: payChargeId,
                     lines: {
                       create: [
-                        { tenantId: params.tenantId, accountCode: GL.CASH, description: 'Card — no-show guarantee', debit: total, credit: 0, currency: 'GHS' },
+                        { tenantId: params.tenantId, accountCode: GL.BANK, description: 'Card — no-show guarantee', debit: total, credit: 0, currency: 'GHS' },
                         { tenantId: params.tenantId, accountCode: GL.AR, description: `Clear AR — No-show ${res.resId || res.id}`, debit: 0, credit: total, currency: 'GHS' },
                       ],
                     },

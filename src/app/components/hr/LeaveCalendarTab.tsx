@@ -152,11 +152,11 @@ export default function LeaveCalendarTab() {
           <div className="font-medium">Who&apos;s off — {monthLabel}</div>
           <div className="flex flex-wrap items-center gap-2">
             <Input size="sm" placeholder="Search staff" value={q} onChange={(e) => setQ(e.target.value)} variant="bordered" className="w-40" />
-            <Select size="sm" aria-label="Department" className="w-44" variant="bordered" selectedKeys={[dept]} onSelectionChange={(k) => setDept(Array.from(k)[0] as string)}
+            <Select disallowEmptySelection size="sm" aria-label="Department" className="w-44" variant="bordered" selectedKeys={[dept]} onSelectionChange={(k) => setDept(Array.from(k)[0] as string)}
               items={[{ id: 'all', name: 'All departments' }, ...departments.map((d) => ({ id: d.id, name: d.name }))]}>
               {(item: any) => <SelectItem key={item.id}>{item.name}</SelectItem>}
             </Select>
-            <Select size="sm" aria-label="Type" className="w-36" variant="bordered" selectedKeys={[typeFilter]} onSelectionChange={(k) => setTypeFilter(Array.from(k)[0] as string)}>
+            <Select disallowEmptySelection size="sm" aria-label="Type" className="w-36" variant="bordered" selectedKeys={[typeFilter]} onSelectionChange={(k) => setTypeFilter(Array.from(k)[0] as string)}>
               <SelectItem key="all">All types</SelectItem>
               <SelectItem key="annual">Annual</SelectItem>
               <SelectItem key="sick">Sick</SelectItem>
@@ -165,7 +165,7 @@ export default function LeaveCalendarTab() {
               <SelectItem key="paternity">Paternity</SelectItem>
               <SelectItem key="bereavement">Bereavement</SelectItem>
             </Select>
-            <Select size="sm" aria-label="Status" className="w-36" variant="bordered" selectedKeys={[statusFilter]} onSelectionChange={(k) => setStatusFilter(Array.from(k)[0] as any)}>
+            <Select disallowEmptySelection size="sm" aria-label="Status" className="w-36" variant="bordered" selectedKeys={[statusFilter]} onSelectionChange={(k) => setStatusFilter(Array.from(k)[0] as any)}>
               <SelectItem key="all">All status</SelectItem>
               <SelectItem key="approved">Approved</SelectItem>
               <SelectItem key="pending">Pending</SelectItem>

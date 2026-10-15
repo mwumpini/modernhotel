@@ -257,6 +257,9 @@ export default class UniversalPayrollBuilder {
       // above), computed and stored separately here; calculateTaxes() below reuses both
       // results instead of recomputing them.
       for (const tag of ['TIER1', 'TIER2'] as const) {
+        // Not enrolled on the staff file: no employee or employer contribution for this tier.
+        if (tag === 'TIER1' && employee.ghTax?.ssnitEnrolled === false) continue;
+        if (tag === 'TIER2' && employee.ghTax?.tier2Enrolled === false) continue;
         const rule = findGhanaTaxRule(tag);
         if (!rule) {
           console.warn(`[Payroll] No GH ${tag} tax rule loaded from the compliance store — not withheld. Call useComplianceStore.getState().setCountry("GH") before running Ghana payroll.`);
@@ -319,6 +322,8 @@ export default class UniversalPayrollBuilder {
     let employerTaxTotal = 0;
 
     if (config.country === 'GH') {
+      // Staff marked as not liable to PAYE on their file (e.g. exempt) have no income tax withheld.
+      const payeExempt = employee.ghTax?.payeEnrolled === false;
       const payeRule = findGhanaTaxRule('PAYE');
       // Bonus, qualifying overtime, casual and non-resident pay are taxed at flat rates;
       // only what is left goes through the graduated bands (see ghanaSpecialRates.ts).
@@ -344,7 +349,9 @@ export default class UniversalPayrollBuilder {
       // Months before Act 1178 took effect are taxed on the bands in force then.
       const period = payrollResult.period;
       const monthKey = period?.year && period?.month ? `${period.year}-${String(period.month).padStart(2, '0')}` : '';
-      if (payeRule && split.graduatedBase > 0 && monthKey && monthKey < ACT_1178_FIRST_MONTH) {
+      if (payeExempt) {
+        // Nothing withheld; Tier 1/Tier 2 below still apply.
+      } else if (payeRule && split.graduatedBase > 0 && monthKey && monthKey < ACT_1178_FIRST_MONTH) {
         const payeAmount = graduatedTax(split.graduatedBase, ACT_1111_TIERS);
         payrollResult.taxes.items.push({ type: 'income', name: payeRule.name, ruleId: payeRule.id, amount: payeAmount, employerAmount: 0 });
         employeeTaxTotal += payeAmount;
@@ -362,7 +369,7 @@ export default class UniversalPayrollBuilder {
       } else if (!payeRule) {
         console.warn('[Payroll] No GH PAYE tax rule loaded from the compliance store — income tax not withheld.');
       }
-      for (const flat of split.flatLines) {
+      for (const flat of payeExempt ? [] : split.flatLines) {
         payrollResult.taxes.items.push({ type: 'income', name: flat.name, amount: flat.amount, base: flat.base, rate: flat.rate, employerAmount: 0 });
         employeeTaxTotal += flat.amount;
       }
