@@ -22,7 +22,10 @@
     "db:studio": "node scripts/with-local-db.mjs node node_modules/prisma/build/index.js studio",
     "postinstall": "node scripts/with-local-db.mjs node node_modules/prisma/build/index.js generate",
     "package:hotel": "node scripts/hotel-package.mjs",
-    "vercel-build": "prisma generate --schema=prisma/schema.production.prisma && prisma db push --schema=prisma/schema.production.prisma && (tsx prisma/seed.ts || echo 'Seed step failed or already applied — continuing build') && next build"
+    "vercel-build": "prisma generate --schema=prisma/schema.production.prisma && prisma db push --schema=prisma/schema.production.prisma && (tsx prisma/seed.ts || echo 'Seed step failed or already applied — continuing build') && next build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:regression": "tsx scripts/test-fo-night-audit.ts && tsx scripts/test-accounting-process.ts && tsx scripts/test-bank-recon-calculations.ts"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.10.0",
@@ -63,6 +66,7 @@
     "postcss-lab-function": "^8.0.15",
     "tailwindcss": "4.1.13",
     "tsx": "^4.20.4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

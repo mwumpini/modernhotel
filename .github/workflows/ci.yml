@@ -1,10 +1,11 @@
 name: CI
 
+# Runs on every push to main (each push is also a live deploy) and on pull requests.
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
-    branches: [master]
+    branches: [main]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -35,14 +36,14 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Unit tests (taxes, bills, numbering, dates)
+        run: npm test
+
+      - name: Regression scripts (night audit, accounting, bank reconciliation)
+        run: npm run test:regression
+
       - name: Production build
         run: npm run build
         env:
           NEXTAUTH_SECRET: ci-build-secret
           DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
-
-      - name: Regression scripts
-        run: |
-          npx tsx scripts/test-fo-night-audit.ts
-          npx tsx scripts/test-accounting-process.ts
-          npx tsx scripts/test-bank-recon-calculations.ts
