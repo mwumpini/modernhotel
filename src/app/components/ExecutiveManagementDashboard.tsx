@@ -38,8 +38,8 @@ import { moduleEnabled } from '../lib/settings/moduleAccess';
 // Same emoji per module the sidebar (Navigation.tsx) uses, so this quick-nav
 // row reads as a shortcut to those same sections rather than a separate icon set.
 const QUICK_MODULES: { key: string; label: string; icon: string }[] = [
-  { key: 'frontdesk', label: 'Front Office', icon: '🏨' },
-  { key: 'events-conferences', label: 'Events', icon: '🎪' },
+  { key: 'frontdesk', label: 'Front Office', icon: '🛎️' },
+  { key: 'events-conferences', label: 'Events', icon: '🎤' },
   { key: 'restaurant', label: 'Restaurant', icon: '🍽️' },
   { key: 'kitchen', label: 'Kitchen', icon: '👨‍🍳' },
   { key: 'housekeeping', label: 'Housekeeping', icon: '🛏️' },

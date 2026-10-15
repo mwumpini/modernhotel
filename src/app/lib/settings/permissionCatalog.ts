@@ -102,7 +102,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
   {
     key: 'frontdesk',
     label: 'Front Office Operations',
-    icon: '🏨',
+    icon: '🛎️',
     fullAccessId: 'frontdesk.*',
     ...crud('frontdesk', 'reservations', { print: true, void: true }),
     extra: [
@@ -136,7 +136,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
   {
     key: 'events-conferences',
     label: 'Events & Conferences',
-    icon: '🎪',
+    icon: '🎤',
     fullAccessId: 'events-conferences.*',
     ...crud('events-conferences', 'events & bookings', { print: true, void: true }),
     extra: [

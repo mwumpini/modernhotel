@@ -32,7 +32,7 @@ async function notify(row: { name: string; hotelName: string; email: string | nu
   });
   const lines = [
     `Name: ${row.name}`,
-    `Hotel: ${row.hotelName}`,
+    `Business: ${row.hotelName}`,
     `Rooms: ${row.rooms ?? '-'}`,
     `City: ${row.city || '-'}`,
     `Email: ${row.email || '-'}`,
@@ -66,12 +66,14 @@ export async function POST(request: NextRequest) {
     const email = clean(body.email, 160) || null;
     const whatsapp = clean(body.whatsapp, 40) || null;
     const city = clean(body.city, 80) || null;
-    const message = String(body.message ?? '').trim().slice(0, 2000) || null;
+    const facilityType = clean(body.facilityType, 60);
+    const note = String(body.message ?? '').trim().slice(0, 2000);
+    const message = [facilityType && `Type of business: ${facilityType}`, note].filter(Boolean).join('\n\n') || null;
     const roomsNumber = Number(body.rooms);
     const rooms = Number.isFinite(roomsNumber) && roomsNumber > 0 ? Math.min(Math.round(roomsNumber), 10_000) : null;
 
     if (!name || !hotelName) {
-      return NextResponse.json({ error: 'Please give your name and your hotel’s name.' }, { status: 400 });
+      return NextResponse.json({ error: 'Please give your name and your business’s name.' }, { status: 400 });
     }
     if (!email && !whatsapp) {
       return NextResponse.json({ error: 'Please give an email address or a WhatsApp number so we can reach you.' }, { status: 400 });

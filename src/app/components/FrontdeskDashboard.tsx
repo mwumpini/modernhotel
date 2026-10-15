@@ -163,7 +163,7 @@ export default function FrontdeskDashboard({
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {backButton}
           <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>
-            {fullPage ? '🏨 Front Office' : '🏨 Front Office Operations'}
+            {fullPage ? '🛎️ Front Office' : '🛎️ Front Office Operations'}
           </h2>
         </div>
         <div className="flex flex-wrap items-center gap-2">

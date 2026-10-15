@@ -335,7 +335,7 @@ export function EventEditorModal() {
                         disabled={eventsScreen.isViewMode}
                       />
                       <label htmlFor="isResidential" className="text-sm text-blue-800 font-semibold">
-                        🏨 Residential Events
+                        🛎️ Residential Events
                       </label>
                     </div>
                   </div>

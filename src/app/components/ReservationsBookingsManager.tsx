@@ -2542,7 +2542,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                   </div>
                       )}
                       <div className="mt-2 pt-3 border-t border-purple-200 text-sm text-purple-800 flex items-center justify-between flex-wrap gap-2">
-                        <span>🏨 Booking a large group by headcount, without individual guest names?</span>
+                        <span>🛎️ Booking a large group by headcount, without individual guest names?</span>
                         <Button
                           size="sm"
                           variant="flat"

@@ -328,10 +328,10 @@ export default function AccountsReceivable() {
 	// Source label helper
 	const getSourceLabel = (sourceModule: string) => {
 		const sourceLabels: Record<string, { label: string; color: 'primary' | 'secondary' | 'success' | 'warning' | 'danger'; icon: string }> = {
-			front_office: { label: 'Front Office', color: 'primary', icon: '🏨' },
-			front_office_checkout: { label: 'Front Office', color: 'primary', icon: '🏨' },
-			front_office_folio: { label: 'In-house folio', color: 'primary', icon: '🏨' },
-			guest_noshow: { label: 'Front Office', color: 'primary', icon: '🏨' },
+			front_office: { label: 'Front Office', color: 'primary', icon: '🛎️' },
+			front_office_checkout: { label: 'Front Office', color: 'primary', icon: '🛎️' },
+			front_office_folio: { label: 'In-house folio', color: 'primary', icon: '🛎️' },
+			guest_noshow: { label: 'Front Office', color: 'primary', icon: '🛎️' },
 			restaurant: { label: 'Restaurant', color: 'success', icon: '🍽️' },
 			bar: { label: 'Bar', color: 'warning', icon: '🍺' },
 			room_service: { label: 'Room Service', color: 'secondary', icon: '🛎️' },

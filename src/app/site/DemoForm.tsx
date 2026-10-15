@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { whatsappLink } from './content';
+import { FACILITIES, whatsappLink } from './content';
 
 type State = { status: 'idle' | 'sending' | 'sent' | 'error'; message?: string };
 
@@ -54,8 +54,16 @@ export default function DemoForm() {
         <input id="name" name="name" required autoComplete="name" className={field} placeholder="Ama Mensah" />
       </div>
       <div>
-        <label className={label} htmlFor="hotelName">Hotel name *</label>
-        <input id="hotelName" name="hotelName" required autoComplete="organization" className={field} placeholder="Golden Palm Hotel" />
+        <label className={label} htmlFor="hotelName">Business name *</label>
+        <input id="hotelName" name="hotelName" required autoComplete="organization" className={field} placeholder="Golden Palm Lodge" />
+      </div>
+      <div className="sm:col-span-2">
+        <label className={label} htmlFor="facilityType">Type of business</label>
+        <select id="facilityType" name="facilityType" defaultValue="" className={field}>
+          <option value="">Choose one (optional)</option>
+          {FACILITIES.map((f) => <option key={f.title} value={f.title}>{f.title}</option>)}
+          <option value="Other">Something else</option>
+        </select>
       </div>
       <div>
         <label className={label} htmlFor="whatsapp">WhatsApp number</label>
@@ -63,10 +71,10 @@ export default function DemoForm() {
       </div>
       <div>
         <label className={label} htmlFor="email">Email</label>
-        <input id="email" name="email" type="email" autoComplete="email" className={field} placeholder="you@yourhotel.com" />
+        <input id="email" name="email" type="email" autoComplete="email" className={field} placeholder="you@yourbusiness.com" />
       </div>
       <div>
-        <label className={label} htmlFor="rooms">Number of rooms</label>
+        <label className={label} htmlFor="rooms">Rooms or units (if any)</label>
         <input id="rooms" name="rooms" type="number" min={1} inputMode="numeric" className={field} placeholder="24" />
       </div>
       <div>

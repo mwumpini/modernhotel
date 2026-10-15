@@ -130,7 +130,7 @@ function reportIcon(reportType: string) {
     case 'Sales Tax':
       return '🛒';
     case 'Hotel Tax':
-      return '🏨';
+      return '🛎️';
     default:
       return '📋';
   }

@@ -2357,7 +2357,7 @@ export default function FBPOS({ onClose, editOrderId = null }: FBPOSProps) {
                     placeholder="Search room or guest..."
                     value={settleRoomSearch}
                     onChange={(e) => setSettleRoomSearch(e.target.value)}
-                    startContent={<span>🏨</span>}
+                    startContent={<span>🛎️</span>}
                   />
                   {settleRoomSearch && filteredRooms.filter(r => (r.roomId || '').toLowerCase().includes(settleRoomSearch.toLowerCase()) || r.guestName.toLowerCase().includes(settleRoomSearch.toLowerCase())).slice(0, 10).map(r => (
                     <div key={r.roomId} className="p-2 border-b text-sm cursor-pointer hover:bg-gray-50" onClick={() => { setSettleSelectedRoom(r as any); setSettleRoomSearch(`${r.roomId} - ${r.guestName}`); }}>

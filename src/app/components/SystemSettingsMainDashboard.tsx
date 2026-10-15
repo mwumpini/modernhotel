@@ -29,7 +29,7 @@ import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 import { useSummaryCollapsed } from '../lib/dashboard/useSummaryCollapsed';
 import { SummaryToggle } from './dashboard/SummaryToggle';
 
-const VALID_TABS = ['profile', 'users', 'rooms', 'policies', 'tills', 'numbering', 'templates', 'locations', 'security', 'approvals', 'modules', 'sample-data', 'audit'] as const;
+const VALID_TABS = ['users', 'rooms', 'policies', 'tills', 'numbering', 'templates', 'locations', 'security', 'approvals', 'modules', 'sample-data', 'audit', 'profile'] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
 
 // The accounting year now sits at the bottom of Operational Policies; old links still land there.
@@ -151,10 +151,6 @@ export default function SystemSettingsMainDashboard() {
             variant="solid"
             classNames={deskBookTabsClassNames}
           >
-            <Tab key="profile" title="Company Profile">
-              <HotelProfilePanel />
-            </Tab>
-
             <Tab key="users" title="Users & Roles">
               <UserManagementUnified />
             </Tab>
@@ -201,6 +197,10 @@ export default function SystemSettingsMainDashboard() {
 
             <Tab key="audit" title="Audit Log">
               <AuditLogPanel />
+            </Tab>
+
+            <Tab key="profile" title="Company Profile">
+              <HotelProfilePanel />
             </Tab>
 
           </Tabs>

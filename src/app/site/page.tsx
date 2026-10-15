@@ -1,15 +1,15 @@
 import type { Metadata } from 'next';
 import Image from 'next/image';
 import DemoForm from './DemoForm';
-import { CONTACT, FAQS, GHANA_POINTS, MODULES, SIGN_IN_URL, STEPS, whatsappLink } from './content';
+import { CONTACT, CUSTOMISE_POINTS, FACILITIES, FAQS, GHANA_POINTS, MODULES, SETUP_OPTIONS, SIGN_IN_URL, STEPS, whatsappLink } from './content';
 
 export const metadata: Metadata = {
-  title: 'AGM Sync: hotel management software built for Ghana',
+  title: 'AGM Sync: hospitality management software built for Ghana',
   description:
-    'Front desk, restaurant POS, kitchen, housekeeping, stores, payroll and accounting in one system, with Ghana’s taxes built in. Request a demo.',
+    'For hotels, guest houses, lodges, resorts, apartments, restaurants, bars and event centres: front desk, POS, kitchen, housekeeping, stores, payroll and accounting in one system, with Ghana’s taxes built in. Request a demo.',
   openGraph: {
-    title: 'AGM Sync: run your whole hotel from one system',
-    description: 'Front desk, restaurant, stores, payroll and accounts, connected and built for Ghana.',
+    title: 'AGM Sync: run your whole business from one system',
+    description: 'Front desk, restaurant, stores, payroll and accounts, connected, set up around your business and built for Ghana.',
     siteName: 'AGM Sync',
     type: 'website',
     images: [{ url: '/brand/og-image.png', width: 1200, height: 630, alt: 'AGM Sync' }],
@@ -37,6 +37,25 @@ function WhatsAppIcon({ className = 'h-5 w-5' }: { className?: string }) {
   );
 }
 
+function Tablet({ src, alt }: { src: string; alt: string }) {
+  return (
+    <div className="rounded-[1.75rem] bg-slate-900 p-2.5 shadow-2xl shadow-slate-900/25 ring-1 ring-black/10">
+      <Image src={src} alt={alt} width={2048} height={1536} className="h-auto w-full rounded-[1.1rem]" sizes="(min-width: 1024px) 30vw, 90vw" />
+    </div>
+  );
+}
+
+function Phone({ src, alt }: { src: string; alt: string }) {
+  return (
+    <div className="relative rounded-[2.25rem] bg-slate-900 p-2 shadow-2xl shadow-slate-900/25 ring-1 ring-black/10">
+      <span aria-hidden="true" className="absolute left-1/2 top-3.5 z-10 h-1.5 w-12 -translate-x-1/2 rounded-full bg-slate-700" />
+      <div className="aspect-[390/780] overflow-hidden rounded-[1.75rem] bg-white">
+        <Image src={src} alt={alt} width={780} height={1688} className="h-auto w-full" sizes="(min-width: 1024px) 15vw, 60vw" />
+      </div>
+    </div>
+  );
+}
+
 function Shot({ src, alt, priority = false }: { src: string; alt: string; priority?: boolean }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-900 shadow-2xl shadow-slate-900/20 ring-1 ring-black/5">
@@ -58,10 +77,12 @@ export default function SitePage() {
       <header className="sticky top-0 z-40 border-b border-slate-200/70 bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
           <a href="#top" aria-label="AGM Sync home"><Logo /></a>
-          <nav className="hidden items-center gap-7 text-[15px] font-medium text-slate-600 md:flex">
+          <nav className="hidden items-center gap-6 text-[15px] font-medium text-slate-600 lg:flex">
+            <a href="#who" className="hover:text-slate-900">Who it’s for</a>
             <a href="#features" className="hover:text-slate-900">Features</a>
+            <a href="#yours" className="hover:text-slate-900">Make it yours</a>
+            <a href="#setup" className="hover:text-slate-900">Setup</a>
             <a href="#ghana" className="hover:text-slate-900">Built for Ghana</a>
-            <a href="#how" className="hover:text-slate-900">How it works</a>
             <a href="#faq" className="hover:text-slate-900">FAQ</a>
           </nav>
           <div className="flex items-center gap-2">
@@ -78,13 +99,13 @@ export default function SitePage() {
           <div className="mx-auto grid max-w-6xl items-center gap-12 px-4 pb-16 pt-14 sm:px-6 lg:grid-cols-[1fr_1.15fr] lg:pb-24 lg:pt-20">
             <div>
               <span className="inline-flex items-center gap-2 rounded-full border border-[#0B5F64]/20 bg-[#0B5F64]/5 px-3 py-1 text-sm font-medium text-[#0B5F64]">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#E9A23B]" /> Hotel management software for Ghana
+                <span className="h-1.5 w-1.5 rounded-full bg-[#E9A23B]" /> Hospitality management software for Ghana
               </span>
               <h1 className="mt-5 text-4xl font-extrabold leading-[1.08] tracking-tight text-slate-900 sm:text-5xl lg:text-[3.4rem]">
-                Run your whole hotel from <span style={{ color: TEAL }}>one system</span>.
+                Run your whole business from <span style={{ color: TEAL }}>one system</span>.
               </h1>
               <p className="mt-5 max-w-xl text-lg leading-relaxed text-slate-600">
-                Front desk, restaurant and bar, kitchen, housekeeping, stores, payroll and accounts, connected. A sale at the bar updates stock and the books on its own, with Ghana’s taxes worked out on every bill.
+                Hotels, guest houses, lodges, restaurants, bars and event centres: front desk, POS, kitchen, housekeeping, stores, payroll and accounts, connected and set up around the way you work. A sale at the bar updates stock and the books on its own, with Ghana’s taxes on every bill.
               </p>
               <div className="mt-8 flex flex-wrap items-center gap-3">
                 <a href="#demo" className="rounded-full px-6 py-3 font-semibold text-white shadow-lg shadow-[#0B5F64]/25 transition hover:brightness-110" style={{ background: TEAL }}>Request a demo</a>
@@ -93,12 +114,13 @@ export default function SitePage() {
                 </a>
               </div>
               <ul className="mt-8 flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-500">
-                <li>✓ Nothing to install</li>
-                <li>✓ Works on PCs and tablets</li>
+                <li>✓ No installation needed</li>
+                <li>✓ PC, tablet and phone</li>
+                <li>✓ On-site setup if you prefer</li>
                 <li>✓ Setup and training included</li>
               </ul>
             </div>
-            <Shot src="/site/dashboard.png" alt="AGM Sync executive dashboard showing in-house guests, arrivals, occupancy and today’s revenue" priority />
+            <Shot src="/site/light/dashboard.png" alt="AGM Sync executive dashboard showing in-house guests, arrivals, occupancy and today’s revenue" priority />
           </div>
         </section>
 
@@ -106,9 +128,9 @@ export default function SitePage() {
         <section className="border-y border-slate-100 bg-slate-50/70">
           <div className="mx-auto grid max-w-6xl gap-10 px-4 py-16 sm:px-6 lg:grid-cols-[1fr_1.4fr] lg:items-center">
             <div>
-              <h2 className="text-3xl font-bold tracking-tight">Stop stitching your hotel together.</h2>
+              <h2 className="text-3xl font-bold tracking-tight">Stop stitching your business together.</h2>
               <p className="mt-4 text-slate-600">
-                Many hotels run the front desk in one program, the restaurant on another, the books in a spreadsheet and the store on paper. Figures are typed twice, stock goes missing, and the night audit takes hours.
+                Many businesses run the front desk in one program, the restaurant on another, the books in a spreadsheet and the store on paper. Figures are typed twice, stock goes missing, and the night audit takes hours.
               </p>
             </div>
             <div className="grid gap-4 sm:grid-cols-3">
@@ -126,11 +148,35 @@ export default function SitePage() {
           </div>
         </section>
 
+        {/* Who it's for */}
+        <section id="who" className="scroll-mt-20">
+          <div className="mx-auto max-w-6xl px-4 pt-20 sm:px-6">
+            <div className="mx-auto max-w-2xl text-center">
+              <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">Made for your kind of business</h2>
+              <p className="mt-4 text-slate-600">AGM Sync is not only for hotels. We configure it for the business you actually run, with the modules, documents and rules that fit it.</p>
+            </div>
+            <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {FACILITIES.map((f) => (
+                <div key={f.title} className="flex gap-4 rounded-2xl border border-slate-200 bg-white p-5">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#0B5F64]/[0.06] text-2xl">{f.icon}</span>
+                  <div>
+                    <h3 className="font-semibold text-slate-900">{f.title}</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-slate-600">{f.text}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="mt-6 text-center text-sm text-slate-500">
+              Running something else, like a training centre, a club or a campus guest house? <a href="#demo" className="font-semibold text-[#0B5F64] hover:underline">Tell us how you work</a> and we’ll set it up to fit.
+            </p>
+          </div>
+        </section>
+
         {/* Modules */}
         <section id="features" className="scroll-mt-20">
           <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
             <div className="mx-auto max-w-2xl text-center">
-              <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">Everything your hotel runs on</h2>
+              <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">Everything your business runs on</h2>
               <p className="mt-4 text-slate-600">Use the whole system, or only the parts you need today. Every module shares the same guests, stock and accounts.</p>
             </div>
             <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
@@ -145,13 +191,35 @@ export default function SitePage() {
           </div>
         </section>
 
+        {/* Devices */}
+        <section className="border-y border-slate-100 bg-slate-50/70">
+          <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
+            <div className="mx-auto max-w-2xl text-center">
+              <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">On the desk, on a tablet, in your pocket</h2>
+              <p className="mt-4 text-slate-600">The same system on a reception PC, a waiter’s tablet or the owner’s phone. Sign in from anywhere and see what is happening right now.</p>
+            </div>
+            <div className="mt-12 grid items-end gap-8 sm:grid-cols-2 lg:grid-cols-[1.7fr_1.15fr_0.55fr]">
+              {[
+                { label: 'PC & laptop', node: <Shot src="/site/light/dashboard.png" alt="AGM Sync dashboard on a desktop computer" /> },
+                { label: 'Tablet', node: <Tablet src="/site/light/devices/tablet.png" alt="AGM Sync dashboard on a tablet" /> },
+                { label: 'Phone', node: <div className="mx-auto w-full max-w-[200px]"><Phone src="/site/light/devices/phone.png" alt="AGM Sync dashboard on a phone" /></div> },
+              ].map((d, i) => (
+                <figure key={d.label} className={i === 0 ? 'sm:col-span-2 lg:col-span-1' : ''}>
+                  {d.node}
+                  <figcaption className="mt-4 text-center text-sm font-semibold text-slate-500">{d.label}</figcaption>
+                </figure>
+              ))}
+            </div>
+          </div>
+        </section>
+
         {/* Spotlights */}
         <section className="bg-slate-950 text-white">
           <div className="mx-auto max-w-6xl space-y-24 px-4 py-24 sm:px-6">
             {[
-              { img: '/site/front-office.png', alt: 'Reservations and bookings list with guests, rooms, dates and rates', tag: 'Front desk', title: 'Every booking, guest and bill in front of you', text: 'See who is arriving, who is in house and who owes what. Check guests in and out, move rooms, take deposits and print a clear check-out bill in seconds.' },
-              { img: '/site/housekeeping.png', alt: 'Housekeeping floor view with room cards showing dirty, cleaning and occupied status', tag: 'Housekeeping', title: 'Know the state of every room', text: 'Rooms turn dirty at checkout and ready when cleaned and inspected. The front desk sees it the moment it changes, with no phone calls between floors.' },
-              { img: '/site/accounting.png', alt: 'Accounts receivable aging table showing customer balances by age', tag: 'Accounting', title: 'Books that keep themselves up to date', text: 'Room, restaurant and event sales post to the right accounts with their taxes. Follow up company accounts by age, reconcile the bank, and print your statements.' },
+              { img: '/site/light/front-office.png', alt: 'Reservations and bookings list with guests, rooms, dates and rates', tag: 'Front desk', title: 'Every booking, guest and bill in front of you', text: 'See who is arriving, who is in house and who owes what. Check guests in and out, move rooms, take deposits and print a clear check-out bill in seconds.' },
+              { img: '/site/dark/housekeeping.png', alt: 'Housekeeping floor view with room cards showing dirty, cleaning and occupied status', tag: 'Housekeeping', title: 'Know the state of every room', text: 'Rooms turn dirty at checkout and ready when cleaned and inspected. The front desk sees it the moment it changes, with no phone calls between floors.' },
+              { img: '/site/light/accounting.png', alt: 'Accounts receivable aging table showing customer balances by age', tag: 'Accounting', title: 'Books that keep themselves up to date', text: 'Room, restaurant and event sales post to the right accounts with their taxes. Follow up company accounts by age, reconcile the bank, and print your statements.' },
             ].map((s, i) => (
               <div key={s.tag} className={`grid items-center gap-10 lg:grid-cols-2 ${i % 2 ? 'lg:[&>*:first-child]:order-2' : ''}`}>
                 <div>
@@ -165,6 +233,60 @@ export default function SitePage() {
           </div>
         </section>
 
+        {/* Make it yours */}
+        <section id="yours" className="scroll-mt-20">
+          <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
+            <div className="grid items-center gap-12 lg:grid-cols-[1fr_1.1fr]">
+              <div>
+                <span className="text-sm font-semibold uppercase tracking-wider text-[#E9A23B]">Make it yours</span>
+                <h2 className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">Shaped around how you work</h2>
+                <p className="mt-4 text-slate-600">No two businesses run the same way. AGM Sync bends to yours instead of the other way round.</p>
+                <div className="mt-8 grid gap-5 sm:grid-cols-2">
+                  {CUSTOMISE_POINTS.map((p) => (
+                    <div key={p.title}>
+                      <h3 className="flex items-center gap-2 font-semibold text-slate-900">
+                        <span className="h-2 w-2 rounded-full" style={{ background: TEAL }} /> {p.title}
+                      </h3>
+                      <p className="mt-1.5 text-sm leading-relaxed text-slate-600">{p.text}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="relative pb-16 pr-6 sm:pb-24 sm:pr-16">
+                <Shot src="/site/light/dashboard.png" alt="AGM Sync in the light theme" />
+                <div className="absolute bottom-0 right-0 w-[72%]">
+                  <Shot src="/site/dark/dashboard.png" alt="AGM Sync in the dark theme" />
+                </div>
+                <span className="absolute left-3 top-14 rounded-full bg-white/95 px-3 py-1 text-xs font-semibold text-slate-700 shadow ring-1 ring-slate-200">☀️ Light</span>
+                <span className="absolute bottom-3 right-3 rounded-full bg-slate-900/90 px-3 py-1 text-xs font-semibold text-white shadow">🌙 Dark</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Setup options */}
+        <section id="setup" className="scroll-mt-20 border-y border-slate-100 bg-slate-50/70">
+          <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
+            <div className="mx-auto max-w-2xl text-center">
+              <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">Use it in the browser, or have it installed</h2>
+              <p className="mt-4 text-slate-600">There is no compulsory installation. Most businesses simply sign in. Companies that want their own setup can have it installed at their premises.</p>
+            </div>
+            <div className="mx-auto mt-12 grid max-w-4xl gap-6 md:grid-cols-2">
+              {SETUP_OPTIONS.map((o, i) => (
+                <div key={o.title} className={`rounded-2xl border bg-white p-7 shadow-sm ${i === 0 ? 'border-[#0B5F64]/30 ring-1 ring-[#0B5F64]/10' : 'border-slate-200'}`}>
+                  <span className={`inline-block rounded-full px-3 py-0.5 text-xs font-semibold ${i === 0 ? 'bg-[#0B5F64] text-white' : 'bg-[#E9A23B]/15 text-[#9a6514]'}`}>{o.tag}</span>
+                  <h3 className="mt-4 text-xl font-bold">{o.title}</h3>
+                  <ul className="mt-4 space-y-2.5 text-[15px] text-slate-600">
+                    {o.points.map((pt) => (
+                      <li key={pt} className="flex gap-2.5"><span style={{ color: TEAL }}>✓</span>{pt}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
         {/* Built for Ghana */}
         <section id="ghana" className="scroll-mt-20">
           <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
@@ -172,8 +294,8 @@ export default function SitePage() {
               <div className="mx-auto mb-4 flex h-1.5 w-24 overflow-hidden rounded-full">
                 <span className="flex-1 bg-[#CE1126]" /><span className="flex-1 bg-[#FCD116]" /><span className="flex-1 bg-[#006B3F]" />
               </div>
-              <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">Built for hotels in Ghana</h2>
-              <p className="mt-4 text-slate-600">Not foreign software with Ghana bolted on. The taxes, documents and payments work the way your hotel already does.</p>
+              <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">Built for Ghana</h2>
+              <p className="mt-4 text-slate-600">Not foreign software with Ghana bolted on. The taxes, documents and payments work the way your business already does.</p>
             </div>
             <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
               {GHANA_POINTS.map((p) => (
@@ -201,7 +323,7 @@ export default function SitePage() {
           <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
             <div className="mx-auto max-w-2xl text-center">
               <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">From first call to first guest</h2>
-              <p className="mt-4 text-slate-600">You don’t have to work it out alone. We set up your hotel and train your team.</p>
+              <p className="mt-4 text-slate-600">You don’t have to work it out alone. We set up your business and train your team.</p>
             </div>
             <ol className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
               {STEPS.map((step, i) => (
@@ -218,7 +340,7 @@ export default function SitePage() {
         {/* FAQ */}
         <section id="faq" className="scroll-mt-20">
           <div className="mx-auto max-w-3xl px-4 py-20 sm:px-6">
-            <h2 className="text-center text-3xl font-bold tracking-tight sm:text-4xl">Questions hotels ask</h2>
+            <h2 className="text-center text-3xl font-bold tracking-tight sm:text-4xl">Questions people ask</h2>
             <div className="mt-10 divide-y divide-slate-200 rounded-2xl border border-slate-200">
               {FAQS.map((f) => (
                 <details key={f.q} className="group p-5 [&_summary::-webkit-details-marker]:hidden">
@@ -239,8 +361,8 @@ export default function SitePage() {
             <div className="grid overflow-hidden rounded-3xl border border-slate-200 shadow-xl shadow-slate-200/60 lg:grid-cols-[0.9fr_1.1fr]">
               <div className="relative p-8 text-white sm:p-10" style={{ background: `linear-gradient(150deg, ${TEAL}, #073f43)` }}>
                 <div aria-hidden="true" className="pointer-events-none absolute -bottom-16 -right-16 h-56 w-56 rounded-full bg-[#E9A23B]/25 blur-3xl" />
-                <h2 className="text-3xl font-bold tracking-tight">See AGM Sync with your own hotel</h2>
-                <p className="mt-4 leading-relaxed text-white/85">Tell us a little about your hotel and we’ll arrange a short demo using your rooms and your menu. No obligation.</p>
+                <h2 className="text-3xl font-bold tracking-tight">See AGM Sync with your own business</h2>
+                <p className="mt-4 leading-relaxed text-white/85">Tell us a little about your business and we’ll arrange a short demo using your rooms, your menu and the way you work. No obligation.</p>
                 <div className="mt-8 space-y-4">
                   <a href={whatsappLink()} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 rounded-2xl bg-white/10 p-4 ring-1 ring-white/15 transition hover:bg-white/15">
                     <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#25D366] text-white"><WhatsAppIcon /></span>

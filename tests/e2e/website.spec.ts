@@ -4,7 +4,7 @@ import { expect, test } from '@playwright/test';
 test.describe('Website', () => {
   test('the site opens without signing in, with the demo form and WhatsApp', async ({ page }) => {
     await page.goto('/site');
-    await expect(page.getByRole('heading', { level: 1 })).toContainText('Run your whole hotel');
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('Run your whole business');
     await expect(page.locator('#demo form')).toBeVisible();
     await expect(page.locator('a[href^="https://wa.me/4915255641215"]').first()).toBeVisible();
   });

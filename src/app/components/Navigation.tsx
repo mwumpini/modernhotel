@@ -296,8 +296,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
     },
     {
       key: 'frontdesk',
-      title: `🏨 Front Office Operations${getUnreadCount('frontdesk') ? ` (${getUnreadCount('frontdesk')})` : ''}`,
-      icon: '🏨',
+      title: `🛎️ Front Office Operations${getUnreadCount('frontdesk') ? ` (${getUnreadCount('frontdesk')})` : ''}`,
+      icon: '🛎️',
       items: [
         { title: '🛎️ Desk', href: '#' },
         { title: '🛏️ Rooms', href: '#' },
@@ -309,8 +309,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
     },
     {
       key: 'events-conferences',
-      title: '🎪 Events & Conferences',
-      icon: '🎪',
+      title: '🎤 Events & Conferences',
+      icon: '🎤',
       items: [
         { title: '📋 Events', href: '#' },
         { title: '🏢 Venues', href: '#' },
@@ -426,12 +426,12 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: '⚙️ System Settings',
       icon: '⚙️',
       items: [
-        { title: '🏢 Company Profile', href: '#' },
         { title: '👥 People', href: '#' },
         { title: '🛏️ Rooms', href: '#' },
         { title: '📄 Documents', href: '#' },
         { title: '📦 Stock', href: '#' },
         { title: '🔒 Security', href: '#' },
+        { title: '🏢 Company Profile', href: '#' },
       ]
     }
   ];

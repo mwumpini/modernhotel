@@ -11169,7 +11169,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       <div className={`${fullPage ? 'mb-2' : 'mb-3'} flex items-center justify-between gap-3`}>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {backButton}
-          <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>🎪 Events & Conferences</h2>
+          <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>🎤 Events & Conferences</h2>
         </div>
         {!fullPage && (
           <ModuleExpandButton

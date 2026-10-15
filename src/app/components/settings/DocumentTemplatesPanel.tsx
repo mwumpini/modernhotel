@@ -24,7 +24,7 @@ interface FamilyOption { key: 'general' | 'restaurant' | 'events' | 'payment-vou
 // (vendor payments — not guest billing, so it stands alone).
 const FAMILIES: FamilyOption[] = [
   {
-    key: 'general', icon: '🏨', label: 'Accommodation & Front Desk',
+    key: 'general', icon: '🛎️', label: 'Accommodation & Front Desk',
     types: [
       { key: 'invoice', label: 'Invoice' },
       { key: 'receipt', label: 'Receipt' },
@@ -39,7 +39,7 @@ const FAMILIES: FamilyOption[] = [
     ],
   },
   {
-    key: 'events', icon: '🎪', label: 'Events & Conferences',
+    key: 'events', icon: '🎤', label: 'Events & Conferences',
     legs: [
       {
         key: 'accommodation', icon: '🛏️', label: 'Accommodation',

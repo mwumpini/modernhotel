@@ -364,7 +364,7 @@ export function GuestRatesPanel({
     // If rate is a string (backward compatibility), treat it as type
     if (typeof rate === 'string') {
       const labels: Record<string, string> = {
-        accommodation: '🏨 Accommodation',
+        accommodation: '🛎️ Accommodation',
         conference: '📅 Conference',
         lunch: '🍽️ Lunch',
         dinner: '🍴 Dinner',
@@ -376,7 +376,7 @@ export function GuestRatesPanel({
     // Use customLabel if available, otherwise use default label
     if (rate.customLabel && rate.customLabel !== rate.type) {
       const icons: Record<string, string> = {
-        accommodation: '🏨',
+        accommodation: '🛎️',
         conference: '📅',
         lunch: '🍽️',
         dinner: '🍴',
@@ -386,7 +386,7 @@ export function GuestRatesPanel({
     }
 
     const labels: Record<string, string> = {
-      accommodation: '🏨 Accommodation',
+      accommodation: '🛎️ Accommodation',
       conference: '📅 Conference',
       lunch: '🍽️ Lunch',
       dinner: '🍴 Dinner',
@@ -504,7 +504,7 @@ export function GuestRatesPanel({
         statusPlaceholder="Filter by type"
         statusOptions={[
           { key: 'all', label: 'All Types' },
-          { key: 'accommodation', label: '🏨 Accommodation' },
+          { key: 'accommodation', label: '🛎️ Accommodation' },
           { key: 'conference', label: '📅 Conference' },
           { key: 'lunch', label: '🍽️ Lunch' },
           { key: 'dinner', label: '🍴 Dinner' },
@@ -745,7 +745,7 @@ export function GuestRatesPanel({
                 <label className="text-sm font-medium">Select Rate Types *</label>
                 <div className="grid grid-cols-2 gap-3 p-3 border rounded-lg">
                   {[
-                    { key: 'accommodation', label: '🏨 Accommodation', defaultUnit: 'per_room' },
+                    { key: 'accommodation', label: '🛎️ Accommodation', defaultUnit: 'per_room' },
                     { key: 'conference', label: '📅 Conference', defaultUnit: 'per_person' },
                     { key: 'lunch', label: '🍽️ Lunch', defaultUnit: 'per_person' },
                     { key: 'dinner', label: '🍴 Dinner', defaultUnit: 'per_person' },

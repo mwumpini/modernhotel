@@ -198,7 +198,7 @@ table{width:100%;border-collapse:collapse;font-size:15px}td{border-top:1px solid
 <header>
   <h1>Hi ${esc(p.name)}, thanks for testing AGM Sync</h1>
   <p>${md(p.focus)}</p>
-  <span class="pill">⏱ ${esc(p.time)}</span><span class="pill">🏨 ${md(p.rooms)}</span><span class="pill">🧾 ${p.tasks.length} small tasks</span>
+  <span class="pill">⏱ ${esc(p.time)}</span><span class="pill">🛎️ ${md(p.rooms)}</span><span class="pill">🧾 ${p.tasks.length} small tasks</span>
 </header>
 
 <h2>1. Sign in</h2>
