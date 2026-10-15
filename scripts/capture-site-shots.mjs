@@ -14,7 +14,16 @@ const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, colorScheme: 'light' });
 const page = await context.newPage();
 // Hide the dev-server badge so the shots show only the product.
-const tidy = (p = page) => p.addStyleTag({ content: 'nextjs-portal, [data-nextjs-toast], [data-next-badge-root]{display:none!important}' }).catch(() => {});
+// Also hide the dashboard's System Alerts card for the picture only (the user's dashboard layout is not changed).
+const tidy = async (p = page) => {
+  await p.addStyleTag({ content: 'nextjs-portal, [data-nextjs-toast], [data-next-badge-root]{display:none!important}' }).catch(() => {});
+  await p.evaluate(() => {
+    const title = [...document.querySelectorAll('h3')].find((el) => el.textContent?.trim() === 'System Alerts');
+    const card = title?.closest('.bg-content1');
+    if (card instanceof HTMLElement) card.style.display = 'none';
+  }).catch(() => {});
+  await p.waitForTimeout(500);
+};
 
 await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 180_000 });
 await page.getByPlaceholder(/organization ID/i).fill('demo');
