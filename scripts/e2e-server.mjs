@@ -20,6 +20,8 @@ const env = {
   ...process.env,
   SQLITE_DATABASE_URL: `file:${dbFile.replace(/\\/g, '/')}`,
   NEXT_DIST_DIR: distDir,
+  // Tax rule data the app writes at runtime; kept out of the reviewed files in prisma/.
+  COMPLIANCE_DATA_DIR: path.join(root, distDir, 'compliance-data'),
   NEXTAUTH_URL: `http://localhost:${port}`,
   NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET || 'e2e-test-secret-not-for-production',
   NEXT_PUBLIC_DEMO_MODE: 'false',

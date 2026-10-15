@@ -234,9 +234,13 @@ class FrontOfficeStore {
         if (val > 0) this.addPayment(reservationId, p.method, val);
       });
     };
-    seedFolio('R-004', [600, 150, 100], [ { method: 'Card' } ]);
-    seedFolio('R-005', [800, 250], [ { method: 'Corporate Account' } ]);
-    seedFolio('R-006', [1000, 300, 100], [ { method: 'Cash', amount: 700 } ]);
+    // Sample bills go only with their sample stays (demo mode). Without this check every real
+    // hotel got GHS 3,300 of made-up "Room Charge" lines dated today, which the dashboard's
+    // Financial Pulse counted as billed room revenue.
+    const isSampleStay = (reservationId: string) => this.reservations.some((r) => r.id === reservationId);
+    if (isSampleStay('R-004')) seedFolio('R-004', [600, 150, 100], [ { method: 'Card' } ]);
+    if (isSampleStay('R-005')) seedFolio('R-005', [800, 250], [ { method: 'Corporate Account' } ]);
+    if (isSampleStay('R-006')) seedFolio('R-006', [1000, 300, 100], [ { method: 'Cash', amount: 700 } ]);
   }
 
   subscribe(l: () => void) { this.listeners.push(l); this.ensureHydratedFromApi(); this.ensureHydratedNightAuditState(); return () => { this.listeners = this.listeners.filter(x => x !== l); }; }

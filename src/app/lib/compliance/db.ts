@@ -7,9 +7,13 @@ type JsonObject = Record<string, any>;
 
 /** Vercel serverless only allows writes under /tmp. */
 const isServerless = process.env.VERCEL === '1';
-const dataDir = isServerless
-  ? path.join('/tmp', 'compliance-data')
-  : path.join(process.cwd(), 'prisma');
+// COMPLIANCE_DATA_DIR lets the end-to-end test server keep its own copy instead of
+// rewriting the reviewed files in prisma/.
+const dataDir = process.env.COMPLIANCE_DATA_DIR
+  ? path.resolve(process.env.COMPLIANCE_DATA_DIR)
+  : isServerless
+    ? path.join('/tmp', 'compliance-data')
+    : path.join(process.cwd(), 'prisma');
 const taxesFile = path.join(dataDir, 'compliance.taxes.json');
 const reportsFile = path.join(dataDir, 'compliance.reports.json');
 const typesFile = path.join(dataDir, 'compliance.taxTypes.json');
