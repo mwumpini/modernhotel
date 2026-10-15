@@ -15,9 +15,12 @@ import { SummaryToggle } from './dashboard/SummaryToggle';
 
 export default function SecurityMainDashboard({
   fullPage = false,
+  backButton,
   initialTab,
 }: {
   fullPage?: boolean;
+  /** Full-page view: the way back, shown at the start of the title row. */
+  backButton?: React.ReactNode;
   initialTab?: string;
 } = {}) {
   // Controls the Recent Activities/Notices cards below — the only hideable
@@ -29,20 +32,23 @@ export default function SecurityMainDashboard({
   const [activeTab, setActiveTab] = React.useState(initialTab || 'patrols');
 
   return (
-    <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-3 sm:p-4 md:p-6'}>
+    <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-3 sm:px-4 sm:py-3'}>
       <div
         className={`flex flex-wrap items-center justify-between gap-2 ${
-          fullPage ? 'mb-2' : 'mb-3 sm:mb-4 md:mb-6'
+          fullPage ? 'mb-2' : 'mb-3'
         }`}
       >
-        <h2
-          className={`min-w-0 flex-1 font-bold text-ghana-black ${
-            fullPage ? 'text-lg sm:text-xl' : 'text-lg sm:text-xl md:text-2xl'
-          }`}
-        >
-          <span className="sm:hidden">🚨 Security</span>
-          <span className="hidden sm:inline">🚨 Security Operations</span>
-        </h2>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {backButton}
+          <h2
+            className={`min-w-0 flex-1 font-bold text-ghana-black ${
+              fullPage ? 'text-lg sm:text-xl' : 'text-lg sm:text-xl md:text-2xl'
+            }`}
+          >
+            <span className="sm:hidden">🚨 Security</span>
+            <span className="hidden sm:inline">🚨 Security Operations</span>
+          </h2>
+        </div>
         <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
           <SummaryToggle collapsed={summaryCollapsed} onToggle={toggleSummary} />
           <CustomizeViewControl

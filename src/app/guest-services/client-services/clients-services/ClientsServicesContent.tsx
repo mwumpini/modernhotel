@@ -41,7 +41,7 @@ interface ClientRow {
 	totalSpent: number;
 	lastVisit?: string;
 	preferences?: ClientPreferences;
-	reservationCount: number;
+	stayCount: number;
 	createdAt: string;
 	isActive: boolean;
 }
@@ -149,16 +149,16 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
         index: 40, id: 90, name: 200, email: 150, phone: 110, secondaryPhone: 110, 
         gender: 70, nationality: 90, dob: 90, company: 150, jobTitle: 120, 
         industry: 120, contactPerson: 140, address: 160, city: 90, 
-        type: 110, reservations: 90, services: 80, dateJoined: 100
+        type: 110, stays: 90, services: 80, dateJoined: 100
     };
     const [colWidths, setColWidths] = useState<Record<string, number>>(defaultColWidths);
     
     // People and companies do not share a column set. "All" keeps a Type column so both can sit in one list.
     const visibleColumns: Array<keyof typeof colWidths> = typeFilter === 'corporate'
-        ? ['index', 'id', 'name', 'contactPerson', 'email', 'phone', 'reservations']
+        ? ['index', 'id', 'name', 'contactPerson', 'email', 'phone', 'stays']
         : typeFilter === 'individual'
-            ? ['index', 'id', 'name', 'email', 'phone', 'nationality', 'reservations']
-            : ['index', 'id', 'name', 'type', 'email', 'phone', 'reservations'];
+            ? ['index', 'id', 'name', 'email', 'phone', 'nationality', 'stays']
+            : ['index', 'id', 'name', 'type', 'email', 'phone', 'stays'];
     
     // Optimized form input handlers
     const handleInputChange = React.useCallback((field: string, value: any) => {
@@ -286,6 +286,16 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
             if (!reservationMap.has(key)) reservationMap.set(key, []);
             reservationMap.get(key)!.push(r);
         });
+
+        // Stays that actually happened (in house now or checked out). A
+        // company or third party that paid counts the stay too, so the number works as
+        // a reference for how often a client has stayed or sent guests.
+        const stayMap = new Map<string, number>();
+        reservations.forEach((r: Reservation) => {
+            if (r.status !== 'checked-in' && r.status !== 'checked-out') return;
+            const parties = new Set([r.guestId, r.billingPersonId].filter(Boolean) as string[]);
+            parties.forEach((id) => stayMap.set(id, (stayMap.get(id) || 0) + 1));
+        });
         
         services.forEach((s: ClientService) => {
             if (s.isActive) {
@@ -355,7 +365,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                     marketingEmails: (g as any).preferences?.marketingEmails ?? false
                 },
                 createdAt: (g as any).createdAt || new Date().toISOString(),
-                    reservationCount: clientReservations.length,
+                    stayCount: stayMap.get(g.id) || 0,
                     isActive: g.isActive !== false,
                 };
             });
@@ -478,7 +488,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 				(r.preferences?.allergies && Array.isArray(r.preferences.allergies) && r.preferences.allergies.some(allergy => allergy.toLowerCase().includes(searchLower))) ||
 				(r.preferences?.dietaryRestrictions && Array.isArray(r.preferences.dietaryRestrictions) && r.preferences.dietaryRestrictions.some(diet => diet.toLowerCase().includes(searchLower))) ||
 				// Search by reservation count
-				r.reservationCount.toString().includes(searchTerm) ||
+				r.stayCount.toString().includes(searchTerm) ||
 				// Search by total spent
 				r.totalSpent.toString().includes(searchTerm)
 			));
@@ -535,13 +545,13 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 		}
 		if (reservationFilter !== 'all') {
 			if (reservationFilter === 'none') {
-				list = list.filter(r => r.reservationCount === 0);
+				list = list.filter(r => r.stayCount === 0);
 			} else if (reservationFilter === '1-5') {
-				list = list.filter(r => r.reservationCount >= 1 && r.reservationCount <= 5);
+				list = list.filter(r => r.stayCount >= 1 && r.stayCount <= 5);
 			} else if (reservationFilter === '6-10') {
-				list = list.filter(r => r.reservationCount >= 6 && r.reservationCount <= 10);
+				list = list.filter(r => r.stayCount >= 6 && r.stayCount <= 10);
 			} else if (reservationFilter === '10+') {
-				list = list.filter(r => r.reservationCount > 10);
+				list = list.filter(r => r.stayCount > 10);
 			}
 		}
 		if (dateJoinedFrom) {
@@ -906,7 +916,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
     };
 
     const clientHasHistory = (row: ClientRow) =>
-        row.reservationCount > 0 || row.services > 0 || frontOfficeStore.guestHasHistory(row.id);
+        row.stayCount > 0 || row.services > 0 || frontOfficeStore.guestHasHistory(row.id);
 
     const handleDelete = async (row: ClientRow) => {
         const used = clientHasHistory(row);
@@ -955,7 +965,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
             case 'address': return row.address || '';
             case 'city': return row.city || '';
             case 'type': return row.type;
-            case 'reservations': return row.reservationCount;
+            case 'stays': return row.stayCount;
             case 'services': return row.services;
             case 'dateJoined': return row.createdAt || '';
             case 'index': return 0; // Index is always 0 for sorting purposes
@@ -1287,12 +1297,12 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                                  <SelectItem key="other">Other</SelectItem>
                              </Select>
                              <Input className="w-full sm:w-48" placeholder="Industry" value={industryFilter} onChange={e=>setIndustryFilter(e.target.value)} aria-label="Filter by industry" />
-                             <Select selectedKeys={[reservationFilter]} onSelectionChange={(keys)=>setReservationFilter(Array.from(keys as Set<string>)[0] || 'all')} className="w-full sm:w-44" aria-label="Filter by reservation count">
-                                 <SelectItem key="all">All Reservations</SelectItem>
-                                 <SelectItem key="none">No Reservations</SelectItem>
-                                 <SelectItem key="1-5">1-5 Reservations</SelectItem>
-                                 <SelectItem key="6-10">6-10 Reservations</SelectItem>
-                                 <SelectItem key="10+">10+ Reservations</SelectItem>
+                             <Select selectedKeys={[reservationFilter]} onSelectionChange={(keys)=>setReservationFilter(Array.from(keys as Set<string>)[0] || 'all')} className="w-full sm:w-44" aria-label="Filter by number of stays">
+                                 <SelectItem key="all">Any number of stays</SelectItem>
+                                 <SelectItem key="none">Never stayed</SelectItem>
+                                 <SelectItem key="1-5">1-5 stays</SelectItem>
+                                 <SelectItem key="6-10">6-10 stays</SelectItem>
+                                 <SelectItem key="10+">More than 10 stays</SelectItem>
                              </Select>
                              <Input type="date" className="w-full sm:w-40" labelPlacement="outside" placeholder="Joined From" value={dateJoinedFrom} onChange={e=>setDateJoinedFrom(e.target.value)} aria-label="Date joined from" />
                              <Input type="date" className="w-full sm:w-40" labelPlacement="outside" placeholder="Joined To" value={dateJoinedTo} onChange={e=>setDateJoinedTo(e.target.value)} aria-label="Date joined to" />
@@ -1334,7 +1344,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 									address: "Address",
 									city: "City",
 									type: "Type",
-									reservations: "Reservations",
+									stays: "Stays",
 									services: "Services",
 									dateJoined: "Date Joined",
 									actions: "Actions"
@@ -1407,10 +1417,10 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 										<Chip size="sm" variant="flat" color={row.type==='corporate'?'primary':'default'}>{row.type === 'corporate' ? 'Company' : 'Person'}</Chip>
 									</TableCell>
 													);
-												case 'reservations':
+												case 'stays':
 													return (
-														<TableCell style={{ width: colWidths.reservations }}>
-															<span className="block text-center font-medium">{row.reservationCount}</span>
+														<TableCell style={{ width: colWidths.stays }}>
+															<span className="block text-center font-medium">{row.stayCount}</span>
 														</TableCell>
 													);
 												case 'services':
@@ -2476,7 +2486,7 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
                               {fact('ID', guest.idNumber ? `${guest.idType || ''} ${guest.idNumber}`.trim() : '')}
                               {fact('Date of birth', profile.dateOfBirth ? new Date(profile.dateOfBirth).toLocaleDateString() : '')}
                               {fact('Company', profile.company)}
-                              {fact('Stays', profile.reservationCount)}
+                              {fact('Stays', profile.stayCount)}
                               {fact('Last visit', profile.lastVisit ? new Date(profile.lastVisit).toLocaleDateString() : '')}
                               {fact('Joined', joined)}
                             </div>

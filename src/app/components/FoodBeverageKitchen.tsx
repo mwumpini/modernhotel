@@ -131,9 +131,12 @@ interface Requisition {
 
 export default function FoodBeverageKitchen({
   fullPage = false,
+  backButton,
   initialTab,
 }: {
   fullPage?: boolean;
+  /** Full-page view: the way back, shown at the start of the title row. */
+  backButton?: React.ReactNode;
   initialTab?: string;
 } = {}) {
   const [selectedTab, setSelectedTab] = useState(initialTab || 'kds');
@@ -510,10 +513,13 @@ export default function FoodBeverageKitchen({
 
   return (
     <SummaryCollapsedProvider collapsed={!fullPage && summaryCollapsed}>
-    <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
+    <div className={fullPage ? 'px-3 pt-1 pb-3' : 'px-4 py-3'}>
       {/* Header */}
-      <div className={`flex items-center justify-between ${fullPage ? 'mb-2' : 'mb-6'}`}>
-        <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>👨‍🍳 Kitchen</h2>
+      <div className={`flex items-center justify-between ${fullPage ? 'mb-2' : 'mb-3'}`}>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {backButton}
+          <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>👨‍🍳 Kitchen</h2>
+        </div>
         <div className="flex items-center gap-2">
           {!fullPage && <SummaryToggle collapsed={summaryCollapsed} onToggle={toggleSummary} />}
           <CustomizeViewControl

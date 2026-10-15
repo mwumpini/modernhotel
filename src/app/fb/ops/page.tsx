@@ -8,10 +8,7 @@ import FoodBeverageMainDashboard from '../../components/FoodBeverageMainDashboar
 export default function FoodBeverageOpsPage() {
   return (
     <PageLayout>
-      <div className="px-3 pt-2 pb-0">
-        <FoodBeverageBackButton />
-      </div>
-      <FoodBeverageMainDashboard fullPage />
+      <FoodBeverageMainDashboard fullPage backButton={<FoodBeverageBackButton iconOnly />} />
     </PageLayout>
   );
 }

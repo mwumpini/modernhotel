@@ -3124,7 +3124,7 @@ export default function InventorySupplyChainDashboard({
 
   return (
     <InventoryScreenProvider value={inventoryScreen as InventoryScreen}>
-    <div className={embedded ? undefined : 'p-6'}>
+    <div className={embedded ? undefined : 'px-4 py-3'}>
       {!embedded && (
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-ghana-black">Stock & Supply</h1>

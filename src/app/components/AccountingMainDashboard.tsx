@@ -126,8 +126,11 @@ const ALL_ACCOUNTING_SECTIONS: DashboardSectionDef[] = [
 
 export default function AccountingMainDashboard({
   fullPage = false,
+  backButton,
 }: {
   fullPage?: boolean;
+  /** Full-page view: the way back, shown at the start of the title row. */
+  backButton?: React.ReactNode;
 } = {}) {
   const leanMode = isLeanAccountingUI();
   const [selectedTab, setSelectedTab] = useState('receivables');
@@ -356,12 +359,15 @@ export default function AccountingMainDashboard({
     <SummaryCollapsedProvider collapsed={headerCollapsed}>
     <>
       {!fullPage && <DeptMessenger from="accounting" mode="drawer" />}
-      <div className={`acct-desk ${headerCollapsed ? 'acct-summary-off' : ''} ${fullPage ? 'px-3 pt-1 pb-3' : 'p-3 md:p-6 short:p-2'}`}>
+      <div className={`acct-desk ${headerCollapsed ? 'acct-summary-off' : ''} ${fullPage ? 'px-3 pt-1 pb-3' : 'p-3 md:px-4 md:py-3 short:p-2'}`}>
         <div>
-          <div className={`flex flex-wrap items-center justify-between gap-2 ${fullPage ? 'mb-2' : 'mb-3 md:mb-6 short:mb-2'}`}>
-            <h2 className={`${fullPage ? 'text-xl' : 'text-xl md:text-2xl short:text-lg'} font-bold text-ghana-black`}>
-              {fullPage ? '🧾 Accounting' : '🧾 Accounting & Finance'}
-            </h2>
+          <div className={`flex flex-wrap items-center justify-between gap-2 ${fullPage ? 'mb-2' : 'mb-3 short:mb-2'}`}>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {backButton}
+              <h2 className={`${fullPage ? 'text-xl' : 'text-xl md:text-2xl short:text-lg'} font-bold text-ghana-black`}>
+                {fullPage ? '🧾 Accounting' : '🧾 Accounting & Finance'}
+              </h2>
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 size="sm"

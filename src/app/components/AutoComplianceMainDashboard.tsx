@@ -137,7 +137,7 @@ export default function AutoComplianceMainDashboard() {
   };
 
   return (
-    <div className="p-6 space-y-3">
+    <div className="px-4 py-3 space-y-3">
       {error && (
         <Card className={`border ${error.includes('default') ? 'border-amber-200 bg-amber-50' : 'border-red-200 bg-red-50'}`}>
           <CardBody>

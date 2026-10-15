@@ -915,7 +915,7 @@ export default function ExecutiveManagementDashboard() {
     }`;
 
   return (
-    <div className="px-3 pt-3 pb-6 sm:p-6">
+    <div className="px-3 pt-3 pb-4 sm:px-4 sm:py-3">
       <div className="mb-4 flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-xl font-semibold tracking-tight text-ghana-black">Executive Management</h2>

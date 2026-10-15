@@ -65,9 +65,12 @@ function resolveFoTab(raw: string | null) {
 export default function FrontdeskDashboard({
   initialTab,
   fullPage = false,
+  backButton,
 }: {
   initialTab?: string;
   fullPage?: boolean;
+  /** Full-page view: the way back, shown at the start of the title row. */
+  backButton?: React.ReactNode;
 } = {}) {
   const [selectedTab, setSelectedTab] = useState(resolveFoTab(initialTab || null) || 'reservations');
   const { collapsed: summaryCollapsed, toggle: toggleSummary } = useSummaryCollapsed('frontdesk.summaryCollapsed');
@@ -154,12 +157,15 @@ export default function FrontdeskDashboard({
     <FrontOfficeDeskVisibilityProvider value={deskVisibility}>
     <FrontOfficeDeskPeriodProvider value={deskPeriodApi}>
     <SummaryCollapsedProvider collapsed={!fullPage && summaryCollapsed}>
-    <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
+    <div className={fullPage ? 'px-3 pt-1 pb-3' : 'px-4 py-3'}>
       {!fullPage && <DeptMessenger from="frontdesk" mode="drawer" />}
-      <div className={`flex flex-wrap items-center justify-between gap-2 ${fullPage ? 'mb-2' : 'mb-6'}`}>
-        <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>
-          {fullPage ? '🏨 Front Office' : '🏨 Front Office Operations'}
-        </h2>
+      <div className={`flex flex-wrap items-center justify-between gap-2 ${fullPage ? 'mb-2' : 'mb-3'}`}>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {backButton}
+          <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>
+            {fullPage ? '🏨 Front Office' : '🏨 Front Office Operations'}
+          </h2>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           {!fullPage && <SummaryToggle collapsed={summaryCollapsed} onToggle={toggleSummary} />}
           <FoDeskKpiCustomize sections={customizeSections} />

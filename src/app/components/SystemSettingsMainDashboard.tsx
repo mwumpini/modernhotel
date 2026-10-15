@@ -109,7 +109,7 @@ export default function SystemSettingsMainDashboard() {
   };
 
   return (
-    <div className="p-6 space-y-3">
+    <div className="px-4 py-3 space-y-3">
       {!initialSetupCompleted && (
         <Card className="border-0 shadow-lg border-l-4 border-l-amber-500 bg-amber-50">
           <CardBody className="flex items-center justify-between gap-3 py-3">

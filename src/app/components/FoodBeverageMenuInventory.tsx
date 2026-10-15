@@ -459,7 +459,7 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
   const openMenuItem = viewingMenuId ? menuItems.find((item) => item.id === viewingMenuId) ?? null : null;
 
   return (
-    <div className={embedded ? 'px-2 pb-2' : 'p-6'}>
+    <div className={embedded ? 'px-2 pb-2' : 'px-4 py-3'}>
       {/* Header */}
       {!embedded && (
       <div className="flex items-center justify-between mb-6">

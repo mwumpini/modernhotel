@@ -166,9 +166,9 @@ export default function StoresMainDashboard() {
   ];
 
   return (
-    <div className="p-6">
+    <div className="px-4 py-3">
       <DeptMessenger from="inventory" mode="drawer" />
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-3">
         <h2 className="text-2xl font-bold text-ghana-black">📦 Inventory & Stores</h2>
         <div className="flex items-center gap-2">
           <Button

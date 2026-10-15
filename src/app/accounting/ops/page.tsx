@@ -8,10 +8,7 @@ import AccountingMainDashboard from '../../components/AccountingMainDashboard';
 export default function AccountingOpsPage() {
   return (
     <PageLayout>
-      <div className="px-3 pt-2 pb-0">
-        <AccountingBackButton />
-      </div>
-      <AccountingMainDashboard fullPage />
+      <AccountingMainDashboard fullPage backButton={<AccountingBackButton iconOnly />} />
     </PageLayout>
   );
 }

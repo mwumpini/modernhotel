@@ -249,11 +249,14 @@ import type {
 
 export default function EventsConferencesMainDashboard({
   fullPage = false,
+  backButton,
   workspaceOnly = false,
   externalEditEventId = null,
   onWorkspaceClose,
 }: {
   fullPage?: boolean;
+  /** Full-page view: the way back, shown at the start of the title row. */
+  backButton?: React.ReactNode;
   /** Render only the event edit modal (e.g. opened from Accounting over the AR screen). */
   workspaceOnly?: boolean;
   externalEditEventId?: string | null;
@@ -11159,12 +11162,15 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     <EventsScreenProvider value={eventsScreen}>
     <>
       {!workspaceOnly && (
-      <div className={fullPage ? 'px-3 pt-1 pb-3' : 'p-6'}>
+      <div className={fullPage ? 'px-3 pt-1 pb-3' : 'px-4 py-3'}>
       {/* Removed top notices; bottom section contains notices & activities */}
       {!fullPage && <DeptMessenger from="events" mode="drawer" />}
       
       <div className={`${fullPage ? 'mb-2' : 'mb-3'} flex items-center justify-between gap-3`}>
-        <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>🎪 Events & Conferences</h2>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {backButton}
+          <h2 className={`${fullPage ? 'text-xl' : 'text-2xl'} font-bold text-ghana-black`}>🎪 Events & Conferences</h2>
+        </div>
         {!fullPage && (
           <ModuleExpandButton
             href={selectedTab === 'reports' ? '/events/reports' : '/events/ops'}

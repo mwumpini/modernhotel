@@ -8,10 +8,7 @@ import SecurityMainDashboard from '../../components/SecurityMainDashboard';
 export default function SecurityOpsPage() {
   return (
     <PageLayout>
-      <div className="px-3 pt-2 pb-0">
-        <SecurityBackButton />
-      </div>
-      <SecurityMainDashboard fullPage />
+      <SecurityMainDashboard fullPage backButton={<SecurityBackButton iconOnly />} />
     </PageLayout>
   );
 }
