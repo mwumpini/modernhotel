@@ -10,9 +10,9 @@ const DEPARTMENTS = [
 ]
 
 const POSITIONS = [
-  { key: 'recep', dept: 'fo', title: 'Front Desk Receptionist', code: 'FO-REC', baseSalary: 2200 },
+  { key: 'recep', dept: 'fo', title: 'Receptionist', code: 'FO-REC', baseSalary: 2200 },
   { key: 'fosup', dept: 'fo', title: 'Front Office Supervisor', code: 'FO-SUP', baseSalary: 3500 },
-  { key: 'maid', dept: 'hk', title: 'Housekeeper', code: 'HK-ROOM', baseSalary: 1800 },
+  { key: 'maid', dept: 'hk', title: 'Room Attendant', code: 'HK-ROOM', baseSalary: 1800 },
   { key: 'hksup', dept: 'hk', title: 'Housekeeping Supervisor', code: 'HK-SUP', baseSalary: 2800 },
   { key: 'waiter', dept: 'fb', title: 'Waiter / Waitress', code: 'FB-SRV', baseSalary: 1700 },
   { key: 'barman', dept: 'fb', title: 'Bartender', code: 'FB-BAR', baseSalary: 2000 },

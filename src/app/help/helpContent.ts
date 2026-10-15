@@ -13,12 +13,21 @@ export type HelpNavSection =
   | 'settings'
   | 'compliance';
 
+/** One chapter of Help, in side-menu order. `reference` is not a desk. */
 export type HelpTopicCategory =
-  | 'start'
-  | 'operations'
-  | 'configuration'
-  | 'finance'
-  | 'general';
+  | 'dashboard'
+  | 'frontdesk'
+  | 'events'
+  | 'restaurant'
+  | 'kitchen'
+  | 'housekeeping'
+  | 'inventory'
+  | 'security'
+  | 'hr'
+  | 'accounting'
+  | 'compliance'
+  | 'settings'
+  | 'reference';
 
 export type HelpTopic = {
   id: string;
@@ -35,8 +44,19 @@ export type HelpTopic = {
   notHere?: string;
   section?: HelpNavSection;
   href?: string;
-  settingsTab?: 'users' | 'rooms' | 'numbering' | 'security';
+  settingsTab?: 'users' | 'rooms' | 'policies' | 'tills' | 'numbering' | 'templates' | 'locations' | 'security' | 'approvals' | 'modules' | 'sample-data' | 'audit' | 'profile';
   complianceTab?: 'tax' | 'payroll' | 'reports';
+  /** Opens that tab after the desk loads. */
+  accountingTab?: 'receivables' | 'payables' | 'banking' | 'assets' | 'journal' | 'statements' | 'accounts';
+  hrTab?: 'employees' | 'leave' | 'time' | 'payroll' | 'departments';
+  securityTab?: 'patrols' | 'incidents' | 'visitors' | 'staff';
+  eventsTab?: 'confirmed' | 'venues' | 'quoting' | 'staff';
+  kitchenTab?: 'kds' | 'ready' | 'log';
+  fbTab?: 'activity' | 'tables' | 'menu' | 'cashiering' | 'supplies';
+  /** Stock & Supply tab inside Inventory → Stock. */
+  inventoryOpsTab?: 'inventory' | 'suppliers' | 'requisitions' | 'purchase-orders' | 'transfers' | 'goods-issue' | 'supplier-invoices' | 'stock-operations';
+  /** Purchase Orders inner tab. */
+  inventoryPoView?: 'orders' | 'goods-receipt';
 };
 
 /** Every keyboard shortcut, shown on the Help page, in its "Keyboard shortcuts" topic and in the manual. */
@@ -83,7 +103,8 @@ export const helpMaintainerGuide = {
   title: 'How to update Help later',
   file: 'src/app/help/helpContent.ts',
   steps: [
-    'Add or edit an entry in the helpTopics array (id, title, description, keywords, category).',
+    'Add or edit an entry in the helpTopics array (id, title, description, keywords, category). Category is the side-menu desk: dashboard, frontdesk, events, restaurant, kitchen, housekeeping, inventory, security, hr, accounting, compliance, or settings.',
+    'Add the topic id to that desk in helpModules, in the order a person meets that part of the desk. Help and the manual follow helpModules, from Executive Management through System Settings.',
     'To deep-link into Settings, set section: "settings" and settingsTab to users | rooms | numbering | locations | security.',
     'To deep-link into Compliance, set section: "compliance" and complianceTab to tax | payroll | reports.',
     'For standalone pages (e.g. setup wizard), set href: "/setup" instead of section.',
@@ -102,7 +123,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'How a desk is laid out',
     description: 'Every department screen has a title, a summary you can hide, and tabs for the work.',
     keywords: ['summary', 'tabs', 'show summary', 'hide summary', 'tablet', 'layout', 'desk'],
-    category: 'start',
+    category: 'dashboard',
     image: '/help-images/desk-summary.png',
     imageAlt: "The Front Office desk with the summary shown: count cards at the top, Hide summary and Customize at the top right.",
     steps: [
@@ -117,7 +138,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Ask Mamani',
     description: 'The desk assistant drafts notices and answers how-to questions from this Help.',
     keywords: ['mamani', 'ask', 'ai', 'f12', 'f1', 'assistant', 'how to'],
-    category: 'start',
+    category: 'dashboard',
     steps: [
       'On a desk, press F1 or F12, or open Messenger (Ctrl+M) and choose Ask Mamani.',
       'Use a suggested prompt, or type a question such as "How do I change VAT?"',
@@ -131,7 +152,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Notices and the messenger',
     description: 'Send a department notice, or a private message, without leaving the desk.',
     keywords: ['notice', 'messenger', 'ctrl m', 'urgent', 'department', 'chat'],
-    category: 'start',
+    category: 'dashboard',
     steps: [
       'Press Ctrl+M or the round message button to open the drawer.',
       'Choose Info, Normal, or Urgent, pick the departments, type the message, and press Send.',
@@ -146,7 +167,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Configuration map (Setup vs Settings vs Compliance)',
     description: 'Which module owns company info, room prices, tax rates, and numbering.',
     keywords: ['where', 'configure', 'setup', 'settings', 'compliance', 'map', 'boundaries'],
-    category: 'configuration',
+    category: 'settings',
     steps: [
       'First visit: the setup wizard asks once for the company, country, and currency. Afterwards, change company details in Settings → Company Profile.',
       'Ongoing: use Settings for users, rooms & rate plans, numbering, and security.',
@@ -158,7 +179,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Initial setup wizard',
     description: 'First-run property bootstrap: company, localization, currency, and base policies.',
     keywords: ['configure', 'wizard', 'first run', 'country', 'currency', 'company'],
-    category: 'configuration',
+    category: 'settings',
     href: '/setup',
     steps: [
       'Open /setup or follow the banner in Settings when setup is incomplete.',
@@ -170,19 +191,24 @@ export const helpTopics: HelpTopic[] = [
   {
     id: 'settings',
     title: 'System settings (overview)',
-    description: 'Users, rooms & pricing, document numbering, and security.',
-    keywords: ['config', 'settings', 'admin'],
-    category: 'configuration',
+    description: 'The last desk. Users, rooms, documents, stock locations, security, approvals, and the company profile.',
+    keywords: ['config', 'settings', 'admin', 'templates', 'approvals', 'audit', 'locations'],
+    category: 'settings',
     section: 'settings',
     image: '/help-images/settings.png',
-    imageAlt: 'System Settings',
+    imageAlt: 'System Settings and its tabs, including Document Templates, Stock Locations, Security, Approvals, and Audit Log.',
+    steps: [
+      'Open System Settings in the side menu.',
+      'The tabs run across the top: Users & Roles, Rooms & Pricing, Operational Policies, Till management, Document Numbering, Document Templates, Stock Locations, Security, Approvals, Modules, Sample Data, Audit Log, and Company Profile.',
+      'People in the side menu opens Users & Roles. Rooms, Documents, and Stock open those tabs. The Security tab here is passwords and sign-in. Company Profile is the hotel name, logo, and TIN.',
+    ],
   },
   {
     id: 'users',
     title: 'Users & roles',
     description: 'Create staff accounts, assign roles, and manage personal preferences.',
     keywords: ['users', 'roles', 'admin', 'preferences', 'password'],
-    category: 'configuration',
+    category: 'settings',
     image: '/help-images/users.png',
     imageAlt: "Settings, Users & Roles: the staff accounts and what each role may do.",
     section: 'settings',
@@ -198,7 +224,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Rooms & pricing',
     description: 'Room types, rate plans, seasonal pricing, and operational policies.',
     keywords: ['rates', 'pricing', 'room types', 'seasonal', 'rate plan', 'bar'],
-    category: 'configuration',
+    category: 'settings',
     image: '/help-images/rooms-pricing.png',
     imageAlt: "Settings, Rooms & Pricing: room types, rooms, rate plans and service charges.",
     section: 'settings',
@@ -214,7 +240,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Document numbering',
     description: 'Invoice, receipt, reservation, and client ID formats and next numbers.',
     keywords: ['invoice', 'receipt', 'numbering', 'prefix', 'folio', 'reservation number'],
-    category: 'configuration',
+    category: 'settings',
     image: '/help-images/numbering.png',
     imageAlt: "Settings, Document Numbering: the prefix and next number for invoices, receipts and other documents.",
     section: 'settings',
@@ -227,22 +253,83 @@ export const helpTopics: HelpTopic[] = [
   },
   {
     id: 'security-settings',
-    title: 'Security & passwords',
-    description: 'Two-factor auth, session timeout, and password policy for all staff.',
-    keywords: ['2fa', 'password', 'session', 'security', 'lockout'],
-    category: 'configuration',
+    title: 'Passwords and sign-in',
+    description: 'The Security tab in System Settings: password rules, session timeout, and the manager PIN. This is not the security desk.',
+    keywords: ['2fa', 'password', 'session', 'security', 'lockout', 'pin'],
+    category: 'settings',
     image: '/help-images/security-settings.png',
-    imageAlt: "Settings, Security: password, session, PIN rules and the manager PIN.",
+    imageAlt: "Settings, Security tab: password, session, PIN rules and the manager PIN.",
     section: 'settings',
     settingsTab: 'security',
-    notHere: 'Company tax ID or VAT rates.',
+    steps: [
+      'Open System Settings → Security. This tab is passwords and how long a sign-in lasts.',
+      'Set the password rules, the session timeout, and the manager PIN.',
+    ],
+    notHere: 'Patrols, visitors, and incidents are the Security Operations desk, earlier in the side menu. They are not set here.',
+  },
+  {
+    id: 'settings-templates',
+    title: 'Document templates',
+    description: 'The printed layout for front-desk documents, the restaurant receipt, event paperwork, and the payslip.',
+    keywords: ['template', 'payslip', 'receipt', 'print', 'letterhead', 'document'],
+    category: 'settings',
+    section: 'settings',
+    settingsTab: 'templates',
+    steps: [
+      'Open System Settings → Document Templates.',
+      'Accommodation & Front Desk covers room and front-desk documents. Restaurant & Bar is the receipt the POS prints. Events & Conferences is separate.',
+      'Pick the design and save it as the one that prints. The logo, name, address, and TIN come from Company Profile.',
+    ],
+    notHere: 'The next invoice number is Document Numbering, not the template.',
+  },
+  {
+    id: 'settings-locations',
+    title: 'Stock locations',
+    description: 'The names of stores, fridges, and floor pantries that inventory transfers and issues use.',
+    keywords: ['stock location', 'store', 'warehouse', 'pantry', 'fridge'],
+    category: 'settings',
+    section: 'settings',
+    settingsTab: 'locations',
+    steps: [
+      'Open System Settings → Stock Locations, or Stock in the side menu.',
+      'Add a location and keep it active. Inventory → Transfers and Issues offer these names.',
+    ],
+    notHere: 'Quantities on hand are Inventory & Stores, not here.',
+  },
+  {
+    id: 'settings-approvals',
+    title: 'Approval thresholds',
+    description: 'The amount at which a journal, purchase, payment, overtime, or payroll must wait for a director.',
+    keywords: ['approval', 'threshold', 'director', 'sign-off', 'purchase order'],
+    category: 'settings',
+    section: 'settings',
+    settingsTab: 'approvals',
+    steps: [
+      'Open System Settings → Approvals.',
+      'Turn on Require approval and set the amount for expenses and journal entries, purchase orders, payments, overtime, and payroll.',
+      'Press Save Thresholds. A posting at or above that amount waits for someone who can approve it.',
+    ],
+  },
+  {
+    id: 'settings-audit',
+    title: 'Audit log',
+    description: 'Who signed in, changed a setting, or posted a document, and when.',
+    keywords: ['audit', 'log', 'history', 'who changed'],
+    category: 'settings',
+    section: 'settings',
+    settingsTab: 'audit',
+    steps: [
+      'Open System Settings → Audit Log.',
+      'Search or filter the list. Each row is an action, the person, and the time.',
+    ],
+    notHere: 'Accounting → Activity log is the books. This log is sign-in and settings across the hotel.',
   },
   {
     id: 'compliance',
     title: 'Compliance & tax (overview)',
     description: 'Tax rules, PAYE, and regulatory filing — drives all system tax calculations.',
     keywords: ['ghana', 'compliance', 'tax', 'gra'],
-    category: 'configuration',
+    category: 'compliance',
     section: 'compliance',
     image: '/help-images/compliance.png',
     imageAlt: 'Compliance and Reports',
@@ -255,7 +342,7 @@ export const helpTopics: HelpTopic[] = [
       'setup', 'set up', 'tax', 'taxes', 'vat', 'nhil', 'getfund', 'tourism levy',
       'withholding', 'wht', 'goods', 'supplier', 'guest bill', 'claim back', 'gl',
     ],
-    category: 'configuration',
+    category: 'compliance',
     image: '/help-images/compliance.png',
     imageAlt: "Compliance, Tax rules: the guest-bill taxes and supplier withholding rates.",
     section: 'compliance',
@@ -279,7 +366,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Staff income tax (PAYE and SSNIT)',
     description: 'Set the PAYE bands and SSNIT rates used when you pay staff.',
     keywords: ['paye', 'payroll', 'ssnit', 'income tax', 'staff tax', 'bands', 'setup'],
-    category: 'configuration',
+    category: 'compliance',
     image: '/help-images/paye.png',
     imageAlt: "Compliance, Payroll tax: PAYE bands and the SSNIT tiers used by payroll.",
     section: 'compliance',
@@ -296,7 +383,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Filing dates and company income tax',
     description: 'When each return is due, and where the hotel’s company income tax sits.',
     keywords: ['vat return', 'filing', 'ssnit', 'paye', 'wht', 'gsl', 'cit', 'income tax', 'company tax', 'reports', 'due date', 'setup'],
-    category: 'configuration',
+    category: 'compliance',
     image: '/help-images/compliance-reports.png',
     imageAlt: "Compliance, Reports & Filing: what to file and when it is due.",
     section: 'compliance',
@@ -315,7 +402,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Executive dashboard',
     description: 'Property-wide view for the general manager: rooms, stock, staff, security, and open restaurant orders in one place.',
     keywords: ['gm', 'executive', 'dashboard', 'management', 'overview', 'approvals'],
-    category: 'operations',
+    category: 'dashboard',
     section: 'dashboard',
     image: '/help-images/executive.png',
     imageAlt: 'Executive Management dashboard',
@@ -329,17 +416,18 @@ export const helpTopics: HelpTopic[] = [
   {
     id: 'front',
     title: 'Front office',
-    description: 'Arrivals, in-house guests, room status, folios, and the night audit.',
-    keywords: ['front desk', 'reception', 'guest', 'rooms', 'check in', 'checkout', 'folio'],
-    category: 'operations',
+    description: 'The second desk. Desk, Rooms, Billing, Clients, Night, and Reports are the parts — open each one from the side menu.',
+    keywords: ['front desk', 'reception', 'guest', 'rooms', 'check in', 'checkout', 'folio', 'billing', 'night', 'clients'],
+    category: 'frontdesk',
     section: 'frontdesk',
     image: '/help-images/front-office.png',
     imageAlt: 'Front Office desk with room status and tabs',
     steps: [
-      'Open Front Office Operations. Desk, Rooms, Billing, Clients, Night, and Reports in the side menu open that part of the desk.',
-      'Rooms shows which rooms are occupied, vacant, or need housekeeping.',
-      'Reservations is the list of stays. Desk is the counter for the guest in front of you.',
-      'Invoices & Payments holds the folio. Cashiering takes the money. Night Audit closes the business date.',
+      'Open Front Office Operations in the side menu. Under it: Desk, Rooms, Billing, Clients, Night, and Reports. Each name opens that part of this desk.',
+      'Desk is the counter for the guest in front of you. Check-in, the open stay, and checkout start here.',
+      'Rooms is the board: occupied, vacant, or needs housekeeping. Room Transfer, on this part, moves a guest and keeps the same folio.',
+      'Billing holds the folio (Invoices & Payments) and Cashiering, where you take the money. Clients is the guest and company list.',
+      'Night closes the business date. Reports is the period summary.',
     ],
     notHere: 'Nightly room prices are set in Settings → Rooms & Pricing. Tax percentages are in Compliance.',
   },
@@ -348,7 +436,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Check in a guest',
     description: 'Move an arriving reservation to in-house and assign a room.',
     keywords: ['check-in', 'check in', 'arrival', 'assign room', 'walk in'],
-    category: 'operations',
+    category: 'frontdesk',
     image: '/help-images/front-checkin.png',
     imageAlt: "The stay window at check-in: room nights with tax, the financial summary, Take payment and Check in.",
     section: 'frontdesk',
@@ -364,7 +452,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Check out and take payment',
     description: 'Settle the folio and release the room to housekeeping.',
     keywords: ['checkout', 'check out', 'payment', 'folio', 'cashier', 'invoice'],
-    category: 'operations',
+    category: 'frontdesk',
     image: '/help-images/front-checkout.png',
     imageAlt: "An in-house stay: charges, payments, Open the folio and Check out.",
     section: 'frontdesk',
@@ -381,7 +469,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Move a guest to another room',
     description: 'Room transfer keeps the same stay and folio.',
     keywords: ['room transfer', 'move room', 'change room'],
-    category: 'operations',
+    category: 'frontdesk',
     image: '/help-images/front-transfer.png',
     imageAlt: "Room Transfer: pick the guest, the new room and the reason.",
     section: 'frontdesk',
@@ -396,7 +484,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Close the business day (night audit)',
     description: 'Post the day\'s room charges and roll the business date. The hotel can also run this automatically at 1:00 AM.',
     keywords: ['night audit', 'close day', 'business date', 'end of day', 'catch up'],
-    category: 'operations',
+    category: 'frontdesk',
     image: '/help-images/front-audit.png',
     imageAlt: "Night Audit: the business date, the checks, and Close.",
     section: 'frontdesk',
@@ -412,7 +500,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Housekeeping',
     description: 'See the floor, assign cleaning, and request supplies.',
     keywords: ['cleaning', 'rooms', 'housekeeper', 'dirty', 'floor', 'linen'],
-    category: 'operations',
+    category: 'housekeeping',
     section: 'housekeeping',
     image: '/help-images/housekeeping.png',
     imageAlt: 'Housekeeping desk',
@@ -429,7 +517,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Update a room after cleaning',
     description: 'Mark a room clean so the front desk can sell or assign it.',
     keywords: ['clean room', 'dirty', 'inspected', 'room status', 'attendant'],
-    category: 'operations',
+    category: 'housekeeping',
     image: '/help-images/hk-clean.png',
     imageAlt: "Housekeeping Work: cleaning tasks and maintenance jobs.",
     section: 'housekeeping',
@@ -445,7 +533,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Restaurant and bar',
     description: 'Tables, orders, the menu, and cashiering for food and drink.',
     keywords: ['restaurant', 'bar', 'menu', 'pos', 'food', 'table', 'order'],
-    category: 'operations',
+    category: 'restaurant',
     section: 'food-beverage',
     image: '/help-images/restaurant.png',
     imageAlt: 'Restaurant and Bar desk',
@@ -462,7 +550,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Send a food order',
     description: 'Take the order in the POS and send it to the kitchen.',
     keywords: ['pos', 'send order', 'ctrl enter', 'payment', 'cover'],
-    category: 'operations',
+    category: 'restaurant',
     image: '/help-images/fb-order.png',
     imageAlt: "The POS: menu on the left, the order on the right, Send to kitchen and payment.",
     section: 'food-beverage',
@@ -474,85 +562,285 @@ export const helpTopics: HelpTopic[] = [
     ],
   },
   {
+    id: 'fb-transactions',
+    title: 'Restaurant transactions',
+    description: 'Every ticket: waiting on the kitchen, waiting on the bar, unpaid, billed, or voided.',
+    keywords: ['kot', 'bot', 'transaction', 'unpaid', 'billed', 'voided', 'ticket'],
+    category: 'restaurant',
+    section: 'food-beverage',
+    fbTab: 'activity',
+    steps: [
+      'Open Restaurant & Bar → Transactions.',
+      'Filter All activity, Pending KOT (kitchen ticket), Pending BOT (bar ticket), Unpaid, Billed, or Voided.',
+      'Narrow by staff, or by today, one date, or a date range. Open a row for the ticket.',
+    ],
+  },
+  {
     id: 'kitchen',
     title: 'Kitchen display',
-    description: 'Tickets coming from the restaurant, the operations log, stations, and recipes.',
-    keywords: ['kitchen', 'kds', 'ticket', 'recipe', 'station', 'prep'],
-    category: 'operations',
+    description: 'Live tickets from the restaurant, plus Ready now and the operations log.',
+    keywords: ['kitchen', 'kds', 'ticket', 'recipe', 'station', 'prep', 'ready now'],
+    category: 'kitchen',
     section: 'kitchen',
+    kitchenTab: 'kds',
     image: '/help-images/kitchen.png',
-    imageAlt: 'Kitchen desk',
+    imageAlt: 'Kitchen Display with tickets in New, Cooking, and Ready.',
     steps: [
-      'Open Kitchen in the side menu.',
-      'Kitchen Display is the live ticket screen. Move a ticket as it is cooked and ready.',
-      'Kitchen Operations Log is the record of what was prepared.',
+      'Open Kitchen → Kitchen Display. The board groups tickets as New, Cooking, Ready, and Done.',
+      'Move a ticket as it is cooked. Display and Sync keep the board with the restaurant.',
+      'Ready now is dishes that can be served at once. Kitchen Operations Log is the history of those moves.',
       'Recipes and Kitchen Stations are the setup. Supplies is the kitchen stock request.',
+    ],
+  },
+  {
+    id: 'kitchen-ready',
+    title: 'Ready now',
+    description: 'Dishes the kitchen can serve immediately. Drinks stay on the bar, not on this board.',
+    keywords: ['ready now', 'ready board', 'starred', 'dish', 'portion'],
+    category: 'kitchen',
+    section: 'kitchen',
+    kitchenTab: 'ready',
+    image: '/help-images/kitchen-ready.png',
+    imageAlt: 'Ready now: tap a dish to mark it ready. Drinks are not on this board.',
+    steps: [
+      'Open Kitchen → Ready now, or the Ready now tab on the kitchen desk.',
+      'Tap a dish to mark it ready for immediate service. Drinks are not on this board.',
+      'Starred keeps a dish easy to find. Clear board takes the ready list down.',
+    ],
+  },
+  {
+    id: 'kitchen-log',
+    title: 'Kitchen operations log',
+    description: 'What happened on the kitchen display: assigned, status change, and prepared.',
+    keywords: ['operations log', 'kitchen log', 'prepared', 'status change'],
+    category: 'kitchen',
+    section: 'kitchen',
+    kitchenTab: 'log',
+    steps: [
+      'Open Kitchen → the Kitchen Operations Log tab.',
+      'Filter by action (Assigned, Status change, Prepared) and by priority.',
+      'Click a row for the full detail.',
     ],
   },
   {
     id: 'evt',
     title: 'Events and conferences',
-    description: 'Banquet and conference bookings, setup, catering, and the event invoice.',
-    keywords: ['conference', 'banquet', 'event', 'meeting', 'beo', 'function'],
-    category: 'operations',
+    description: 'Bookings, the four ways to look at them, halls, and the event invoice.',
+    keywords: ['conference', 'banquet', 'event', 'meeting', 'beo', 'function', 'venue', 'calendar', 'gantt'],
+    category: 'events',
     section: 'events-conferences-standalone',
+    eventsTab: 'confirmed',
     image: '/help-images/events.png',
     imageAlt: 'Events and Conferences desk',
     steps: [
-      'Open Events & Conferences → Event Management.',
-      'Press New event, or open an existing row. The booking has Event, Setup, Catering, Timeline, and Tasks.',
-      'Invoices and Receipts sit on the Event Management screen next to Event Master.',
-      'Venue Management is the halls. Guest Rates are the prices for event guests. Staff Management is the crew.',
+      'Open Events & Conferences → Events. Event Management is the bookings. Venues is the halls. Rates are guest prices. Staff is the crew.',
+      'On Event Master, switch Table, Calendar, Gantt, or Function. New event starts a booking.',
+      'Invoices and Receipts sit beside Event Master. Record Receipt searches the unpaid invoice.',
     ],
     notHere: 'Nightly room prices are under Settings → Rooms & Pricing → Rate Plans.',
   },
   {
+    id: 'evt-create',
+    title: 'Create an event',
+    description: 'The booking window: client, schedule, rates, and whether guests also stay.',
+    keywords: ['new event', 'create event', 'residential', 'client', 'banquet'],
+    category: 'events',
+    section: 'events-conferences-standalone',
+    eventsTab: 'confirmed',
+    steps: [
+      'Open Events & Conferences → Events and press New event.',
+      'Phase 1 is the event details and the client: event name, organization, contact name, phone, and email.',
+      'Turn on Residential Events when the party also takes rooms. Continue through the schedule and the rates.',
+    ],
+  },
+  {
+    id: 'evt-views',
+    title: 'Table, calendar, Gantt, and the function sheet',
+    description: 'Four ways to read the same bookings, including the sheet other desks work from.',
+    keywords: ['calendar', 'gantt', 'function sheet', 'beo', 'table', 'venue', 'pax'],
+    category: 'events',
+    section: 'events-conferences-standalone',
+    eventsTab: 'confirmed',
+    steps: [
+      'On Event Master, the switch at the right is Table, Calendar, Gantt, and Function.',
+      'Table is the list. Calendar is the month, and can switch to week or day. Today jumps back to the current date.',
+      'Gantt is one row per hall across the month, with daily guest totals along the bottom. Choose All venues or one hall.',
+      'Function is the provisional function schedule: department duties from the banquet event order. Print Schedule, Download CSV, or Send to Departments so restaurant, housekeeping, and reservations can post their work.',
+    ],
+  },
+  {
+    id: 'evt-receipt',
+    title: 'Record an event receipt',
+    description: 'Take money against one unpaid event invoice, without opening the whole invoice book.',
+    keywords: ['event receipt', 'deposit', 'unpaid invoice', 'record receipt'],
+    category: 'events',
+    section: 'events-conferences-standalone',
+    eventsTab: 'confirmed',
+    steps: [
+      'Open the event, then Record Receipt.',
+      'Search the unpaid invoice. The window says not to browse the full invoice book.',
+      'Enter the amount and save. The balance on that invoice comes down.',
+    ],
+  },
+  {
+    id: 'evt-venue',
+    title: 'Venue management',
+    description: 'The halls and spaces an event can be booked into.',
+    keywords: ['venue', 'hall', 'boardroom', 'banquet room', 'new venue'],
+    category: 'events',
+    section: 'events-conferences-standalone',
+    eventsTab: 'venues',
+    steps: [
+      'Open Events & Conferences → Venues. The heading is Venue Management.',
+      'Press New Venue. Name the hall and its capacity, then save.',
+      'The Gantt and the event booking both offer the venues on this list.',
+    ],
+  },
+  {
     id: 'inv',
     title: 'Inventory and stores',
-    description: 'Stock on hand, suppliers, purchase orders, and the physical stock count.',
-    keywords: ['stock', 'stores', 'purchase', 'warehouse', 'reorder', 'supplier', 'po'],
-    category: 'operations',
+    description: 'From a department request through the purchase order, the goods receipt, and the shelf count.',
+    keywords: ['stock', 'stores', 'purchase', 'warehouse', 'reorder', 'supplier', 'po', 'requisition', 'grn'],
+    category: 'inventory',
     section: 'inventory',
+    inventoryOpsTab: 'inventory',
     image: '/help-images/inventory.png',
     imageAlt: 'Inventory and Stores desk',
     steps: [
-      'Open Inventory & Stores.',
-      'Stock & Supply is the item list, including what is at or below reorder.',
-      'Quick actions on a full desktop: Add Item, Create PO, Add Supplier, Stock Count, and Reports.',
-      'Housekeeping, Kitchen, and Restaurant request stock from their own Supplies tabs. Those requests land here.',
+      'Open Inventory & Stores → Stock, then Stock & Supply.',
+      'The tabs follow the work: Items, Suppliers, Requisitions, Purchase Orders, Transfers, Issues, Invoices, and Stock Count.',
+      'Purchase Orders has two parts: Orders, and Goods Receipt for what arrives.',
+      'Housekeeping, Kitchen, and Restaurant request stock from their own Supplies tabs. Those requests land on Requisitions.',
     ],
-    notHere: 'The names of stock locations (stores, fridges, floor pantries) are edited in Settings → Stock Locations.',
+    notHere: 'The names of stock locations are Settings → Stock Locations. Supplier bills in the books are Accounting → Accounts Payable.',
+  },
+  {
+    id: 'inv-requisition',
+    title: 'Requisitions',
+    description: 'A department asks the store for stock. An approved request becomes a purchase order.',
+    keywords: ['requisition', 'request stock', 'approve requisition', 'convert'],
+    category: 'inventory',
+    section: 'inventory',
+    inventoryOpsTab: 'requisitions',
+    steps: [
+      'Open Inventory & Stores → Stock → Stock & Supply → Requisitions.',
+      'Press Create Requisition. Name who is asking, the department, and the items.',
+      'Approve it, then convert it to a purchase order when the store must buy.',
+    ],
+  },
+  {
+    id: 'inv-po',
+    title: 'Purchase orders and goods receipts',
+    description: 'Order from a supplier, then record what actually arrives.',
+    keywords: ['purchase order', 'po', 'goods receipt', 'grn', 'receive'],
+    category: 'inventory',
+    section: 'inventory',
+    inventoryOpsTab: 'purchase-orders',
+    steps: [
+      'Open Purchase Orders and press Create PO. Pick the supplier and the lines.',
+      'When the delivery arrives, open Goods Receipt on that same screen.',
+      'Choose the confirmed or in-transit order, enter Receive Now for each line, and press Receive & Create GRN.',
+    ],
+    notHere: 'The supplier bill is the Invoices tab. Paying it is Accounting → Accounts Payable.',
+  },
+  {
+    id: 'inv-suppliers',
+    title: 'Suppliers',
+    description: 'The vendors purchase orders and supplier invoices are raised against.',
+    keywords: ['supplier', 'vendor', 'add supplier'],
+    category: 'inventory',
+    section: 'inventory',
+    inventoryOpsTab: 'suppliers',
+    steps: [
+      'Open Inventory & Stores → Stock → Suppliers.',
+      'Press Add Supplier. Name, contact, and address.',
+      'Create PO offers this list. Add the supplier before the first order.',
+    ],
+  },
+  {
+    id: 'inv-transfer',
+    title: 'Stock transfers',
+    description: 'Move quantity from one location to another without leaving the hotel.',
+    keywords: ['transfer', 'move stock', 'location', 'store'],
+    category: 'inventory',
+    section: 'inventory',
+    inventoryOpsTab: 'transfers',
+    steps: [
+      'Open Inventory & Stores → Stock → Transfers.',
+      'Press New Transfer. Pick the from location, the to location, and the items.',
+      'The locations are the names in Settings → Stock Locations.',
+    ],
+  },
+  {
+    id: 'inv-issue',
+    title: 'Goods issues',
+    description: 'Send stock out of the store to a department or a person.',
+    keywords: ['goods issue', 'issue stock', 'department issue'],
+    category: 'inventory',
+    section: 'inventory',
+    inventoryOpsTab: 'goods-issue',
+    steps: [
+      'Open Inventory & Stores → Stock → Issues.',
+      'Press New Issue. Choose the department or person and the items leaving the store.',
+      'A transfer between two stores is Transfers, not an issue.',
+    ],
+  },
+  {
+    id: 'inv-invoices',
+    title: 'Supplier invoices',
+    description: 'The bill from a supplier for goods the store received.',
+    keywords: ['supplier invoice', 'vendor bill', 'create invoice', 'stores invoice'],
+    category: 'inventory',
+    section: 'inventory',
+    inventoryOpsTab: 'supplier-invoices',
+    steps: [
+      'Open Inventory & Stores → Stock → Invoices.',
+      'Press Create Invoice and tie it to the supplier and the goods received.',
+    ],
+    notHere: 'Guest invoices are Front Office. Paying the supplier from the bank book is Accounting → Accounts Payable.',
   },
   {
     id: 'inv-count',
-    title: 'Count stock and reorder',
-    description: 'Reconcile what is on the shelf, then raise a purchase order for what is short.',
-    keywords: ['stock count', 'reorder', 'low stock', 'purchase order', 'physical'],
-    category: 'operations',
-    image: '/help-images/inv-count.png',
-    imageAlt: "Kitchen Supplies: request stock from the store and count what is on hand.",
+    title: 'Stock count',
+    description: 'Count what is on the shelf at one location and update the book quantity.',
+    keywords: ['stock count', 'physical count', 'reorder', 'shelf'],
+    category: 'inventory',
     section: 'inventory',
+    inventoryOpsTab: 'stock-operations',
     steps: [
-      'Open Inventory & Stores and start Stock Count from Quick actions, or the count on Stock & Supply.',
-      'Enter the quantity you can see. The book quantity updates to the count.',
-      'Items at or below their reorder point show on the summary. Create PO for those items and send it to the supplier on file.',
-      'Add Supplier first if the vendor is not in the list yet.',
+      'Open Inventory & Stores → Stock → Stock Count.',
+      'Press New Count, pick the location, and enter the quantity you can see.',
+      'Save. The book quantity for that location becomes the count.',
     ],
   },
   {
     id: 'sec',
-    title: 'Security operations',
-    description: 'Patrols, incidents, visitors, and who is on duty.',
-    keywords: ['safety', 'patrol', 'incident', 'visitor', 'shift', 'checkpoint'],
-    category: 'operations',
+    title: 'Patrols, visitors, and shifts',
+    description: 'The security desk: the patrol round, who is visiting, and who is on duty. Incidents are the next topic.',
+    keywords: ['safety', 'patrol', 'visitor', 'shift', 'checkpoint', 'security desk'],
+    category: 'security',
     section: 'security',
     image: '/help-images/security.png',
     imageAlt: 'Security Operations desk',
     steps: [
-      'Open Security Operations.',
-      'Patrol Log is the round in progress. Press Start Patrol, then check each checkpoint as you pass it, or mark it missed.',
-      'Incident Management is for theft, alarms, medical calls, and anything else that must be written down. Assign it, then resolve it when it is finished.',
-      'Visitor Management is sign-in and sign-out. Shift Log is who checked in for duty.',
+      'Open Security Operations in the side menu. It sits after Inventory and before HR.',
+      'Watch is the patrol. Press Start Patrol, then check each checkpoint as you pass it, or mark it missed.',
+      'Visitors is sign-in and sign-out. Staff is who checked in for duty.',
+    ],
+    notHere: 'Password rules are System Settings → Security, at the end of the side menu.',
+  },
+  {
+    id: 'sec-incidents',
+    title: 'Incident management',
+    description: 'Write down a theft, an alarm, a medical call, or anything else that must stay on file.',
+    keywords: ['incident', 'report incident', 'alarm', 'theft', 'security'],
+    category: 'security',
+    section: 'security',
+    securityTab: 'incidents',
+    steps: [
+      'Open Security Operations → Incidents. The heading is Security Incident Management.',
+      'Press Report Incident. Enter the type, severity, and location.',
+      'Assign it to an officer. Resolve it when the matter is finished. The row stays on the list.',
     ],
   },
 
@@ -560,53 +848,152 @@ export const helpTopics: HelpTopic[] = [
   {
     id: 'acc',
     title: 'Accounting',
-    description: 'GL, AP/AR, bank, reports, and audit-related accounting screens.',
-    keywords: ['finance', 'ledger', 'payable', 'receivable', 'reports', 'journal'],
-    category: 'finance',
+    description: 'Receivables, payables, the bank, assets, the chart of accounts, and the statements.',
+    keywords: ['finance', 'ledger', 'payable', 'receivable', 'reports', 'journal', 'books', 'statements', 'assets'],
+    category: 'accounting',
     section: 'accounting-management',
     image: '/help-images/accounting.png',
     imageAlt: 'Accounting and Finance desk',
     steps: [
-      'Open Accounting & Finance → Accounting Management.',
-      'Accounts Receivable is guest and company invoices. Accounts Payable is supplier bills.',
-      'Bank & Cash is the bank book. Journal is a manual entry. Statements are the profit and loss and balance sheet.',
-      'Books is the chart of accounts. Activity log is who posted what.',
+      'Open Accounting & Finance. The desk tabs are Receivable, Payable, Bank & Cash, PPE & Assets, Taxes, Journal, Statements, Reports, Activity log, Books, and Cost & Income.',
+      'Receivable is guest and company invoices. Payable is supplier bills. Journal is an entry you type.',
+      'Books is the chart of accounts. Statements are the income statement, balance sheet, and the other reports.',
     ],
     notHere: 'VAT, NHIL, and levy percentages are edited in Compliance. Accounting uses the rates saved there.',
   },
   {
+    id: 'acc-books',
+    title: 'Chart of accounts',
+    description: 'The list of accounts that bank, invoices, and journals post to.',
+    keywords: ['chart of accounts', 'books', 'gl', 'account code', 'ledger'],
+    category: 'accounting',
+    section: 'accounting-management',
+    accountingTab: 'accounts',
+    steps: [
+      'Open Accounting & Finance and choose the Books tab. The heading is Chart of Accounts.',
+      'Search by name or code. Main accounts, all accounts, and how many have a balance sit above the list.',
+      'The side-menu item named Books opens the Journal. The chart is this Books tab on the desk.',
+    ],
+    notHere: 'Typing a balanced entry is the Journal tab. This list is the accounts that entry can use.',
+  },
+  {
+    id: 'acc-bank',
+    title: 'Bank and cash',
+    description: 'The bank book: accounts, money in, and money out.',
+    keywords: ['bank', 'cash', 'reconciliation', 'deposit'],
+    category: 'accounting',
+    section: 'accounting-management',
+    accountingTab: 'banking',
+    steps: [
+      'Open Accounting & Finance → Cash, or the Bank & Cash tab on the desk.',
+      'Pick the bank or cash account, then record the movement against it.',
+    ],
+    notHere: 'A guest payment at the desk is Front Office cashiering. It reaches this book when it is posted.',
+  },
+  {
+    id: 'acc-assets',
+    title: 'PPE and assets',
+    description: 'Property and equipment: cost, depreciation, and the group it sits in on the books.',
+    keywords: ['ppe', 'asset', 'depreciation', 'fixed asset', 'equipment'],
+    category: 'accounting',
+    section: 'accounting-management',
+    accountingTab: 'assets',
+    steps: [
+      'Open Accounting & Finance and choose PPE & Assets.',
+      'Add the asset with its cost and the books group. Depreciation follows the method on that group.',
+    ],
+    notHere: 'Stock on the shelf is Inventory & Stores, not an asset register.',
+  },
+  {
+    id: 'acc-statements',
+    title: 'Financial statements',
+    description: 'Overview, income statement, balance sheet, changes in equity, cash flow, and the trial balance.',
+    keywords: ['statements', 'income statement', 'profit', 'balance sheet', 'cash flow', 'trial balance', 'equity', 'financial year'],
+    category: 'accounting',
+    section: 'accounting-management',
+    accountingTab: 'statements',
+    steps: [
+      'Open Accounting & Finance → Statements.',
+      'The inner tabs are Overview, Income Statement, Balance Sheet, Changes in equity, Cash Flow, and Trial Balance.',
+      'On Changes in equity, the year button reads Open · ends and the year-end date while that year is still open. Press it when you are ready to close the year. After the close it reads Closed.',
+    ],
+    notHere: 'Guest-bill tax rates are Compliance. These statements use the postings already in the books.',
+  },
+  {
     id: 'hr',
     title: 'Human resources',
-    description: 'Staff records, leave, time, and payroll. Hotel sales tax is a different screen.',
-    keywords: ['staff', 'payroll', 'employee', 'leave', 'attendance', 'ssnit', 'paye'],
-    category: 'finance',
+    description: 'Staff records, leave, departments, and the monthly pay run with its payslips.',
+    keywords: ['staff', 'payroll', 'employee', 'leave', 'attendance', 'ssnit', 'paye', 'department', 'payslip'],
+    category: 'hr',
     section: 'hr',
     image: '/help-images/hr.png',
     imageAlt: 'HR and Payroll desk',
     steps: [
-      'Open HR & Payroll.',
-      'Employees is the staff file. Use Add Employee for a new hire.',
-      'Leave is requests. Time is attendance. Payroll is the monthly run.',
-      'Departments and positions are on the Departments tab.',
+      'Open HR & Payroll. People is the staff file. Leave is requests. Time is attendance.',
+      'Departments holds departments and positions.',
+      'Payroll is the month: Staff Payroll, Payment Advice, Payslips, and History.',
     ],
     notHere: 'PAYE bands and SSNIT rates are in Compliance → Payroll tax. This screen applies them to staff.',
+  },
+  {
+    id: 'hr-leave',
+    title: 'Leave',
+    description: 'Ask for leave, then approve or reject it.',
+    keywords: ['leave', 'request leave', 'absence', 'holiday'],
+    category: 'hr',
+    section: 'hr',
+    hrTab: 'leave',
+    steps: [
+      'Open HR & Payroll → Leave.',
+      'Press Request Leave and fill the dates and the type.',
+      'Open the request to approve or reject it. Print form or PDF if the file needs a copy.',
+    ],
+  },
+  {
+    id: 'hr-departments',
+    title: 'Departments and positions',
+    description: 'The hotel’s departments and the jobs inside them.',
+    keywords: ['department', 'position', 'job title', 'org'],
+    category: 'hr',
+    section: 'hr',
+    hrTab: 'departments',
+    steps: [
+      'Open HR & Payroll → the Departments tab.',
+      'A new hotel already has one department per desk and the usual jobs in each. Edit or delete any that do not fit, or add your own.',
+      'Payroll and leave use these names when they group staff.',
+    ],
   },
   {
     id: 'hr-payroll',
     title: 'Run payroll',
     description: 'Prepare the month, check the figures, then send it for approval.',
     keywords: ['payroll run', 'salary', 'net pay', 'approve payroll', 'payslip'],
-    category: 'finance',
+    category: 'hr',
     image: '/help-images/hr-payroll.png',
     imageAlt: "HR Payroll: run the month, check each line, then approve.",
     section: 'hr',
+    hrTab: 'payroll',
     steps: [
-      'Open HR & Payroll → Payroll, or press Run Payroll on the summary.',
+      'Open HR & Payroll → Payroll. Stay on Staff Payroll for the month.',
       'Open the current period. Draft or processing means it is not finished.',
       'Review each employee\'s gross, deductions, and net pay before approval.',
-      'Approval is a separate step. Once a period is approved it is no longer a draft you can delete.',
+      'Payment Advice is how the net pay goes out. Payslips is the print. History is a closed month.',
     ],
     notHere: 'Changing the PAYE bands themselves is Compliance → Payroll tax, not this payroll run.',
+  },
+  {
+    id: 'hr-payslips',
+    title: 'Payslips',
+    description: 'Print one payslip or the whole month, using the payslip design from Settings.',
+    keywords: ['payslip', 'pay slip', 'print payroll', 'salary slip'],
+    category: 'hr',
+    section: 'hr',
+    hrTab: 'payroll',
+    steps: [
+      'Open HR & Payroll → Payroll → Payslips.',
+      'Pick the month. Print one row, or Print all payslips.',
+      'The layout is Settings → Document Templates → Payslip. A month that has not been prepared yet has nothing to print.',
+    ],
   },
 
   // —— General ——
@@ -615,14 +1002,14 @@ export const helpTopics: HelpTopic[] = [
     title: 'Department messenger',
     description: 'Open the department chat / notices panel from anywhere (Ctrl+M).',
     keywords: ['chat', 'message', 'messenger', 'ctrl m', 'announcements'],
-    category: 'general',
+    category: 'dashboard',
   },
   {
     id: 'help-keys',
     title: 'Keyboard shortcuts',
     description: 'Keys that save time on every desk. The most useful: Ctrl + L signs you out at once.',
     keywords: ['keyboard', 'shortcut', 'f12', 'f1', 'escape', 'sign out', 'log out', 'logout', 'help'],
-    category: 'general',
+    category: 'reference',
     steps: [
       'Ctrl + L: sign out at once. Use it when you hand the till or the desk to someone else. It does nothing while the cursor is in a text box, so a slip cannot lose what you were typing.',
       'Ctrl + Shift + L: sign out from anywhere, even while typing.',
@@ -640,7 +1027,7 @@ export const helpTopics: HelpTopic[] = [
     description:
       'Void keeps the invoice on file marked Void and posts a reversing entry, so the books stay correct. Delete removes it for good and is only for drafts, proformas, and invoices typed in by hand.',
     keywords: ['void invoice', 'cancel invoice', 'delete invoice', 'wrong invoice', 'reverse invoice', 'receivable', 'customer invoice'],
-    category: 'finance',
+    category: 'accounting',
     image: '/help-images/accounting.png',
     imageAlt: "Accounting, Receivable: who owes the hotel, invoices and receipts.",
     section: 'accounting-management',
@@ -659,7 +1046,7 @@ export const helpTopics: HelpTopic[] = [
     description:
       'Voiding a receipt reverses the money in the books and reopens the balance on its invoice. A receipt taken on a guest folio is also taken off the folio.',
     keywords: ['void receipt', 'cancel payment', 'wrong payment', 'reverse receipt', 'refund', 'receivable'],
-    category: 'finance',
+    category: 'accounting',
     section: 'accounting-management',
     steps: [
       'Accounting → Accounts Receivable → Receipts, then open the receipt.',
@@ -674,7 +1061,7 @@ export const helpTopics: HelpTopic[] = [
     description:
       'Voiding a bill or a supplier payment posts a reversing entry. A voided payment puts the amount back on the bill as owed.',
     keywords: ['void bill', 'cancel bill', 'wrong bill', 'supplier payment', 'void payment', 'payable', 'supplier'],
-    category: 'finance',
+    category: 'accounting',
     image: '/help-images/acc-payable.png',
     imageAlt: "Accounting, Payable: supplier bills and payments.",
     section: 'accounting-management',
@@ -690,7 +1077,7 @@ export const helpTopics: HelpTopic[] = [
     description:
       'A posted journal entry is not deleted. Voiding it posts the opposite entry so the two cancel out, and both stay on record.',
     keywords: ['void journal', 'reverse journal', 'wrong journal', 'cancel entry', 'journal entry', 'ledger'],
-    category: 'finance',
+    category: 'accounting',
     image: '/help-images/acc-journal.png',
     imageAlt: "Accounting, Journal: entries posted to the books.",
     section: 'accounting-management',
@@ -707,7 +1094,7 @@ export const helpTopics: HelpTopic[] = [
     title: 'Void a charge on a guest folio',
     description: 'Removes a wrong charge from a guest bill by posting a reversing entry. It cannot be undone.',
     keywords: ['void charge', 'folio', 'guest bill', 'wrong charge', 'remove charge', 'cancel charge', 'guest'],
-    category: 'operations',
+    category: 'frontdesk',
     section: 'frontdesk',
     steps: [
       'Front Office → Invoices & Payments, then choose the guest folio.',
@@ -722,7 +1109,7 @@ export const helpTopics: HelpTopic[] = [
     description:
       'Cancel one item that was ordered by mistake, or delete a whole order. Deleting an order needs a manager PIN.',
     keywords: ['delete order', 'cancel order', 'cancel item', 'void order', 'wrong order', 'pos', 'restaurant', 'bar'],
-    category: 'operations',
+    category: 'restaurant',
     section: 'food-beverage',
     steps: [
       'On the POS, open the Orders tab (next to Current order).',
@@ -735,15 +1122,112 @@ export const helpTopics: HelpTopic[] = [
     title: 'Updating this Help page (for admins & developers)',
     description: 'How to add topics and keep configuration guidance accurate when the product changes.',
     keywords: ['documentation', 'help content', 'maintain', 'developer', 'helpTopics'],
-    category: 'general',
+    category: 'reference',
     steps: helpMaintainerGuide.steps,
   },
 ];
 
+/**
+ * Help and the printable manual follow the side menu: the first desk, then Front Office
+ * part by part, then each later desk, and System Settings last.
+ * topicIds is the reading order inside that desk. Keyboard shortcuts and the maintainer
+ * note stay out of this list (they have their own blocks on the page).
+ */
+export const helpModules: {
+  id: Exclude<HelpTopicCategory, 'reference'>;
+  title: string;
+  intro: string;
+  topicIds: string[];
+}[] = [
+  {
+    id: 'dashboard',
+    title: 'Executive Management',
+    intro:
+      'The first desk in the side menu. It is the hotel-wide picture. Every desk after this uses the same layout, Ask Mamani, and notices.',
+    topicIds: ['start-desks', 'exec', 'start-mamani', 'start-notices', 'messenger'],
+  },
+  {
+    id: 'frontdesk',
+    title: 'Front Office Operations',
+    intro:
+      'The second desk. Open Desk, Rooms, Billing, Clients, Night, and Reports from the side menu. The topics below follow that path: the counter, a room move, the folio, checkout, and night audit.',
+    topicIds: ['front', 'front-checkin', 'front-transfer', 'void-folio-charge', 'front-checkout', 'front-audit'],
+  },
+  {
+    id: 'events',
+    title: 'Events & Conferences',
+    intro: 'Bookings, four ways to read them, receipts, and the halls. This desk is next after Front Office.',
+    topicIds: ['evt', 'evt-create', 'evt-views', 'evt-receipt', 'evt-venue'],
+  },
+  {
+    id: 'restaurant',
+    title: 'Restaurant & Bar',
+    intro: 'Tables, the menu, the POS, the transaction list, and cashiering. POS Terminal in the side menu is where an order starts.',
+    topicIds: ['fb', 'fb-order', 'fb-transactions', 'pos-cancel-order'],
+  },
+  {
+    id: 'kitchen',
+    title: 'Kitchen',
+    intro: 'Live tickets, dishes ready to serve now, and the log of what the display did.',
+    topicIds: ['kitchen', 'kitchen-ready', 'kitchen-log'],
+  },
+  {
+    id: 'housekeeping',
+    title: 'Housekeeping & Maintenance',
+    intro: 'The floor board, cleaning tasks, and supply requests. A room left dirty here is not ready for Front Office to sell.',
+    topicIds: ['hk', 'hk-clean'],
+  },
+  {
+    id: 'inventory',
+    title: 'Inventory & Stores',
+    intro: 'Requisitions, purchase orders and goods receipts, suppliers, transfers, issues, supplier invoices, then the shelf count.',
+    topicIds: ['inv', 'inv-requisition', 'inv-po', 'inv-suppliers', 'inv-transfer', 'inv-issue', 'inv-invoices', 'inv-count'],
+  },
+  {
+    id: 'security',
+    title: 'Security Operations',
+    intro: 'One desk, after Inventory and before HR. Patrols and visitors first, then how to write up an incident. Passwords are under System Settings, not here.',
+    topicIds: ['sec', 'sec-incidents'],
+  },
+  {
+    id: 'hr',
+    title: 'HR & Payroll',
+    intro: 'Staff records, leave, departments and positions, the monthly pay run, and payslips.',
+    topicIds: ['hr', 'hr-leave', 'hr-departments', 'hr-payroll', 'hr-payslips'],
+  },
+  {
+    id: 'accounting',
+    title: 'Accounting & Finance',
+    intro: 'The chart of accounts, bank and cash, assets, the statements, and how to void a wrong posting.',
+    topicIds: ['acc', 'acc-books', 'acc-bank', 'acc-assets', 'acc-statements', 'void-customer-invoice', 'void-customer-receipt', 'void-supplier-bill', 'void-journal-entry'],
+  },
+  {
+    id: 'compliance',
+    title: 'Compliance & Reports',
+    intro: 'Guest-bill taxes, supplier withholding, staff PAYE, and filing dates. The other desks calculate from the rates saved here.',
+    topicIds: ['compliance', 'tax-rules', 'paye', 'compliance-reports'],
+  },
+  {
+    id: 'settings',
+    title: 'System Settings',
+    intro:
+      'The last item in the side menu. Users, rooms, document numbers and templates, stock locations, passwords, approval amounts, and the audit log. Tax percentages stay in Compliance & Reports.',
+    topicIds: ['config-map', 'setup', 'settings', 'users', 'rooms-pricing', 'numbering', 'settings-templates', 'settings-locations', 'security-settings', 'settings-approvals', 'settings-audit'],
+  },
+];
+
 export const helpCategoryLabels: Record<HelpTopicCategory, string> = {
-  start: 'Start here',
-  configuration: 'Configuration & setup',
-  operations: 'Daily operations',
-  finance: 'Finance & HR',
-  general: 'General',
-};
+  ...Object.fromEntries(helpModules.map((mod) => [mod.id, mod.title])),
+  reference: 'Reference',
+} as Record<HelpTopicCategory, string>;
+
+/** Topics in side-menu order. A search result keeps this order and drops empty desks. */
+export function groupHelpTopics(topics: HelpTopic[]) {
+  const byId = new Map(topics.map((topic) => [topic.id, topic]));
+  return helpModules
+    .map((mod) => ({
+      ...mod,
+      topics: mod.topicIds.map((id) => byId.get(id)).filter((topic): topic is HelpTopic => Boolean(topic)),
+    }))
+    .filter((mod) => mod.topics.length > 0);
+}

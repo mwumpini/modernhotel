@@ -3,48 +3,12 @@ import { Employee, Department, Position } from './models';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
 import { newId } from './newId';
-import { planStandardDepartments } from './standardDepartments';
+import { focusHrStructure, planStandardDepartments } from './standardDepartments';
 import type { ModuleSettings } from '../settings/store';
 
 function hrTenantHeaders(): HeadersInit {
   const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
   return { 'x-tenant-subdomain': sub, 'x-tenant-id': sub, 'Content-Type': 'application/json' };
-}
-
-/** Same display name twice (a second Front Office, a second Housekeeping) is one department in the UI. Staff and positions on a dropped copy follow the one that is kept. */
-function collapseSameNameDepartments(departments: Department[], employees: Employee[], positions: Position[]) {
-  const keeperByName = new Map<string, Department>();
-  const idRemap = new Map<string, string>();
-  const kept: Department[] = [];
-  for (const department of departments) {
-    const key = String(department.name || '').trim().toLowerCase();
-    if (!key) {
-      kept.push(department);
-      continue;
-    }
-    const keeper = keeperByName.get(key);
-    if (!keeper) {
-      keeperByName.set(key, department);
-      kept.push(department);
-    } else if (department.id !== keeper.id) {
-      idRemap.set(department.id, keeper.id);
-    }
-  }
-  if (idRemap.size === 0) return { departments, employees, positions };
-  const remap = (id: string) => idRemap.get(id) || id;
-  return {
-    departments: kept,
-    employees: employees.map((employee) =>
-      employee.departmentId && idRemap.has(employee.departmentId)
-        ? { ...employee, departmentId: remap(employee.departmentId) }
-        : employee
-    ),
-    positions: positions.map((position) =>
-      position.departmentId && idRemap.has(position.departmentId)
-        ? { ...position, departmentId: remap(position.departmentId) }
-        : position
-    ),
-  };
 }
 
 // Best-effort background persistence — the store stays synchronous/in-memory for the UI
@@ -409,8 +373,43 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
         }
       }
       const current = get();
-      const collapsed = collapseSameNameDepartments(current.departments, current.employees, current.positions);
-      if (collapsed.departments.length !== current.departments.length) set(collapsed);
+      const focused = focusHrStructure({
+        departments: current.departments,
+        positions: current.positions,
+        employees: current.employees,
+      });
+      const positionChanged = (before: Position[], after: Position[]) => {
+        if (before.length !== after.length) return true;
+        const byId = new Map(before.map((p) => [p.id, p]));
+        return after.some((p) => {
+          const prev = byId.get(p.id);
+          return !prev || prev.title !== p.title || prev.departmentId !== p.departmentId;
+        });
+      };
+      const employeeChanged = focused.employees.some((employee, index) => {
+        const prev = current.employees[index];
+        return !prev || prev.departmentId !== employee.departmentId || prev.positionId !== employee.positionId;
+      });
+      if (
+        focused.removeDepartmentIds.length
+        || focused.removePositionIds.length
+        || focused.departments.length !== current.departments.length
+        || positionChanged(current.positions, focused.positions)
+        || employeeChanged
+      ) {
+        set({ departments: focused.departments, positions: focused.positions, employees: focused.employees });
+        focused.removeDepartmentIds.forEach((id) => deleteDepartmentFromApi(id));
+        focused.removePositionIds.forEach((id) => deletePositionFromApi(id));
+        const prevPos = new Map(current.positions.map((p) => [p.id, p]));
+        focused.positions.forEach((position) => {
+          const prev = prevPos.get(position.id);
+          if (prev && (prev.title !== position.title || prev.departmentId !== position.departmentId)) syncPositionToApi(position);
+        });
+        focused.employees.forEach((employee, index) => {
+          const prev = current.employees[index];
+          if (prev && (prev.departmentId !== employee.departmentId || prev.positionId !== employee.positionId)) syncEmployeeToApi(employee);
+        });
+      }
       // A new business (no departments, no staff yet) starts with the standard set for the
       // modules it uses, so staff can be added straight away. Read once settings have loaded.
       const loadedAll = empRes.ok && deptRes.ok && posRes.ok;

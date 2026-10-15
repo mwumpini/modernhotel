@@ -20,6 +20,18 @@ import type {
   SupplierInvoice,
 } from '../../lib/inventory/models';
 import type { ColumnSort } from '../dashboard/deskTableUi';
+import type { DateMode } from '../fb/DateFilterPills';
+
+export type InventoryDateFilter = {
+  mode: DateMode;
+  setMode: (mode: DateMode) => void;
+  single: string;
+  setSingle: (value: string) => void;
+  from: string;
+  setFrom: (value: string) => void;
+  to: string;
+  setTo: (value: string) => void;
+};
 
 export interface InventoryScreen {
   STOCK_CATEGORIES: readonly ["food", "beverage", "cleaning", "maintenance", "office", "linens", "amenities", "electronics", "furniture", "other"];
@@ -91,11 +103,19 @@ export interface InventoryScreen {
   handleGenerateRequisitionPDF: () => void;
   handleInvoicePOChange: (poId: string) => void;
   handleIssueGoods: () => void;
+  handleVoidGoodsIssue: (issue: GoodsIssue) => void;
   handleOpenGoodsIssue: () => void;
   handleOpenGoodsReceipt: (po: PurchaseOrder) => void;
   handlePOItemChange: (itemCode: string, itemIndex: number) => void;
   handlePOSupplierChange: (supplierId: string) => void;
   handlePrintStockCount: (count: StockCount) => void;
+  printInventorySheet: (doc: {
+    title: string;
+    subtitle?: string;
+    fields?: Array<[string, string]>;
+    columns?: string[];
+    rows?: Array<Array<string | number>>;
+  }) => void;
   handleReceiveGoods: () => void;
   handleRemovePOItem: (itemId: string) => void;
   handleRemoveRequisitionItem: (itemId: string) => void;
@@ -108,7 +128,7 @@ export interface InventoryScreen {
   handleSaveStockCount: () => void;
   handleSaveStockTransfer: () => void;
   handleSaveSupplier: () => void;
-  handleSubmitQualityCheck: () => void;
+  handleSubmitQualityCheck: (override?: boolean) => void;
   handleTransferStatusChange: (transfer: StockTransfer, status: StockTransfer["status"]) => void;
   handleUpdatePOItem: (itemId: string, updates: Partial<PurchaseOrderItem>) => void;
   handleUpdateRequisitionItem: (itemId: string, updates: Partial<RequisitionItem>) => void;
@@ -194,6 +214,9 @@ export interface InventoryScreen {
   paginatedSuppliers: Supplier[];
   poCols: { frameRef: React.Dispatch<React.SetStateAction<HTMLDivElement | null>>; frameStyle: React.CSSProperties; style: (key: "number" | "status" | "amount" | "orderDate" | "priority" | "supplier" | "expected") => { width: number; minWidth: number; maxWidth: number; }; sizer: (key: "number" | "status" | "amount" | "orderDate" | "priority" | "supplier" | "expected", label: string) => React.JSX.Element; };
   poFilterStatus: string;
+  poDateFilter: InventoryDateFilter;
+  requisitionDateFilter: InventoryDateFilter;
+  poView: string;
   poFormData: Partial<PurchaseOrder> & { items?: PurchaseOrderItem[]; taxType?: string; taxRate?: number; };
   poItemSearchTerms: { [x: number]: string; };
   poPageSafe: number;
@@ -206,6 +229,8 @@ export interface InventoryScreen {
   receiptPage: number;
   receiptSort: { column: string; direction: "asc" | "desc"; };
   rejectGRN: (grnId: string, rejectedBy: string, reason: string) => void;
+  voidGRN: (grnId: string, performedBy: string) => void;
+  deleteGRN: (grnId: string, performedBy: string) => void;
   rejectInvoice: (invoiceId: string, rejectedBy: string, reason: string) => void;
   reqActionModal: { type: "approve" | "reject" | "ready" | "convert" | "delete"; requisitionId: string; requisitionNumber: string; };
   reqConvertSuppliers: { [x: string]: string; };
@@ -244,6 +269,7 @@ export interface InventoryScreen {
   setItemSort: (value: React.SetStateAction<ColumnSort>) => void;
   setMatchResult: (value: React.SetStateAction<{ matched: boolean; discrepancies: string[]; } | null>) => void;
   setPOFilterStatus: (value: React.SetStateAction<string>) => void;
+  setPoView: (value: React.SetStateAction<string>) => void;
   setPOFormData: (value: React.SetStateAction<Partial<PurchaseOrder> & { items?: PurchaseOrderItem[]; taxType?: string; taxRate?: number; }>) => void;
   setPOItemSearchTerms: (value: React.SetStateAction<Record<number, string>>) => void;
   setPOPage: (value: React.SetStateAction<number>) => void;

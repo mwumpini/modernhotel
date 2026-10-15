@@ -348,7 +348,7 @@ export default function StoresMainDashboard() {
             className="w-full"
             size="sm"
             variant="solid"
-            classNames={deskBookTabsClassNames}
+            classNames={{ ...deskBookTabsClassNames, base: 'inline-flex w-full px-1.5 pt-1.5' }}
             aria-label="Inventory operations"
           >
             <Tab key="items" title="📦 Stock & Supply">

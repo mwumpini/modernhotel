@@ -1,6 +1,9 @@
 import { prisma } from '@/app/lib/database/client';
 import { listReportingRules, listTaxRules, listTaxTypes } from '@/app/lib/compliance/repository';
 import { ensureDefaultPaymentAccounts, ensureMobileMoneyGlAccount } from '@/app/lib/accounting/repository';
+import { planStandardDepartments } from '@/app/lib/hr/standardDepartments';
+import { applyPaidModules, readPaidModules } from '@/app/lib/platform/hotelModules';
+import type { ModuleSettings } from '@/app/lib/settings/store';
 
 const GHANA_COUNTRY = 'GH';
 
@@ -77,6 +80,46 @@ export async function provisionGhanaHotel(tenantId: string, hotelName: string, o
   await ensureMobileMoneyGlAccount(tenantId);
   await ensureDefaultPaymentAccounts(tenantId);
   await installStarterRooms(tenantId, hotelName, options?.replaceIfUnused === true);
+  await ensureStandardDepartments(tenantId);
+}
+
+/** Departments and jobs for the modules this hotel has. Ones already there are left as they are. */
+export async function ensureStandardDepartments(tenantId: string) {
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { subdomain: true, metadata: true } });
+  if (!tenant) return;
+  const paid = readPaidModules(tenant.metadata);
+  const modules: ModuleSettings = applyPaidModules({
+    frontOffice: true,
+    housekeeping: true,
+    foodBeverage: true,
+    inventory: true,
+    accounting: true,
+    hr: true,
+    security: true,
+    compliance: true,
+    maintenance: true,
+    analytics: true,
+    kitchenTerminal: true,
+  }, paid);
+  const [departments, positions] = await Promise.all([
+    prisma.hrDepartment.findMany({ where: { tenantId }, select: { id: true, name: true } }),
+    prisma.hrPosition.findMany({ where: { tenantId }, select: { title: true, departmentId: true } }),
+  ]);
+  const plan = planStandardDepartments({ tenant: tenant.subdomain, modules, departments, positions });
+  if (plan.departments.length) {
+    await prisma.hrDepartment.createMany({
+      data: plan.departments.map((d) => ({
+        id: d.id, tenantId, name: d.name, code: d.code, description: d.description, budget: 0, location: '', isActive: true, status: 'active',
+      })),
+    });
+  }
+  if (plan.positions.length) {
+    await prisma.hrPosition.createMany({
+      data: plan.positions.map((p) => ({
+        id: p.id, tenantId, title: p.title, code: p.code, departmentId: p.departmentId, description: p.description, isActive: true, status: 'active',
+      })),
+    });
+  }
 }
 
 async function installStarterRooms(tenantId: string, hotelName: string, replaceIfUnused: boolean) {

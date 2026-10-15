@@ -12,21 +12,19 @@ import {
   Input,
 } from '@heroui/react';
 import { openMessengerFromShell } from '../lib/openMessenger';
+import ModuleBackButton from '../components/ModuleBackButton';
 import {
   helpTopics,
   configurationGuide,
   helpMaintainerGuide,
-  helpCategoryLabels,
+  groupHelpTopics,
   keyboardShortcuts,
   type HelpTopic,
-  type HelpTopicCategory,
 } from './helpContent';
 
 const shortcuts = keyboardShortcuts;
 
-const CATEGORY_ORDER: HelpTopicCategory[] = ['start', 'operations', 'configuration', 'finance', 'general'];
-
-function goToAppSection(router: ReturnType<typeof useRouter>, topic: Pick<HelpTopic, 'section' | 'settingsTab' | 'complianceTab' | 'href'>) {
+function goToAppSection(router: ReturnType<typeof useRouter>, topic: Pick<HelpTopic, 'section' | 'settingsTab' | 'complianceTab' | 'href' | 'accountingTab' | 'hrTab' | 'securityTab' | 'eventsTab' | 'kitchenTab' | 'fbTab' | 'inventoryOpsTab' | 'inventoryPoView'>) {
   if (topic.href) {
     router.push(topic.href);
     return;
@@ -34,12 +32,16 @@ function goToAppSection(router: ReturnType<typeof useRouter>, topic: Pick<HelpTo
   if (!topic.section) return;
   try {
     localStorage.setItem('nav.section', topic.section);
-    if (topic.settingsTab) {
-      localStorage.setItem('settings.tab', topic.settingsTab);
-    }
-    if (topic.complianceTab) {
-      localStorage.setItem('compliance.tab', topic.complianceTab);
-    }
+    if (topic.settingsTab) localStorage.setItem('settings.tab', topic.settingsTab);
+    if (topic.complianceTab) localStorage.setItem('compliance.tab', topic.complianceTab);
+    if (topic.accountingTab) localStorage.setItem('accounting.tab', topic.accountingTab);
+    if (topic.hrTab) localStorage.setItem('hr.tab', topic.hrTab);
+    if (topic.securityTab) localStorage.setItem('security.tab', topic.securityTab);
+    if (topic.eventsTab) localStorage.setItem('events.tab', topic.eventsTab);
+    if (topic.kitchenTab) localStorage.setItem('kitchen.tab', topic.kitchenTab);
+    if (topic.fbTab) localStorage.setItem('fb.tab', topic.fbTab);
+    if (topic.inventoryOpsTab) localStorage.setItem('inventory.opsTab', topic.inventoryOpsTab);
+    if (topic.inventoryPoView) localStorage.setItem('inventory.poView', topic.inventoryPoView);
   } catch {
     /* ignore */
   }
@@ -119,18 +121,7 @@ export default function HelpPage() {
     });
   }, [normalized]);
 
-  const groupedTopics = React.useMemo(() => {
-    const groups = new Map<HelpTopicCategory, HelpTopic[]>();
-    for (const cat of CATEGORY_ORDER) {
-      groups.set(cat, []);
-    }
-    for (const t of filteredTopics) {
-      groups.get(t.category)?.push(t);
-    }
-    return CATEGORY_ORDER.map((cat) => ({ category: cat, topics: groups.get(cat) ?? [] })).filter(
-      (g) => g.topics.length > 0
-    );
-  }, [filteredTopics]);
+  const groupedTopics = React.useMemo(() => groupHelpTopics(filteredTopics), [filteredTopics]);
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -152,11 +143,12 @@ export default function HelpPage() {
   return (
     <div className="min-h-screen bg-[var(--background)] px-4 py-10 text-[var(--text-primary)]">
       <div className="mx-auto max-w-4xl space-y-6">
+        <ModuleBackButton label="dashboard" onPress={() => router.push('/')} />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">Help</h1>
             <p className="mt-1 text-sm text-slate-600">
-              The Help button in the side menu opens this page. Press{' '}
+              Topics follow the side menu, from Executive Management through Front Office and each later desk, up to System Settings. Press{' '}
               <kbd className="rounded border border-slate-300 bg-white px-1.5 py-0.5 font-mono text-xs shadow-sm">F1</kbd>{' '}
               /{' '}
               <kbd className="rounded border border-slate-300 bg-white px-1.5 py-0.5 font-mono text-xs shadow-sm">F12</kbd>{' '}
@@ -164,10 +156,9 @@ export default function HelpPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button color="primary" variant="flat" onPress={() => router.push('/')}>
-              Back to dashboard
+            <Button color="primary" variant="flat" onPress={() => router.push('/help/manual')}>
+              Open manual
             </Button>
-            {/* The whole Help as one printable manual; the print window offers "Save as PDF". */}
             <Button color="primary" variant="solid" onPress={() => window.open('/help/manual?print=1', '_blank', 'noopener')}>
               Download manual
             </Button>
@@ -183,49 +174,45 @@ export default function HelpPage() {
           classNames={{ inputWrapper: 'bg-[var(--input-background)] shadow-sm' }}
         />
 
-        {!normalized && (
-          <Card shadow="sm" className="border border-slate-200/80">
+        {groupedTopics.map(({ id, title, intro, topics }) => (
+          <Card key={id} shadow="sm" className="border border-slate-200/80">
             <CardHeader className="flex flex-col items-start gap-1 px-6 pt-6 pb-2">
-              <p className="text-lg font-medium text-slate-900">{configurationGuide.title}</p>
-              <p className="text-sm text-slate-500">{configurationGuide.intro}</p>
-            </CardHeader>
-            <CardBody className="space-y-4 px-6 pb-6">
-              {configurationGuide.areas.map((area) => (
-                <div key={area.name} className="rounded-lg border border-[var(--card-border)] bg-[var(--surface)] p-4">
-                  <p className="font-medium text-slate-900">{area.name}</p>
-                  <p className="mt-1 text-sm text-slate-700">
-                    <span className="font-medium text-slate-800">Use for: </span>
-                    {area.owns}
-                  </p>
-                  <p className="mt-1 text-sm text-slate-600">
-                    <span className="font-medium text-slate-700">Not for: </span>
-                    {area.notHere}
-                  </p>
-                  <div className="mt-3">
-                    <Button
-                      size="sm"
-                      variant="flat"
-                      color="primary"
-                      onPress={() => goToAppSection(router, { section: area.section })}
-                    >
-                      Open in app
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </CardBody>
-          </Card>
-        )}
-
-        {groupedTopics.map(({ category, topics }) => (
-          <Card key={category} shadow="sm" className="border border-slate-200/80">
-            <CardHeader className="flex flex-col items-start gap-1 px-6 pt-6 pb-2">
-              <p className="text-lg font-medium text-slate-900">{helpCategoryLabels[category]}</p>
+              <p className="text-lg font-medium text-slate-900">{title}</p>
+              {!normalized && <p className="text-sm text-slate-500">{intro}</p>}
               {normalized && (
                 <p className="text-sm text-slate-500">{topics.length} matching topic(s)</p>
               )}
             </CardHeader>
             <CardBody className="px-6 pb-6">
+              {id === 'settings' && !normalized && (
+                <div className="mb-4 space-y-3">
+                  <p className="font-medium text-slate-900">{configurationGuide.title}</p>
+                  <p className="text-sm text-slate-500">{configurationGuide.intro}</p>
+                  {configurationGuide.areas.map((area) => (
+                    <div key={area.name} className="rounded-lg border border-[var(--card-border)] bg-[var(--surface)] p-4">
+                      <p className="font-medium text-slate-900">{area.name}</p>
+                      <p className="mt-1 text-sm text-slate-700">
+                        <span className="font-medium text-slate-800">Use for: </span>
+                        {area.owns}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-600">
+                        <span className="font-medium text-slate-700">Not for: </span>
+                        {area.notHere}
+                      </p>
+                      <div className="mt-3">
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          color="primary"
+                          onPress={() => goToAppSection(router, { section: area.section })}
+                        >
+                          Open in app
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
               <ul className="space-y-3">
                 {topics.map((t) => (
                   <TopicCard key={t.id} topic={t} router={router} pathname={pathname} />

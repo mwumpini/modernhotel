@@ -56,6 +56,10 @@ export interface Employee {
   };
   /** SSNIT membership ID — required to actually file a return; ssnitEnrolled alone isn't enough. */
   ssnitNumber?: string;
+  /** Tier 2 occupational-pension membership number at the trustee. */
+  tier2Number?: string;
+  /** Tier 3 provident-fund account number. */
+  tier3Number?: string;
   /** Ghana Card (NIA) number, format GHA-XXXXXXXXX-X — distinct from the generic governmentIds.nationalId freetext. */
   ghanaCardNumber?: string;
   /** For fixed-term/contract staff; open-ended hires leave this unset. */

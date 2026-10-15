@@ -47,6 +47,15 @@ You do not need to know the system before you start. Every step says where to cl
 - To add something, look for a button such as **+ New**, **Add** or **New …** at the top right of a list.
 - If a screen looks out of date, press **Refresh** on the screen, or reload the page (**F5**).
 
+### Loops
+
+A loop is the same fact on two desks. If you did it on one screen and the next screen does not show it, that step **fails**.
+
+- An order **above** the direct purchase limit starts as a **requisition**. If it waits for a director, it sits under **Executive Management → Approvals**, and only then becomes a purchase order. Do not skip that and type the purchase order by hand.
+- A kitchen ticket shows on **Restaurant & Bar → Transactions** and on the kitchen board.
+- Money you paid (a supplier, a guest, the payroll) shows on the bank, on the tax screens, and on **Statements**.
+- **Books** on the left menu opens the **journal**. The list of accounts is the **Books** tab on that same screen.
+
 ### Words you will see
 
 | Word | Meaning |
@@ -65,6 +74,7 @@ You do not need to know the system before you start. Every step says where to cl
 | **Till** | The cash drawer for one cashier's shift |
 | **PAYE** | Income tax taken from staff pay |
 | **Tier 1 / Tier 2** | SSNIT pension contributions |
+| **Approvals** | **Executive Management → Approvals**. A requisition, payment, overtime entry or payroll above the limit in **System Settings → Approvals** waits here until someone approves it |
 
 ### Taxes in this test
 
@@ -186,6 +196,12 @@ Then:
 3. ✅ It should show **₵4,260.00** still to pay.
 4. Print or preview the **contract** and the **receipt**. ✅ Both open with the right names and amounts.
 
+**A31. The event shows on every view.** Stay on **Events & Conferences → Events**.
+1. Switch to **Calendar**. ✅ The workshop is on Day 2.
+2. Switch to **Gantt**. ✅ It sits on **Volta Hall**.
+3. Switch to **Function**. ✅ The provisional schedule names **Volta Mining** and **Volta Hall**. Print or preview it.
+✅ The same event is on the table, the calendar, the Gantt and the function sheet.
+
 **A11. Security visitor.** Go to **🚨 Security Operations → Visitors** and log a visitor:
 - Name: **Musah Ibrahim**, driver from **Accra Foods Ltd**
 - Purpose: delivery
@@ -217,9 +233,21 @@ Log him out when B says the delivery is in.
 - **Accra Foods Ltd**, VAT registered, with a TIN
 - **Kumasi Drinks Ltd**, VAT registered, with a TIN
 
-**B3. Purchase orders.** On the **Purchase Orders** tab, raise two POs and send them.
+**B3. The order that is small enough.** Open **⚙️ System Settings → Approvals** and write down two numbers. They should both be **₵1,000**. If either one is higher, set it back to **₵1,000** and save. This test needs the ₵2,800 order to be too big for a direct purchase order.
 
-**PO 1, to Accra Foods Ltd:**
+1. **Direct purchase order** limit: ₵______
+2. **Requisition approval** threshold: ₵______
+
+On **Inventory & Stores → Stock → Purchase Orders**, raise only the order that is **at or under** the direct limit.
+
+**Kumasi Drinks Ltd:** Coca-Cola, 48 bottles at ₵5, which is **₵240.00** before tax. Send it.
+✅ It saves. It is under the limit.
+
+Do not type the Accra Foods order on this screen. That order is **₵2,800**, which is above the limit. The next step is the only way in.
+
+**B26. The order above the limit.**
+1. On **Purchase Orders**, try to save the Accra Foods order (the four lines below, **₵2,800.00** before tax). ✅ The screen refuses it and says an order above the limit starts as a requisition.
+2. Go to **Requisitions → Create Requisition** and enter that order:
 
 | Item | Qty | Price | Line |
 | --- | --- | --- | --- |
@@ -229,9 +257,11 @@ Log him out when B says the delivery is in.
 | Toilet roll | 100 | 3 | 300.00 |
 | **Total before tax** | | | **2,800.00** |
 
-**PO 2, to Kumasi Drinks Ltd:** Coca-Cola, 48 bottles at ₵5, which is **₵240.00** before tax.
+3. Press **Approve**. If it stays waiting for a director, open **🏛️ Executive Management → Approvals** and approve it there. ✅ It is approved.
+4. Press **Convert to PO**, choose **Accra Foods Ltd** for the lines, and create the purchase order.
+5. ✅ **Purchase Orders** now shows Accra Foods for **₵2,800.00** before tax, and Kumasi Drinks for **₵240.00**.
 
-**B4. Receive the goods.** On the **Receive & Recon** tab, receive both POs in full into the **Main Store**.
+**B4. Receive the goods.** On **Purchase Orders → Goods Receipt**, receive both POs in full into the **Main Store**.
 ✅ On the **Items** tab, Main Store shows:
 - Rice 50
 - Chicken 20
@@ -289,6 +319,12 @@ Send each order to the kitchen first (**Send to kitchen**), then take payment.
 1. ✅ All three tickets are there.
 2. Move each one to **ready**, then **served**.
 
+**B27. The tickets left the restaurant.**
+1. Go to **Restaurant & Bar → Transactions**. ✅ The three Day 1 sales are there: cash **₵217.80**, billed to the room **₵96.80**, mobile money **₵108.90**.
+2. ✅ After you marked them served, they are not still on **Pending KOT**.
+3. Go to **Kitchen → Board**, then the **Ready now** tab. ✅ The board opens. Drinks are not on this board.
+4. Open the **Kitchen Operations Log** tab. ✅ The three tickets show as moved.
+
 **B13. Stock went down.** Go to **Inventory & Stores → Stock → Items**, or check the stock levels on the Kitchen and Restaurant & Bar supply screens.
 ✅ After 4 Jollof and 3 Coca-Cola:
 - Kitchen: Rice **9**, Chicken **3.8**, Oil **1.8**
@@ -310,15 +346,17 @@ Send each order to the kitchen first (**Send to kitchen**), then take payment.
 
 *Wait for C5.*
 
-**C6. Staff.** Go to **👥 HR & Payroll → People** (the **Records** tab) and add five employees. Departments and positions can be anything sensible.
+**C6. Departments, then staff.** Go to **👥 HR & Payroll → People → Departments**. Add **Front Office**, **Kitchen**, **Housekeeping**, **Restaurant & Bar** and **General** if they are not already there.
 
-| Name | Job | Monthly basic | Allowance | Employment class | Residency |
-| --- | --- | --- | --- | --- | --- |
-| **Abena Kusi** | Front office manager | 4,000 | 500 | Regular | Resident |
-| **Kofi Mensah** | Chef | 3,000 | 0 | Regular | Resident |
-| **Adwoa Sarpong** | Room attendant | 1,200 | 100 | Regular | Resident |
-| **Yaw Boakye** | Waiter | 800 | 0 | **Casual** | Resident |
-| **John Smith** | General manager | 15,000 | 0 | Regular | **Non-resident** |
+Then open **Records** and add five employees. Put each person in the department next to their name.
+
+| Name | Department | Job | Monthly basic | Allowance | Employment class | Residency |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Abena Kusi** | Front Office | Front office manager | 4,000 | 500 | Regular | Resident |
+| **Kofi Mensah** | Kitchen | Chef | 3,000 | 0 | Regular | Resident |
+| **Adwoa Sarpong** | Housekeeping | Room attendant | 1,200 | 100 | Regular | Resident |
+| **Yaw Boakye** | Restaurant & Bar | Waiter | 800 | 0 | **Casual** | Resident |
+| **John Smith** | General | General manager | 15,000 | 0 | Regular | **Non-resident** |
 
 **C7. Staff loan.** Go to **HR & Payroll → Payroll → Staff debts**.
 1. Give **Kofi Mensah** a salary advance of **₵500**, repaid in **one** instalment this month.
@@ -396,7 +434,12 @@ If the system already ran night audit by itself, write down the time it ran and 
 1. Mark it as in progress or held, if the screen has that.
 2. ✅ The balance still shows **₵4,260.00**.
 
+**A32. A patrol round.** Go to **🚨 Security Operations → Watch**.
+1. Press **Start Patrol**, mark one checkpoint done, and finish the round.
+2. ✅ The round shows as completed.
+
 **A20. Security incident.** Go to **🚨 Security Operations → Incidents** and log "Guest lost key card, room 201", severity low. Close it with a note "card replaced".
+✅ It shows as closed. Passwords and sign-in are **System Settings → Security**, not this desk.
 
 **A21. End of day: night audit.** *Wait for B's Day 2 till close (B21).* Go to **Night**.
 1. ✅ In-house is **4**: Ama, Esi, Yaw, Akosua.
@@ -413,6 +456,7 @@ If the system already ran night audit by itself, write down the time it ran and 
 2. ✅ It shows as void.
 3. ✅ It is not in the day's sales.
 4. ✅ It did **not** take a bottle off stock.
+5. On **Restaurant & Bar → Transactions**, filter **Voided**. ✅ That Coca-Cola is there, and it is not counted as a sale.
 
 **B19. Stock after Day 2.**
 ✅ Kitchen:
@@ -439,22 +483,25 @@ If the system already ran night audit by itself, write down the time it ran and 
 
 For Accra Foods and Tema Equipment, turn on **Withhold tax (WHT)** when you record the payment.
 
-1. ✅ Each supplier's balance goes to **₵0.00**. The withholding counts as paid.
-2. ✅ GCB Bank goes down only by what you actually paid: ₵8,244.00 in total.
+1. If a payment waits for approval (these two large ones are above the usual ₵1,000 payment limit), open **🏛️ Executive Management → Approvals** and press **Approve & Post**. The amounts do not change.
+2. ✅ Each supplier's balance goes to **₵0.00**. The withholding counts as paid.
+3. ✅ GCB Bank goes down only by what you actually paid: ₵8,244.00 in total.
 
 **C14. Overtime and leave.**
-1. Go to **HR & Payroll → Time → Overtime**. Record **20 hours** of overtime for **Adwoa Sarpong** this month, and approve it.
+1. Go to **HR & Payroll → Time → Overtime**. Record **20 hours** of overtime for **Adwoa Sarpong** this month, and approve it. The overtime limit is usually **8 hours**, so 20 hours may wait. If it does, approve it under **🏛️ Executive Management → Approvals**.
 2. Go to **HR & Payroll → Leave**. Enter a 2-day leave request for Adwoa next week, and approve it.
    ✅ It shows on **Who's Off** for those days.
 
 **C15. Who owes us, one day later.** Go to **Accounting & Finance → Receivable → Who owes us**.
 ✅ Volta Mining Ltd shows the event balance **₵4,260.00** under **Current**.
 
-**C16. A manual journal.** Go to **Accounting & Finance → Books → Journal**.
-1. Record bank charges of **₵25.00**:
+**C16. The accounts, then a journal.**
+1. Open **Accounting & Finance → Books**. The left-menu item **Books** opens the **Journal**, not the list of accounts.
+2. Open the **Books** tab on that screen (the chart of accounts). ✅ **GCB Bank** is there, and there is an account for bank charges.
+3. Go back to the **Journal** tab. Record bank charges of **₵25.00**:
    - Debit: bank charges expense
    - Credit: GCB Bank
-2. ✅ The journal balances and posts.
+4. ✅ The journal balances and posts. ₵25 is under the usual ₵1,000 journal limit, so it should not wait. If it does, approve it under **🏛️ Executive Management → Approvals**.
 
 ---
 
@@ -501,15 +548,17 @@ For Accra Foods and Tema Equipment, turn on **Withhold tax (WHT)** when you reco
 
 **A30. Events and security reports.**
 1. ✅ **Events & Conferences → Reports & Analysis** shows the workshop: ₵7,260.00 billed and ₵7,260.00 paid.
-2. ✅ **Security Operations → Reports & Analysis** shows the visitor and the incident.
+2. ✅ **Security Operations → Reports & Analysis** shows the visitor, the patrol round, and the incident.
 
 ## Day 3: Tester B
 
 **B22. Stock count.** Go to **Kitchen → Supplies** (stock count) and count the kitchen.
 1. Enter **Rice 8.25**, **Oil 1.65**, and **Chicken 2.7** (0.2 kg is missing).
 2. ✅ The count shows a **shortage of 0.2 kg chicken**, worth about **₵12.00**.
-3. Post it.
+3. Post it. Do not post a second count.
 4. ✅ Kitchen chicken is now **2.7**.
+5. Open **Inventory & Stores → Stock → Items**. ✅ Kitchen chicken is **2.7** there too. Main Store chicken is still **15**.
+6. Open the **Stock Count** tab. ✅ The shortage you posted is the one on the answer sheet (about **₵12.00**). Do not count the kitchen again from this screen.
 
 **B23. Restaurant reports.** Go to **Restaurant & Bar → Reports & Analysis**. ✅ Over the three days:
 - **7 Jollof** and **6 Coca-Cola** sold
@@ -567,9 +616,14 @@ The employer also pays:
 - **Tier 2 (5%):** ₵1,200.00
 
 **C19. Approve and pay payroll.**
-1. Approve the month, then mark it paid from GCB Bank.
+1. Approve the month, then mark it paid from GCB Bank. If the month waits, approve it under **🏛️ Executive Management → Approvals** or on **Payment Advice**, then pay.
 2. ✅ GCB Bank goes down by the net pay, **₵23,872.69**.
 3. ✅ Kofi's staff advance shows **₵0.00** owing.
+
+**C26. Payslips.**
+1. Open **⚙️ System Settings → Document Templates** and select **Payslip**. ✅ A payslip layout is there. Do not redesign it.
+2. Go to **HR & Payroll → Payroll → Payslips** and print or preview this month.
+3. ✅ There is a slip for each of the five employees. The net on each slip matches the payroll table. The hotel name is the one on **System Settings → Company Profile**.
 
 **C20. Payroll taxes.** Go to **⚖️ Compliance & Reports → Payroll** (or **HR → Compliance → Tax**).
 ✅ For this month:
@@ -600,9 +654,9 @@ The employer also pays:
 - WHT we kept from suppliers
 - WHT the customer kept from us
 
-**C23. Statements.** Go to **Accounting & Finance → Statements**.
-1. ✅ **Trial balance:** total debits equal total credits.
-2. ✅ **Profit and loss** shows:
+**C23. Statements.** Go to **Accounting & Finance → Statements**. Walk every tab. The year button should still say **Open · ends …**. Do not close the year.
+1. ✅ **Trial Balance:** total debits equal total credits.
+2. ✅ **Income Statement** shows:
    - Room revenue ₵2,450.00
    - Food & drink ₵620.00
    - Events ₵6,000.00, so total revenue **₵9,070.00**
@@ -610,12 +664,14 @@ The employer also pays:
    - Salaries ₵30,807.60 plus employer pension ₵3,120.00
    - Stationery ₵150.00
    - Bank charges ₵25.00
-3. ✅ **Balance sheet** shows:
+3. ✅ **Balance Sheet** shows:
    - The laundry machine ₵4,000.00 under fixed assets
    - GCB Bank, petty cash ₵350.00, and the cash drawers
    - Stock on hand
    - Taxes owed to GRA
-4. Run depreciation for the month if the screen offers it. ✅ About **₵100.00** (₵4,000 × 30% ÷ 12).
+4. ✅ **Changes in equity** opens, and the year button still reads **Open**.
+5. ✅ **Cash Flow** opens and includes the bank movements you already reconciled.
+6. Run depreciation for the month if the screen offers it. ✅ About **₵100.00** (₵4,000 × 30% ÷ 12). The Income Statement and the Balance Sheet should pick that up.
 
 **C24. Owner's view.** Go to **🏛️ Executive Management → Main Dashboard**.
 ✅ Revenue, occupancy, receipts and payroll match the desks. It should not look like an empty hotel.
@@ -715,10 +771,16 @@ If one screen has it and the other doesn't, the step fails.
 | Restaurant sale | Stock goes down through the recipe or the 1:1 drink link |
 | Voided sale | No sale and no stock taken |
 | Stock received in Inventory | Supplier bill in Payable |
+| Order above the direct purchase limit | Requisition, then Approvals if it waits, then a purchase order, then goods receipt |
+| Kitchen ticket marked served | Restaurant → Transactions (not still Pending KOT) and Kitchen Operations Log |
+| Voided sale | Transactions → Voided, and not in the day's sales |
 | WHT on supplier payment | Supplier fully paid; WHT on the tax report |
 | WHT kept by a customer | Receivable invoice settled; listed under Tax certificates |
 | Event deposit and balance | Event folio, Receivable, Receipts |
-| Payroll approved | Bank, Compliance → Payroll, Statements |
+| Payroll approved and paid | Bank, Compliance → Payroll, Statements, and a payslip for each employee |
+| Journal posted | Books tab still lists the accounts; Trial Balance still balances |
+| Event created | Calendar, Gantt and the function sheet, then Receivable |
+| Patrol, visitor, incident | Security → Reports & Analysis |
 | Night audit | Next room night on every in-house guest; business date moves on |
 
 ---

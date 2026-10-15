@@ -6,16 +6,19 @@ import { StockItem, StockTransferItem } from '../../lib/inventory/models';
 import { sizedTableClassNames } from '../frontoffice/columnResize';
 import { useInventoryScreen } from './inventoryScreenContext';
 import PostingDateField from '../shared/PostingDateField';
+import { DateFilterPills, matchesDateFilter, useDateFilter } from '../fb/DateFilterPills';
 
 /** Inventory → Transfers. Transfer list. */
 export function TransfersTable() {
   const inventoryScreen = useInventoryScreen();
+  const dates = useDateFilter();
   const filtered = inventoryScreen.stockTransfers.filter((t) =>
     (inventoryScreen.stockTransferSearchTerm === '' ||
       t.transferNumber.toLowerCase().includes(inventoryScreen.stockTransferSearchTerm.toLowerCase()) ||
       t.fromLocation.toLowerCase().includes(inventoryScreen.stockTransferSearchTerm.toLowerCase()) ||
       t.toLocation.toLowerCase().includes(inventoryScreen.stockTransferSearchTerm.toLowerCase())) &&
-    (inventoryScreen.stockTransferFilterStatus === 'all' || t.status === inventoryScreen.stockTransferFilterStatus)
+    (inventoryScreen.stockTransferFilterStatus === 'all' || t.status === inventoryScreen.stockTransferFilterStatus) &&
+    matchesDateFilter(t.transferDate, dates.mode, dates.single, dates.from, dates.to)
   );
   const dir = inventoryScreen.transferSort.direction === 'asc' ? 1 : -1;
   const ms = (d: Date | string) => (d instanceof Date ? d : new Date(d)).getTime();
@@ -37,13 +40,13 @@ export function TransfersTable() {
   return (
     <div className="space-y-3">
       <Card className={deskTableCardClassName}>
-        <CardHeader className="pb-3">
+        <CardHeader className="!px-3 !pt-2 !pb-0">
           <div className="flex items-center justify-between w-full">
             <div>
-              <h3 className="text-xl font-semibold text-ghana-black">🔄 Stock Transfers</h3>
+              <h3 className="text-base font-semibold text-ghana-black">🔄 Stock Transfers</h3>
               <p className="text-sm text-gray-500">Move stock between locations</p>
             </div>
-            <Button color="primary" className="bg-ghana-green text-white" variant="flat" onPress={inventoryScreen.handleAddStockTransfer}>
+            <Button size="sm" color="primary" className="bg-ghana-green text-white" variant="flat" onPress={inventoryScreen.handleAddStockTransfer}>
               + New Transfer
             </Button>
           </div>
@@ -68,6 +71,18 @@ export function TransfersTable() {
               <SelectItem key="delivered">Delivered</SelectItem>
               <SelectItem key="cancelled">Cancelled</SelectItem>
             </Select>
+          </div>
+          <div className="mb-2">
+            <DateFilterPills
+              mode={dates.mode}
+              onMode={(mode) => { dates.setMode(mode); inventoryScreen.setTransferPage(1); }}
+              single={dates.single}
+              onSingle={(value) => { dates.setSingle(value); inventoryScreen.setTransferPage(1); }}
+              from={dates.from}
+              onFrom={(value) => { dates.setFrom(value); inventoryScreen.setTransferPage(1); }}
+              to={dates.to}
+              onTo={(value) => { dates.setTo(value); inventoryScreen.setTransferPage(1); }}
+            />
           </div>
           <div ref={inventoryScreen.transferCols.frameRef} style={inventoryScreen.transferCols.frameStyle}>
           <Table aria-label="Stock transfers" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
@@ -492,8 +507,9 @@ export function StockTransferViewModal() {
                 </div>
               )}
             </ModalBody>
-            <ModalFooter className="flex flex-wrap gap-2">
-              <Button variant="bordered" onPress={inventoryScreen.onStockTransferViewClose}>Close</Button>
+            <ModalFooter className="flex w-full flex-wrap items-center gap-2 !justify-between">
+              <div />
+              <div className="flex flex-wrap justify-end gap-2">
               {inventoryScreen.viewingStockTransfer?.status === 'pending' && (
                 <Button
                   color="warning"
@@ -524,6 +540,28 @@ export function StockTransferViewModal() {
                   ❌ Cancel
                 </Button>
               )}
+              {inventoryScreen.viewingStockTransfer && (
+                <Button variant="flat" onPress={() => {
+                  const transfer = inventoryScreen.viewingStockTransfer;
+                  const money = (n: number) => `₵${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                  inventoryScreen.printInventorySheet({
+                    title: 'Stock Transfer',
+                    subtitle: transfer.transferNumber,
+                    fields: [
+                      ['From', transfer.fromLocation],
+                      ['To', transfer.toLocation],
+                      ['Status', transfer.status],
+                      ['Total', money(transfer.totalValue)],
+                    ],
+                    columns: ['Item', 'Qty', 'Amount'],
+                    rows: transfer.items.map((item) => [item.itemName, item.quantity, money(item.totalValue)]),
+                  });
+                }}>
+                  Print
+                </Button>
+              )}
+              <Button variant="bordered" onPress={inventoryScreen.onStockTransferViewClose}>Close</Button>
+              </div>
             </ModalFooter>
           </ModalContent>
         </Modal>

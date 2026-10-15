@@ -187,7 +187,7 @@ interface AccountingState {
   deleteJournalEntry: (id: string) => void;
   setCurrentJournalEntry: (entry: JournalEntry | null) => void;
   postJournalEntry: (id: string) => Promise<void>;
-  voidJournalEntry: (id: string) => Promise<void>;
+  voidJournalEntry: (id: string, opts?: { allowClosedPeriod?: boolean; reason?: string }) => Promise<void>;
   unvoidJournalEntry: (id: string) => Promise<void>;
   
   // General Ledger
@@ -696,13 +696,14 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     }
   },
 
-  voidJournalEntry: async (id) => {
+  voidJournalEntry: async (id, opts) => {
     set({ isLoading: true, error: null });
     try {
       const original = get().journalEntries.find(e => e.id === id);
       const rev = postJournalEntryReversal(id, get(), {
         postedBy: 'current-user',
-        reason: 'Manual journal void',
+        reason: opts?.reason || 'Manual journal void',
+        allowClosedPeriod: opts?.allowClosedPeriod,
         persistEntry: persistJournalEntry,
         markOriginalVoid: (entryId) => {
           set((state) => ({

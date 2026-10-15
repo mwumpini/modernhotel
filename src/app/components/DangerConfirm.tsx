@@ -10,6 +10,8 @@ export type DangerConfirmRequest = {
   tone: 'delete' | 'void' | 'confirm';
   /** Optional third choice shown before the confirm button (e.g. "Assign room"). */
   altLabel?: string;
+  /** Paint the title and message red. Used for the year-close double prompt. */
+  redNotice?: boolean;
 };
 
 export type DangerChoice = 'confirm' | 'alt' | 'cancel';
@@ -97,10 +99,10 @@ export default function DangerConfirmHost() {
     >
       <ModalContent>
         <ModalHeader className="flex flex-col gap-1">
-          <span data-danger-confirm="open">{pending?.title}</span>
+          <span data-danger-confirm="open" className={pending?.redNotice ? 'text-danger' : undefined}>{pending?.title}</span>
         </ModalHeader>
         <ModalBody>
-          <p className="text-sm text-slate-600">{pending?.message}</p>
+          <p className={`text-sm ${pending?.redNotice ? 'text-danger' : 'text-slate-600'}`}>{pending?.message}</p>
         </ModalBody>
         <ModalFooter>
           <Button size="sm" variant="flat" onPress={() => close('cancel')}>Keep as is</Button>

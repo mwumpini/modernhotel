@@ -80,6 +80,8 @@ function toStoreEmployee(row: any) {
     allowances: row.allowances != null ? Number(row.allowances) : undefined,
     paymentFrequency: row.paymentFrequency ?? undefined,
     ssnitNumber: row.ssnitNumber ?? undefined,
+    tier2Number: details.tier2Number ?? undefined,
+    tier3Number: details.tier3Number ?? undefined,
     ghanaCardNumber: row.ghanaCardNumber ?? undefined,
     contractEndDate: row.contractEndDate ?? undefined,
     workPermitExpiryDate: row.workPermitExpiryDate ?? undefined,
@@ -110,12 +112,14 @@ function splitEmployeeData(e: Partial<Record<string, any>>) {
   const {
     taxWithholding, leaveEntitlements, governmentIds, bankAccount, emergencyContact,
     nextOfKin, address, documents, qualifications, acknowledgments, probation, healthCertificateExpiryDate,
+    tier2Number, tier3Number,
     ...columns
   } = e
 
   const details = stripUndefined({
     taxWithholding, leaveEntitlements, governmentIds, bankAccount, emergencyContact,
     nextOfKin, address, documents, qualifications, acknowledgments, probation, healthCertificateExpiryDate,
+    tier2Number, tier3Number,
   })
 
   const data: Record<string, any> = stripUndefined({

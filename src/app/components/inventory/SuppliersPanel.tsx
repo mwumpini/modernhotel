@@ -227,9 +227,10 @@ export function SuppliersTable() {
     <div className="space-y-3">
       {/* Filters and Search */}
       <Card className="border-0 shadow-lg">
-        <CardBody>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <CardBody className="px-3 py-2">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
             <Input
+              size="sm"
               placeholder="Search suppliers..."
               value={inventoryScreen.supplierSearchTerm}
               onChange={(e) => inventoryScreen.setSupplierSearchTerm(e.target.value)}
@@ -263,6 +264,7 @@ export function SuppliersTable() {
             <Select
               placeholder="Payment Terms"
               selectedKeys={[inventoryScreen.supplierFilterPaymentTerms]}
+              size="sm"
               onSelectionChange={(keys) => inventoryScreen.setSupplierFilterPaymentTerms(Array.from(keys)[0] as string)}
             >
               <SelectItem key="all">All Terms</SelectItem>
@@ -277,10 +279,11 @@ export function SuppliersTable() {
 
       {/* Main Table */}
       <Card className={deskTableCardClassName}>
-        <CardHeader className="pb-3">
+        <CardHeader className="!px-3 !pt-2 !pb-0">
           <div className="flex items-center justify-between w-full">
-            <h3 className="text-xl font-semibold text-ghana-black">🤝 Suppliers</h3>
+            <h3 className="text-base font-semibold text-ghana-black">🤝 Suppliers</h3>
             <Button
+              size="sm"
               color="primary"
               className="bg-blue-500 text-white"
               variant="flat"
@@ -291,7 +294,7 @@ export function SuppliersTable() {
             </Button>
           </div>
         </CardHeader>
-        <CardBody className={deskTableCardBodyClassName}>
+        <CardBody className={`${deskTableCardBodyClassName} !pt-1`}>
           <div ref={inventoryScreen.supplierCols.frameRef} style={inventoryScreen.supplierCols.frameStyle}>
           <Table aria-label="Suppliers table" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
             <TableHeader>
@@ -572,19 +575,41 @@ export function SupplierModals() {
                     </div>
                   )}
                 </ModalBody>
-                <ModalFooter>
-                  <Button variant="bordered" onPress={() => inventoryScreen.setSupplierViewOpen(false)}>Close</Button>
+                <ModalFooter className="flex w-full flex-wrap items-center gap-2 !justify-between">
+                  <div>
                   {inventoryScreen.viewingSupplier && (
                     <Button color="danger" variant="light" onPress={() => { inventoryScreen.setSupplierViewOpen(false); void inventoryScreen.handleDeleteSupplier(inventoryScreen.viewingSupplier.id); }}>Delete</Button>
                   )}
+                  </div>
+                  <div className="flex flex-wrap justify-end gap-2">
                   {inventoryScreen.viewingSupplier && (
-                    <Button color="primary" onPress={() => {
+                    <Button color="primary" variant="flat" onPress={() => {
                       inventoryScreen.setSupplierViewOpen(false);
                       inventoryScreen.handleEditSupplier(inventoryScreen.viewingSupplier);
                     }}>
                       Edit
                     </Button>
                   )}
+                  {inventoryScreen.viewingSupplier && (
+                    <Button variant="flat" onPress={() => {
+                      const supplier = inventoryScreen.viewingSupplier;
+                      inventoryScreen.printInventorySheet({
+                        title: 'Supplier',
+                        subtitle: supplier.code,
+                        fields: [
+                          ['Name', supplier.name],
+                          ['Contact', supplier.contactPerson || '—'],
+                          ['Phone', supplier.phone || '—'],
+                          ['Email', supplier.email || '—'],
+                          ['Terms', supplier.paymentTerms || '—'],
+                        ],
+                      });
+                    }}>
+                      Print
+                    </Button>
+                  )}
+                  <Button variant="bordered" onPress={() => inventoryScreen.setSupplierViewOpen(false)}>Close</Button>
+                  </div>
                 </ModalFooter>
               </ModalContent>
             </Modal>

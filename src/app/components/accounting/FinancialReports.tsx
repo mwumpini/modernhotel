@@ -5,6 +5,7 @@ import {
   Card, CardBody, CardHeader, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
   Chip, Tabs, Tab, Divider, Spinner, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem,
+  Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
   Checkbox, RadioGroup, Radio
 } from "@heroui/react";
 import { toRollupCoa } from '@/app/lib/accounting/coaHierarchy';
@@ -13,10 +14,11 @@ import { useSettingsStore } from '@/app/lib/settings/store';
 import {
   financialQuarterIndex,
   financialYearContaining,
-  financialYearCycleLabel,
   financialYearEndedLabel,
+  financialYearEndedShortLabel,
   financialYearEnding,
   quarterOfFinancialYear,
+  toIsoDate,
   yearReadyToClose,
 } from '@/app/lib/accounting/financialYear';
 import { GHANA_CHART_OF_ACCOUNTS } from '@/app/lib/accounting/models';
@@ -31,12 +33,9 @@ import {
 } from '@/app/lib/accounting/financialReportRollup';
 import { buildStatementOfChangesInEquity } from '@/app/lib/accounting/statementOfChangesInEquity';
 import { orderAssetsForStatement, orderLiabilitiesForStatement } from '@/app/lib/accounting/statementLayout';
-import {
-  buildProfitLossCloseEntry,
-  hasPeriodCloseForDate,
-  RETAINED_EARNINGS_GL,
-} from '@/app/lib/accounting/periodClose';
+import { buildProfitLossCloseEntry, findPostedPeriodClose, latestClosedThroughDate, RETAINED_EARNINGS_GL } from '@/app/lib/accounting/periodClose';
 import { logAccountingProcess } from '@/app/lib/accounting/accountingProcessLog';
+import { confirmDanger } from '../DangerConfirm';
 import { accountingAmountsLabel } from '@/app/lib/accounting/tenantAccountingConfig';
 import { downloadCSV, openPrintPreview } from '@/app/lib/accounting/helpers/exportHelpers';
 import { unifiedTableClassNames } from '../frontoffice/columnResize';
@@ -83,14 +82,6 @@ const formatCurrencyWithSign = (amount: number, showZero = false) => {
   const sign = amount < 0 ? '(' : '';
   const end = amount < 0 ? ')' : '';
   return `${sign}${formatPlainAmount(amount)}${end}`;
-};
-
-/** Calendar date in the browser's timezone. toISOString() shifts local midnight to the previous day east of UTC. */
-const formatLocalIsoDate = (d: Date) => {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
 };
 
 const roundMoney = (amount: number) => Math.round((amount + Number.EPSILON) * 100) / 100;
@@ -235,16 +226,15 @@ export default function FinancialReportsPage() {
     isLoading,
     addJournalEntry,
     addAuditTrail,
+    voidJournalEntry,
   } = useAccountingStore();
   const yearStartIso = useSettingsStore((s) => s.companySettings?.financialYearStartDate);
-  const yearCycleLabel = financialYearCycleLabel(yearStartIso);
 
   // ==================== STATE ====================
   const [selectedTab, setSelectedTab] = useState("overview");
-  const [closeAsOfDate, setCloseAsOfDate] = useState('');
-  const [closeDateEdited, setCloseDateEdited] = useState(false);
-  const [closeMessage, setCloseMessage] = useState<string | null>(null);
   const [closeBusy, setCloseBusy] = useState(false);
+  const [closeMessage, setCloseMessage] = useState<string | null>(null);
+  const [yearCloseOpen, setYearCloseOpen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   
   // Period Selection
@@ -399,9 +389,31 @@ export default function FinancialReportsPage() {
     return Array.from({ length: to - from + 1 }, (_, i) => from + i);
   }, [yearStartIso]);
 
-  const yearToClose = useMemo(() => yearReadyToClose(new Date(), yearStartIso), [yearStartIso]);
+  const viewedYear = useMemo(() => {
+    if (periodType === 'year' || periodType === 'quarter') {
+      const endingYear = parseInt(selectedYear, 10);
+      if (Number.isFinite(endingYear)) return financialYearEnding(endingYear, yearStartIso);
+    }
+    return financialYearContaining(endDate, yearStartIso);
+  }, [periodType, selectedYear, endDate, yearStartIso]);
+  const closedThrough = useMemo(() => latestClosedThroughDate(journalEntries), [journalEntries]);
+  const viewedEndIso = toIsoDate(viewedYear.end);
+  const viewedEnded = toIsoDate(new Date()) >= viewedEndIso;
+  const viewedClosed = viewedEnded && !!closedThrough && closedThrough >= viewedEndIso;
+  const priorReady = useMemo(() => yearReadyToClose(new Date(), yearStartIso), [yearStartIso]);
+  const priorEndIso = toIsoDate(priorReady.end);
+  const priorClosed = !!closedThrough && closedThrough >= priorEndIso;
+  const canClosePrior = !viewedEnded && priorReady.endingYear < viewedYear.endingYear && !priorClosed;
+  const actionEndIso = canClosePrior ? priorEndIso : viewedEndIso;
+  const canPostYear = (canClosePrior || viewedEnded) && !viewedClosed && !(canClosePrior && priorClosed);
+  const yearEndShort = viewedYear.end.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const yearStatusLabel = viewedClosed
+    ? `Closed · ${yearEndShort}`
+    : viewedEnded
+      ? `Open · ${yearEndShort}`
+      : `Open · ends ${yearEndShort}`;
   const yearEndedLabel = (endingYear: number) =>
-    financialYearEndedLabel(financialYearEnding(endingYear, yearStartIso).end);
+    financialYearEndedShortLabel(financialYearEnding(endingYear, yearStartIso).end);
 
   const accountTreePeriod = useMemo(
     () => buildFinancialAccountTree(rollupCoa, journalEntries, { kind: 'period', startDate, endDate }),
@@ -608,19 +620,23 @@ export default function FinancialReportsPage() {
     return rows;
   }, [flattenStatement, isSectionExpanded, assetAccounts, liabilityAccounts, equityAccounts, totals.unclosedProfit, totals.unexplainedDifference, totalsPrior.unclosedProfit, totalsPrior.unexplainedDifference]);
 
-  useEffect(() => {
-    if (!closeDateEdited) setCloseAsOfDate(formatLocalIsoDate(endDate));
-  }, [endDate, closeDateEdited]);
-
   const socie = useMemo(
     () => buildStatementOfChangesInEquity(journalEntries, rollupCoa, startDate, endDate, totals.netIncome),
     [journalEntries, rollupCoa, startDate, endDate, totals.netIncome]
   );
 
-  const closeAlreadyPosted = useMemo(
-    () => (closeAsOfDate ? hasPeriodCloseForDate(journalEntries, closeAsOfDate) : false),
-    [journalEntries, closeAsOfDate]
+  const postedClose = useMemo(
+    () => findPostedPeriodClose(journalEntries, actionEndIso),
+    [journalEntries, actionEndIso]
   );
+  const closeAlreadyPosted = !!postedClose || (viewedClosed && !canClosePrior);
+  const closePreview = useMemo(
+    () => (actionEndIso ? buildProfitLossCloseEntry(journalEntries, rollupCoa, actionEndIso) : null),
+    [actionEndIso, journalEntries, rollupCoa],
+  );
+  const nothingToClose = !!closePreview && !closePreview.ok;
+  const canShowPost = canPostYear && !closeAlreadyPosted && !nothingToClose;
+  const latestCloseDate = closedThrough;
 
   // Trial balance rows that are safe to add: a collapsed parent contributes its
   // rolled-up net, an expanded parent contributes nothing (its children do), plus
@@ -1076,28 +1092,38 @@ export default function FinancialReportsPage() {
     openPrintPreview(generateReportHTML('STATEMENT OF CHANGES IN EQUITY', periodLabel, content));
   }, [socie, periodLabel]);
 
-  const handlePostPeriodClose = useCallback(async () => {
+  const postYearClose = async () => {
     setCloseMessage(null);
-    if (!closeAsOfDate) {
-      setCloseMessage('Choose a closing date.');
+    if (!canPostYear || closeBusy) {
+      setCloseMessage(viewedEnded ? 'This year is already closed.' : 'This year is still open.');
       return;
     }
-    const { confirmChoice } = await import('../DangerConfirm');
-    if (!(await confirmChoice(
-      `Close the books as at ${closeAsOfDate}?`,
-      `This posts profit or loss to retained earnings (GL ${RETAINED_EARNINGS_GL}) and locks every date on or before ${closeAsOfDate} against new postings.`,
-      'Post close',
-    ))) return;
+    const first = await confirmDanger({
+      tone: 'delete',
+      redNotice: true,
+      title: `Close the books as at ${actionEndIso}?`,
+      message: `Profit or loss through this date moves to retained earnings (${RETAINED_EARNINGS_GL}). Every date on or before ${actionEndIso} locks.`,
+      confirmLabel: 'Continue',
+    });
+    if (!first) return;
+    const second = await confirmDanger({
+      tone: 'delete',
+      redNotice: true,
+      title: 'Post this close?',
+      message: `This writes the year-close journal. Dates on or before ${actionEndIso} stay locked until that journal is voided.`,
+      confirmLabel: 'Post close',
+    });
+    if (!second) return;
     setCloseBusy(true);
     try {
-      const result = buildProfitLossCloseEntry(journalEntries, rollupCoa, closeAsOfDate);
+      const result = buildProfitLossCloseEntry(journalEntries, rollupCoa, actionEndIso);
       if (!result.ok) {
         setCloseMessage(result.error);
         return;
       }
       addJournalEntry(result.entry);
       logAccountingProcess('PeriodClose', 'P&L close posted to retained earnings', {
-        date: closeAsOfDate,
+        date: actionEndIso,
         entryNumber: result.entry.entryNumber,
         reference: result.entry.reference,
         retainedEarningsGl: RETAINED_EARNINGS_GL,
@@ -1107,22 +1133,59 @@ export default function FinancialReportsPage() {
         tableName: 'PeriodClose',
         recordId: result.entry.id,
         action: 'Create',
-        oldValues: undefined,
         newValues: {
           type: 'PeriodClose',
-          date: closeAsOfDate,
+          date: actionEndIso,
           entryNumber: result.entry.entryNumber,
           reference: result.entry.reference,
         },
         userId: 'system',
         timestamp: new Date().toISOString(),
       });
-      setCloseMessage(`Posted ${result.entry.entryNumber}. Ledger refreshed.`);
+      setCloseMessage(`Posted ${result.entry.entryNumber}. Dates on or before ${actionEndIso} are locked.`);
       void handleRefresh();
     } finally {
       setCloseBusy(false);
     }
-  }, [closeAsOfDate, journalEntries, rollupCoa, addJournalEntry, addAuditTrail, handleRefresh]);
+  };
+
+  const undoYearClose = async () => {
+    setCloseMessage(null);
+    if (!actionEndIso || !postedClose || closeBusy) return;
+    if (latestCloseDate && latestCloseDate > actionEndIso.slice(0, 10)) {
+      setCloseMessage(`Undo the close through ${latestCloseDate} first.`);
+      return;
+    }
+    const ok = await confirmDanger({
+      tone: 'delete',
+      redNotice: true,
+      title: `Undo the close as at ${actionEndIso}?`,
+      message: `This voids ${postedClose.entryNumber}. Profit or loss comes back out of retained earnings, and dates on or before ${actionEndIso} open again.`,
+      confirmLabel: 'Undo close',
+    });
+    if (!ok) return;
+    setCloseBusy(true);
+    try {
+      await voidJournalEntry(postedClose.id, {
+        allowClosedPeriod: true,
+        reason: `Undo period close as at ${actionEndIso}`,
+      });
+      const err = useAccountingStore.getState().error;
+      if (err) {
+        setCloseMessage(err);
+        return;
+      }
+      logAccountingProcess('PeriodClose', 'P&L close undone', {
+        date: actionEndIso,
+        entryNumber: postedClose.entryNumber,
+        reference: postedClose.reference,
+      });
+      setCloseMessage(`Reopened. ${postedClose.entryNumber} is void. Dates on or before ${actionEndIso} accept postings again.`);
+      void handleRefresh();
+    } finally {
+      setCloseBusy(false);
+    }
+  };
 
   // ==================== REPORT OPTIONS ====================
   // `showComparisonToggle` is only passed true from Income Statement / Balance Sheet — Trial
@@ -1175,7 +1238,6 @@ export default function FinancialReportsPage() {
         <SelectItem key="year">Full Year</SelectItem>
         <SelectItem key="custom">Custom Range</SelectItem>
       </Select>
-      <span className="text-xs text-gray-500">Year runs {yearCycleLabel}</span>
 
       {periodType === 'month' && (
         <Input
@@ -1218,7 +1280,7 @@ export default function FinancialReportsPage() {
             size="sm"
             variant="bordered"
             aria-label="Accounting year"
-            className="w-64"
+            className="w-[15.5rem] shrink-0"
             classNames={{ trigger: 'h-8 min-h-8' }}
           >
             {yearOptions.map((y) => (
@@ -1238,7 +1300,7 @@ export default function FinancialReportsPage() {
           size="sm"
           variant="bordered"
           aria-label="Accounting year"
-          className="w-64"
+          className="w-[15.5rem] shrink-0"
           classNames={{ trigger: 'h-8 min-h-8' }}
         >
           {yearOptions.map((y) => (
@@ -1761,9 +1823,6 @@ export default function FinancialReportsPage() {
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                   <div>
                     <h3 className="text-base font-semibold text-gray-800">Statement of changes in equity</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      Post period close below to move P&amp;L into retained earnings ({RETAINED_EARNINGS_GL}).
-                    </p>
                   </div>
                   <Dropdown>
                     <DropdownTrigger>
@@ -1782,63 +1841,72 @@ export default function FinancialReportsPage() {
                   </Dropdown>
                 </div>
 
-                <Card className="shadow-none border border-slate-200 bg-slate-50/40">
-                  <CardHeader className="py-3 border-b border-slate-200">
-                    <h4 className="font-semibold text-gray-800 text-sm">Period close — P&amp;L to retained earnings</h4>
-                  </CardHeader>
-                  <CardBody className="py-4 space-y-3">
-                    <div className="flex flex-wrap items-end gap-3">
-                      <div className="min-w-[200px]">
-                        <label className="text-xs font-medium text-gray-500 mb-1 block">Close as at (date)</label>
-                        <Input
-                          type="date"
-                          value={closeAsOfDate}
-                          onValueChange={(value) => {
-                            setCloseDateEdited(true);
-                            setCloseAsOfDate(value);
-                          }}
-                          size="sm"
-                          variant="bordered"
-                          aria-label="Period close as-of date"
-                        />
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="flat"
-                        onPress={() => {
-                          setCloseDateEdited(true);
-                          setCloseAsOfDate(formatLocalIsoDate(yearToClose.end));
-                        }}
-                      >
-                        {financialYearEndedLabel(yearToClose.end)}
-                      </Button>
-                      <Button
-                        color="primary"
-                        size="sm"
-                        isDisabled={closeBusy || closeAlreadyPosted || !closeAsOfDate}
-                        isLoading={closeBusy}
-                        onPress={handlePostPeriodClose}
-                      >
-                        Post P&amp;L to retained earnings
-                      </Button>
-                      {closeAlreadyPosted && (
-                        <Chip size="sm" variant="flat" color="warning">
-                          Close already posted for this date
-                        </Chip>
-                      )}
-                    </div>
-                    {closeMessage && (
-                      <p className={`text-sm ${closeMessage.startsWith('Posted') ? 'text-emerald-700' : 'text-rose-700'}`}>
-                        {closeMessage}
+                <div>
+                  <Button
+                    size="sm"
+                    color={viewedClosed ? 'success' : canShowPost ? 'danger' : 'default'}
+                    variant="bordered"
+                    onPress={() => setYearCloseOpen(true)}
+                  >
+                    {yearStatusLabel}
+                  </Button>
+                </div>
+
+                <Modal isOpen={yearCloseOpen} onClose={() => setYearCloseOpen(false)} size="lg">
+                  <ModalContent>
+                    <ModalHeader className="flex flex-col gap-1">
+                      <span className={viewedClosed ? 'text-success' : 'text-danger'}>{yearStatusLabel}</span>
+                      <span className={`text-xs font-normal ${viewedClosed ? 'text-success' : 'text-danger'}`}>
+                        {viewedClosed
+                          ? 'This year is closed. Undo close is the only way to open it again.'
+                          : canClosePrior && canShowPost
+                            ? `This year is still open. ${priorReady.end.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} can be closed.`
+                            : viewedEnded && canShowPost
+                              ? 'This year is open. Posting closes it. Undo close is the only way to open it again.'
+                              : viewedEnded && closePreview && !closePreview.ok
+                                ? closePreview.error
+                                : 'This year is still open. Close it after the last day.'}
+                      </span>
+                    </ModalHeader>
+                    <ModalBody className="gap-3">
+                      <p className="text-sm text-gray-700">
+                        Close as at <span className="font-medium">{actionEndIso}</span>
                       </p>
-                    )}
-                    <p className="text-xs text-gray-500">
-                      This company&apos;s year runs {yearCycleLabel}. Use {financialYearEndedLabel(yearToClose.end)} to fill the close date for the year that has finished. The opening day is under Settings, Accounting year.
-                      One posted close per date. Once posted, folio checkout, invoices, payments, and other postings refuse a date on or before
-                      this date. Void the close entry to reopen it.
-                    </p>
-                  </CardBody>
-                </Card>
+                      {closeAlreadyPosted && (
+                        <Chip size="sm" variant="flat" color="success">This year is closed</Chip>
+                      )}
+                      {closeMessage && (
+                        <p className={`text-sm ${closeMessage.startsWith('Posted') || closeMessage.startsWith('Reopened') ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {closeMessage}
+                        </p>
+                      )}
+                      <p className="text-xs text-gray-500">A closed year stays closed. Undo close is the only way to open it again.</p>
+                    </ModalBody>
+                    <ModalFooter>
+                      <Button
+                        size="sm"
+                        color="danger"
+                        variant="bordered"
+                        isDisabled={closeBusy || !postedClose}
+                        isLoading={closeBusy && !!postedClose}
+                        onPress={undoYearClose}
+                      >
+                        Undo close
+                      </Button>
+                      {canShowPost && (
+                        <Button
+                          size="sm"
+                          color="danger"
+                          isDisabled={closeBusy}
+                          isLoading={closeBusy && !postedClose}
+                          onPress={postYearClose}
+                        >
+                          Post P&amp;L to retained earnings
+                        </Button>
+                      )}
+                    </ModalFooter>
+                  </ModalContent>
+                </Modal>
 
                 <Card className="shadow-none border overflow-hidden">
                   <CardBody className="p-0">

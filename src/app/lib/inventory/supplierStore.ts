@@ -41,6 +41,7 @@ function syncPurchaseOrderToApi(order: PurchaseOrder): Promise<PurchaseOrder | n
       approvedAt: order.approvedAt,
       taxTypeId: order.taxTypeId,
       customTaxRate: order.customTaxRate,
+      fromRequisition: /converted from requisition/i.test(order.notes || ''),
       items: order.items.map((i) => ({
         itemId: i.itemId,
         itemCode: i.itemCode,
@@ -345,6 +346,79 @@ function syncGRNToApi(grn: GoodsReceiptNote) {
       })),
     }),
   }).catch((e) => console.warn('[Inventory] Failed to sync goods receipt note to server:', e));
+}
+
+function deleteGRNFromApi(id: string) {
+  if (typeof window === 'undefined') return;
+  fetch(`/api/inventory/goods-receipt-notes?id=${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: poTenantHeaders(),
+  }).catch((e) => console.warn('[Inventory] Failed to delete goods receipt note on server:', e));
+}
+
+/** Reverse stock, the purchase order's received quantity, and the payable posted when a receipt was approved. */
+function undoPostedReceipt(
+  grn: GoodsReceiptNote,
+  performedBy: string,
+  purchaseOrders: PurchaseOrder[],
+  updatePurchaseOrder: (id: string, updates: Partial<PurchaseOrder>) => void,
+) {
+  if (grn.status !== 'approved') return;
+  const stock = useStockStore.getState();
+  for (const item of grn.items) {
+    const qty = Math.max(0, Number(item.acceptedQuantity ?? item.receivedQuantity ?? 0));
+    if (qty <= 0) continue;
+    stock.updateStockLevel(item.itemId, qty, 'remove');
+    stock.addStockMovement({
+      itemId: item.itemId,
+      itemCode: item.itemCode,
+      itemName: item.itemName,
+      movementType: 'out',
+      quantity: qty,
+      unitCost: Number(item.unitCost || 0),
+      totalValue: qty * Number(item.unitCost || 0),
+      referenceType: 'purchase',
+      referenceId: grn.id,
+      referenceNumber: grn.grnNumber,
+      performedBy,
+      notes: `Voided ${grn.grnNumber} for ${grn.poNumber}`,
+    });
+  }
+
+  const po = purchaseOrders.find((order) => order.id === grn.poId);
+  if (po) {
+    const items = po.items.map((line) => {
+      const received = grn.items.find((item) => item.itemId === line.itemId);
+      if (!received) return line;
+      const accepted = Math.max(0, Number(received.acceptedQuantity ?? received.receivedQuantity ?? 0));
+      return { ...line, receivedQuantity: Math.max(0, Number(line.receivedQuantity || 0) - accepted) };
+    });
+    const fullyReceived = items.length > 0 && items.every((line) => Number(line.receivedQuantity || 0) >= Number(line.quantity || 0));
+    const anyReceived = items.some((line) => Number(line.receivedQuantity || 0) > 0);
+    updatePurchaseOrder(po.id, {
+      items,
+      status: fullyReceived ? 'delivered' : anyReceived ? 'in-transit' : 'confirmed',
+      actualDeliveryDate: fullyReceived ? po.actualDeliveryDate : (null as unknown as Date),
+    });
+  }
+
+  try {
+    const { useAccountingStore } = require('../accounting/store');
+    const accounting = useAccountingStore.getState();
+    const entry = accounting.journalEntries.find((e: { id: string; sourceTransactionId?: string; status: string }) =>
+      (e.id === `JE-GRN-${grn.id}` || e.sourceTransactionId === grn.id) && e.status === 'Posted'
+    );
+    if (entry) void accounting.voidJournalEntry(entry.id);
+    if (grn.totalValue > 0) {
+      const category = stock.getStockItem(grn.items[0]?.itemId)?.category;
+      const categoryToCenter: Record<string, string> = {
+        food: 'KT', beverage: 'FB', cleaning: 'HK', maintenance: 'MT', office: 'AC', linens: 'HK', amenities: 'FO',
+      };
+      accounting.recordExpense(category ? (categoryToCenter[category] || 'FO') : 'KT', -Number(grn.totalValue || 0));
+    }
+  } catch (e) {
+    console.error('[Inventory] Failed to reverse goods receipt:', e);
+  }
 }
 
 function mapApiGRNToStore(raw: any): GoodsReceiptNote {
@@ -669,6 +743,8 @@ interface SupplierStore {
   getGRNsByStatus: (status: GoodsReceiptNote['status']) => GoodsReceiptNote[];
   approveGRN: (grnId: string, approvedBy: string) => void;
   rejectGRN: (grnId: string, rejectedBy: string, reason: string) => void;
+  voidGRN: (grnId: string, performedBy: string) => void;
+  deleteGRN: (grnId: string, performedBy: string) => void;
   selectGRN: (grn: GoodsReceiptNote | null) => void;
   
   // Supplier Invoice Management
@@ -1213,6 +1289,7 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
       set(state => ({
         purchaseOrders: state.purchaseOrders.map(o => (o.id === newOrder.id ? serverOrder : o)),
       }));
+      if (serverOrder.status === 'delivered') useStockStore.getState().hydrateFromApi();
     });
   },
 
@@ -1231,6 +1308,7 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
         set(state => ({
           purchaseOrders: state.purchaseOrders.map(o => (o.id === serverOrder.id ? serverOrder : o)),
         }));
+        if (serverOrder.status === 'delivered') useStockStore.getState().hydrateFromApi();
       });
     }
   },
@@ -1353,6 +1431,7 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
     get().updatePurchaseOrder(orderId, { status: 'in-transit' });
   },
 
+  // Delivered receives any quantity still outstanding. The server posts the stock receipt.
   markDelivered: (orderId, actualDeliveryDate) => {
     get().updatePurchaseOrder(orderId, { 
       status: 'delivered',
@@ -1534,6 +1613,7 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
         finalAmount,
         currency: 'GHS',
         paymentTerms: supplier.paymentTerms || 'net30',
+        taxTypeId: 'standard',
         notes: `Converted from Requisition ${requisition.requisitionNumber} (${items.length} line${items.length === 1 ? '' : 's'})`,
         items: poItems,
         createdBy: requisition.requestedBy,
@@ -1869,6 +1949,43 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
       })
     }));
     if (updatedGrn) syncGRNToApi(updatedGrn);
+
+    const stock = useStockStore.getState();
+    for (const item of grn.items) {
+      const qty = Math.max(0, Number(item.acceptedQuantity ?? item.receivedQuantity ?? 0));
+      if (qty <= 0) continue;
+      stock.updateStockLevel(item.itemId, qty, 'add', Number(item.unitCost || 0));
+      stock.addStockMovement({
+        itemId: item.itemId,
+        itemCode: item.itemCode,
+        itemName: item.itemName,
+        movementType: 'in',
+        quantity: qty,
+        unitCost: Number(item.unitCost || 0),
+        totalValue: qty * Number(item.unitCost || 0),
+        referenceType: 'purchase',
+        referenceId: grn.id,
+        referenceNumber: grn.grnNumber,
+        performedBy: approvedBy,
+        notes: `Accepted on ${grn.grnNumber} for ${grn.poNumber}`,
+      });
+    }
+
+    const po = get().purchaseOrders.find((order) => order.id === grn.poId);
+    if (po) {
+      const items = po.items.map((line) => {
+        const received = grn.items.find((item) => item.itemId === line.itemId);
+        if (!received) return line;
+        const accepted = Math.max(0, Number(received.acceptedQuantity ?? received.receivedQuantity ?? 0));
+        return { ...line, receivedQuantity: Number(line.receivedQuantity || 0) + accepted };
+      });
+      const fullyReceived = items.every((line) => Number(line.receivedQuantity || 0) >= Number(line.quantity || 0));
+      get().updatePurchaseOrder(po.id, {
+        items,
+        status: fullyReceived ? 'delivered' : 'in-transit',
+        ...(fullyReceived ? { actualDeliveryDate: new Date() } : {}),
+      });
+    }
   },
 
   rejectGRN: (grnId, rejectedBy, reason) => {
@@ -1888,6 +2005,29 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
       })
     }));
     if (updatedGrn) syncGRNToApi(updatedGrn);
+  },
+
+  voidGRN: (grnId, performedBy) => {
+    const grn = get().goodsReceiptNotes.find((g) => g.id === grnId);
+    if (!grn || grn.status === 'void') return;
+    if (grn.status === 'approved') undoPostedReceipt(grn, performedBy, get().purchaseOrders, get().updatePurchaseOrder);
+    let updatedGrn: GoodsReceiptNote | undefined;
+    set((state) => ({
+      goodsReceiptNotes: state.goodsReceiptNotes.map((row) => {
+        if (row.id !== grnId) return row;
+        updatedGrn = { ...row, status: 'void' as const, updatedAt: new Date() };
+        return updatedGrn;
+      }),
+    }));
+    if (updatedGrn) syncGRNToApi(updatedGrn);
+  },
+
+  deleteGRN: (grnId, performedBy) => {
+    const grn = get().goodsReceiptNotes.find((g) => g.id === grnId);
+    if (!grn) return;
+    if (grn.status === 'approved') undoPostedReceipt(grn, performedBy, get().purchaseOrders, get().updatePurchaseOrder);
+    set((state) => ({ goodsReceiptNotes: state.goodsReceiptNotes.filter((row) => row.id !== grnId) }));
+    deleteGRNFromApi(grnId);
   },
 
   selectGRN: (grn) => set({ selectedGRN: grn }),
@@ -2141,9 +2281,11 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
     const check = get().getQualityCheck(checkId);
     if (!check) return;
 
-    const passedCount = check.items.filter(i => i.qualityStatus === 'passed').length;
-    const failedCount = check.items.filter(i => i.qualityStatus === 'failed').length;
-    const overallStatus = failedCount === 0 ? 'passed' : passedCount === 0 ? 'failed' : 'partial';
+    const passedCount = check.items.filter(i => Number(i.passedQuantity) > 0 && Number(i.failedQuantity) === 0).length;
+    const failedCount = check.items.filter(i => Number(i.failedQuantity) > 0).length;
+    const anyPassed = check.items.some(i => Number(i.passedQuantity) > 0);
+    const anyFailed = check.items.some(i => Number(i.failedQuantity) > 0);
+    const overallStatus = !anyFailed ? 'passed' : !anyPassed ? 'failed' : 'partial';
 
     let updatedCheck: QualityCheck | undefined;
     set(state => ({
@@ -2163,12 +2305,27 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
     }));
     if (updatedCheck) syncQualityCheckToApi(updatedCheck);
 
-    // Update GRN quality status
+    const grn = get().goodsReceiptNotes.find((g) => g.id === check.grnId);
+    const items = grn ? grn.items.map((line) => {
+      const qc = check.items.find((i) => i.grnItemId === line.id || i.itemId === line.itemId);
+      if (!qc) return line;
+      const accepted = Math.max(0, Number(qc.passedQuantity || 0));
+      return {
+        ...line,
+        acceptedQuantity: accepted,
+        rejectedQuantity: Math.max(0, Number(qc.failedQuantity || 0)),
+        totalValue: accepted * Number(line.unitCost || 0),
+        qualityStatus: qc.qualityStatus,
+      };
+    }) : undefined;
+    const acceptedValue = items ? items.reduce((sum, line) => sum + Number(line.totalValue || 0), 0) : 0;
+
     get().updateGRN(check.grnId, {
+      ...(items ? { items, totalValue: acceptedValue } : {}),
       qualityCheckedBy: approvedBy,
       qualityCheckedAt: new Date(),
       qualityStatus: overallStatus as 'passed' | 'failed' | 'partial',
-      status: overallStatus === 'passed' ? 'quality-check' as const : 'rejected' as const
+      status: overallStatus === 'failed' ? 'rejected' as const : 'quality-check' as const,
     });
   }
 }));

@@ -132,6 +132,7 @@ export default function EmployeeRecordsPanel() {
     </TableColumn>
   );
 
+  const [pensionIdsOpen, setPensionIdsOpen] = React.useState(false);
   const [form, setForm] = React.useState<any>({
     // Basic
     employeeNumber: '',
@@ -170,6 +171,8 @@ export default function EmployeeRecordsPanel() {
     taxWithholding: { tin: '', filingStatus: 'single', allowances: 0 },
     governmentIds: { nationalId: '', ssn: '', passport: '', workPermit: '' },
     ssnitNumber: '',
+    tier2Number: '',
+    tier3Number: '',
     ghanaCardNumber: '',
     contractEndDate: '',
     workPermitExpiryDate: '',
@@ -213,7 +216,7 @@ export default function EmployeeRecordsPanel() {
 
     const value = (e: (typeof rows)[number]): string | number => {
       switch (sortKey) {
-        case 'idNo': return (e as any).governmentIds?.nationalId || '';
+        case 'idNo': return (e as any).ghanaCardNumber || '';
         case 'staffNo': return e.employeeNumber || '';
         case 'name': return `${e.firstName} ${e.lastName}`.trim().toLowerCase();
         case 'department': return getDepartment(e.departmentId)?.name || '';
@@ -252,6 +255,7 @@ export default function EmployeeRecordsPanel() {
     setViewingId(null);
     setIsEditing(false);
     setEditingId(null);
+    setPensionIdsOpen(false);
     setStep(1);
 		setForm({
       employeeNumber: useSettingsStore.getState().peekNextModuleNumber('hr', 'employeeId'),
@@ -289,6 +293,8 @@ export default function EmployeeRecordsPanel() {
       taxWithholding: { tin: '', filingStatus: 'single', allowances: 0 },
       governmentIds: { nationalId: '', ssn: '', passport: '', workPermit: '' },
     ssnitNumber: '',
+    tier2Number: '',
+    tier3Number: '',
     ghanaCardNumber: '',
     contractEndDate: '',
     workPermitExpiryDate: '',
@@ -319,6 +325,7 @@ export default function EmployeeRecordsPanel() {
     setViewingId(null);
     setIsEditing(true);
     setEditingId(id);
+    setPensionIdsOpen(!!((e as any).tier2Number || (e as any).tier3Number));
     setStep(1);
 		setForm({
       employeeNumber: e.employeeNumber,
@@ -355,7 +362,9 @@ export default function EmployeeRecordsPanel() {
       paymentFrequency: (e as any).paymentFrequency || 'monthly',
       taxWithholding: (e as any).taxWithholding || { tin: '', filingStatus: 'single', allowances: 0 },
       governmentIds: (e as any).governmentIds || { nationalId: '', ssn: '', passport: '', workPermit: '' },
-      ssnitNumber: (e as any).ssnitNumber || '',
+      ssnitNumber: (e as any).ssnitNumber || (e as any).ghanaCardNumber || '',
+      tier2Number: (e as any).tier2Number || '',
+      tier3Number: (e as any).tier3Number || '',
       ghanaCardNumber: (e as any).ghanaCardNumber || '',
       contractEndDate: (e as any).contractEndDate ? new Date((e as any).contractEndDate).toISOString().slice(0, 10) : '',
       workPermitExpiryDate: (e as any).workPermitExpiryDate ? new Date((e as any).workPermitExpiryDate).toISOString().slice(0, 10) : '',
@@ -498,6 +507,8 @@ export default function EmployeeRecordsPanel() {
         taxWithholding: form.taxWithholding,
         governmentIds: form.governmentIds,
         ssnitNumber: form.ssnitNumber || undefined,
+        tier2Number: form.tier2Number || undefined,
+        tier3Number: form.tier3Number || undefined,
         ghanaCardNumber: form.ghanaCardNumber || undefined,
         contractEndDate: form.contractEndDate ? new Date(form.contractEndDate) : undefined,
         workPermitExpiryDate: form.workPermitExpiryDate ? new Date(form.workPermitExpiryDate) : undefined,
@@ -601,6 +612,8 @@ export default function EmployeeRecordsPanel() {
         taxWithholding: form.taxWithholding,
         governmentIds: form.governmentIds,
         ssnitNumber: form.ssnitNumber || undefined,
+        tier2Number: form.tier2Number || undefined,
+        tier3Number: form.tier3Number || undefined,
         ghanaCardNumber: form.ghanaCardNumber || undefined,
         contractEndDate: form.contractEndDate ? new Date(form.contractEndDate) : undefined,
         workPermitExpiryDate: form.workPermitExpiryDate ? new Date(form.workPermitExpiryDate) : undefined,
@@ -665,6 +678,8 @@ export default function EmployeeRecordsPanel() {
       taxWithholding: { tin: '', filingStatus: 'single', allowances: 0 },
       governmentIds: { nationalId: '', ssn: '', passport: '', workPermit: '' },
     ssnitNumber: '',
+    tier2Number: '',
+    tier3Number: '',
     ghanaCardNumber: '',
     contractEndDate: '',
     workPermitExpiryDate: '',
@@ -955,7 +970,7 @@ export default function EmployeeRecordsPanel() {
             }}
           >
             <TableHeader>
-              {column('idNo', 'ID No.')}
+              {column('idNo', 'Ghana Card')}
               {column('staffNo', 'Staff No.')}
               {column('name', 'Name')}
               {column('department', 'Department')}
@@ -1003,7 +1018,7 @@ export default function EmployeeRecordsPanel() {
                     className={rowClassNames(viewingId === e.id || (isOpen && editingId === e.id))}
                     onClick={() => openView(e.id)}
                   >
-                    <TableCell className={visibleColumns.has('idNo') ? 'text-gray-600' : 'hidden'}>{(e as any).governmentIds?.nationalId || '-'}</TableCell>
+                    <TableCell className={visibleColumns.has('idNo') ? 'text-gray-600' : 'hidden'}>{(e as any).ghanaCardNumber || '-'}</TableCell>
                     <TableCell className={visibleColumns.has('staffNo') ? 'text-gray-600' : 'hidden'}>{e.employeeNumber}</TableCell>
                     <TableCell className={visibleColumns.has('name') ? 'font-semibold text-ghana-black' : 'hidden'}>
                       <span className="block truncate" title={`${e.firstName} ${e.lastName}`}>{e.firstName} {e.lastName}</span>
@@ -1061,7 +1076,7 @@ export default function EmployeeRecordsPanel() {
               <ModalBody>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                   {[
-                    { key: 'idNo', label: 'ID No.' },
+                    { key: 'idNo', label: 'Ghana Card' },
                     { key: 'staffNo', label: 'Staff No.' },
                     { key: 'name', label: 'Name' },
                     { key: 'department', label: 'Department' },
@@ -1310,7 +1325,7 @@ export default function EmployeeRecordsPanel() {
                       {form.compensationType === 'monthly' && (
                         <>
                           <Input label="Basic Salary" type="number" value={String(form.basicSalary)} onChange={(e) => setForm({ ...form, basicSalary: parseFloat(e.target.value || '0') })} variant="bordered" />
-                          <Input label="Allowances" type="number" value={String(form.allowances)} onChange={(e) => setForm({ ...form, allowances: parseFloat(e.target.value || '0') })} variant="bordered" />
+                          <Input label="Allowances" description="Optional. Cash paid on top of basic salary." type="number" value={String(form.allowances)} onChange={(e) => setForm({ ...form, allowances: parseFloat(e.target.value || '0') })} variant="bordered" />
                         </>
                       )}
                       {form.compensationType === 'hourly' && (
@@ -1319,7 +1334,7 @@ export default function EmployeeRecordsPanel() {
                           <Input label="Overtime Rate" type="number" value={String(form.overtimeRate)} onChange={(e) => setForm({ ...form, overtimeRate: e.target.value })} variant="bordered" />
                         </>
                       )}
-                      <Select disallowEmptySelection label="Payment Frequency" selectedKeys={[form.paymentFrequency]} onSelectionChange={(k) => setForm({ ...form, paymentFrequency: Array.from(k)[0] as string })} variant="bordered">
+                      <Select isRequired disallowEmptySelection label="Payment Frequency" selectedKeys={[form.paymentFrequency]} onSelectionChange={(k) => setForm({ ...form, paymentFrequency: Array.from(k)[0] as string })} variant="bordered">
                         <SelectItem key="monthly">Monthly</SelectItem>
                         <SelectItem key="biweekly">Biweekly</SelectItem>
                         <SelectItem key="weekly">Weekly</SelectItem>
@@ -1382,15 +1397,25 @@ export default function EmployeeRecordsPanel() {
                         <SelectItem key="married">Married</SelectItem>
                         <SelectItem key="head_of_household">Head of Household</SelectItem>
                       </Select>
-                      <Input label="Allowances" type="number" value={String(form.taxWithholding.allowances)} onChange={(e) => setForm({ ...form, taxWithholding: { ...form.taxWithholding, allowances: parseInt(e.target.value || '0', 10) } })} variant="bordered" />
-                      <Input label="National ID" value={form.governmentIds.nationalId} onChange={(e) => setForm({ ...form, governmentIds: { ...form.governmentIds, nationalId: e.target.value } })} variant="bordered" />
-                      <Input label="SSN" value={form.governmentIds.ssn} onChange={(e) => setForm({ ...form, governmentIds: { ...form.governmentIds, ssn: e.target.value } })} variant="bordered" />
+                      <Input label="Ghana Card" description="This is the ID on the staff list. Optional." placeholder="GHA-XXXXXXXXX-X" value={form.ghanaCardNumber} onChange={(e) => {
+                        const nextId = e.target.value;
+                        const prevId = form.ghanaCardNumber || '';
+                        const follows = !form.ssnitNumber || form.ssnitNumber === prevId;
+                        setForm({ ...form, ghanaCardNumber: nextId, ssnitNumber: follows ? nextId : form.ssnitNumber });
+                      }} variant="bordered" />
+                      {(pensionIdsOpen || form.tier2Number || form.tier3Number) ? (
+                        <>
+                          <Input label="Tier 2 ID number" description="Optional. Occupational pension membership." value={form.tier2Number} onChange={(e) => setForm({ ...form, tier2Number: e.target.value })} variant="bordered" />
+                          <Input label="Tier 3 ID number" description="Optional. Provident fund account." value={form.tier3Number} onChange={(e) => setForm({ ...form, tier3Number: e.target.value })} variant="bordered" />
+                        </>
+                      ) : (
+                        <Button variant="bordered" className="h-14 self-end" onPress={() => setPensionIdsOpen(true)}>+ Pension ID</Button>
+                      )}
                       <Input label="Passport" value={form.governmentIds.passport} onChange={(e) => setForm({ ...form, governmentIds: { ...form.governmentIds, passport: e.target.value } })} variant="bordered" />
                       {form.nationality && form.nationality !== 'Ghana' && (
                         <Input label="Work Permit" value={form.governmentIds.workPermit} onChange={(e) => setForm({ ...form, governmentIds: { ...form.governmentIds, workPermit: e.target.value } })} variant="bordered" />
                       )}
-                      <Input label="SSNIT Number" value={form.ssnitNumber} onChange={(e) => setForm({ ...form, ssnitNumber: e.target.value })} variant="bordered" description="Required to actually file a SSNIT return" />
-                      <Input label="Ghana Card Number" value={form.ghanaCardNumber} onChange={(e) => setForm({ ...form, ghanaCardNumber: e.target.value })} variant="bordered" placeholder="GHA-XXXXXXXXX-X" />
+                      <Input label="SSNIT Number" value={form.ssnitNumber} onChange={(e) => setForm({ ...form, ssnitNumber: e.target.value })} variant="bordered" description="Optional. Starts as the Ghana Card. Type a different number to override it." />
                       {form.employmentType === 'contract' && (
                         <Input label="Contract End Date" type="date" value={form.contractEndDate} onChange={(e) => setForm({ ...form, contractEndDate: e.target.value })} variant="bordered" />
                       )}

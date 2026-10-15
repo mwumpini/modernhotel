@@ -1,9 +1,9 @@
 // Builds the tester pages from TESTER_SCRIPT.md.
 // Run: node scripts/build-tester-html.mjs
-//   docs/testers/tester-{1,2,3}-*.html          three people (unchanged split)
-//   docs/testers/one-tester.html                one person does every step
-//   docs/testers/two-tester-1-hotel.html        two people: the hotel floor
-//   docs/testers/two-tester-2-office.html       two people: the office
+//   docs/testers/three tester/tester-{1,2,3}-*.html
+//   docs/testers/one tester/one-tester.html     one person does every step
+//   docs/testers/two tester/two-tester-1-hotel.html
+//   docs/testers/two tester/two-tester-2-office.html
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -13,9 +13,9 @@ const outDir = path.join(root, 'docs', 'testers');
 fs.mkdirSync(outDir, { recursive: true });
 
 const TESTERS = [
-  { letter: 'A', n: 1, role: 'Front desk, housekeeping, events, security', file: 'tester-1-front-desk.html' },
-  { letter: 'B', n: 2, role: 'Stores, restaurant & bar, kitchen', file: 'tester-2-stores-restaurant.html' },
-  { letter: 'C', n: 3, role: 'Settings, HR & payroll, accounting, tax', file: 'tester-3-back-office.html' },
+  { letter: 'A', n: 1, role: 'Front desk, housekeeping, events, security', file: 'three tester/tester-1-front-desk.html' },
+  { letter: 'B', n: 2, role: 'Stores, restaurant & bar, kitchen', file: 'three tester/tester-2-stores-restaurant.html' },
+  { letter: 'C', n: 3, role: 'Settings, HR & payroll, accounting, tax', file: 'three tester/tester-3-back-office.html' },
 ];
 const numOf = (l) => TESTERS.find((t) => t.letter === l).n;
 
@@ -373,7 +373,7 @@ ${nameField}`;
 
 const EXTRA = [
   {
-    file: 'one-tester.html',
+    file: 'one tester/one-tester.html',
     title: 'One tester',
     heading: 'Hotel system test: just you',
     who: 'Just you',
@@ -382,11 +382,12 @@ const EXTRA = [
     copyLabel: 'Hotel test: one tester',
     markdown: prepare(['A', 'B', 'C'], 'solo'),
     intro: `<p><strong>This test is for one person: you.</strong> You do the front desk, the restaurant and the stores, then the accounts. Work from the top of the page to the bottom, over three days. One login is enough.</p>
+<p>You are also checking the <strong>loops</strong>. A loop fails when the next desk does not show the same thing: a big purchase has to become a requisition before it can be a purchase order, a kitchen ticket has to show on Transactions, a payslip has to match the payroll, and the statements have to match the answer sheet. If a payment or a requisition waits for a director, approve it under <strong>Executive Management → Approvals</strong> and carry on. The amounts do not change.</p>
 <p>Before Day 1, open <strong>System Settings → Sample Data</strong>. It must say <strong>No sample data loaded</strong>. If old test records are there, press <strong>Clear test data</strong> first.</p>
 ${tickHelp}`,
   },
   {
-    file: 'two-tester-1-hotel.html',
+    file: 'two tester/two-tester-1-hotel.html',
     title: 'Tester 1 of 2',
     heading: 'Hotel system test: Tester 1 of 2',
     who: 'Tester 1 of 2',
@@ -399,7 +400,7 @@ ${tickHelp}`,
 ${tickHelp}`,
   },
   {
-    file: 'two-tester-2-office.html',
+    file: 'two tester/two-tester-2-office.html',
     title: 'Tester 2 of 2',
     heading: 'Hotel system test: Tester 2 of 2',
     who: 'Tester 2 of 2',
@@ -415,6 +416,7 @@ ${tickHelp}`,
 
 for (const t of [...TESTERS, ...EXTRA]) {
   const file = path.join(outDir, t.file);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, page(t));
   const steps = (fs.readFileSync(file, 'utf8').match(/class="step" data-step=/g) || []).length;
   console.log(`${t.file}: ${steps} steps`);

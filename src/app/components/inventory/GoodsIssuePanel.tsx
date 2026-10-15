@@ -5,15 +5,18 @@ import { DESK_PAGE_SIZE, SortHeader, deskTableCardBodyClassName, deskTableCardCl
 import { StockItem } from '../../lib/inventory/models';
 import { sizedTableClassNames } from '../frontoffice/columnResize';
 import { useInventoryScreen } from './inventoryScreenContext';
+import { DateFilterPills, matchesDateFilter, useDateFilter } from '../fb/DateFilterPills';
 
 /** Inventory → Issues. Goods issue list. */
 export function GoodsIssueTable() {
   const inventoryScreen = useInventoryScreen();
+  const dates = useDateFilter();
   const filtered = inventoryScreen.goodsIssues.filter((row) =>
-    inventoryScreen.issueSearchTerm === '' ||
+    (inventoryScreen.issueSearchTerm === '' ||
     row.issueNumber.toLowerCase().includes(inventoryScreen.issueSearchTerm.toLowerCase()) ||
     row.department.toLowerCase().includes(inventoryScreen.issueSearchTerm.toLowerCase()) ||
-    row.issuedTo.toLowerCase().includes(inventoryScreen.issueSearchTerm.toLowerCase())
+    row.issuedTo.toLowerCase().includes(inventoryScreen.issueSearchTerm.toLowerCase())) &&
+    matchesDateFilter(row.issueDate, dates.mode, dates.single, dates.from, dates.to)
   );
   const dir = inventoryScreen.issueSort.direction === 'asc' ? 1 : -1;
   const ms = (d: Date | string) => (d instanceof Date ? d : new Date(d)).getTime();
@@ -43,27 +46,40 @@ export function GoodsIssueTable() {
   return (
     <div className="space-y-3">
       <Card className={deskTableCardClassName}>
-        <CardHeader className="pb-3">
+        <CardHeader className="!px-3 !pt-2 !pb-0">
           <div className="flex items-center justify-between w-full">
             <div>
-              <h3 className="text-xl font-semibold text-ghana-black">📤 Goods Issue</h3>
+              <h3 className="text-base font-semibold text-ghana-black">📤 Goods Issue</h3>
               <p className="text-sm text-gray-500">Issue stock from Stores to a department or person</p>
             </div>
             <div className="flex gap-2 items-center">
               <Badge color="success" variant="flat">{todayCount} today</Badge>
-              <Button color="primary" className="bg-ghana-gold text-white" variant="flat" onPress={inventoryScreen.handleOpenGoodsIssue}>
+              <Button size="sm" color="primary" className="bg-ghana-gold text-white" variant="flat" onPress={inventoryScreen.handleOpenGoodsIssue}>
                 + New Issue
               </Button>
             </div>
           </div>
         </CardHeader>
-        <CardBody className={deskTableCardBodyClassName}>
-          <div className="mb-6">
+        <CardBody className={`${deskTableCardBodyClassName} !pt-1`}>
+          <div className="mb-2">
             <Input
+              size="sm"
               placeholder="Search issue #, department, or person..."
               value={inventoryScreen.issueSearchTerm}
               onChange={(e) => { inventoryScreen.setIssueSearchTerm(e.target.value); inventoryScreen.setIssuePage(1); }}
               startContent={<span className="text-gray-400">🔍</span>}
+            />
+          </div>
+          <div className="mb-2">
+            <DateFilterPills
+              mode={dates.mode}
+              onMode={(mode) => { dates.setMode(mode); inventoryScreen.setIssuePage(1); }}
+              single={dates.single}
+              onSingle={(value) => { dates.setSingle(value); inventoryScreen.setIssuePage(1); }}
+              from={dates.from}
+              onFrom={(value) => { dates.setFrom(value); inventoryScreen.setIssuePage(1); }}
+              to={dates.to}
+              onTo={(value) => { dates.setTo(value); inventoryScreen.setIssuePage(1); }}
             />
           </div>
           <div ref={inventoryScreen.issueCols.frameRef} style={inventoryScreen.issueCols.frameStyle}>
@@ -185,18 +201,38 @@ export function GoodsIssueModals() {
                 </div>
               )}
             </ModalBody>
-            <ModalFooter>
-              <Button variant="bordered" onPress={inventoryScreen.onGoodsIssueViewClose}>Close</Button>
+            <ModalFooter className="flex w-full flex-wrap items-center gap-2 !justify-between">
+              <div />
+              <div className="flex flex-wrap justify-end gap-2">
+              {inventoryScreen.viewingGoodsIssue && (
+                <Button variant="flat" onPress={() => {
+                  const issue = inventoryScreen.viewingGoodsIssue;
+                  const money = (n: number) => `₵${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                  inventoryScreen.printInventorySheet({
+                    title: 'Goods Issue',
+                    subtitle: issue.issueNumber,
+                    fields: [
+                      ['Department', issue.department || '—'],
+                      ['Issued to', issue.issuedTo || '—'],
+                      ['Status', issue.status],
+                      ['Total', money(issue.totalValue)],
+                    ],
+                    columns: ['Item', 'Qty', 'Amount'],
+                    rows: issue.items.map((item) => [item.itemName, item.quantity, money(item.totalValue)]),
+                  });
+                }}>
+                  Print
+                </Button>
+              )}
               {inventoryScreen.viewingGoodsIssue && inventoryScreen.viewingGoodsIssue.status === 'issued' && (
                 <Button color="warning" variant="flat" onPress={async () => {
                   const { confirmVoid } = await import('../DangerConfirm');
                   if (!(await confirmVoid(inventoryScreen.viewingGoodsIssue.issueNumber, 'The issue stays on file as Void and the stock is put back.'))) return;
-                  inventoryScreen.viewingGoodsIssue.items.forEach((item) => inventoryScreen.updateStockLevel(item.itemId, item.quantity, 'add'));
-                  const voided = { ...inventoryScreen.viewingGoodsIssue, status: 'void' as const, updatedAt: new Date() };
-                  inventoryScreen.upsertGoodsIssue(voided);
-                  inventoryScreen.setViewingGoodsIssue(voided);
+                  inventoryScreen.handleVoidGoodsIssue(inventoryScreen.viewingGoodsIssue);
                 }}>Void</Button>
               )}
+              <Button variant="bordered" onPress={inventoryScreen.onGoodsIssueViewClose}>Close</Button>
+              </div>
             </ModalFooter>
           </ModalContent>
         </Modal>

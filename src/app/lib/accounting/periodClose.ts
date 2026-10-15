@@ -56,13 +56,18 @@ export function aggregateBalancesThroughDate(
   return m;
 }
 
-export function hasPeriodCloseForDate(journalEntries: JournalEntry[], asOfDateIso: string): boolean {
+export function findPostedPeriodClose(journalEntries: JournalEntry[], asOfDateIso: string): JournalEntry | undefined {
   const key = asOfDateIso.slice(0, 10);
-  return journalEntries.some(
+  return journalEntries.find(
     (je) =>
+      je.status === 'Posted' &&
       je.sourceModule === CLOSE_SOURCE &&
-      (je.sourceTransactionId === `PL-CLOSE-${key}` || je.reference === `PL-CLOSE-${key}`)
+      (je.sourceTransactionId === `PL-CLOSE-${key}` || je.reference === `PL-CLOSE-${key}`),
   );
+}
+
+export function hasPeriodCloseForDate(journalEntries: JournalEntry[], asOfDateIso: string): boolean {
+  return !!findPostedPeriodClose(journalEntries, asOfDateIso);
 }
 
 /** The latest date "the books" have been closed through, or null if never closed. */

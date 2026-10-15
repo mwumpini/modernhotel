@@ -290,7 +290,7 @@ export default function DepartmentsPositionsPanel() {
     <Card className="shadow-sm border border-slate-200">
       <CardHeader className="px-3 py-2 flex items-center justify-between flex-wrap gap-2">
         <div className="text-sm font-semibold text-gray-800">Departments &amp; Positions</div>
-        <div className="text-xs text-gray-500">Populates Department/Position dropdowns on New Staff and User Management</div>
+        <div className="text-xs text-gray-500">A new hotel starts with these. Edit or delete any that do not fit.</div>
       </CardHeader>
       <CardBody className="p-0">
         <Tabs size="sm" variant="solid" className="w-full" classNames={deskBookTabsClassNames} selectedKey={tab} onSelectionChange={(k) => setTab(k as 'departments' | 'positions')} aria-label="Departments and positions">

@@ -16,6 +16,7 @@ import UniversalPayrollBuilder from '@/app/lib/payroll/builder';
 import { approvedOvertimeFor, buildPayrollJournal, monthYearOf, prepareBuilderForRun, readAdjustments, readEmployerContribution, recalculateStaffLine, runMonthlyPayroll } from '@/app/lib/payroll/monthlyRun';
 import { notifyError, notifySuccess } from '@/app/lib/notifications/notify';
 import { estimateMonthlyPay } from '@/app/lib/payroll/estimate';
+import PayslipsPanel from './PayslipsPanel';
 import ExportButtons from '@/app/components/ExportButtons';
 import type { PayrollPeriod, PayrollRecord } from '@/app/lib/hr/models';
 import type { ExportFormat } from '@/app/lib/frontoffice/reportExportFormat';
@@ -392,7 +393,7 @@ export default function PayrollProcessingPanel() {
 
   // `value` is the plain figure used for export; `render` (optional) is how the table shows it.
   const columns: Array<{ key: string; label: string; money?: boolean; value: (r: Row) => string | number; render?: (r: Row) => React.ReactNode }> = [
-    { key: 'idNo', label: 'ID No.', value: (r) => (r.e as any)?.governmentIds?.nationalId || '-' },
+    { key: 'idNo', label: 'Ghana Card', value: (r) => (r.e as any)?.ghanaCardNumber || '-' },
     { key: 'staffNo', label: 'Staff No.', value: (r) => r.staffNo },
     { key: 'name', label: 'Name', value: (r) => r.name, render: (r) => {
       const owed = r.e ? owedByEmployee(r.e.id) : 0;
@@ -1071,6 +1072,13 @@ export default function PayrollProcessingPanel() {
               )}
             </CardBody>
           </Card>
+          </div>
+        </Tab>
+
+        {/* ---------- Payslips ---------- */}
+        <Tab key="payslips" title="Payslips">
+          <div className={deskBookTabPanelClassName}>
+            <PayslipsPanel labels={{ tier1: tier1Label, tier2: tier2Label, tier3: tier3Label }} />
           </div>
         </Tab>
 

@@ -6,7 +6,7 @@ import { ensureDefaultRolesForTenant } from '@/app/lib/settings/roleRepository';
 import { findUserForLogin, normalizeUsername, usernameError, usernameTaken } from '@/app/lib/auth/loginLookup';
 import { addDaysISO, nextPaidUntil, onFreeTrial, parseMonthlyFee, parseTrialDays, paymentDue, readBill, readExpenses, readPayments, readTrial, todayISO } from '@/app/lib/platform/billing';
 import { frontDeskOnly, normalizePaidModules, readPaidModules, type PaidModules } from '@/app/lib/platform/hotelModules';
-import { provisionGhanaHotel } from '@/app/lib/platform/ghanaStarter';
+import { ensureStandardDepartments, provisionGhanaHotel } from '@/app/lib/platform/ghanaStarter';
 import { ensureBookingApiKey, newBookingApiKey } from '@/app/lib/booking/websiteApiKey';
 
 import { OPERATOR_ROLE, PLATFORM_SUBDOMAIN } from './operatorRole';
@@ -249,6 +249,7 @@ export async function setHotelModules(id: string, raw: unknown) {
     where: { id },
     data: { metadata: { ...meta, modules } },
   });
+  await ensureStandardDepartments(hotel.id);
   return { hotel: presentHotel(updated) };
 }
 

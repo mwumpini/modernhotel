@@ -1,28 +1,29 @@
 'use client';
 
-import { Badge, Button, Card, CardBody, CardHeader, Chip, Divider, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Pagination, Select, SelectItem, Tab, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, Tabs, Textarea } from '@heroui/react';
+import { Badge, Button, Card, CardBody, CardHeader, Chip, Divider, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Pagination, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, Textarea } from '@heroui/react';
 import { DEPARTMENT_LOCATIONS } from '../../lib/inventory/departmentLocations';
 import { DESK_PAGE_SIZE, SortHeader, deskTableCardBodyClassName, deskTableCardClassName, deskTableClassNames, toggleColumnSort } from '../dashboard/deskTableUi';
 import { StockCountItem } from '../../lib/inventory/models';
-import { deskBookTabsClassNames } from '../dashboard/deskTabsUi';
 import { sizedTableClassNames } from '../frontoffice/columnResize';
 import { trackEvent } from '../../lib/analytics/trackEvent';
-import { useSupplierStore } from '../../lib/inventory/supplierStore';
 import { inventoryHeaders } from './inventoryHeaders';
 import { useInventoryScreen } from './inventoryScreenContext';
 import PostingDateField from '../shared/PostingDateField';
+import { DateFilterPills, matchesDateFilter, useDateFilter } from '../fb/DateFilterPills';
 
-/** Inventory → Receive & Recon. Goods receipt and stock count lists. */
-export function ReceiveAndReconTable() {
+/** Inventory → Purchase Orders. Orders waiting to be received, and receipts waiting on quality check. */
+export function GoodsReceiptList() {
   const inventoryScreen = useInventoryScreen();
-  const activeOpTab = inventoryScreen.stockOpSubTab === 'grn-management' ? 'goods-receipt' : inventoryScreen.stockOpSubTab;
+  const receiptDates = useDateFilter();
+  const qcDates = useDateFilter();
   // Get POs ready for receipt (confirmed or in-transit)
   const posForReceipt = inventoryScreen.supplierStorePurchaseOrders.filter(po => 
     po.status === 'confirmed' || po.status === 'in-transit'
   );
   const receiptFiltered = posForReceipt.filter((po) =>
-    po.poNumber.toLowerCase().includes(inventoryScreen.poSearchTerm.toLowerCase()) ||
-    po.supplierName.toLowerCase().includes(inventoryScreen.poSearchTerm.toLowerCase())
+    (po.poNumber.toLowerCase().includes(inventoryScreen.poSearchTerm.toLowerCase()) ||
+    po.supplierName.toLowerCase().includes(inventoryScreen.poSearchTerm.toLowerCase())) &&
+    matchesDateFilter(po.orderDate, receiptDates.mode, receiptDates.single, receiptDates.from, receiptDates.to)
   );
   const receiptDir = inventoryScreen.receiptSort.direction === 'asc' ? 1 : -1;
   const receiptMs = (d: Date | string) => (d instanceof Date ? d : new Date(d)).getTime();
@@ -41,64 +42,38 @@ export function ReceiveAndReconTable() {
   const receiptPageSafe = Math.min(inventoryScreen.receiptPage, receiptPages);
   const receiptPaged = receiptSorted.slice((receiptPageSafe - 1) * DESK_PAGE_SIZE, receiptPageSafe * DESK_PAGE_SIZE);
 
-  const countFiltered = inventoryScreen.stockCounts.filter((c) =>
-    (inventoryScreen.stockCountSearchTerm === '' ||
-      c.countNumber.toLowerCase().includes(inventoryScreen.stockCountSearchTerm.toLowerCase()) ||
-      c.location.toLowerCase().includes(inventoryScreen.stockCountSearchTerm.toLowerCase())) &&
-    (inventoryScreen.stockCountFilterStatus === 'all' || c.status === inventoryScreen.stockCountFilterStatus)
-  );
-  const countDir = inventoryScreen.countSort.direction === 'asc' ? 1 : -1;
-  const countMs = (d: Date | string) => (d instanceof Date ? d : new Date(d)).getTime();
-  const countSorted = [...countFiltered].sort((a, b) => {
-    switch (inventoryScreen.countSort.column) {
-      case 'type': return a.countType.localeCompare(b.countType) * countDir;
-      case 'location': return a.location.localeCompare(b.location) * countDir;
-      case 'started': return (countMs(a.startDate) - countMs(b.startDate)) * countDir;
-      case 'lines': return (a.items.length - b.items.length) * countDir;
-      case 'variance': return (a.varianceItems - b.varianceItems) * countDir;
-      case 'status': return a.status.localeCompare(b.status) * countDir;
-      case 'number':
-      default: return a.countNumber.localeCompare(b.countNumber) * countDir;
-    }
-  });
-  const countPages = Math.max(1, Math.ceil(countSorted.length / DESK_PAGE_SIZE));
-  const countPageSafe = Math.min(inventoryScreen.countPage, countPages);
-  const countPaged = countSorted.slice((countPageSafe - 1) * DESK_PAGE_SIZE, countPageSafe * DESK_PAGE_SIZE);
-
   return (
-    <div className="space-y-3">
-      <Tabs
-        selectedKey={activeOpTab}
-        onSelectionChange={(key) => inventoryScreen.setStockOpSubTab(key as string)}
-        className="w-full"
-        size="sm"
-        variant="solid"
-        classNames={deskBookTabsClassNames}
-        aria-label="Receive and recon sections"
-      >
-        <Tab key="goods-receipt" title="📥 Goods Receipt" />
-        <Tab key="stock-counts" title="🔍 Stock Count" />
-      </Tabs>
-
-      {activeOpTab === 'goods-receipt' && (
-        <div className="space-y-6">
+        <div className="space-y-3">
           <Card className={deskTableCardClassName}>
-            <CardHeader className="pb-3">
+            <CardHeader className="!px-3 !pt-2 !pb-0">
               <div className="flex items-center justify-between w-full">
                 <div>
-                  <h3 className="text-xl font-semibold text-ghana-black">📥 Goods Receipt</h3>
+                  <h3 className="text-base font-semibold text-ghana-black">📥 Goods Receipt</h3>
                   <p className="text-sm text-gray-500">Receive against confirmed / in-transit POs — QC follows in the receipt view</p>
                 </div>
                 <Badge color="primary" variant="flat">{posForReceipt.length} ready</Badge>
               </div>
             </CardHeader>
-            <CardBody className={deskTableCardBodyClassName}>
-              <div className="mb-6">
+            <CardBody className={`${deskTableCardBodyClassName} !pt-1`}>
+              <div className="mb-2">
                 <Input
+                  size="sm"
                   placeholder="Search PO # or supplier..."
                   value={inventoryScreen.poSearchTerm}
                   onChange={(e) => { inventoryScreen.setPOSearchTerm(e.target.value); inventoryScreen.setReceiptPage(1); }}
                   startContent={<span className="text-gray-400">🔍</span>}
+                />
+              </div>
+              <div className="mb-2">
+                <DateFilterPills
+                  mode={receiptDates.mode}
+                  onMode={(mode) => { receiptDates.setMode(mode); inventoryScreen.setReceiptPage(1); }}
+                  single={receiptDates.single}
+                  onSingle={(value) => { receiptDates.setSingle(value); inventoryScreen.setReceiptPage(1); }}
+                  from={receiptDates.from}
+                  onFrom={(value) => { receiptDates.setFrom(value); inventoryScreen.setReceiptPage(1); }}
+                  to={receiptDates.to}
+                  onTo={(value) => { receiptDates.setTo(value); inventoryScreen.setReceiptPage(1); }}
                 />
               </div>
               <div ref={inventoryScreen.receiptCols.frameRef} style={inventoryScreen.receiptCols.frameStyle}>
@@ -148,23 +123,37 @@ export function ReceiveAndReconTable() {
           </Card>
 
           {(() => {
-            const pendingGrns = inventoryScreen.goodsReceiptNotes
-              .filter((g) => g.status === 'pending' || g.status === 'quality-check')
+            const awaitingGrns = inventoryScreen.goodsReceiptNotes
+              .filter((g) => g.status === 'pending' || g.status === 'quality-check');
+            if (awaitingGrns.length === 0) return null;
+            const pendingGrns = awaitingGrns
+              .filter((g) => matchesDateFilter(g.receiptDate, qcDates.mode, qcDates.single, qcDates.from, qcDates.to))
               .sort((a, b) => {
                 const ta = a.receiptDate instanceof Date ? a.receiptDate.getTime() : new Date(a.receiptDate).getTime();
                 const tb = b.receiptDate instanceof Date ? b.receiptDate.getTime() : new Date(b.receiptDate).getTime();
                 return tb - ta;
               });
-            if (pendingGrns.length === 0) return null;
             return (
               <Card className={deskTableCardClassName}>
-                <CardHeader className="pb-3">
+                <CardHeader className="!px-3 !pt-2 !pb-0">
                   <div>
-                    <h3 className="text-lg font-semibold text-ghana-black">Awaiting QC / Approve</h3>
+                    <h3 className="text-base font-semibold text-ghana-black">Awaiting QC / Approve</h3>
                     <p className="text-sm text-gray-500">Receipts created — finish quality check, then approve</p>
                   </div>
                 </CardHeader>
-                <CardBody className={deskTableCardBodyClassName}>
+                <CardBody className={`${deskTableCardBodyClassName} !pt-1`}>
+                  <div className="mb-2">
+                    <DateFilterPills
+                      mode={qcDates.mode}
+                      onMode={qcDates.setMode}
+                      single={qcDates.single}
+                      onSingle={qcDates.setSingle}
+                      from={qcDates.from}
+                      onFrom={qcDates.setFrom}
+                      to={qcDates.to}
+                      onTo={qcDates.setTo}
+                    />
+                  </div>
                   <Table aria-label="GRNs awaiting QC" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
                     <TableHeader>
                       <TableColumn>GRN</TableColumn>
@@ -212,26 +201,57 @@ export function ReceiveAndReconTable() {
             );
           })()}
         </div>
-      )}
+  );
+}
 
-      {activeOpTab === 'stock-counts' && (
-        <div className="space-y-6">
+/** Inventory → Stock Count. Physical counts for a location. */
+export function ReceiveAndReconTable() {
+  const inventoryScreen = useInventoryScreen();
+  const countDates = useDateFilter();
+  const countFiltered = inventoryScreen.stockCounts.filter((c) =>
+    (inventoryScreen.stockCountSearchTerm === '' ||
+      c.countNumber.toLowerCase().includes(inventoryScreen.stockCountSearchTerm.toLowerCase()) ||
+      c.location.toLowerCase().includes(inventoryScreen.stockCountSearchTerm.toLowerCase())) &&
+    (inventoryScreen.stockCountFilterStatus === 'all' || c.status === inventoryScreen.stockCountFilterStatus) &&
+    matchesDateFilter(c.startDate, countDates.mode, countDates.single, countDates.from, countDates.to)
+  );
+  const countDir = inventoryScreen.countSort.direction === 'asc' ? 1 : -1;
+  const countMs = (d: Date | string) => (d instanceof Date ? d : new Date(d)).getTime();
+  const countSorted = [...countFiltered].sort((a, b) => {
+    switch (inventoryScreen.countSort.column) {
+      case 'type': return a.countType.localeCompare(b.countType) * countDir;
+      case 'location': return a.location.localeCompare(b.location) * countDir;
+      case 'started': return (countMs(a.startDate) - countMs(b.startDate)) * countDir;
+      case 'lines': return (a.items.length - b.items.length) * countDir;
+      case 'variance': return (a.varianceItems - b.varianceItems) * countDir;
+      case 'status': return a.status.localeCompare(b.status) * countDir;
+      case 'number':
+      default: return a.countNumber.localeCompare(b.countNumber) * countDir;
+    }
+  });
+  const countPages = Math.max(1, Math.ceil(countSorted.length / DESK_PAGE_SIZE));
+  const countPageSafe = Math.min(inventoryScreen.countPage, countPages);
+  const countPaged = countSorted.slice((countPageSafe - 1) * DESK_PAGE_SIZE, countPageSafe * DESK_PAGE_SIZE);
+
+  return (
+        <div className="space-y-3">
           <Card className={deskTableCardClassName}>
-            <CardHeader className="pb-3">
+            <CardHeader className="!px-3 !pt-2 !pb-0">
               <div className="flex items-center justify-between w-full">
                 <div>
-                  <h3 className="text-xl font-semibold text-ghana-black">🔍 Stock Count</h3>
+                  <h3 className="text-base font-semibold text-ghana-black">🔍 Stock Count</h3>
                 </div>
                 {inventoryScreen.canRunStockCount && (
-                  <Button color="primary" className="bg-ghana-gold text-white" variant="flat" onPress={inventoryScreen.handleAddStockCount}>
+                  <Button size="sm" color="primary" className="bg-ghana-gold text-white" variant="flat" onPress={inventoryScreen.handleAddStockCount}>
                     + New Count
                   </Button>
                 )}
               </div>
             </CardHeader>
-            <CardBody className={deskTableCardBodyClassName}>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <CardBody className={`${deskTableCardBodyClassName} !pt-1`}>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
                 <Input
+                  size="sm"
                   placeholder="Search count # or location..."
                   value={inventoryScreen.stockCountSearchTerm}
                   onChange={(e) => { inventoryScreen.setStockCountSearchTerm(e.target.value); inventoryScreen.setCountPage(1); }}
@@ -239,6 +259,7 @@ export function ReceiveAndReconTable() {
                   className="md:col-span-2"
                 />
                 <Select
+                  size="sm"
                   selectedKeys={[inventoryScreen.stockCountFilterStatus]}
                   onSelectionChange={(keys) => { inventoryScreen.setStockCountFilterStatus(Array.from(keys)[0] as string); inventoryScreen.setCountPage(1); }}
                 >
@@ -248,6 +269,18 @@ export function ReceiveAndReconTable() {
                   <SelectItem key="completed">Completed</SelectItem>
                   <SelectItem key="cancelled">Cancelled</SelectItem>
                 </Select>
+              </div>
+              <div className="mb-2">
+                <DateFilterPills
+                  mode={countDates.mode}
+                  onMode={(mode) => { countDates.setMode(mode); inventoryScreen.setCountPage(1); }}
+                  single={countDates.single}
+                  onSingle={(value) => { countDates.setSingle(value); inventoryScreen.setCountPage(1); }}
+                  from={countDates.from}
+                  onFrom={(value) => { countDates.setFrom(value); inventoryScreen.setCountPage(1); }}
+                  to={countDates.to}
+                  onTo={(value) => { countDates.setTo(value); inventoryScreen.setCountPage(1); }}
+                />
               </div>
               <div ref={inventoryScreen.countCols.frameRef} style={inventoryScreen.countCols.frameStyle}>
               <Table aria-label="Stock counts" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
@@ -311,8 +344,6 @@ export function ReceiveAndReconTable() {
             </CardBody>
           </Card>
         </div>
-      )}
-    </div>
   );
 }
 
@@ -507,27 +538,36 @@ export function GoodsReceiptModals() {
                 </div>
               )}
             </ModalBody>
-            <ModalFooter className="flex flex-wrap gap-2">
-              <Button variant="bordered" onPress={inventoryScreen.onGRNViewClose}>Close</Button>
-              {inventoryScreen.viewingGRN?.status === 'pending' && (
+            <ModalFooter className="flex w-full flex-wrap items-center gap-2 !justify-between">
+              <div>
+              {inventoryScreen.viewingGRN && inventoryScreen.viewingGRN.status !== 'void' && (
                 <Button color="danger" variant="light" onPress={async () => {
+                  const posted = inventoryScreen.viewingGRN.status === 'approved';
                   const { confirmDelete } = await import('../DangerConfirm');
-                  if (!(await confirmDelete(inventoryScreen.viewingGRN.grnNumber, 'A receipt that was never approved will be permanently removed.'))) return;
-                  useSupplierStore.setState((state) => ({ goodsReceiptNotes: state.goodsReceiptNotes.filter((g) => g.id !== inventoryScreen.viewingGRN.id) }));
+                  if (!(await confirmDelete(
+                    inventoryScreen.viewingGRN.grnNumber,
+                    posted
+                      ? 'Stock and the payable are reversed, then this receipt is removed.'
+                      : 'This receipt will be permanently removed.',
+                  ))) return;
+                  inventoryScreen.deleteGRN(inventoryScreen.viewingGRN.id, inventoryScreen.currentUserName);
                   inventoryScreen.onGRNViewClose();
                 }}>Delete</Button>
               )}
-              {inventoryScreen.viewingGRN && inventoryScreen.viewingGRN.status !== 'pending' && inventoryScreen.viewingGRN.status !== 'void' && inventoryScreen.viewingGRN.status !== 'rejected' && (
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+              {inventoryScreen.viewingGRN && inventoryScreen.viewingGRN.status !== 'void' && inventoryScreen.viewingGRN.status !== 'rejected' && inventoryScreen.viewingGRN.status !== 'pending' && (
                 <Button color="warning" variant="flat" onPress={async () => {
+                  const posted = inventoryScreen.viewingGRN.status === 'approved';
                   const { confirmVoid } = await import('../DangerConfirm');
-                  if (!(await confirmVoid(inventoryScreen.viewingGRN.grnNumber, 'The receipt stays on file as Void. A reversing journal entry keeps the books even.'))) return;
-                  try {
-                    const { useAccountingStore } = await import('../../lib/accounting/store');
-                    const entry = useAccountingStore.getState().journalEntries.find((e) => e.id === `JE-GRN-${inventoryScreen.viewingGRN.id}` || e.sourceTransactionId === inventoryScreen.viewingGRN.id);
-                    if (entry && entry.status === 'Posted') await useAccountingStore.getState().voidJournalEntry(entry.id);
-                  } catch {}
-                  inventoryScreen.updateGRN(inventoryScreen.viewingGRN.id, { status: 'void' });
-                  inventoryScreen.setViewingGRN({ ...inventoryScreen.viewingGRN, status: 'void' });
+                  if (!(await confirmVoid(
+                    inventoryScreen.viewingGRN.grnNumber,
+                    posted
+                      ? 'Accepted goods come back out of stock, the payable is reversed, and the receipt stays on file as Void.'
+                      : 'The receipt stays on file as Void. Nothing was posted to stock.',
+                  ))) return;
+                  inventoryScreen.voidGRN(inventoryScreen.viewingGRN.id, inventoryScreen.currentUserName);
+                  inventoryScreen.setViewingGRN(inventoryScreen.getGRN(inventoryScreen.viewingGRN.id) || { ...inventoryScreen.viewingGRN, status: 'void' });
                 }}>Void</Button>
               )}
               {inventoryScreen.viewingGRN?.status === 'pending' && (
@@ -571,6 +611,28 @@ export function GoodsReceiptModals() {
                   </Button>
                 </>
               )}
+              {inventoryScreen.viewingGRN && (
+                <Button variant="flat" onPress={() => {
+                  const grn = inventoryScreen.viewingGRN;
+                  const money = (n: number) => `₵${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                  inventoryScreen.printInventorySheet({
+                    title: 'Goods Receipt',
+                    subtitle: grn.grnNumber,
+                    fields: [
+                      ['Supplier', grn.supplierName],
+                      ['Purchase order', grn.poNumber],
+                      ['Status', grn.status],
+                      ['Total', money(grn.totalValue)],
+                    ],
+                    columns: ['Item', 'Ordered', 'Received', 'Amount'],
+                    rows: grn.items.map((item) => [item.itemName, item.orderedQuantity, item.receivedQuantity, money(item.totalValue)]),
+                  });
+                }}>
+                  Print
+                </Button>
+              )}
+              <Button variant="bordered" onPress={inventoryScreen.onGRNViewClose}>Close</Button>
+              </div>
             </ModalFooter>
           </ModalContent>
         </Modal>
@@ -588,7 +650,7 @@ export function GoodsReceiptModals() {
               {inventoryScreen.selectedGRNForQC && (
                 <div className="space-y-4">
                   <p className="text-sm text-slate-500">
-                    Mark failed qty per line. Zero failed = pass. Completing QC unlocks Approve on the GRN.
+                    What passes is added to stock and to accounts payable. Failed quantity is left out. Override accepts every line.
                   </p>
                   <Table>
                     <TableHeader>
@@ -646,8 +708,11 @@ export function GoodsReceiptModals() {
             </ModalBody>
             <ModalFooter>
               <Button variant="bordered" onPress={inventoryScreen.onQualityCheckClose}>Cancel</Button>
-              <Button color="primary" className="bg-ghana-gold text-white" onPress={inventoryScreen.handleSubmitQualityCheck}>
-                Submit QC
+              <Button variant="flat" onPress={() => inventoryScreen.handleSubmitQualityCheck(true)}>
+                Override — accept all
+              </Button>
+              <Button color="primary" className="bg-ghana-gold text-white" onPress={() => inventoryScreen.handleSubmitQualityCheck()}>
+                Finish check
               </Button>
             </ModalFooter>
           </ModalContent>
@@ -863,55 +928,9 @@ export function StockCountViewModal() {
         {/* Stock Count View Modal */}
         <Modal isOpen={inventoryScreen.isStockCountViewOpen} onClose={inventoryScreen.onStockCountViewClose} size="4xl" scrollBehavior="inside">
           <ModalContent>
-            <ModalHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <div className="text-xl font-semibold">Stock Count Details</div>
-                <div className="text-sm text-gray-500 font-mono">{inventoryScreen.viewingStockCount?.countNumber}</div>
-              </div>
-              {inventoryScreen.viewingStockCount && (
-                <div className="flex flex-wrap items-center gap-1 border-b border-default-200 pb-0.5" role="tablist" aria-label="Stock count actions">
-                  {inventoryScreen.canPrintInventoryDocs && (
-                    <Button size="sm" variant="light" className="min-w-16 h-8 rounded-none border-b-2 border-transparent data-[hover=true]:border-primary" onPress={() => inventoryScreen.handlePrintStockCount(inventoryScreen.viewingStockCount)}>
-                      Print
-                    </Button>
-                  )}
-                  {inventoryScreen.canEditInventoryDocs && (
-                    <Button
-                      size="sm"
-                      variant="light"
-                      className="min-w-16 h-8 rounded-none border-b-2 border-transparent data-[hover=true]:border-primary"
-                      isDisabled={inventoryScreen.viewingStockCount.status === 'completed' || inventoryScreen.viewingStockCount.status === 'cancelled'}
-                      onPress={() => inventoryScreen.handleEditStockCountFromView(inventoryScreen.viewingStockCount)}
-                    >
-                      Edit
-                    </Button>
-                  )}
-                  {inventoryScreen.canDeleteInventoryDocs && (
-                    <Button
-                      size="sm"
-                      variant="light"
-                      color="danger"
-                      className="min-w-16 h-8 rounded-none border-b-2 border-transparent data-[hover=true]:border-danger"
-                      isDisabled={inventoryScreen.viewingStockCount.status === 'completed'}
-                      onPress={() => inventoryScreen.handleDeleteStockCount(inventoryScreen.viewingStockCount)}
-                    >
-                      Delete
-                    </Button>
-                  )}
-                  {inventoryScreen.canVoidInventoryDocs && (
-                    <Button
-                      size="sm"
-                      variant="light"
-                      color="warning"
-                      className="min-w-16 h-8 rounded-none border-b-2 border-transparent data-[hover=true]:border-warning"
-                      isDisabled={inventoryScreen.viewingStockCount.status === 'completed' || inventoryScreen.viewingStockCount.status === 'cancelled'}
-                      onPress={() => inventoryScreen.handleVoidStockCount(inventoryScreen.viewingStockCount)}
-                    >
-                      Void
-                    </Button>
-                  )}
-                </div>
-              )}
+            <ModalHeader className="flex flex-col gap-1">
+              <div className="text-xl font-semibold">Stock Count Details</div>
+              <div className="text-sm text-gray-500 font-mono">{inventoryScreen.viewingStockCount?.countNumber}</div>
             </ModalHeader>
             <ModalBody>
               {inventoryScreen.viewingStockCount && (
@@ -998,8 +1017,25 @@ export function StockCountViewModal() {
                 </div>
               )}
             </ModalBody>
-            <ModalFooter className="flex flex-wrap gap-2">
-              <Button variant="bordered" onPress={inventoryScreen.onStockCountViewClose}>Close</Button>
+            <ModalFooter className="flex w-full flex-wrap items-center gap-2 !justify-between">
+              <div>
+              {inventoryScreen.viewingStockCount && inventoryScreen.canDeleteInventoryDocs && inventoryScreen.viewingStockCount.status !== 'completed' && (
+                <Button color="danger" variant="light" onPress={() => inventoryScreen.handleDeleteStockCount(inventoryScreen.viewingStockCount)}>
+                  Delete
+                </Button>
+              )}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+              {inventoryScreen.viewingStockCount && inventoryScreen.canVoidInventoryDocs && inventoryScreen.viewingStockCount.status !== 'completed' && inventoryScreen.viewingStockCount.status !== 'cancelled' && (
+                <Button color="warning" variant="flat" onPress={() => inventoryScreen.handleVoidStockCount(inventoryScreen.viewingStockCount)}>
+                  Void
+                </Button>
+              )}
+              {inventoryScreen.viewingStockCount && inventoryScreen.canEditInventoryDocs && inventoryScreen.viewingStockCount.status !== 'completed' && inventoryScreen.viewingStockCount.status !== 'cancelled' && (
+                <Button color="warning" variant="flat" onPress={() => inventoryScreen.handleEditStockCountFromView(inventoryScreen.viewingStockCount)}>
+                  Edit
+                </Button>
+              )}
               {inventoryScreen.viewingStockCount && inventoryScreen.viewingStockCount.status === 'in-progress' && inventoryScreen.canRunStockCount && (
                 <Button
                   color="success"
@@ -1012,6 +1048,13 @@ export function StockCountViewModal() {
                   ✅ Complete & Post
                 </Button>
               )}
+              {inventoryScreen.viewingStockCount && inventoryScreen.canPrintInventoryDocs && (
+                <Button variant="flat" onPress={() => inventoryScreen.handlePrintStockCount(inventoryScreen.viewingStockCount)}>
+                  Print
+                </Button>
+              )}
+              <Button variant="bordered" onPress={inventoryScreen.onStockCountViewClose}>Close</Button>
+              </div>
             </ModalFooter>
           </ModalContent>
         </Modal>

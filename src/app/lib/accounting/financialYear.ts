@@ -107,20 +107,16 @@ export function financialQuarterIndex(date: Date, yearStartIso?: string | null):
   return 1;
 }
 
-export function formatDayMonth(date: Date): string {
-  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' });
-}
-
 export function formatDayMonthYear(date: Date): string {
   return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-/** "1 April to 31 March" */
-export function financialYearCycleLabel(yearStartIso?: string | null): string {
-  const year = financialYearEnding(2026, yearStartIso);
-  return `${formatDayMonth(year.start)} to ${formatDayMonth(year.end)}`;
-}
-
 export function financialYearEndedLabel(end: Date): string {
   return `Year ended ${formatDayMonthYear(end)}`;
+}
+
+/** Short month so the year picker can show the whole label. */
+export function financialYearEndedShortLabel(end: Date): string {
+  const date = end.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  return `Year ended ${date}`;
 }

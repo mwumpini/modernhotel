@@ -1,24 +1,49 @@
 'use client';
 
-import { Autocomplete, AutocompleteItem, Badge, Button, Card, CardBody, CardHeader, Divider, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Pagination, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, Textarea } from '@heroui/react';
+import { Autocomplete, AutocompleteItem, Badge, Button, Card, CardBody, CardHeader, Divider, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Pagination, Select, SelectItem, Tab, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, Tabs, Textarea } from '@heroui/react';
 import { PurchaseOrder, StockItem } from '../../lib/inventory/models';
 import { SortHeader, deskTableCardBodyClassName, deskTableCardClassName, deskTableClassNames, toggleColumnSort } from '../dashboard/deskTableUi';
+import { deskBookTabsClassNames } from '../dashboard/deskTabsUi';
 import { sizedTableClassNames } from '../frontoffice/columnResize';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import { useInventoryScreen } from './inventoryScreenContext';
+import { GoodsReceiptList } from './ReceiveAndReconPanel';
 import PostingDateField from '../shared/PostingDateField';
+import { DateFilterPills } from '../fb/DateFilterPills';
 
-/** Inventory → Purchase Orders. Order table. */
+/** Inventory → Purchase Orders. Orders and the receipt of those orders. */
 export function PurchaseOrdersTable() {
   const inventoryScreen = useInventoryScreen();
+  const view = inventoryScreen.poView === 'goods-receipt' ? 'goods-receipt' : 'orders';
   return (
-  (
-      <div className="space-y-6">
+    <div className="space-y-3">
+      <Tabs
+        selectedKey={view}
+        onSelectionChange={(key) => inventoryScreen.setPoView(String(key))}
+        className="w-full"
+        size="sm"
+        variant="solid"
+        classNames={deskBookTabsClassNames}
+        aria-label="Purchase order and goods receipt"
+      >
+        <Tab key="orders" title="📋 Orders" />
+        <Tab key="goods-receipt" title="📥 Goods Receipt" />
+      </Tabs>
+      {view === 'goods-receipt' ? <GoodsReceiptList /> : <PurchaseOrderList />}
+    </div>
+  );
+}
+
+function PurchaseOrderList() {
+  const inventoryScreen = useInventoryScreen();
+  return (
+      <div className="space-y-3">
         <Card className={deskTableCardClassName}>
-          <CardHeader className="pb-3">
+          <CardHeader className="!px-3 !pt-2 !pb-0">
             <div className="flex items-center justify-between w-full">
-              <h3 className="text-xl font-semibold text-ghana-black">📋 Purchase Orders</h3>
+              <h3 className="text-base font-semibold text-ghana-black">📋 Purchase Orders</h3>
               <Button
+                size="sm"
                 color="primary"
                 className="bg-ghana-gold text-white"
                 variant="flat"
@@ -28,10 +53,11 @@ export function PurchaseOrdersTable() {
               </Button>
             </div>
           </CardHeader>
-          <CardBody className={deskTableCardBodyClassName}>
+          <CardBody className={`${deskTableCardBodyClassName} !pt-1`}>
             {/* Filters and Search */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
               <Input
+                size="sm"
                 placeholder="Search PO number or supplier..."
                 value={inventoryScreen.poSearchTerm}
                 onChange={(e) => inventoryScreen.setPOSearchTerm(e.target.value)}
@@ -39,6 +65,7 @@ export function PurchaseOrdersTable() {
                 className="md:col-span-2"
               />
               <Select
+                size="sm"
                 placeholder="Filter by Status"
                 selectedKeys={[inventoryScreen.poFilterStatus]}
                 onSelectionChange={(keys) => inventoryScreen.setPOFilterStatus(Array.from(keys)[0] as string)}
@@ -52,6 +79,18 @@ export function PurchaseOrdersTable() {
                 <SelectItem key="cancelled">Cancelled</SelectItem>
                 <SelectItem key="closed">Closed</SelectItem>
               </Select>
+            </div>
+            <div className="mb-2">
+              <DateFilterPills
+                mode={inventoryScreen.poDateFilter.mode}
+                onMode={inventoryScreen.poDateFilter.setMode}
+                single={inventoryScreen.poDateFilter.single}
+                onSingle={inventoryScreen.poDateFilter.setSingle}
+                from={inventoryScreen.poDateFilter.from}
+                onFrom={inventoryScreen.poDateFilter.setFrom}
+                to={inventoryScreen.poDateFilter.to}
+                onTo={inventoryScreen.poDateFilter.setTo}
+              />
             </div>
 
             <div ref={inventoryScreen.poCols.frameRef} style={inventoryScreen.poCols.frameStyle}>
@@ -143,7 +182,6 @@ export function PurchaseOrdersTable() {
           </CardBody>
         </Card>
       </div>
-    )
   );
 }
 
@@ -643,8 +681,21 @@ export function PurchaseOrderModals() {
                 </div>
               )}
             </ModalBody>
-            <ModalFooter className="flex flex-wrap gap-2">
-              <Button variant="bordered" onPress={inventoryScreen.onPOViewClose}>Close</Button>
+            <ModalFooter className="flex w-full flex-wrap items-center gap-2 !justify-between">
+              <div>
+                {inventoryScreen.viewingPO && inventoryScreen.viewingPO.status === 'draft' && (
+                  <Button color="danger" variant="light" onPress={async () => {
+                    const { confirmDelete } = await import('../DangerConfirm');
+                    if (!(await confirmDelete(inventoryScreen.viewingPO.poNumber, 'This draft purchase order will be permanently removed.'))) return;
+                    inventoryScreen.deletePurchaseOrder(inventoryScreen.viewingPO.id);
+                    trackEvent('Stores.Issued', { action: 'delete_po', poNumber: inventoryScreen.viewingPO.poNumber });
+                    inventoryScreen.onPOViewClose();
+                  }}>
+                    Delete
+                  </Button>
+                )}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
               {inventoryScreen.viewingPO && inventoryScreen.viewingPO.status === 'draft' && (
                 <Button color="warning" variant="flat" onPress={() => {
                   inventoryScreen.onPOViewClose();
@@ -682,22 +733,12 @@ export function PurchaseOrderModals() {
               )}
               {inventoryScreen.viewingPO && (inventoryScreen.viewingPO.status === 'in-transit' || inventoryScreen.viewingPO.status === 'confirmed') && (
                 <Button color="success" onPress={() => {
-                  inventoryScreen.markDelivered(inventoryScreen.viewingPO.id, new Date());
-                  trackEvent('Stores.Issued', { action: 'mark_delivered_po', poNumber: inventoryScreen.viewingPO.poNumber });
-                  inventoryScreen.setViewingPO({ ...inventoryScreen.viewingPO, status: 'delivered' });
-                }}>
-                  ✅ Mark Delivered
-                </Button>
-              )}
-              {inventoryScreen.viewingPO && inventoryScreen.viewingPO.status === 'draft' && (
-                <Button color="danger" variant="light" onPress={async () => {
-                  const { confirmDelete } = await import('../DangerConfirm');
-                  if (!(await confirmDelete(inventoryScreen.viewingPO.poNumber, 'This draft purchase order will be permanently removed.'))) return;
-                  inventoryScreen.deletePurchaseOrder(inventoryScreen.viewingPO.id);
-                  trackEvent('Stores.Issued', { action: 'delete_po', poNumber: inventoryScreen.viewingPO.poNumber });
+                  const po = inventoryScreen.viewingPO;
                   inventoryScreen.onPOViewClose();
+                  inventoryScreen.handleOpenGoodsReceipt(po);
+                  trackEvent('Stores.Issued', { action: 'deliver_po', poNumber: po.poNumber });
                 }}>
-                  Delete
+                  ✅ Delivered
                 </Button>
               )}
               {inventoryScreen.viewingPO && inventoryScreen.viewingPO.status !== 'draft' && inventoryScreen.viewingPO.status !== 'cancelled' && inventoryScreen.viewingPO.status !== 'delivered' && (
@@ -711,6 +752,28 @@ export function PurchaseOrderModals() {
                   Void
                 </Button>
               )}
+              {inventoryScreen.viewingPO && (
+                <Button variant="flat" onPress={() => {
+                  const po = inventoryScreen.viewingPO;
+                  const money = (n: number) => `₵${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                  inventoryScreen.printInventorySheet({
+                    title: 'Purchase Order',
+                    subtitle: po.poNumber,
+                    fields: [
+                      ['Supplier', po.supplierName],
+                      ['Status', po.status],
+                      ['Order date', new Date(po.orderDate).toLocaleDateString()],
+                      ['Total', money(po.finalAmount)],
+                    ],
+                    columns: ['Item', 'Qty', 'Unit cost', 'Amount'],
+                    rows: po.items.map((item) => [item.itemName, item.quantity, money(item.unitCost), money(item.totalCost)]),
+                  });
+                }}>
+                  Print
+                </Button>
+              )}
+              <Button variant="bordered" onPress={inventoryScreen.onPOViewClose}>Close</Button>
+              </div>
             </ModalFooter>
           </ModalContent>
         </Modal>

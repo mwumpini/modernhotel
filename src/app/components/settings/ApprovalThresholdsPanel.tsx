@@ -48,6 +48,7 @@ export default function ApprovalThresholdsPanel() {
     expenseApprovalThreshold: settings.financialSettings.expenseApprovalThreshold,
     requireApprovalForPurchaseOrders: settings.financialSettings.requireApprovalForPurchaseOrders,
     purchaseOrderApprovalThreshold: settings.financialSettings.purchaseOrderApprovalThreshold,
+    directPurchaseOrderLimit: settings.financialSettings.directPurchaseOrderLimit ?? 1000,
     requireApprovalForPayments: settings.financialSettings.requireApprovalForPayments,
     paymentApprovalThreshold: settings.financialSettings.paymentApprovalThreshold,
     requireApprovalForOvertime: settings.financialSettings.requireApprovalForOvertime,
@@ -64,6 +65,7 @@ export default function ApprovalThresholdsPanel() {
       expenseApprovalThreshold: settings.financialSettings.expenseApprovalThreshold,
       requireApprovalForPurchaseOrders: settings.financialSettings.requireApprovalForPurchaseOrders,
       purchaseOrderApprovalThreshold: settings.financialSettings.purchaseOrderApprovalThreshold,
+    directPurchaseOrderLimit: settings.financialSettings.directPurchaseOrderLimit ?? 1000,
       requireApprovalForPayments: settings.financialSettings.requireApprovalForPayments,
       paymentApprovalThreshold: settings.financialSettings.paymentApprovalThreshold,
       requireApprovalForOvertime: settings.financialSettings.requireApprovalForOvertime,
@@ -76,6 +78,7 @@ export default function ApprovalThresholdsPanel() {
     settings.financialSettings.expenseApprovalThreshold,
     settings.financialSettings.requireApprovalForPurchaseOrders,
     settings.financialSettings.purchaseOrderApprovalThreshold,
+    settings.financialSettings.directPurchaseOrderLimit,
     settings.financialSettings.requireApprovalForPayments,
     settings.financialSettings.paymentApprovalThreshold,
     settings.financialSettings.requireApprovalForOvertime,
@@ -86,7 +89,7 @@ export default function ApprovalThresholdsPanel() {
   const handleSave = () => {
     if (!canManage) { alert('You do not have permission to configure approval thresholds.'); return; }
     for (const [key, value] of Object.entries(form)) {
-      if (key.endsWith('Threshold') && (!Number.isFinite(value) || (value as number) < 0)) {
+      if ((key.endsWith('Threshold') || key.endsWith('Limit')) && (!Number.isFinite(value) || (value as number) < 0)) {
         alert('Thresholds must be zero or a positive number.');
         return;
       }
@@ -137,6 +140,22 @@ export default function ApprovalThresholdsPanel() {
             onThreshold={(v) => setForm((f) => ({ ...f, purchaseOrderApprovalThreshold: v }))}
             disabled={!canManage}
           />
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-4 border rounded-lg mt-3">
+            <div>
+              <h4 className="font-medium">Direct purchase order</h4>
+              <p className="text-sm text-gray-600">
+                An order at or below this amount can be raised on its own. Above it, start with a requisition.
+              </p>
+            </div>
+            <Input
+              type="number"
+              label="Limit (GHS)"
+              className="max-w-[160px]"
+              value={String(form.directPurchaseOrderLimit)}
+              onChange={(e) => setForm((f) => ({ ...f, directPurchaseOrderLimit: Number(e.target.value) }))}
+              isDisabled={!canManage}
+            />
+          </div>
         </CardBody>
       </Card>
 

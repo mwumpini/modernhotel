@@ -107,6 +107,7 @@ function syncApprovalThresholdsToApi(fs: SystemSettings['financialSettings']) {
       expenseApprovalThreshold: fs.expenseApprovalThreshold,
       requireApprovalForPurchaseOrders: fs.requireApprovalForPurchaseOrders,
       purchaseOrderApprovalThreshold: fs.purchaseOrderApprovalThreshold,
+      directPurchaseOrderLimit: fs.directPurchaseOrderLimit,
       requireApprovalForPayments: fs.requireApprovalForPayments,
       paymentApprovalThreshold: fs.paymentApprovalThreshold,
       requireApprovalForOvertime: fs.requireApprovalForOvertime,
@@ -969,6 +970,9 @@ export interface SystemSettings {
     expenseApprovalThreshold: number;
     requireApprovalForPurchaseOrders: boolean;
     purchaseOrderApprovalThreshold: number;
+    // At or below this amount a purchase order can be raised directly.
+    // Above it, the buy starts as a requisition.
+    directPurchaseOrderLimit: number;
     requireApprovalForPayments: boolean;
     paymentApprovalThreshold: number;
     // Hours, not currency — an overtime request at or above this needs director
@@ -2438,6 +2442,7 @@ const defaultSettings: SystemSettings = {
     expenseApprovalThreshold: 1000,
     requireApprovalForPurchaseOrders: true,
     purchaseOrderApprovalThreshold: 1000,
+    directPurchaseOrderLimit: 1000,
     requireApprovalForPayments: true,
     paymentApprovalThreshold: 1000,
     requireApprovalForOvertime: true,

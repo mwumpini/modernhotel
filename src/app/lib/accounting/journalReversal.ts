@@ -129,7 +129,7 @@ export interface ReversalStoreActions {
 export function postJournalEntryReversal(
   originalEntryId: string,
   store: ReversalStoreActions,
-  opts: { postedBy?: string; reason?: string; persistEntry?: (entry: JournalEntry) => void; markOriginalVoid?: (id: string) => void },
+  opts: { postedBy?: string; reason?: string; allowClosedPeriod?: boolean; persistEntry?: (entry: JournalEntry) => void; markOriginalVoid?: (id: string) => void },
 ): { ok: true; reversal: JournalEntry } | { ok: false; error: string } {
   const original = store.journalEntries.find((e) => e.id === originalEntryId);
   if (!original) return { ok: false, error: 'Journal entry not found' };
@@ -139,9 +139,11 @@ export function postJournalEntryReversal(
     return { ok: false, error: 'Entry already has a reversal' };
   }
 
-  const periodCheck = assertPeriodNotClosed(store.journalEntries, new Date().toISOString());
-  if (!periodCheck.ok) {
-    return { ok: false, error: periodCheck.error };
+  if (!opts.allowClosedPeriod) {
+    const periodCheck = assertPeriodNotClosed(store.journalEntries, new Date().toISOString());
+    if (!periodCheck.ok) {
+      return { ok: false, error: periodCheck.error };
+    }
   }
 
   const reversal = buildReversalJournalEntry(original, {

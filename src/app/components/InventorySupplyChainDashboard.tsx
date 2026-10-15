@@ -8,6 +8,7 @@
 // GoodsIssuePanel — issues to departments
 // SupplierInvoicesPanel — supplier invoices
 // ReceiveAndReconPanel — goods receipt and stock count
+import { matchesDateFilter, useDateFilter } from './fb/DateFilterPills';
 import { InventoryScreenProvider } from './inventory/inventoryScreenContext';
 import type { InventoryScreen } from './inventory/inventoryScreenTypes';
 import { ItemsTable, ItemModals } from './inventory/ItemsPanel';
@@ -33,6 +34,7 @@ import { useSupplierStore } from '../lib/inventory/supplierStore';
 import { useAccountingStore } from '../lib/accounting/store';
 import { useComplianceStore } from '../lib/compliance/store';
 import { useCalculateTax } from '../hooks/useCalculateTax';
+import { computePurchaseTax } from '../lib/tax/engine';
 import { openHtmlPrintWindow } from '../lib/print/engine';
 import { StockItem, Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, RequisitionItem, StockTransfer, StockTransferItem, StockCount, StockCountItem, GoodsIssue, GoodsReceiptNote, GRNItem, SupplierInvoice, InvoiceItem, QualityCheck } from '../lib/inventory/models';
 import { BusinessPartner } from '../lib/accounting/models';
@@ -74,7 +76,16 @@ export default function InventorySupplyChainDashboard({
     if (key === 'items') return 'inventory';
     return allowed.includes(key) ? key : 'inventory';
   };
-  const [selectedTab, setSelectedTab] = useState(() => resolveTab(initialTab));
+  const [selectedTab, setSelectedTab] = useState(() => {
+    try {
+      const stored = localStorage.getItem('inventory.opsTab');
+      if (stored) {
+        localStorage.removeItem('inventory.opsTab');
+        return resolveTab(stored);
+      }
+    } catch { /* ignore */ }
+    return resolveTab(initialTab);
+  });
   const settings = useSettingsStore();
   const { data: session } = useSession();
   const currentUserName = session?.user?.name || 'User';
@@ -160,6 +171,8 @@ export default function InventorySupplyChainDashboard({
     getGRNsByStatus,
     approveGRN,
     rejectGRN,
+    voidGRN,
+    deleteGRN,
     hydrateGRNsFromApi,
     createSupplierInvoice,
     updateSupplierInvoice,
@@ -566,53 +579,38 @@ export default function InventorySupplyChainDashboard({
     discountAmount: 0,
     items: [],
     paymentTerms: 'net30',
-    taxType: 'none',
+    taxType: 'standard',
     taxRate: 0
   });
 
-  // Tax type options — Tax Types configured for Purchases in Settings → Tax Rate
-  // Builder (Compliance). A Tax Type is a named bundle of one or more compliance tax
-  // rules (e.g. "Purchases Standard Tax" = NHIL + GETFund + VAT stacked, "Purchases
-  // Flat Rate" = VFRS 3%) — not a single flat rate, so the amount is always computed
-  // by summing whichever rules are assigned to the selected type (computePOTax
-  // below), the same stacking engine the Compliance simulator uses.
-  const complianceTaxTypes = useComplianceStore(s => s.taxTypes);
+  // Same three choices as a supplier bill: the purchase stack (NHIL, GETFund, VAT),
+  // a typed rate, or no tax. Older orders may still carry a compliance tax-type id.
   const complianceTaxRules = useComplianceStore(s => s.taxRules);
-  const complianceCountry = useComplianceStore(s => s.country);
   const calcTax = useCalculateTax();
-  const taxOptions = useMemo(() => {
-    const realOptions = complianceTaxTypes
-      .filter(t => t.countryCode === complianceCountry && (t.domain || 'sales') === 'purchases')
-      .map(t => ({ value: t.id, label: t.name }));
-    return [
-      { value: 'none', label: 'None' },
-      ...realOptions,
-      { value: 'custom', label: 'Custom Rate' },
-    ];
-  }, [complianceTaxTypes, complianceCountry]);
+  const taxOptions = useMemo(() => ([
+    { value: 'standard', label: 'Standard purchase stack' },
+    { value: 'custom', label: 'Custom rate' },
+    { value: 'none', label: 'No tax' },
+  ]), []);
 
-  // Signed tax amount for a purchase subtotal — 'none' is 0, 'custom' applies the
-  // manually typed rate, and any real Tax Type sums every rule assigned to it via
-  // the shared stacking engine (NHIL+GETFund+VAT compounding, WHT subtracting, etc).
-  // Mirrors repository.ts's resolvePurchaseTax, which is what the server actually
-  // persists — this is only an optimistic local preview.
   const computePOTax = useCallback((subtotal: number, taxTypeId: string | undefined, customRate: number): number => {
-    if (!(subtotal > 0) || !taxTypeId || taxTypeId === 'none') return 0;
+    if (!(subtotal > 0) || !taxTypeId || taxTypeId === 'none' || taxTypeId === 'NONE') return 0;
     if (taxTypeId === 'custom') return Math.round(subtotal * (customRate || 0) / 100 * 100) / 100;
+    if (taxTypeId === 'standard' || taxTypeId === 'STANDARD') return computePurchaseTax(subtotal).totalTax;
     const { total } = calcTax(subtotal, 'ALL', { domain: 'purchases', operation: 'internal', typeId: taxTypeId });
     return Math.round((total - subtotal) * 100) / 100;
   }, [calcTax]);
 
-  // Itemized breakdown for display — a Tax Type is a bundle of rules (e.g. NHIL,
-  // GETFund Levy, VAT (Standard Rate)), so the UI should show each one separately
-  // rather than collapsing them into one "Tax" line, matching how the Compliance
-  // simulator (Settings → Tax Rate Builder) already presents the same calculation.
-  // Signed per line (negative = withheld) using that rule's own `effect`.
   const computePOTaxLines = useCallback((subtotal: number, taxTypeId: string | undefined, customRate: number): Array<{ name: string; amount: number }> => {
-    if (!(subtotal > 0) || !taxTypeId || taxTypeId === 'none') return [];
+    if (!(subtotal > 0) || !taxTypeId || taxTypeId === 'none' || taxTypeId === 'NONE') return [];
     if (taxTypeId === 'custom') {
       const amount = Math.round(subtotal * (customRate || 0) / 100 * 100) / 100;
-      return amount !== 0 ? [{ name: 'Custom Rate', amount }] : [];
+      return amount !== 0 ? [{ name: 'Custom rate', amount }] : [];
+    }
+    if (taxTypeId === 'standard' || taxTypeId === 'STANDARD') {
+      return computePurchaseTax(subtotal).lines
+        .filter((line) => line.amount !== 0)
+        .map((line) => ({ name: line.name, amount: line.amount }));
     }
     const { taxes } = calcTax(subtotal, 'ALL', { domain: 'purchases', operation: 'internal', typeId: taxTypeId });
     return taxes
@@ -625,6 +623,7 @@ export default function InventorySupplyChainDashboard({
   }, [calcTax, complianceTaxRules]);
   const [poSearchTerm, setPOSearchTerm] = useState('');
   const [poFilterStatus, setPOFilterStatus] = useState<string>('all');
+  const poDateFilter = useDateFilter();
   const [poPage, setPOPage] = useState(1);
   const [poSort, setPOSort] = useState<ColumnSort>({ column: 'orderDate', direction: 'desc' });
   const poCols = useResizableColumns({
@@ -651,6 +650,7 @@ export default function InventorySupplyChainDashboard({
   });
   const [requisitionSearchTerm, setRequisitionSearchTerm] = useState('');
   const [requisitionFilterStatus, setRequisitionFilterStatus] = useState<string>('all');
+  const requisitionDateFilter = useDateFilter();
   const [requisitionPage, setRequisitionPage] = useState(1);
   const [requisitionSort, setRequisitionSort] = useState<ColumnSort>({ column: 'date', direction: 'desc' });
   const requisitionCols = useResizableColumns({
@@ -863,9 +863,12 @@ export default function InventorySupplyChainDashboard({
           setSelectedTab('goods-issue');
         } else if (op === 'supplier-invoices') {
           setSelectedTab('supplier-invoices');
+        } else if (op === 'goods-receipt' || op === 'grn-management') {
+          setSelectedTab('purchase-orders');
+          setPoView('goods-receipt');
         } else {
           setSelectedTab('stock-operations');
-          setStockOpSubTab(op === 'grn-management' ? 'goods-receipt' : op);
+          setStockOpSubTab(op);
         }
       }
     };
@@ -1164,7 +1167,7 @@ export default function InventorySupplyChainDashboard({
       notes: '',
       items: [],
       createdBy: currentUserName,
-      taxType: 'none',
+      taxType: 'standard',
       taxRate: 0
     });
     onPOModalOpen();
@@ -1176,10 +1179,11 @@ export default function InventorySupplyChainDashboard({
     let taxRate = 0;
 
     if (po.taxTypeId) {
-      const match = taxOptions.find(opt => opt.value === po.taxTypeId);
-      taxType = match?.value || (po.taxTypeId === 'custom' ? 'custom' : 'none');
-      // Only 'custom' has a single rate to re-populate — a real Tax Type is a bundle
-      // of rules with no one rate (its amount is recomputed live from those rules).
+      const stored = po.taxTypeId;
+      if (stored === 'custom') taxType = 'custom';
+      else if (stored === 'none' || stored === 'NONE') taxType = 'none';
+      else if (stored === 'standard' || stored === 'STANDARD') taxType = 'standard';
+      else taxType = 'standard';
       taxRate = taxType === 'custom'
         ? (po.customTaxRate ?? (po.totalAmount > 0 ? Math.abs(po.taxAmount / po.totalAmount) * 100 : 0))
         : 0;
@@ -1227,6 +1231,11 @@ export default function InventorySupplyChainDashboard({
     const shipping = poFormData.shippingAmount || 0;
     const discount = poFormData.discountAmount || 0;
     const finalAmount = subtotal + taxAmount + shipping - discount;
+    const directLimit = settings.financialSettings.directPurchaseOrderLimit ?? 1000;
+    if (!editingPO && finalAmount > directLimit) {
+      alert(`Orders above GHS ${directLimit.toLocaleString()} start as a requisition. This one is GHS ${finalAmount.toLocaleString()}.`);
+      return;
+    }
 
     const poData: Omit<PurchaseOrder, 'id' | 'createdAt' | 'updatedAt'> = {
       poNumber: poFormData.poNumber || generatePONumber(),
@@ -1268,7 +1277,7 @@ export default function InventorySupplyChainDashboard({
       discountAmount: 0,
       items: [],
       paymentTerms: 'net30',
-      taxType: 'none',
+      taxType: 'standard',
       taxRate: 0
     });
     setEditingPO(null);
@@ -1536,10 +1545,11 @@ export default function InventorySupplyChainDashboard({
         po.supplierName.toLowerCase().includes(poSearchTerm.toLowerCase());
       
       const matchesStatus = poFilterStatus === 'all' || po.status === poFilterStatus;
+      const matchesDate = matchesDateFilter(po.orderDate, poDateFilter.mode, poDateFilter.single, poDateFilter.from, poDateFilter.to);
       
-      return matchesSearch && matchesStatus;
+      return matchesSearch && matchesStatus && matchesDate;
     });
-  }, [supplierStorePurchaseOrders, poSearchTerm, poFilterStatus]);
+  }, [supplierStorePurchaseOrders, poSearchTerm, poFilterStatus, poDateFilter.mode, poDateFilter.single, poDateFilter.from, poDateFilter.to]);
 
   const sortedPOs = useMemo(() => {
     const dir = poSort.direction === 'asc' ? 1 : -1;
@@ -1574,7 +1584,7 @@ export default function InventorySupplyChainDashboard({
 
   useEffect(() => {
     setPOPage(1);
-  }, [poSearchTerm, poFilterStatus, poSort.column, poSort.direction]);
+  }, [poSearchTerm, poFilterStatus, poSort.column, poSort.direction, poDateFilter.mode, poDateFilter.single, poDateFilter.from, poDateFilter.to]);
 
   // Requisition handlers — uses the real configured numbering sequence (Settings → Document
   // Numbering → Inventory → Requisition) instead of `array.length + 1`, which reused an
@@ -1829,10 +1839,11 @@ export default function InventorySupplyChainDashboard({
         req.requestedBy.toLowerCase().includes(requisitionSearchTerm.toLowerCase());
       
       const matchesStatus = requisitionFilterStatus === 'all' || req.status === requisitionFilterStatus;
+      const matchesDate = matchesDateFilter(req.requestedDate, requisitionDateFilter.mode, requisitionDateFilter.single, requisitionDateFilter.from, requisitionDateFilter.to);
       
-      return matchesSearch && matchesStatus;
+      return matchesSearch && matchesStatus && matchesDate;
     });
-  }, [supplierStoreRequisitions, requisitionSearchTerm, requisitionFilterStatus]);
+  }, [supplierStoreRequisitions, requisitionSearchTerm, requisitionFilterStatus, requisitionDateFilter.mode, requisitionDateFilter.single, requisitionDateFilter.from, requisitionDateFilter.to]);
 
   const sortedRequisitions = useMemo(() => {
     const dir = requisitionSort.direction === 'asc' ? 1 : -1;
@@ -1867,7 +1878,7 @@ export default function InventorySupplyChainDashboard({
 
   useEffect(() => {
     setRequisitionPage(1);
-  }, [requisitionSearchTerm, requisitionFilterStatus, requisitionSort.column, requisitionSort.direction]);
+  }, [requisitionSearchTerm, requisitionFilterStatus, requisitionSort.column, requisitionSort.direction, requisitionDateFilter.mode, requisitionDateFilter.single, requisitionDateFilter.from, requisitionDateFilter.to]);
 
   const handleDeleteSupplier = async (supplierId: string) => {
     const { confirmDelete } = await import('./DangerConfirm');
@@ -1971,19 +1982,21 @@ export default function InventorySupplyChainDashboard({
       alert('Invoice needs at least one line item.');
       return;
     }
-    const created = createSupplierInvoice({
+    const invoiceDate = invoiceFormData.invoiceDate instanceof Date
+      ? invoiceFormData.invoiceDate
+      : new Date(invoiceFormData.invoiceDate || Date.now());
+    const dueDate = invoiceFormData.dueDate instanceof Date
+      ? invoiceFormData.dueDate
+      : new Date(invoiceFormData.dueDate || Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const invoiceFields = {
       supplierId: invoiceFormData.supplierId!,
       supplierName: invoiceFormData.supplierName || '',
       poId: invoiceFormData.poId!,
       poNumber: invoiceFormData.poNumber || '',
       grnId: invoiceFormData.grnId,
       grnNumber: invoiceFormData.grnNumber,
-      invoiceDate: invoiceFormData.invoiceDate instanceof Date
-        ? invoiceFormData.invoiceDate
-        : new Date(invoiceFormData.invoiceDate || Date.now()),
-      dueDate: invoiceFormData.dueDate instanceof Date
-        ? invoiceFormData.dueDate
-        : new Date(invoiceFormData.dueDate || Date.now() + 30 * 24 * 60 * 60 * 1000),
+      invoiceDate,
+      dueDate,
       items: invoiceFormData.items,
       subtotal: Number(invoiceFormData.subtotal || 0),
       taxAmount: Number(invoiceFormData.taxAmount || 0),
@@ -1991,16 +2004,24 @@ export default function InventorySupplyChainDashboard({
       discountAmount: Number(invoiceFormData.discountAmount || 0),
       totalAmount: Number(invoiceFormData.totalAmount || 0),
       currency: invoiceFormData.currency || 'GHS',
-      status: 'pending',
       notes: invoiceFormData.notes,
-      matchingStatus: {
-        isQuantityMatched: false,
-        isPriceMatched: false,
-        isTermsMatched: false,
-        discrepancies: [],
-      },
-    });
-    trackEvent('Stores.Issued', { action: 'create_invoice', poNumber: created.poNumber, invoiceNumber: created.invoiceNumber });
+    };
+    if (editingInvoice) {
+      updateSupplierInvoice(editingInvoice.id, invoiceFields);
+      trackEvent('Stores.Issued', { action: 'update_invoice', poNumber: invoiceFields.poNumber, invoiceNumber: editingInvoice.invoiceNumber });
+    } else {
+      const created = createSupplierInvoice({
+        ...invoiceFields,
+        status: 'pending',
+        matchingStatus: {
+          isQuantityMatched: false,
+          isPriceMatched: false,
+          isTermsMatched: false,
+          discrepancies: [],
+        },
+      });
+      trackEvent('Stores.Issued', { action: 'create_invoice', poNumber: created.poNumber, invoiceNumber: created.invoiceNumber });
+    }
     onInvoiceModalClose();
     setInvoiceFormData({ items: [] });
     setSelectedPOForInvoice(null);
@@ -2016,7 +2037,17 @@ export default function InventorySupplyChainDashboard({
   };
 
   // Stock Operations State
-  const [stockOpSubTab, setStockOpSubTab] = useState('goods-receipt');
+  const [stockOpSubTab, setStockOpSubTab] = useState('stock-counts');
+  const [poView, setPoView] = useState(() => {
+    try {
+      const view = localStorage.getItem('inventory.poView');
+      if (view === 'goods-receipt' || view === 'orders') {
+        localStorage.removeItem('inventory.poView');
+        return view;
+      }
+    } catch { /* ignore */ }
+    return 'orders';
+  });
   const [stockTransferSearchTerm, setStockTransferSearchTerm] = useState('');
   const [stockTransferFilterStatus, setStockTransferFilterStatus] = useState<string>('all');
   const [stockCountSearchTerm, setStockCountSearchTerm] = useState('');
@@ -2150,52 +2181,8 @@ export default function InventorySupplyChainDashboard({
       notes: `Received goods for PO ${selectedPOForReceipt.poNumber}`
     });
 
-    const updatedPoItems = po.items.map((poItem) => {
-      const receiptItem = itemsToReceive.find((r) => r.itemId === poItem.itemId);
-      if (!receiptItem || receiptItem.receiveNow <= 0) return poItem;
-      return {
-        ...poItem,
-        receivedQuantity: (poItem.receivedQuantity || 0) + receiptItem.receiveNow,
-      };
-    });
-
-    itemsToReceive.forEach((receiptItem) => {
-      if (receiptItem.receiveNow <= 0) return;
-      const additionalQty = receiptItem.receiveNow;
-
-      updateStockLevel(receiptItem.itemId, additionalQty, 'add', receiptItem.unitCost);
-
-      addStockMovement({
-        itemId: receiptItem.itemId,
-        itemCode: receiptItem.itemCode,
-        itemName: receiptItem.itemName,
-        movementType: 'in',
-        quantity: additionalQty,
-        unitCost: receiptItem.unitCost,
-        totalValue: additionalQty * receiptItem.unitCost,
-        toLocation: stockItems.find((i) => i.id === receiptItem.itemId)?.location || '',
-        referenceType: 'purchase',
-        referenceId: grn.id,
-        referenceNumber: grn.grnNumber,
-        batchNumber: receiptItem.batchNumber,
-        expiryDate: receiptItem.expiryDate,
-        performedBy: currentUserName,
-        notes: receiptItem.notes || `Received from ${selectedPOForReceipt.poNumber} - GRN ${grn.grnNumber}`
-      });
-    });
-
-    const allReceived = updatedPoItems.every((item) => (item.receivedQuantity || 0) >= item.quantity);
-    updatePurchaseOrder(po.id, {
-      items: updatedPoItems,
-      status: allReceived ? 'delivered' : 'in-transit',
-      ...(allReceived ? { actualDeliveryDate: new Date() } : {}),
-    });
-
     onGoodsReceiptClose();
-    // Open GRN details so QC can run immediately — without this the PO leaves the
-    // receivable list and there is no inbox to resume quality check.
-    setViewingGRN(grn);
-    onGRNViewOpen();
+    openQualityCheck(grn);
     trackEvent('Stores.Issued', { action: 'goods_receipt', poNumber: selectedPOForReceipt.poNumber, grnNumber: grn.grnNumber });
   };
 
@@ -2226,13 +2213,13 @@ export default function InventorySupplyChainDashboard({
     onQualityCheckOpen();
   };
 
-  const handleSubmitQualityCheck = () => {
+  const handleSubmitQualityCheck = (override = false) => {
     if (!selectedGRNForQC || !qualityCheckFormData.items?.length) {
       alert('Nothing to check.');
       return;
     }
     const items = qualityCheckFormData.items.map((item: any) => {
-      const failed = Math.max(0, Number(item.failedQuantity) || 0);
+      const failed = override ? 0 : Math.max(0, Number(item.failedQuantity) || 0);
       const passed = Math.max(0, (Number(item.checkedQuantity) || 0) - failed);
       return {
         ...item,
@@ -2242,7 +2229,7 @@ export default function InventorySupplyChainDashboard({
       };
     });
     const failedCount = items.filter((i: any) => i.failedQuantity > 0).length;
-    const passedCount = items.length - failedCount;
+    const passedCount = items.filter((i: any) => i.passedQuantity > 0).length;
     const overallStatus = failedCount === 0 ? 'passed' : passedCount === 0 ? 'failed' : 'partial';
 
     const check = createQualityCheck({
@@ -2262,12 +2249,11 @@ export default function InventorySupplyChainDashboard({
       notes: qualityCheckFormData.notes
     });
     completeQualityCheck(check.id, currentUserName);
+    if (overallStatus !== 'failed') {
+      approveGRN(selectedGRNForQC.id, currentUserName);
+    }
     const refreshed = getGRN(selectedGRNForQC.id);
-    setViewingGRN(refreshed || {
-      ...selectedGRNForQC,
-      status: overallStatus === 'passed' ? 'quality-check' : 'rejected',
-      qualityStatus: overallStatus as 'passed' | 'failed' | 'partial'
-    });
+    setViewingGRN(refreshed || selectedGRNForQC);
     onQualityCheckClose();
     onGRNViewOpen();
     trackEvent('Stores.Issued', { action: 'quality_check', grnNumber: selectedGRNForQC.grnNumber });
@@ -2382,6 +2368,33 @@ export default function InventorySupplyChainDashboard({
     setIssueFormData({ department: '', issuedTo: '', items: [], notes: '' });
     setIssueItemSearchTerms({});
     trackEvent('Stores.Issued', { action: 'goods_issue', department: issueFormData.department, issueNumber });
+  };
+
+  const handleVoidGoodsIssue = (issue: GoodsIssue) => {
+    if (issue.status !== 'issued') return;
+    issue.items.forEach((item) => {
+      updateStockLevel(item.itemId, item.quantity, 'add');
+      addStockMovement({
+        itemId: item.itemId,
+        itemCode: item.itemCode,
+        itemName: item.itemName,
+        movementType: 'return',
+        quantity: item.quantity,
+        unitCost: item.unitCost,
+        totalValue: item.totalValue,
+        toLocation: stockItems.find((i) => i.id === item.itemId)?.location,
+        referenceType: 'adjustment',
+        referenceId: issue.id,
+        referenceNumber: issue.issueNumber,
+        reason: `Void goods issue ${issue.issueNumber}`,
+        performedBy: currentUserName,
+        notes: `Voided issue to ${issue.issuedTo} — ${issue.department}. Stock put back.`,
+      });
+    });
+    const voided: GoodsIssue = { ...issue, status: 'void', updatedAt: new Date() };
+    upsertGoodsIssue(voided);
+    setViewingGoodsIssue(voided);
+    trackEvent('Stores.Issued', { action: 'void_goods_issue', issueNumber: issue.issueNumber });
   };
 
   // Stock Transfer Handlers
@@ -2667,6 +2680,36 @@ export default function InventorySupplyChainDashboard({
     trackEvent('Stores.Issued', { action: 'complete_stock_count', countNumber: count.countNumber });
   };
 
+  const printInventorySheet = (doc: {
+    title: string;
+    subtitle?: string;
+    fields?: Array<[string, string]>;
+    columns?: string[];
+    rows?: Array<Array<string | number>>;
+  }) => {
+    const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const company = settings.companySettings;
+    const companyName = company?.tradingName || company?.legalName || settings.tenant?.name || 'Hotel';
+    const fields = (doc.fields || []).map(([label, value]) => `<div><span>${esc(label)}</span> ${esc(value)}</div>`).join('');
+    const head = (doc.columns || []).map((col) => `<th>${esc(col)}</th>`).join('');
+    const body = (doc.rows || []).map((row) => `<tr>${row.map((cell) => `<td>${esc(cell)}</td>`).join('')}</tr>`).join('');
+    openHtmlPrintWindow(`<!DOCTYPE html><html><head><title>${esc(doc.title)} ${esc(doc.subtitle || '')}</title>
+      <style>
+        body { font-family: Arial, Helvetica, sans-serif; color: #1a1a1a; padding: 32px 40px; font-size: 13px; }
+        h1 { margin: 0 0 4px; font-size: 22px; }
+        .meta { color: #555; margin: 12px 0 20px; }
+        .meta div { margin: 2px 0; }
+        .meta span { color: #777; display: inline-block; min-width: 120px; }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #1a1a1a; color: #fff; text-align: left; padding: 8px 10px; font-size: 12px; }
+        td { padding: 8px 10px; border-bottom: 1px solid #eee; }
+      </style></head><body>
+      <h1>${esc(doc.title)}</h1>
+      <div class="meta"><div><strong>${esc(companyName)}</strong></div>${doc.subtitle ? `<div>${esc(doc.subtitle)}</div>` : ''}${fields}</div>
+      ${head ? `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>` : ''}
+      </body></html>`);
+  };
+
   const handlePrintStockCount = (count: StockCount) => {
     const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const money = (n: number) => `₵${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -2881,11 +2924,13 @@ export default function InventorySupplyChainDashboard({
     handleGenerateRequisitionPDF,
     handleInvoicePOChange,
     handleIssueGoods,
+    handleVoidGoodsIssue,
     handleOpenGoodsIssue,
     handleOpenGoodsReceipt,
     handlePOItemChange,
     handlePOSupplierChange,
     handlePrintStockCount,
+    printInventorySheet,
     handleReceiveGoods,
     handleRemovePOItem,
     handleRemoveRequisitionItem,
@@ -2984,6 +3029,8 @@ export default function InventorySupplyChainDashboard({
     paginatedSuppliers,
     poCols,
     poFilterStatus,
+    poDateFilter,
+    requisitionDateFilter,
     poFormData,
     poItemSearchTerms,
     poPageSafe,
@@ -2996,6 +3043,8 @@ export default function InventorySupplyChainDashboard({
     receiptPage,
     receiptSort,
     rejectGRN,
+    voidGRN,
+    deleteGRN,
     rejectInvoice,
     reqActionModal,
     reqConvertSuppliers,
@@ -3084,6 +3133,8 @@ export default function InventorySupplyChainDashboard({
     stockCounts,
     stockItems,
     stockOpSubTab,
+    poView,
+    setPoView,
     stockTransferFilterStatus,
     stockTransferFormData,
     stockTransferSearchTerm,
@@ -3129,7 +3180,7 @@ export default function InventorySupplyChainDashboard({
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-ghana-black">Stock & Supply</h1>
           <p className="text-gray-600 text-sm">
-            Items, suppliers, requisitions, POs, transfers, issues — then receive & reconcile.
+            Items, suppliers, requisitions, purchase orders and receipts, transfers, issues, and stock counts.
           </p>
         </div>
       )}
@@ -3137,14 +3188,9 @@ export default function InventorySupplyChainDashboard({
       <Tabs 
         selectedKey={selectedTab} 
         onSelectionChange={(key) => {
-          const tab = String(key);
-          setSelectedTab(tab);
-          // Keep recon sub-tab on a receive-related default when opening Recon
-          if (tab === 'stock-operations' && !['goods-receipt', 'stock-counts'].includes(stockOpSubTab)) {
-            setStockOpSubTab('goods-receipt');
-          }
+          setSelectedTab(String(key));
         }}
-        className="w-full"
+        className="mt-2 w-full"
         size="sm"
         variant="solid"
         classNames={deskBookTabsClassNames}
@@ -3157,7 +3203,7 @@ export default function InventorySupplyChainDashboard({
         <Tab key="transfers" title="🔄 Transfers" />
         <Tab key="goods-issue" title="📤 Issues" />
         <Tab key="supplier-invoices" title="🧾 Invoices" />
-        <Tab key="stock-operations" title="✅ Receive & Recon" />
+        <Tab key="stock-operations" title="🔍 Stock Count" />
       </Tabs>
 
       <div className={deskBookTabPanelClassName}>

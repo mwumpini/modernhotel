@@ -82,9 +82,7 @@ export interface PurchaseOrder {
   // when it nets to a withholding; computed by summing every rule assigned to the
   // selected Tax Type.
   taxAmount: number;
-  // Which compliance Tax Type (Settings → Tax Rate Builder — a named bundle of rules,
-  // e.g. "Purchases Standard Tax" or "Purchases Flat Rate") was selected; undefined =
-  // none. 'custom' = customTaxRate is a manual override.
+  // 'standard' = purchase stack, 'custom' = customTaxRate, undefined = no tax.
   taxTypeId?: string;
   customTaxRate?: number;
   shippingAmount: number;

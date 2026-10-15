@@ -9,12 +9,13 @@ import { useInventoryScreen } from './inventoryScreenContext';
 export function ItemsTable() {
   const inventoryScreen = useInventoryScreen();
     return (
-    <div className="space-y-6">
+    <div className="space-y-3">
         {/* Filters and Search */}
         <Card className="border-0 shadow-lg">
-          <CardBody>
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <CardBody className="px-3 py-2">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
               <Input
+                size="sm"
                 placeholder="Search items..."
                 value={inventoryScreen.searchTerm}
                 onChange={(e) => inventoryScreen.setSearchTerm(e.target.value)}
@@ -23,6 +24,7 @@ export function ItemsTable() {
               />
 
               <Select
+                size="sm"
                 placeholder="Category"
                 selectedKeys={[inventoryScreen.filterCategory]}
                 onSelectionChange={(keys) => inventoryScreen.setFilterCategory(Array.from(keys)[0] as string)}
@@ -36,6 +38,7 @@ export function ItemsTable() {
               </Select>
 
               <Select
+                size="sm"
                 placeholder="Location"
                 selectedKeys={[inventoryScreen.filterLocation]}
                 onSelectionChange={(keys) => inventoryScreen.setFilterLocation(Array.from(keys)[0] as string)}
@@ -49,6 +52,7 @@ export function ItemsTable() {
               </Select>
 
               <Select
+                size="sm"
                 placeholder="Status"
                 selectedKeys={[inventoryScreen.filterStatus]}
                 onSelectionChange={(keys) => inventoryScreen.setFilterStatus(Array.from(keys)[0] as string)}
@@ -66,10 +70,11 @@ export function ItemsTable() {
 
         {/* Main Table */}
       <Card className={deskTableCardClassName}>
-        <CardHeader className="pb-3">
+        <CardHeader className="!px-3 !pt-2 !pb-0">
             <div className="flex items-center justify-between w-full">
-              <h3 className="text-xl font-semibold text-ghana-black">📦 Stock Items</h3>
+              <h3 className="text-base font-semibold text-ghana-black">📦 Stock Items</h3>
             <Button
+              size="sm"
               color="primary"
               className="bg-ghana-green text-white"
               variant="flat"
@@ -80,7 +85,7 @@ export function ItemsTable() {
             </Button>
           </div>
         </CardHeader>
-        <CardBody className={deskTableCardBodyClassName}>
+        <CardBody className={`${deskTableCardBodyClassName} !pt-1`}>
             <div ref={inventoryScreen.itemCols.frameRef} style={inventoryScreen.itemCols.frameStyle}>
             <Table aria-label="Stock items table" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
             <TableHeader>
@@ -143,20 +148,23 @@ export function ItemsTable() {
                         <span className="text-sm font-medium whitespace-nowrap">{item.unit || '—'}</span>
                       </TableCell>
                       <TableCell>
-                        <div className="flex flex-col items-end gap-0.5">
-                          <div className={`font-semibold tabular-nums ${stockText}`}>
-                            {onHand.toLocaleString()}
+                        <div className="flex flex-col items-end gap-0">
+                          <div className="flex items-baseline gap-1.5">
+                            <span className={`font-semibold tabular-nums ${stockText}`}>
+                              {onHand.toLocaleString()}
+                            </span>
+                            {maxStock > 0 && (
+                              <span className="text-[10px] leading-none text-gray-500 tabular-nums">Max {maxStock.toLocaleString()}</span>
+                            )}
                           </div>
                           <Progress
                             aria-label={`${item.name} stock level`}
                             value={stockPercentage}
                             size="sm"
                             color={stockColor}
-                            className="w-16"
+                            className="h-1 w-16"
+                            classNames={{ track: 'h-1', indicator: 'h-1' }}
                           />
-                          {maxStock > 0 && (
-                            <div className="text-[10px] text-gray-500 tabular-nums">Max {maxStock.toLocaleString()}</div>
-                          )}
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
@@ -172,7 +180,7 @@ export function ItemsTable() {
                         )}
                   </TableCell>
                   <TableCell>
-                    <div className="flex flex-col gap-1 items-start">
+                    <div className="flex flex-col gap-0.5 items-start">
                     <Badge
                           color={stockStatus.color as any}
                       size="sm"
@@ -462,11 +470,13 @@ export function ItemModals() {
                     </div>
                   )}
                 </ModalBody>
-                <ModalFooter className="flex flex-wrap gap-2">
-                  <Button variant="bordered" onPress={() => inventoryScreen.setViewOpen(false)}>Close</Button>
+                <ModalFooter className="flex w-full flex-wrap items-center gap-2 !justify-between">
+                  <div>
                   {inventoryScreen.viewingItem && (
                     <Button color="danger" variant="light" onPress={() => { inventoryScreen.setViewOpen(false); void inventoryScreen.handleDeleteItem(inventoryScreen.viewingItem.id); }}>Delete</Button>
                   )}
+                  </div>
+                  <div className="flex flex-wrap justify-end gap-2">
                   {inventoryScreen.viewingItem && (
                     <Button color="warning" variant="flat" onPress={() => {
                       inventoryScreen.setViewOpen(false);
@@ -476,13 +486,26 @@ export function ItemModals() {
                     </Button>
                   )}
                   {inventoryScreen.viewingItem && (
-                    <Button color="danger" variant="flat" onPress={() => {
-                      inventoryScreen.setViewOpen(false);
-                      inventoryScreen.handleDeleteItem(inventoryScreen.viewingItem.id);
+                    <Button variant="flat" onPress={() => {
+                      const item = inventoryScreen.viewingItem;
+                      const money = (n: number) => `₵${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                      inventoryScreen.printInventorySheet({
+                        title: 'Stock Item',
+                        subtitle: item.itemCode,
+                        fields: [
+                          ['Name', item.name],
+                          ['Category', item.category || '—'],
+                          ['Location', item.location || '—'],
+                          ['On hand', String(item.currentStock ?? 0)],
+                          ['Unit cost', money(item.unitCost || 0)],
+                        ],
+                      });
                     }}>
-                      🗑️ Delete
+                      Print
                     </Button>
                   )}
+                  <Button variant="bordered" onPress={() => inventoryScreen.setViewOpen(false)}>Close</Button>
+                  </div>
                 </ModalFooter>
               </ModalContent>
             </Modal>

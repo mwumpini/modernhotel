@@ -6,9 +6,8 @@ import BrandLogo from '../../components/BrandLogo';
 import {
   helpTopics,
   configurationGuide,
-  helpCategoryLabels,
+  groupHelpTopics,
   keyboardShortcuts,
-  type HelpTopicCategory,
 } from '../helpContent';
 
 /**
@@ -16,8 +15,6 @@ import {
  * ?print=1, which brings up the print window: choose "Save as PDF" to keep a copy to read
  * beside the app. Built from helpContent.ts, so it never falls out of date with Help.
  */
-const CATEGORY_ORDER: HelpTopicCategory[] = ['start', 'operations', 'configuration', 'finance', 'general'];
-
 const shortcuts = keyboardShortcuts;
 
 const anchor = (id: string) => `topic-${id}`;
@@ -64,10 +61,7 @@ async function downloadManualFile(root: HTMLElement) {
 export default function HelpManualPage() {
   const rootRef = React.useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
-  const groups = CATEGORY_ORDER.map((category) => ({
-    category,
-    topics: helpTopics.filter((t) => t.category === category && t.id !== 'help-maintain'),
-  })).filter((g) => g.topics.length > 0);
+  const groups = groupHelpTopics(helpTopics);
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get('print') !== '1') return;
@@ -103,13 +97,14 @@ export default function HelpManualPage() {
         .manual img { display:block; max-width:100%; height:auto; border:1px solid var(--line); border-radius:8px; margin:10px 0 4px; }
         .manual .caption { font-size:12px; color:var(--muted); }
         .manual .note { background:var(--warn); border-radius:8px; padding:8px 12px; margin-top:8px; font-size:14px; }
-        .manual .toc { columns:2; column-gap:28px; padding-left:20px; } .manual .toc li { break-inside:avoid; }
+        .manual .toc { padding-left:20px; } .manual .toc > li { break-inside:avoid; margin:10px 0; }
+        .manual .toc ol { margin:2px 0 0; padding-left:18px; } .manual .toc > li > a { font-weight:600; }
         .manual .toc a { color:var(--accent); text-decoration:none; }
         .manual table { border-collapse:collapse; width:100%; font-size:14px; margin:8px 0; }
         .manual th, .manual td { border:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
         .manual th { background:var(--soft); }
         .manual kbd { border:1px solid var(--line); border-radius:4px; padding:0 5px; font-family:ui-monospace,monospace; font-size:13px; background:var(--soft); }
-        @media (max-width:600px) { .manual .toc { columns:1; } .manual .cover h1 { font-size:26px; } }
+        @media (max-width:600px) { .manual .cover h1 { font-size:26px; } }
         @media print {
           @page { size:A4; margin:16mm 14mm; }
           /* The app-wide print rule hides everything outside #report-print-area; the manual is all content. */
@@ -123,7 +118,10 @@ export default function HelpManualPage() {
       `}</style>
 
       <div className="bar">
-        <Link href="/help">← Back to Help</Link>
+        <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Link href="/">← Back to the app</Link>
+          <Link href="/help">← Back to Help</Link>
+        </span>
         <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button
             type="button"
@@ -145,37 +143,46 @@ export default function HelpManualPage() {
         <section className="cover">
           <BrandLogo size="lg" syncClass="text-slate-900" className="mb-6" />
           <h1>User Manual</h1>
-          <p>Step-by-step guide to every desk: front office, restaurant, kitchen, housekeeping, stores, events, security, HR and payroll, accounting and tax.</p>
+          <p>The desks in side-menu order: Executive Management, then Front Office (Desk, Rooms, Billing, Clients, Night, and Reports), then Events, Restaurant, Kitchen, Housekeeping, Stores, Security, HR, Accounting, Compliance, and System Settings.</p>
           <p>Generated {today}. The Help page in the app always has the latest version.</p>
         </section>
 
         <h2 style={{ breakBefore: 'auto', borderTop: 'none' }}>Contents</h2>
         <ol className="toc">
-          <li><a href="#where-to-configure">{configurationGuide.title}</a></li>
           {groups.map((g) => (
-            <React.Fragment key={g.category}>
-              {g.topics.map((t) => (
-                <li key={t.id}><a href={`#${anchor(t.id)}`}>{t.title}</a></li>
-              ))}
-            </React.Fragment>
+            <li key={g.id}>
+              <a href={`#module-${g.id}`}>{g.title}</a>
+              <ol>
+                {g.id === 'settings' && (
+                  <li><a href="#where-to-configure">{configurationGuide.title}</a></li>
+                )}
+                {g.topics.map((t) => (
+                  <li key={t.id}><a href={`#${anchor(t.id)}`}>{t.title}</a></li>
+                ))}
+              </ol>
+            </li>
           ))}
           <li><a href="#shortcuts">Keyboard shortcuts</a></li>
         </ol>
 
-        <h2 id="where-to-configure">{configurationGuide.title}</h2>
-        <p>{configurationGuide.intro}</p>
-        <table>
-          <thead><tr><th>Area</th><th>Set it here</th><th>Not here</th></tr></thead>
-          <tbody>
-            {configurationGuide.areas.map((a) => (
-              <tr key={a.name}><td>{a.name}</td><td>{a.owns}</td><td>{a.notHere}</td></tr>
-            ))}
-          </tbody>
-        </table>
-
         {groups.map((g) => (
-          <section key={g.category}>
-            <h2>{helpCategoryLabels[g.category]}</h2>
+          <section key={g.id}>
+            <h2 id={`module-${g.id}`}>{g.title}</h2>
+            <p>{g.intro}</p>
+            {g.id === 'settings' && (
+              <>
+                <h3 id="where-to-configure">{configurationGuide.title}</h3>
+                <p>{configurationGuide.intro}</p>
+                <table>
+                  <thead><tr><th>Area</th><th>Set it here</th><th>Not here</th></tr></thead>
+                  <tbody>
+                    {configurationGuide.areas.map((a) => (
+                      <tr key={a.name}><td>{a.name}</td><td>{a.owns}</td><td>{a.notHere}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
             {g.topics.map((t) => (
               <article key={t.id} id={anchor(t.id)} className="topic">
                 <h3>{t.title}</h3>

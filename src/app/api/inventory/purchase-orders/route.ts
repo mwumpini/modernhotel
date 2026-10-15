@@ -86,11 +86,17 @@ export async function POST(req: NextRequest) {
       createdBy: body.createdBy,
       taxTypeId: body.taxTypeId,
       customTaxRate: body.customTaxRate,
+      fromRequisition: body.fromRequisition === true,
       items,
     });
 
     return NextResponse.json({ order }, { status: 201 });
   } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (message.startsWith('DIRECT_PO_LIMIT:')) {
+      const limit = message.split(':')[1];
+      return NextResponse.json({ error: `Orders above GHS ${limit} start as a requisition.` }, { status: 400 });
+    }
     console.error('Error creating purchase order:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
@@ -141,6 +147,7 @@ export async function PUT(req: NextRequest) {
       approvedAt: body.approvedAt,
       taxTypeId: body.taxTypeId,
       customTaxRate: body.customTaxRate,
+      fromRequisition: body.fromRequisition === true,
       items,
     });
 
@@ -150,6 +157,11 @@ export async function PUT(req: NextRequest) {
 
     return NextResponse.json({ order });
   } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (message.startsWith('DIRECT_PO_LIMIT:')) {
+      const limit = message.split(':')[1];
+      return NextResponse.json({ error: `Orders above GHS ${limit} start as a requisition.` }, { status: 400 });
+    }
     console.error('Error updating purchase order:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

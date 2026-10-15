@@ -6,18 +6,20 @@ import { StockItem } from '../../lib/inventory/models';
 import { sizedTableClassNames } from '../frontoffice/columnResize';
 import { useInventoryScreen } from './inventoryScreenContext';
 import PostingDateField from '../shared/PostingDateField';
+import { DateFilterPills } from '../fb/DateFilterPills';
 
 /** Inventory → Requisitions. Requisition table. */
 export function RequisitionsTable() {
   const inventoryScreen = useInventoryScreen();
   return (
   (
-      <div className="space-y-6">
+      <div className="space-y-3">
         <Card className={deskTableCardClassName}>
-          <CardHeader className="pb-3">
+          <CardHeader className="!px-3 !pt-2 !pb-0">
             <div className="flex items-center justify-between w-full">
-              <h3 className="text-xl font-semibold text-ghana-black">📝 Requisitions</h3>
+              <h3 className="text-base font-semibold text-ghana-black">📝 Requisitions</h3>
               <Button
+                size="sm"
                 color="primary"
                 className="bg-ghana-green text-white"
                 variant="flat"
@@ -27,10 +29,11 @@ export function RequisitionsTable() {
               </Button>
             </div>
           </CardHeader>
-          <CardBody className={deskTableCardBodyClassName}>
+          <CardBody className={`${deskTableCardBodyClassName} !pt-1`}>
             {/* Filters and Search */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
               <Input
+                size="sm"
                 placeholder="Search requisition number or requester..."
                 value={inventoryScreen.requisitionSearchTerm}
                 onChange={(e) => inventoryScreen.setRequisitionSearchTerm(e.target.value)}
@@ -38,6 +41,7 @@ export function RequisitionsTable() {
                 className="md:col-span-2"
               />
               <Select
+                size="sm"
                 placeholder="Filter by Status"
                 selectedKeys={[inventoryScreen.requisitionFilterStatus]}
                 onSelectionChange={(keys) => inventoryScreen.setRequisitionFilterStatus(Array.from(keys)[0] as string)}
@@ -50,6 +54,18 @@ export function RequisitionsTable() {
                 <SelectItem key="converted-to-po">Converted to PO</SelectItem>
                 <SelectItem key="cancelled">Cancelled</SelectItem>
               </Select>
+            </div>
+            <div className="mb-2">
+              <DateFilterPills
+                mode={inventoryScreen.requisitionDateFilter.mode}
+                onMode={inventoryScreen.requisitionDateFilter.setMode}
+                single={inventoryScreen.requisitionDateFilter.single}
+                onSingle={inventoryScreen.requisitionDateFilter.setSingle}
+                from={inventoryScreen.requisitionDateFilter.from}
+                onFrom={inventoryScreen.requisitionDateFilter.setFrom}
+                to={inventoryScreen.requisitionDateFilter.to}
+                onTo={inventoryScreen.requisitionDateFilter.setTo}
+              />
             </div>
 
             <div ref={inventoryScreen.requisitionCols.frameRef} style={inventoryScreen.requisitionCols.frameStyle}>
@@ -503,19 +519,21 @@ export function RequisitionModals() {
                 </div>
               )}
             </ModalBody>
-            <ModalFooter className="flex flex-wrap gap-2">
-              <Button variant="bordered" onPress={inventoryScreen.onRequisitionViewClose}>Close</Button>
+            <ModalFooter className="flex w-full flex-wrap items-center gap-2 !justify-between">
+              <div>
+              {inventoryScreen.viewingRequisition && (inventoryScreen.viewingRequisition.status === 'pending' || inventoryScreen.canEditProcessedRequisitions) && inventoryScreen.viewingRequisition.status !== 'converted-to-po' && (
+                <Button color="danger" variant="flat" onPress={() => inventoryScreen.openReqAction('delete', inventoryScreen.viewingRequisition)}>
+                  Delete
+                </Button>
+              )}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
               {inventoryScreen.viewingRequisition && (inventoryScreen.viewingRequisition.status === 'pending' || inventoryScreen.canEditProcessedRequisitions) && inventoryScreen.viewingRequisition.status !== 'converted-to-po' && (
                 <Button color="warning" variant="flat" onPress={() => {
                   inventoryScreen.onRequisitionViewClose();
                   inventoryScreen.handleEditRequisition(inventoryScreen.viewingRequisition);
                 }}>
                   ✏️ Edit
-                </Button>
-              )}
-              {inventoryScreen.viewingRequisition && (inventoryScreen.viewingRequisition.status === 'pending' || inventoryScreen.canEditProcessedRequisitions) && inventoryScreen.viewingRequisition.status !== 'converted-to-po' && (
-                <Button color="danger" variant="flat" onPress={() => inventoryScreen.openReqAction('delete', inventoryScreen.viewingRequisition)}>
-                  🗑️ Delete
                 </Button>
               )}
               {inventoryScreen.viewingRequisition && inventoryScreen.viewingRequisition.status === 'pending' && inventoryScreen.canActOnRequisitions && (
@@ -538,6 +556,28 @@ export function RequisitionModals() {
                   </Button>
                 </>
               )}
+              {inventoryScreen.viewingRequisition && (
+                <Button variant="flat" onPress={() => {
+                  const req = inventoryScreen.viewingRequisition;
+                  const money = (n: number) => `₵${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                  const total = req.requestedItems.reduce((sum, item) => sum + item.totalCost, 0);
+                  inventoryScreen.printInventorySheet({
+                    title: 'Requisition',
+                    subtitle: req.requisitionNumber,
+                    fields: [
+                      ['Requested by', req.requestedBy || '—'],
+                      ['Status', req.status],
+                      ['Total', money(total)],
+                    ],
+                    columns: ['Item', 'Qty', 'Amount'],
+                    rows: req.requestedItems.map((item) => [item.itemName, item.quantity, money(item.totalCost)]),
+                  });
+                }}>
+                  Print
+                </Button>
+              )}
+              <Button variant="bordered" onPress={inventoryScreen.onRequisitionViewClose}>Close</Button>
+              </div>
             </ModalFooter>
           </ModalContent>
         </Modal>

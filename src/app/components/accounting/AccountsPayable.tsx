@@ -96,6 +96,8 @@ export default function AccountsPayablePage() {
   const [lineEntryKind, setLineEntryKind] = useState<'item' | 'service'>('item');
   const [viewKind, setViewKind] = useState<'supplier' | 'invoice' | 'payment' | null>(null);
   const [viewItem, setViewItem] = useState<any>(null);
+  const [showBillLines, setShowBillLines] = useState(false);
+  const purchaseOrders = useSupplierStore((s) => s.purchaseOrders);
   const isViewOpen = viewKind != null && viewItem != null;
 
   // Filter states
@@ -3317,6 +3319,32 @@ export default function AccountsPayablePage() {
               const statusLabel = balance <= 0 ? 'Paid' : daysOverdue > 0 ? 'Overdue' : 'Still owed';
               const statusColor = balance <= 0 ? 'success' : daysOverdue > 0 ? 'danger' : 'warning';
               const lineItems = viewItem.lines || viewItem.items || viewItem.lineItems || [];
+              const storedLines = (viewItem.lines || viewItem.items || viewItem.lineItems || []).map((ln: any) => {
+                const quantity = Number(ln.quantity || 1) || 1;
+                const unitPrice = Number(ln.unitPrice || 0);
+                const amount = ln.amount != null && ln.amount !== '' ? Number(ln.amount) : quantity * unitPrice;
+                return {
+                  id: ln.id,
+                  description: String(ln.description || ln.itemName || ''),
+                  quantity,
+                  unitPrice: unitPrice || (quantity ? amount / quantity : amount),
+                  amount,
+                };
+              });
+              const summaryText = viewItem.description || storedLines[0]?.description || 'Purchase';
+              const summaryAmount = Number(viewItem.subtotal || 0);
+              const linkedPo = purchaseOrders.find((po) => po.poNumber && po.poNumber === viewItem.poNumber);
+              const poLines = (linkedPo?.items || []).map((item) => ({
+                id: item.id,
+                description: item.itemName,
+                quantity: Number(item.quantity || 0),
+                unitPrice: Number(item.unitCost || 0),
+                amount: Number(item.totalCost || (Number(item.quantity || 0) * Number(item.unitCost || 0))),
+              }));
+              const detailLines = storedLines.length > 1 ? storedLines : (poLines.length > 1 ? poLines : storedLines);
+              const chargesDiffer = detailLines.length > 1 || detailLines.some((line: { description: string; amount: number }) =>
+                line.description.trim() !== String(summaryText).trim() || Math.abs(line.amount - summaryAmount) > 0.01,
+              );
               return (
                 <>
                   <ModalHeader className="border-b bg-white px-6 py-4">
@@ -3359,29 +3387,47 @@ export default function AccountsPayablePage() {
                       </div>
                     </div>
                     {lineItems.length > 0 && (
-                      <div>
-                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Line Items</h4>
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b-2 border-gray-200">
-                              <th className="text-left py-2 text-gray-600">Description</th>
-                              <th className="text-right py-2 text-gray-600">Qty</th>
-                              <th className="text-right py-2 text-gray-600">Unit</th>
-                              <th className="text-right py-2 text-gray-600">Amount</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {lineItems.map((ln: any, i: number) => (
-                              <tr key={ln.id || i} className="border-b border-gray-100">
-                                <td className="py-2">{ln.description || '—'}</td>
-                                <td className="py-2 text-right tabular-nums">{ln.quantity ?? '—'}</td>
-                                <td className="py-2 text-right tabular-nums">{formatAccountingCurrency(ln.unitPrice || 0)}</td>
-                                <td className="py-2 text-right tabular-nums font-medium">{formatAccountingCurrency(ln.amount ?? ((ln.quantity || 0) * (ln.unitPrice || 0)))}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                    <div className="pb-3">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Line Items</h4>
+                        {chargesDiffer && (
+                          <button
+                            type="button"
+                            className="text-xs text-blue-600 hover:underline"
+                            onClick={() => setShowBillLines((open) => !open)}
+                          >
+                            {showBillLines ? 'Show summary' : 'View charges'}
+                          </button>
+                        )}
                       </div>
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-200">
+                            <th className="text-left py-1 text-gray-600 font-semibold">Description</th>
+                            <th className="text-right py-1 text-gray-600 font-semibold">Qty</th>
+                            <th className="text-right py-1 text-gray-600 font-semibold">Unit</th>
+                            <th className="text-right py-1 text-gray-600 font-semibold">Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {showBillLines && chargesDiffer ? detailLines.map((ln: { id?: string; description: string; quantity: number; unitPrice: number; amount: number }, i: number) => (
+                            <tr key={ln.id || i} className="border-b border-gray-100">
+                              <td className="py-1">{ln.description || '—'}</td>
+                              <td className="py-1 text-right tabular-nums">{ln.quantity}</td>
+                              <td className="py-1 text-right tabular-nums">{formatAccountingCurrency(ln.unitPrice)}</td>
+                              <td className="py-1 text-right tabular-nums font-medium">{formatAccountingCurrency(ln.amount)}</td>
+                            </tr>
+                          )) : (
+                            <tr className="border-b border-gray-100">
+                              <td className="py-1">{summaryText}</td>
+                              <td className="py-1 text-right tabular-nums">1</td>
+                              <td className="py-1 text-right tabular-nums">{formatAccountingCurrency(summaryAmount)}</td>
+                              <td className="py-1 text-right tabular-nums font-medium">{formatAccountingCurrency(summaryAmount)}</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                     )}
                   </ModalBody>
                   <ModalFooter className="border-t bg-white px-4 py-2.5">
@@ -3403,12 +3449,12 @@ export default function AccountsPayablePage() {
                     )}
                     {viewItem.status !== 'Void' && (
                       <Button color="danger" variant="light" size="sm" onPress={() => handleDeleteBill(viewItem)}>
+                        Delete
+                      </Button>
+                    )}
                     {viewItem.status === 'Void' && (
                       <Button color="warning" variant="flat" size="sm" onPress={() => handleUnvoidBill(viewItem)}>
                         Unvoid
-                      </Button>
-                    )}
-                        Delete
                       </Button>
                     )}
                     <Button color="primary" size="sm" onPress={() => printBillPDF(viewItem)}>
@@ -3484,12 +3530,12 @@ export default function AccountsPayablePage() {
                   )}
                   {viewItem.status !== 'Void' && (
                     <Button color="danger" variant="light" size="sm" onPress={() => handleDeletePayment(viewItem)}>
+                      Delete
+                    </Button>
+                  )}
                   {viewItem.status === 'Void' && (
                     <Button color="warning" variant="flat" size="sm" onPress={() => handleUnvoidPayment(viewItem)}>
                       Unvoid
-                    </Button>
-                  )}
-                      Delete
                     </Button>
                   )}
                   <Button color="primary" size="sm" onPress={() => printPaymentPDF(viewItem)}>

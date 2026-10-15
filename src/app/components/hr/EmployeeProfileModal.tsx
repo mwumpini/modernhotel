@@ -257,9 +257,10 @@ export default function EmployeeProfileModal({
                   <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">IDs & compliance</h4>
                   <DetailGrid>
                     <DetailField label="TIN" value={live.taxWithholding?.tin} />
-                    <DetailField label="National ID" value={live.governmentIds?.nationalId} />
                     <DetailField label="Ghana Card" value={live.ghanaCardNumber} />
                     <DetailField label="SSNIT number" value={live.ssnitNumber} />
+                    <DetailField label="Tier 2 ID" value={live.tier2Number} />
+                    <DetailField label="Tier 3 ID" value={live.tier3Number} />
                     <DetailField label="SSNIT (Tier 1)" value={live.ssnitEnrolled ? 'Enrolled' : 'Not enrolled'} />
                     <DetailField label="Tier 2" value={live.tier2Enrolled ? 'Enrolled' : 'Not enrolled'} />
                     <DetailField label="Tier 3" value={live.tier3Enrolled ? `Enrolled (${live.tier3ContributionPct ?? 0}%)` : 'Not enrolled'} />

@@ -15,10 +15,17 @@ export { DEPARTMENT_LOCATIONS };
  * the compliance rule set doesn't cover.
  */
 async function resolvePurchaseTax(tenantId: string, subtotal: number, taxTypeId?: string | null, customRate?: number): Promise<{ amount: number }> {
-	if (!(subtotal > 0) || !taxTypeId) return { amount: 0 }
+	if (!(subtotal > 0) || !taxTypeId || taxTypeId === 'none' || taxTypeId === 'NONE') return { amount: 0 }
 	if (taxTypeId === 'custom') {
 		const rate = Number(customRate) || 0
 		return { amount: Math.round(subtotal * (rate / 100) * 100) / 100 }
+	}
+	if (taxTypeId === 'standard' || taxTypeId === 'STANDARD') {
+		const { salesTaxConfigsForTenant } = require('../tax/serverConfigs') as typeof import('../tax/serverConfigs')
+		const { computeStackedTaxLines } = require('../accounting/taxFromConfig') as typeof import('../accounting/taxFromConfig')
+		const configs = await salesTaxConfigsForTenant(tenantId)
+		const { totalTax } = computeStackedTaxLines(subtotal, configs, 'purchase')
+		return { amount: totalTax }
 	}
 	try {
 		// Dynamic imports avoid bundling this into client chunks when tree-shaken.
@@ -195,7 +202,7 @@ export async function upsertPurchaseOrder(params: {
 	supplierName: string;
 	orderDate?: Date | string;
 	expectedDeliveryDate?: Date | string;
-	actualDeliveryDate?: Date | string;
+	actualDeliveryDate?: Date | string | null;
 	status?: string;
 	priority?: string;
 	shippingAmount?: number;
@@ -206,12 +213,12 @@ export async function upsertPurchaseOrder(params: {
 	createdBy?: string;
 	approvedBy?: string;
 	approvedAt?: Date | string;
-	// Which compliance Tax Type (Settings → Tax Rate Builder — a named bundle of
-	// rules, e.g. "Purchases Standard Tax" or "Purchases Flat Rate") applies to
-	// this purchase, by id; undefined/null means none. 'custom' means
-	// customTaxRate below is a manually typed override instead of a real type.
+	// 'standard' = the same purchase stack as a supplier bill (NHIL, GETFund, VAT).
+	// 'custom' = customTaxRate. undefined/null/'none' = no tax. An older compliance
+	// tax-type id is still accepted.
 	taxTypeId?: string | null;
 	customTaxRate?: number;
+	fromRequisition?: boolean;
 	items: PurchaseOrderItemInput[];
 }) {
 	const totalAmount = params.items.reduce((sum, i) => sum + i.quantity * i.unitCost, 0);
@@ -224,7 +231,7 @@ export async function upsertPurchaseOrder(params: {
 		supplierId: params.supplierId,
 		supplierName: params.supplierName,
 		expectedDeliveryDate: params.expectedDeliveryDate ? new Date(params.expectedDeliveryDate) : undefined,
-		actualDeliveryDate: params.actualDeliveryDate ? new Date(params.actualDeliveryDate) : undefined,
+		actualDeliveryDate: params.actualDeliveryDate ? new Date(params.actualDeliveryDate) : params.actualDeliveryDate === null ? null : undefined,
 		status: params.status,
 		priority: params.priority,
 		totalAmount,
@@ -244,7 +251,7 @@ export async function upsertPurchaseOrder(params: {
 		const existing = await prisma.purchaseOrder.findFirst({ where: { id: params.id, tenantId: params.tenantId } });
 		if (existing) {
 			await prisma.purchaseOrderItem.deleteMany({ where: { purchaseOrderId: params.id } });
-			return prisma.purchaseOrder.update({
+			const updated = await prisma.purchaseOrder.update({
 				where: { id: params.id },
 				data: {
 					...data,
@@ -264,16 +271,25 @@ export async function upsertPurchaseOrder(params: {
 				},
 				include: { items: true },
 			});
+			return updated;
 		}
 		// id given but no row exists yet — the client (supplierStore.ts) generates its own
 		// id optimistically before this sync call resolves; honor it on create instead of
 		// generating a different server-side id that the client would then have to reconcile.
 	}
 
+	const fromRequisition = params.fromRequisition || /converted from requisition/i.test(params.notes || '');
+	if (!fromRequisition) {
+		const limit = await directPurchaseOrderLimit(params.tenantId);
+		if (finalAmount > limit) {
+			throw new Error(`DIRECT_PO_LIMIT:${limit}`);
+		}
+	}
+
 	const orderCount = await prisma.purchaseOrder.count({ where: { tenantId: params.tenantId } });
 	const poNumber = params.poNumber || `PO-${new Date().getFullYear()}-${String(orderCount + 1).padStart(3, '0')}`;
 
-	return prisma.purchaseOrder.create({
+	const created = await prisma.purchaseOrder.create({
 		data: {
 			...(params.id ? { id: params.id } : {}),
 			tenantId: params.tenantId,
@@ -299,6 +315,18 @@ export async function upsertPurchaseOrder(params: {
 		},
 		include: { items: true },
 	});
+	return created;
+}
+
+/** Orders above this amount start as a requisition. At or below it, a purchase order can be raised directly. */
+export async function directPurchaseOrderLimit(tenantId: string): Promise<number> {
+	const settings = await prisma.systemSettings.findUnique({
+		where: { tenantId },
+		select: { financialSettings: true },
+	});
+	const fs = (settings?.financialSettings as Record<string, unknown>) || {};
+	const limit = Number(fs.directPurchaseOrderLimit);
+	return Number.isFinite(limit) && limit >= 0 ? limit : 1000;
 }
 
 export async function deletePurchaseOrder(tenantId: string, id: string) {
@@ -1125,6 +1153,13 @@ export async function upsertGoodsReceiptNote(params: {
 		},
 		include: { items: true },
 	});
+}
+
+export async function deleteGoodsReceiptNote(tenantId: string, id: string) {
+	const existing = await prisma.goodsReceiptNote.findFirst({ where: { id, tenantId } });
+	if (!existing) return null;
+	await prisma.goodsReceiptNote.delete({ where: { id } });
+	return existing;
 }
 
 // ---------------------------------------------------------------------------

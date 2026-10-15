@@ -127,7 +127,6 @@ export async function downloadEmployeeProfilePdf(input: ProfilePdfInput) {
       title: 'IDs & compliance',
       fields: [
         { label: 'TIN', value: e.taxWithholding?.tin || '—' },
-        { label: 'National ID', value: e.governmentIds?.nationalId || '—' },
         { label: 'Ghana Card', value: e.ghanaCardNumber || '—' },
         { label: 'SSNIT number', value: e.ssnitNumber || '—' },
         { label: 'SSNIT (Tier 1)', value: e.ssnitEnrolled ? 'Enrolled' : 'Not enrolled' },

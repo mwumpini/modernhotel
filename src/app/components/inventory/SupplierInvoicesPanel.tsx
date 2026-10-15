@@ -8,17 +8,19 @@ import { trackEvent } from '../../lib/analytics/trackEvent';
 import { useSupplierStore } from '../../lib/inventory/supplierStore';
 import { useInventoryScreen } from './inventoryScreenContext';
 import PostingDateField from '../shared/PostingDateField';
+import { DateFilterPills, matchesDateFilter, useDateFilter } from '../fb/DateFilterPills';
 
 /** Inventory → Supplier invoices. Invoice table. */
 export function SupplierInvoicesTable() {
   const inventoryScreen = useInventoryScreen();
+  const dates = useDateFilter();
   const filteredInvoices = inventoryScreen.supplierInvoices.filter(inv => {
     const matchesSearch = inventoryScreen.invoiceSearchTerm === '' || 
       inv.invoiceNumber.toLowerCase().includes(inventoryScreen.invoiceSearchTerm.toLowerCase()) ||
       inv.poNumber.toLowerCase().includes(inventoryScreen.invoiceSearchTerm.toLowerCase()) ||
       inv.supplierName.toLowerCase().includes(inventoryScreen.invoiceSearchTerm.toLowerCase());
     const matchesStatus = inventoryScreen.invoiceFilterStatus === 'all' || inv.status === inventoryScreen.invoiceFilterStatus;
-    return matchesSearch && matchesStatus;
+    return matchesSearch && matchesStatus && matchesDateFilter(inv.invoiceDate, dates.mode, dates.single, dates.from, dates.to);
   });
   const dir = inventoryScreen.invoiceSort.direction === 'asc' ? 1 : -1;
   const ms = (d: Date | string) => (d instanceof Date ? d : new Date(d)).getTime();
@@ -46,14 +48,12 @@ export function SupplierInvoicesTable() {
   return (
     <div className="space-y-3">
       <Card className={deskTableCardClassName}>
-        <CardHeader className="pb-3">
+        <CardHeader className="!px-3 !pt-2 !pb-0">
           <div className="flex items-center justify-between w-full">
-            <h3 className="text-xl font-semibold text-ghana-black">🧾 Supplier Invoices</h3>
+            <h3 className="text-base font-semibold text-ghana-black">🧾 Supplier Invoices</h3>
             <div className="flex gap-2">
-              <Badge color="primary" variant="flat">
-                {inventoryScreen.supplierInvoices.length} Invoices
-              </Badge>
               <Button
+                size="sm"
                 color="primary"
                 className="bg-ghana-gold text-white"
                 variant="flat"
@@ -68,9 +68,10 @@ export function SupplierInvoicesTable() {
             </div>
           </div>
         </CardHeader>
-        <CardBody className={deskTableCardBodyClassName}>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <CardBody className={`${deskTableCardBodyClassName} !pt-1`}>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
             <Input
+              size="sm"
               placeholder="Search invoice, PO number or supplier..."
               value={inventoryScreen.invoiceSearchTerm}
               onChange={(e) => { inventoryScreen.setInvoiceSearchTerm(e.target.value); inventoryScreen.setInvoicePage(1); }}
@@ -78,6 +79,7 @@ export function SupplierInvoicesTable() {
               className="md:col-span-2"
             />
             <Select
+              size="sm"
               placeholder="Filter by Status"
               selectedKeys={[inventoryScreen.invoiceFilterStatus]}
               onSelectionChange={(keys) => { inventoryScreen.setInvoiceFilterStatus(Array.from(keys)[0] as string); inventoryScreen.setInvoicePage(1); }}
@@ -90,6 +92,18 @@ export function SupplierInvoicesTable() {
               <SelectItem key="paid">Paid</SelectItem>
               <SelectItem key="cancelled">Cancelled</SelectItem>
             </Select>
+          </div>
+          <div className="mb-2">
+            <DateFilterPills
+              mode={dates.mode}
+              onMode={(mode) => { dates.setMode(mode); inventoryScreen.setInvoicePage(1); }}
+              single={dates.single}
+              onSingle={(value) => { dates.setSingle(value); inventoryScreen.setInvoicePage(1); }}
+              from={dates.from}
+              onFrom={(value) => { dates.setFrom(value); inventoryScreen.setInvoicePage(1); }}
+              to={dates.to}
+              onTo={(value) => { dates.setTo(value); inventoryScreen.setInvoicePage(1); }}
+            />
           </div>
 
           <div ref={inventoryScreen.invoiceCols.frameRef} style={inventoryScreen.invoiceCols.frameStyle}>
@@ -213,7 +227,7 @@ export function SupplierInvoiceModals() {
                   </Select>
                   <Input
                     label="Invoice #"
-                    value={inventoryScreen.generateNextInvoiceNumber()}
+                    value={inventoryScreen.editingInvoice?.invoiceNumber || inventoryScreen.generateNextInvoiceNumber()}
                     isReadOnly
                     description="Assigned on save"
                     classNames={{ input: 'font-mono font-semibold' }}
@@ -446,8 +460,8 @@ export function SupplierInvoiceModals() {
                 </div>
               )}
             </ModalBody>
-            <ModalFooter className="flex flex-wrap gap-2">
-              <Button variant="bordered" onPress={inventoryScreen.onInvoiceViewClose}>Close</Button>
+            <ModalFooter className="flex w-full flex-wrap items-center gap-2 !justify-between">
+              <div>
               {inventoryScreen.viewingInvoice?.status === 'pending' && (
                 <Button color="danger" variant="light" onPress={async () => {
                   const { confirmDelete } = await import('../DangerConfirm');
@@ -456,6 +470,8 @@ export function SupplierInvoiceModals() {
                   inventoryScreen.onInvoiceViewClose();
                 }}>Delete</Button>
               )}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
               {inventoryScreen.viewingInvoice?.status === 'void' && (
                 <Button color="warning" variant="flat" onPress={async () => {
                   const { confirmUnvoid } = await import('../DangerConfirm');
@@ -533,6 +549,37 @@ export function SupplierInvoiceModals() {
                   💰 Mark Paid
                 </Button>
               )}
+              {inventoryScreen.viewingInvoice?.status === 'pending' && (
+                <Button color="warning" variant="flat" onPress={() => {
+                  inventoryScreen.onInvoiceViewClose();
+                  inventoryScreen.setEditingInvoice(inventoryScreen.viewingInvoice);
+                  inventoryScreen.setInvoiceFormData({ ...inventoryScreen.viewingInvoice, items: inventoryScreen.viewingInvoice.items });
+                  inventoryScreen.onInvoiceModalOpen();
+                }}>
+                  Edit
+                </Button>
+              )}
+              {inventoryScreen.viewingInvoice && (
+                <Button variant="flat" onPress={() => {
+                  const invoice = inventoryScreen.viewingInvoice;
+                  const money = (n: number) => `₵${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                  inventoryScreen.printInventorySheet({
+                    title: 'Supplier Invoice',
+                    subtitle: invoice.invoiceNumber,
+                    fields: [
+                      ['Supplier', invoice.supplierName || '—'],
+                      ['Status', invoice.status],
+                      ['Total', money(invoice.totalAmount || 0)],
+                    ],
+                    columns: ['Item', 'Qty', 'Amount'],
+                    rows: (invoice.items || []).map((item) => [item.itemName, item.quantity, money(item.totalPrice)]),
+                  });
+                }}>
+                  Print
+                </Button>
+              )}
+              <Button variant="bordered" onPress={inventoryScreen.onInvoiceViewClose}>Close</Button>
+              </div>
             </ModalFooter>
           </ModalContent>
         </Modal>

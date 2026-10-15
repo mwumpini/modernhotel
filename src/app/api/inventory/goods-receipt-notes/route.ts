@@ -3,6 +3,7 @@ import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant';
 import { requireAuth } from '@/app/lib/api/auth-guard';
 import { rejectIfBackdated } from '@/app/lib/frontoffice/postingDateGuard';
 import {
+  deleteGoodsReceiptNote,
   listGoodsReceiptNotes,
   upsertGoodsReceiptNote,
   type GRNItemInput,
@@ -129,6 +130,25 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ grn });
   } catch (error) {
     console.error('Error updating goods receipt note:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const auth = await requireAuth(req);
+    if (!auth.ok) return auth.response;
+    const tenantId = await resolveTenantId(req);
+    if (!tenantId) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 });
+
+    const id = new URL(req.url).searchParams.get('id');
+    if (!id) return NextResponse.json({ error: 'Missing required field: id' }, { status: 400 });
+
+    const existing = await deleteGoodsReceiptNote(tenantId, id);
+    if (!existing) return NextResponse.json({ error: 'Goods receipt note not found' }, { status: 404 });
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error('Error deleting goods receipt note:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
