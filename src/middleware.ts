@@ -7,14 +7,15 @@ import { isPlatformOperator } from '@/app/lib/platform/operatorRole'
 // Routes that must stay reachable without a session: `/` renders its own login form
 // client-side when unauthenticated, and `/setup` is the first-run onboarding wizard that
 // creates the tenant/first user before any login is possible.
-const PUBLIC_PATHS = ['/setup']
+const PUBLIC_PATHS = ['/setup', '/site']
 
 /**
  * API routes that answer without a login, each guarded its own way: sign-in and
  * account recovery, the health check, the hotel website's booking API (booking key),
- * Vercel cron (CRON_SECRET), and the setup wizard's "is this hotel set up?" check.
+ * Vercel cron (CRON_SECRET), the setup wizard's "is this hotel set up?" check, and the
+ * website's demo request form (honeypot and rate limit).
  */
-const PUBLIC_API_PREFIXES = ['/api/auth/', '/api/health', '/api/booking/', '/api/cron/']
+const PUBLIC_API_PREFIXES = ['/api/auth/', '/api/health', '/api/booking/', '/api/cron/', '/api/demo-request']
 const PUBLIC_API_GET = ['/api/settings/setup-status']
 
 function isPublicApi(request: NextRequest): boolean {
@@ -55,9 +56,33 @@ async function guardApi(request: NextRequest) {
   return NextResponse.next()
 }
 
+/**
+ * The public website. SITE_HOSTS (e.g. "agmsync.com,www.agmsync.com") lists the addresses that
+ * show it at /; any app page asked for on them moves to APP_ORIGIN (e.g. https://app.agmsync.com).
+ * API calls still work on every address (hotel websites call /api/booking on www). Unset, the
+ * site is only at /site and every address stays the app.
+ */
+const SITE_HOSTS = new Set(
+  (process.env.SITE_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean),
+)
+const APP_ORIGIN = process.env.APP_ORIGIN || 'https://app.agmsync.com'
+
+function routeSiteHost(request: NextRequest): NextResponse | null {
+  if (SITE_HOSTS.size === 0) return null
+  const host = (request.headers.get('host') || '').toLowerCase().split(':')[0]
+  if (!SITE_HOSTS.has(host)) return null
+  const { pathname, search } = request.nextUrl
+  if (pathname === '/') return NextResponse.rewrite(new URL('/site', request.url))
+  if (pathname === '/site' || pathname.startsWith('/site/')) return NextResponse.next()
+  return NextResponse.redirect(new URL(pathname + search, APP_ORIGIN), 308)
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   if (pathname.startsWith('/api/')) return guardApi(request)
+
+  const site = routeSiteHost(request)
+  if (site) return site
 
   if (pathname === '/' || PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
     return NextResponse.next()

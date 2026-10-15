@@ -2955,3 +2955,24 @@ model NumberCounter {
 
   @@unique([tenantId, series])
 }
+
+/// A hotel asking for a demo from the agmsync.com website. Not tied to any hotel account.
+model DemoRequest {
+  id        String   @id @default(cuid())
+  name      String
+  hotelName String
+  email     String?
+  whatsapp  String?
+  rooms     Int?
+  city      String?
+  message   String?
+  /// Where on the site it came from, e.g. "hero" or "contact".
+  source    String?
+  ip        String?
+  /// new | contacted | demo-booked | won | lost
+  status    String   @default("new")
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("demo_requests")
+}
