@@ -1221,6 +1221,8 @@ export interface RoomManagementSettings {
   // Standard times
   standardCheckInHour?: number; // 0-23
   standardCheckOutHour?: number; // 0-23
+  /** Default on. Off: the room is vacant and sellable as soon as the guest leaves. */
+  markRoomDirtyOnCheckout?: boolean;
 
   // No-Show Policy
   noShowPolicyEnabled?: boolean;
@@ -4403,6 +4405,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     earlyCheckoutAdvancedEnabled: false,
     standardCheckInHour: 14,
     standardCheckOutHour: 11,
+    markRoomDirtyOnCheckout: true,
     noShowPolicyEnabled: false,
     noShowChargeType: 'first_night',
     noShowChargeValue: 0,

@@ -15,7 +15,8 @@ import { useAccountingStore } from '@/app/lib/accounting/store';
 import { useSettingsStore } from '@/app/lib/settings/store';
 import { useSupplierStore } from '@/app/lib/inventory/supplierStore';
 import { useStockStore } from '@/app/lib/inventory/stockStore';
-import { computePurchaseTax } from '@/app/lib/tax/engine';
+import { computePurchaseTax, getActiveTaxConfigs } from '@/app/lib/tax/engine';
+import { useComplianceStore } from '@/app/lib/compliance/store';
 import { computePurchaseWht, computePurchaseWhtVat, PURCHASE_WHT_CATEGORIES, type PurchaseWhtCategory } from '@/app/lib/accounting/purchaseWht';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { filterFinanceApInvoices, computeSupplierAgingFromInvoices } from '@/app/lib/accounting/apSubledger';
@@ -77,6 +78,23 @@ export default function AccountsPayablePage() {
     recordSupplierWHTPayment,
     initializeAccounting,
   } = useAccountingStore();
+  const expenseAccounts = useMemo(() => {
+    const accounts = chartOfAccounts || [];
+    const parentIds = new Set(accounts.map((a) => a.parentId).filter(Boolean) as string[]);
+    const expenses = accounts.filter((a) => a.isActive !== false && (a.type === 'Expense' || a.type === 'Operating Expense' || a.type === 'Cost of Sales'));
+    const leaves = expenses.filter((a) => !parentIds.has(a.id));
+    return (leaves.length ? leaves : expenses).slice().sort((a, b) => a.name.localeCompare(b.name));
+  }, [chartOfAccounts]);
+  const expenseAccountChoices = (selectedCode?: string) => {
+    if (!selectedCode || expenseAccounts.some((a) => a.code === selectedCode)) return expenseAccounts;
+    const current = (chartOfAccounts || []).find((a) => a.code === selectedCode);
+    return current ? [current, ...expenseAccounts] : expenseAccounts;
+  };
+  const defaultExpenseCode = (kind: 'item' | 'service') => {
+    const prefer = kind === 'item' ? '5110' : '5680';
+    if (expenseAccounts.some((a) => a.code === prefer)) return prefer;
+    return expenseAccounts[0]?.code || '5100';
+  };
   const canApprovePayments = useSettingsStore((s) => s.hasPermission('accounting.approve-payment'));
   const canManageAp = useSettingsStore((s) => s.hasPermission('accounting.manage-ap'));
   const canDeleteAp = useSettingsStore((s) => s.hasPermission('accounting.delete'));
@@ -93,6 +111,7 @@ export default function AccountsPayablePage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [postOnSave, setPostOnSave] = useState(true);
   const [showAdvancedInvoice, setShowAdvancedInvoice] = useState(false);
+  const [showTaxDetail, setShowTaxDetail] = useState(false);
   const [lineEntryKind, setLineEntryKind] = useState<'item' | 'service'>('item');
   const [viewKind, setViewKind] = useState<'supplier' | 'invoice' | 'payment' | null>(null);
   const [viewItem, setViewItem] = useState<any>(null);
@@ -458,11 +477,87 @@ export default function AccountsPayablePage() {
     </TableColumn>
   );
 
+  const hotelBillTax = (subtotal: number) => {
+    const compliance = useComplianceStore.getState();
+    const loaded = compliance.taxTypes.some((t) => t.id === 'gh-purchases-hotel');
+    const { taxes } = compliance.calculateTax(subtotal, 'HOTEL_BILL', {
+      domain: 'purchases',
+      operation: 'internal',
+      typeId: 'gh-purchases-hotel',
+    });
+    if (loaded) {
+      const rules = compliance.getActiveRules();
+      const lines = taxes.map((line) => {
+        const rule = rules.find((r) => r.id === line.ruleId);
+        return {
+          key: line.ruleId,
+          label: `${line.name} ${line.rate}%`,
+          amount: line.amount,
+          recoverable: rule?.isRecoverable !== false,
+        };
+      });
+      const tourism = +lines.filter((line) => !line.recoverable).reduce((sum, line) => sum + line.amount, 0).toFixed(2);
+      const total = +lines.reduce((sum, line) => sum + line.amount, 0).toFixed(2);
+      return { lines, tourism, total };
+    }
+    const purchase = computePurchaseTax(subtotal);
+    const tourism = +((subtotal * 1) / 100).toFixed(2);
+    return {
+      lines: [
+        ...purchase.lines.map((line) => ({
+          key: line.taxCode || line.name,
+          label: `${line.name} ${line.rate}%`,
+          amount: line.amount,
+          recoverable: true,
+        })),
+        { key: 'tourism', label: 'Tourism Levy 1%', amount: tourism, recoverable: false },
+      ],
+      tourism,
+      total: +(purchase.totalTax + tourism).toFixed(2),
+    };
+  };
+
   const taxFromSubtotal = (subtotal: number, taxType?: string, customTaxPercent?: number) => {
     const type = taxType || 'STANDARD';
     if (type === 'NONE') return 0;
     if (type === 'CUSTOM') return +(subtotal * (Number(customTaxPercent || 0) / 100)).toFixed(2);
+    if (type === 'HOTEL') return hotelBillTax(subtotal).total;
     return +computePurchaseTax(subtotal).totalTax.toFixed(2);
+  };
+
+  const purchaseTaxLines = (current: { taxType?: string; subtotal?: number; taxAmount?: number; customTaxPercent?: number }) => {
+    const type = current.taxType || 'STANDARD';
+    const subtotal = Number(current.subtotal || 0);
+    if (type === 'NONE') return [{ key: 'none', label: 'No tax', amount: 0 }];
+    if (type === 'CUSTOM') {
+      const rate = Number(current.customTaxPercent || 0);
+      return [{ key: 'custom', label: rate > 0 ? `Custom ${rate}%` : 'Custom', amount: Number(current.taxAmount || 0) }];
+    }
+    if (type === 'HOTEL') return hotelBillTax(subtotal).lines;
+    const computed = computePurchaseTax(subtotal).lines;
+    if (computed.length) {
+      return computed.map((line) => ({
+        key: line.taxCode || line.name,
+        label: `${line.name} ${line.rate}%`,
+        amount: line.amount,
+      }));
+    }
+    const order: Record<string, number> = { NHIL: 10, GETFund: 20, VAT: 30, Tourism: 40, COVID19: 50 };
+    return getActiveTaxConfigs()
+      .filter((c) => c.isActive && c.rate > 0 && c.type !== 'Withholding' && c.applyOnPurchases !== false && c.isRecoverable)
+      .sort((a, b) => (order[a.type] ?? 60) - (order[b.type] ?? 60))
+      .map((c) => ({ key: c.code, label: `${c.name} ${c.rate}%`, amount: 0 }));
+  };
+
+  const taxBreakdownFor = (current: any, taxType: string, subtotal: number, taxAmount: number) => {
+    const tb = { ...(current.taxBreakdown || {}) };
+    if (taxType === 'HOTEL') tb.tourism = hotelBillTax(subtotal).tourism;
+    else delete tb.tourism;
+    if (current.whtVatApplicable) {
+      const vatBase = taxType === 'HOTEL' ? Math.max(0, taxAmount - Number(tb.tourism || 0)) : taxAmount;
+      tb.withholdingVat = computePurchaseWhtVat(vatBase)?.amount || 0;
+    }
+    return tb;
   };
 
   const recomputeInvoiceFromLines = (
@@ -475,15 +570,17 @@ export default function AccountsPayablePage() {
       const qty = l.lineKind === 'service' ? 1 : Number(l.quantity || 0);
       return s + qty * Number(l.unitPrice || 0);
     }, 0);
-    const taxAmount = taxFromSubtotal(subtotal, taxType ?? form.taxType, customTaxPercent ?? form.customTaxPercent);
-    const nextBreakdown = { ...(taxBreakdown ?? form.taxBreakdown ?? {}) };
+    const type = taxType ?? form.taxType;
+    const taxAmount = taxFromSubtotal(subtotal, type, customTaxPercent ?? form.customTaxPercent);
+    const nextBreakdown = taxBreakdownFor(
+      { ...form, taxBreakdown: taxBreakdown ?? form.taxBreakdown },
+      type || 'STANDARD',
+      subtotal,
+      taxAmount,
+    );
     if (form.whtApplicable) {
       const wht = computePurchaseWht(subtotal, form.whtCategory || 'SERVICE');
       nextBreakdown.withholding = wht?.amount || 0;
-    }
-    if (form.whtVatApplicable) {
-      const whtVat = computePurchaseWhtVat(taxAmount);
-      nextBreakdown.withholdingVat = whtVat?.amount || 0;
     }
     return {
       lines,
@@ -532,6 +629,7 @@ export default function AccountsPayablePage() {
     setDialogType('invoice');
     setEditing(null);
     setShowAdvancedInvoice(false);
+    setShowTaxDetail(false);
     setLineEntryKind('item');
     const today = new Date().toISOString().slice(0, 10);
     const supplier = suppliers.find((s) => s.id === supplierId);
@@ -552,7 +650,7 @@ export default function AccountsPayablePage() {
       taxType: 'STANDARD',
       claimInputTax: vatCfg ? vatCfg.isRecoverable !== false : true,
       description: '',
-      lines: [{ id: `INL-${Date.now()}`, lineKind: 'item', description: '', quantity: 1, unitPrice: 0, glAccountCode: '5100', uom: 'Each' }],
+      lines: [{ id: `INL-${Date.now()}`, lineKind: 'item', description: '', quantity: 1, unitPrice: 0, glAccountCode: defaultExpenseCode('item'), uom: 'Each' }],
     });
     setIsOpen(true);
   };
@@ -580,6 +678,7 @@ export default function AccountsPayablePage() {
     setDialogType('invoice');
     setEditing(invoice);
     setShowAdvancedInvoice(false);
+    setShowTaxDetail(false);
     const rawLines = invoice.lines || invoice.items || invoice.lineItems || [];
     const normalized = rawLines.map((ln: any) => ({
       ...ln,
@@ -1722,6 +1821,7 @@ export default function AccountsPayablePage() {
           setIsOpen(open);
           if (!open) {
             setShowAdvancedInvoice(false);
+            setShowTaxDetail(false);
             setErrors({});
           }
         }}
@@ -1833,7 +1933,7 @@ export default function AccountsPayablePage() {
                 taxAmount,
                 uom: ln.uom || 'Each',
                 costCenter: ln.costCenter || undefined,
-                glAccountCode: ln.glAccountCode || '5100',
+                glAccountCode: ln.glAccountCode || defaultExpenseCode(ln.lineKind === 'service' ? 'service' : 'item'),
               };
             });
             const subtotalFromLines = lines.reduce((s: number, l: any) => s + l.amount, 0);
@@ -1865,6 +1965,7 @@ export default function AccountsPayablePage() {
               otherCharges: Number(form.otherCharges || 0),
               amountDue: +(((Number(form.subtotal ?? subtotalFromLines)) + (Number(form.taxAmount ?? taxFromLines)) + Number(form.shippingCharges || 0) + Number(form.otherCharges || 0) - Number(form.discountAmount || 0) - Number(form.taxBreakdown?.withholding || 0) - Number(form.taxBreakdown?.withholdingVat || 0)) - Number(form.paidAmount || 0)).toFixed(2),
               workflowStatus: form.workflowStatus || 'Posted',
+              taxType: form.taxType || 'STANDARD',
               taxBreakdown: form.taxBreakdown || undefined,
               claimInputTax: form.taxType === 'NONE' ? false : form.claimInputTax !== false,
               sourceModule: editing?.sourceModule || 'manual',
@@ -2302,6 +2403,7 @@ export default function AccountsPayablePage() {
                           ...ln,
                           lineKind: 'item',
                           quantity: ln.quantity || 1,
+                          glAccountCode: ln.glAccountCode === defaultExpenseCode('service') ? defaultExpenseCode('item') : ln.glAccountCode,
                         }));
                         setForm({ ...form, ...recomputeInvoiceFromLines(next.length ? next : [{
                           id: `INL-${Date.now()}`,
@@ -2309,7 +2411,7 @@ export default function AccountsPayablePage() {
                           description: '',
                           quantity: 1,
                           unitPrice: 0,
-                          glAccountCode: '5100',
+                          glAccountCode: defaultExpenseCode('item'),
                           uom: 'Each',
                         }]) });
                       }}
@@ -2328,6 +2430,7 @@ export default function AccountsPayablePage() {
                           itemId: '',
                           itemCode: '',
                           uom: undefined,
+                          glAccountCode: ln.glAccountCode === defaultExpenseCode('item') ? defaultExpenseCode('service') : ln.glAccountCode,
                         }));
                         setForm({ ...form, ...recomputeInvoiceFromLines(next.length ? next : [{
                           id: `INL-${Date.now()}`,
@@ -2335,7 +2438,7 @@ export default function AccountsPayablePage() {
                           description: '',
                           quantity: 1,
                           unitPrice: 0,
-                          glAccountCode: '5100',
+                          glAccountCode: defaultExpenseCode('service'),
                         }]) });
                       }}
                     >
@@ -2356,7 +2459,7 @@ export default function AccountsPayablePage() {
                               description: '',
                               quantity: 1,
                               unitPrice: 0,
-                              glAccountCode: '5100',
+                              glAccountCode: defaultExpenseCode('service'),
                             }
                           : {
                               id: `INL-${Date.now()}`,
@@ -2364,7 +2467,7 @@ export default function AccountsPayablePage() {
                               description: '',
                               quantity: 1,
                               unitPrice: 0,
-                              glAccountCode: '5100',
+                              glAccountCode: defaultExpenseCode('item'),
                               uom: 'Each',
                               costCenter: '',
                             },
@@ -2377,13 +2480,14 @@ export default function AccountsPayablePage() {
                 </div>
                 <div className="rounded-lg border border-gray-200 overflow-x-auto">
                   {lineEntryKind === 'item' ? (
-                    <Table aria-label="Item lines" removeWrapper classNames={{ th: 'bg-gray-50 text-[11px] uppercase tracking-wide', td: 'py-2' }}>
+                    <Table aria-label="Item lines" removeWrapper classNames={{ table: 'table-fixed', th: 'bg-gray-50 text-[11px] uppercase tracking-wide', td: 'py-2' }}>
                       <TableHeader>
-                        <TableColumn>ITEM</TableColumn>
-                        <TableColumn width={88}>QTY</TableColumn>
-                        <TableColumn width={110}>UNIT PRICE</TableColumn>
-                        <TableColumn width={120}>AMOUNT</TableColumn>
-                        <TableColumn width={56}>{''}</TableColumn>
+                        <TableColumn width={192}>ITEM</TableColumn>
+                        <TableColumn width={181}>ACCOUNT</TableColumn>
+                        <TableColumn width={77}>QTY</TableColumn>
+                        <TableColumn width={104}>UNIT PRICE</TableColumn>
+                        <TableColumn width={100}>AMOUNT</TableColumn>
+                        <TableColumn width={44}>{''}</TableColumn>
                       </TableHeader>
                       <TableBody emptyContent="Add a line to start this bill.">
                         {(form.lines || []).map((ln: any, idx: number) => {
@@ -2396,9 +2500,11 @@ export default function AccountsPayablePage() {
                           return (
                             <TableRow key={ln.id || idx}>
                               <TableCell>
-                                <div className="space-y-1.5 min-w-[200px]">
+                                <div className="space-y-1.5 w-full min-w-0">
                                   <Autocomplete
                                     size="sm"
+                                    className="w-full [&_button[aria-label='Show_suggestions']]:!min-w-[15px] [&_button[aria-label='Show_suggestions']]:!w-[15px] [&_button[aria-label='Show_suggestions']]:!h-[15px] [&_button[aria-label='Show_suggestions']]:!p-0"
+                                    classNames={{ popoverContent: 'min-w-[280px]' }}
                                     selectedKey={ln.itemId || undefined}
                                     onSelectionChange={(key) => {
                                       const item = stockItems.find((i) => i.id === String(key || ''));
@@ -2438,18 +2544,6 @@ export default function AccountsPayablePage() {
                                       />
                                       <Autocomplete
                                         size="sm"
-                                        selectedKey={ln.glAccountCode || undefined}
-                                        onSelectionChange={(key) => updateLine({ glAccountCode: String(key || '') })}
-                                        placeholder="GL"
-                                      >
-                                        {chartOfAccounts.map((acc) => (
-                                          <AutocompleteItem key={acc.code} textValue={`${acc.code} ${acc.name}`}>
-                                            <span className="font-mono text-xs">{acc.code}</span> {acc.name}
-                                          </AutocompleteItem>
-                                        ))}
-                                      </Autocomplete>
-                                      <Autocomplete
-                                        size="sm"
                                         selectedKey={ln.costCenter || undefined}
                                         onSelectionChange={(key) => updateLine({ costCenter: String(key || '') })}
                                         placeholder="Cost center"
@@ -2466,10 +2560,28 @@ export default function AccountsPayablePage() {
                                 </div>
                               </TableCell>
                               <TableCell>
+                                <Autocomplete
+                                  size="sm"
+                                  aria-label="Expense account"
+                                  className="min-w-0 [&_button[aria-label='Show_suggestions']]:!min-w-[15px] [&_button[aria-label='Show_suggestions']]:!w-[15px] [&_button[aria-label='Show_suggestions']]:!h-[15px] [&_button[aria-label='Show_suggestions']]:!p-0"
+                                  classNames={{ popoverContent: 'min-w-[320px]' }}
+                                  selectedKey={ln.glAccountCode || undefined}
+                                  onSelectionChange={(key) => updateLine({ glAccountCode: String(key || '') })}
+                                  placeholder="Expense account"
+                                >
+                                  {expenseAccountChoices(ln.glAccountCode).map((acc) => (
+                                    <AutocompleteItem key={acc.code} textValue={acc.name} className="whitespace-nowrap">
+                                      {acc.name}
+                                    </AutocompleteItem>
+                                  ))}
+                                </Autocomplete>
+                              </TableCell>
+                              <TableCell>
                                 <Input
                                   size="sm"
                                   type="number"
                                   aria-label="Quantity"
+                                  className="w-full min-w-[61px]"
                                   value={String(ln.quantity ?? 1)}
                                   onChange={(e) => updateLine({ quantity: parseFloat(e.target.value) || 0 })}
                                 />
@@ -2479,6 +2591,7 @@ export default function AccountsPayablePage() {
                                   size="sm"
                                   type="number"
                                   aria-label="Unit price"
+                                  className="w-full min-w-[88px]"
                                   value={String(ln.unitPrice ?? 0)}
                                   onChange={(e) => updateLine({ unitPrice: parseFloat(e.target.value) || 0 })}
                                 />
@@ -2507,11 +2620,12 @@ export default function AccountsPayablePage() {
                       </TableBody>
                     </Table>
                   ) : (
-                    <Table aria-label="Service lines" removeWrapper classNames={{ th: 'bg-gray-50 text-[11px] uppercase tracking-wide', td: 'py-2' }}>
+                    <Table aria-label="Service lines" removeWrapper classNames={{ table: 'table-fixed', th: 'bg-gray-50 text-[11px] uppercase tracking-wide', td: 'py-2' }}>
                       <TableHeader>
                         <TableColumn>DESCRIPTION</TableColumn>
+                        <TableColumn width={220}>ACCOUNT</TableColumn>
                         <TableColumn width={140}>AMOUNT</TableColumn>
-                        <TableColumn width={56}>{''}</TableColumn>
+                        <TableColumn width={48}>{''}</TableColumn>
                       </TableHeader>
                       <TableBody emptyContent="Add a line to start this bill.">
                         {(form.lines || []).map((ln: any, idx: number) => {
@@ -2535,21 +2649,10 @@ export default function AccountsPayablePage() {
                                     <div className="grid grid-cols-2 gap-1.5">
                                       <Autocomplete
                                         size="sm"
-                                        selectedKey={ln.glAccountCode || undefined}
-                                        onSelectionChange={(key) => updateLine({ glAccountCode: String(key || '') })}
-                                        placeholder="GL"
-                                      >
-                                        {chartOfAccounts.map((acc) => (
-                                          <AutocompleteItem key={acc.code} textValue={`${acc.code} ${acc.name}`}>
-                                            <span className="font-mono text-xs">{acc.code}</span> {acc.name}
-                                          </AutocompleteItem>
-                                        ))}
-                                      </Autocomplete>
-                                      <Autocomplete
-                                        size="sm"
                                         selectedKey={ln.costCenter || undefined}
                                         onSelectionChange={(key) => updateLine({ costCenter: String(key || '') })}
                                         placeholder="Cost center"
+                                        className="col-span-2"
                                       >
                                         {(costCenters || []).map((cc) => (
                                           <AutocompleteItem key={cc.code} textValue={`${cc.code} ${cc.name}`}>
@@ -2560,6 +2663,23 @@ export default function AccountsPayablePage() {
                                     </div>
                                   )}
                                 </div>
+                              </TableCell>
+                              <TableCell>
+                                <Autocomplete
+                                  size="sm"
+                                  aria-label="Expense account"
+                                  className="min-w-0 [&_button[aria-label='Show_suggestions']]:!min-w-[15px] [&_button[aria-label='Show_suggestions']]:!w-[15px] [&_button[aria-label='Show_suggestions']]:!h-[15px] [&_button[aria-label='Show_suggestions']]:!p-0"
+                                  classNames={{ popoverContent: 'min-w-[320px]' }}
+                                  selectedKey={ln.glAccountCode || undefined}
+                                  onSelectionChange={(key) => updateLine({ glAccountCode: String(key || '') })}
+                                  placeholder="Expense account"
+                                >
+                                  {expenseAccountChoices(ln.glAccountCode).map((acc) => (
+                                    <AutocompleteItem key={acc.code} textValue={acc.name} className="whitespace-nowrap">
+                                      {acc.name}
+                                    </AutocompleteItem>
+                                  ))}
+                                </Autocomplete>
                               </TableCell>
                               <TableCell>
                                 <Input
@@ -2598,7 +2718,7 @@ export default function AccountsPayablePage() {
               <section className="rounded-lg border border-gray-200 p-3 space-y-3">
                 <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Tax & withholding</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
-                  <div className="flex gap-2 items-end">
+                  <div className="flex flex-wrap gap-2 items-end">
                     <Select
                       size="sm"
                       label="VAT / tax"
@@ -2608,23 +2728,25 @@ export default function AccountsPayablePage() {
                         const v = Array.from(keys)[0] as string;
                         const subtotal = Number(form.subtotal || 0);
                         const taxAmount = taxFromSubtotal(subtotal, v, form.customTaxPercent);
-                        const tb = { ...(form.taxBreakdown || {}) };
-                        if (form.whtVatApplicable) {
-                          tb.withholdingVat = computePurchaseWhtVat(taxAmount)?.amount || 0;
-                        }
                         setForm({
                           ...form,
                           taxType: v,
                           taxAmount,
                           total: +(subtotal + taxAmount).toFixed(2),
-                          taxBreakdown: tb,
+                          taxBreakdown: taxBreakdownFor(form, v, subtotal, taxAmount),
                         });
                       }}
                     >
                       <SelectItem key="STANDARD">Standard purchase stack</SelectItem>
+                      <SelectItem key="HOTEL">Hotel bill</SelectItem>
                       <SelectItem key="CUSTOM">Custom rate</SelectItem>
                       <SelectItem key="NONE">No tax</SelectItem>
                     </Select>
+                    {form.taxType === 'HOTEL' && (
+                      <p className="w-full text-[11px] text-gray-500 leading-snug">
+                        From Compliance. Tourism stays a cost. NHIL, GETFund, and VAT can be claimed.
+                      </p>
+                    )}
                     {form.taxType === 'CUSTOM' && (
                       <Input
                         size="sm"
@@ -2636,16 +2758,12 @@ export default function AccountsPayablePage() {
                           const customTaxPercent = parseFloat(e.target.value) || 0;
                           const subtotal = Number(form.subtotal || 0);
                           const taxAmount = taxFromSubtotal(subtotal, 'CUSTOM', customTaxPercent);
-                          const tb = { ...(form.taxBreakdown || {}) };
-                          if (form.whtVatApplicable) {
-                            tb.withholdingVat = computePurchaseWhtVat(taxAmount)?.amount || 0;
-                          }
                           setForm({
                             ...form,
                             customTaxPercent,
                             taxAmount,
                             total: +(subtotal + taxAmount).toFixed(2),
-                            taxBreakdown: tb,
+                            taxBreakdown: taxBreakdownFor(form, 'CUSTOM', subtotal, taxAmount),
                           });
                         }}
                       />
@@ -2847,9 +2965,26 @@ export default function AccountsPayablePage() {
                 <span>Subtotal</span>
                 <span className="tabular-nums">{formatAccountingCurrency(Number(form.subtotal || 0))}</span>
               </div>
-              <div className="flex justify-between text-gray-600">
-                <span>Tax</span>
-                <span className="tabular-nums">{formatAccountingCurrency(Number(form.taxAmount || 0))}</span>
+              <div>
+                <button
+                  type="button"
+                  className="flex w-full justify-between text-gray-600"
+                  aria-expanded={showTaxDetail}
+                  onClick={() => setShowTaxDetail((open) => !open)}
+                >
+                  <span>{showTaxDetail ? '▾' : '▸'} Tax</span>
+                  <span className="tabular-nums">{formatAccountingCurrency(Number(form.taxAmount || 0))}</span>
+                </button>
+                {showTaxDetail && (
+                  <div className="mt-1 space-y-1 ps-3 text-[11px] text-gray-500">
+                    {purchaseTaxLines(form).map((line) => (
+                      <div key={line.key} className="flex justify-between gap-2">
+                        <span>{line.label}</span>
+                        <span className="tabular-nums">{formatAccountingCurrency(line.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               {Number(form.discountAmount || 0) > 0 && (
                 <div className="flex justify-between text-gray-600">
@@ -2892,9 +3027,6 @@ export default function AccountsPayablePage() {
                 <span>Amount due</span>
                 <span className="tabular-nums">{formatAccountingCurrency(invoiceNetPayable)}</span>
               </div>
-              <p className="text-[11px] text-gray-400 leading-snug pt-1">
-                Line amounts and tax update as you type.
-              </p>
             </aside>
           </div>
         )}

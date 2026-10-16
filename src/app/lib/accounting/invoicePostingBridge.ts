@@ -252,26 +252,43 @@ export function buildPurchaseInvoiceJournalEntry(
 
   if (tax > 0.005) {
     const claimInput = invoice.claimInputTax !== false;
-    if (claimInput) {
-      lines.push({
-        id: jl(),
-        journalEntryId: entryId,
-        accountCode: GL.VAT,
-        description: `Input VAT — ${invoice.invoiceNumber}`,
-        debit: tax,
-        credit: 0,
-        currency: invoice.currency || 'GHS',
-        reference: invoice.invoiceNumber,
-      });
-    } else {
-      // Non-claimable purchase tax — cost of the bill, not input VAT to reclaim.
-      const costGl = expenseLines[0]?.glAccountCode || GL.EXPENSE;
+    const tourism = +Math.max(0, Number(invoice.taxBreakdown?.tourism || 0)).toFixed(2);
+    const claimable = +Math.max(0, tax - tourism).toFixed(2);
+    const costGl = expenseLines[0]?.glAccountCode || GL.EXPENSE;
+    if (claimable > 0.005) {
+      if (claimInput) {
+        lines.push({
+          id: jl(),
+          journalEntryId: entryId,
+          accountCode: GL.VAT,
+          description: `Input VAT — ${invoice.invoiceNumber}`,
+          debit: claimable,
+          credit: 0,
+          currency: invoice.currency || 'GHS',
+          reference: invoice.invoiceNumber,
+        });
+      } else {
+        // Non-claimable purchase tax — cost of the bill, not input VAT to reclaim.
+        lines.push({
+          id: jl(),
+          journalEntryId: entryId,
+          accountCode: costGl,
+          description: `Non-claimable tax — ${invoice.invoiceNumber}`,
+          debit: claimable,
+          credit: 0,
+          currency: invoice.currency || 'GHS',
+          reference: invoice.invoiceNumber,
+          costCenter: expenseLines[0]?.costCenter,
+        });
+      }
+    }
+    if (tourism > 0.005) {
       lines.push({
         id: jl(),
         journalEntryId: entryId,
         accountCode: costGl,
-        description: `Non-claimable tax — ${invoice.invoiceNumber}`,
-        debit: tax,
+        description: `Tourism levy — ${invoice.invoiceNumber}`,
+        debit: tourism,
         credit: 0,
         currency: invoice.currency || 'GHS',
         reference: invoice.invoiceNumber,

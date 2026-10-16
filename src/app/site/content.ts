@@ -25,21 +25,27 @@ export const FACILITIES = [
   { icon: '🎤', title: 'Event & conference centres', text: 'Halls, bookings, catering, quotations and contracts.' },
 ];
 
+/** The side menu, in order. These are the modules. */
 export const MODULES = [
-  { icon: '🛎️', title: 'Front desk', text: 'Reservations, check-in and checkout, room moves, folios, deposits, company billing and the night audit.' },
-  { icon: '🍽️', title: 'Restaurant & bar POS', text: 'Fast touch ordering, kitchen and bar tickets, split bills, room charges and receipts with the right taxes.' },
-  { icon: '👨‍🍳', title: 'Kitchen', text: 'A live kitchen display, recipes, and ingredients taken from stock as dishes are sold.' },
-  { icon: '🧹', title: 'Housekeeping', text: 'Room status at a glance, cleaning tasks, inspections and maintenance requests.' },
-  { icon: '📦', title: 'Stores & inventory', text: 'Purchase orders, goods received, requisitions, transfers, stock counts and low-stock alerts.' },
-  { icon: '👥', title: 'HR & payroll', text: 'Staff records, shifts, leave, and payroll with PAYE and SSNIT worked out for you.' },
-  { icon: '🧾', title: 'Accounting', text: 'Sales post to the books on their own: receivables, payables, bank reconciliation and financial statements.' },
-  { icon: '🎤', title: 'Events & conferences', text: 'Halls, bookings, catering, quotations, invoices and contracts for every event.' },
-  { icon: '🚨', title: 'Security', text: 'Shifts, patrols, incidents and visitor logs in the same system as the rest of the business.' },
-  { icon: '📊', title: 'Reports & assistant', text: 'Daily flash reports, occupancy and revenue, plus Ask Mamani: ask a question, get the number.' },
+  { icon: '🏛️', title: 'Executive Management', text: 'The whole business on one screen: who is in house, what is arriving, and what needs a decision.' },
+  { icon: '🛎️', title: 'Front Office Operations', text: 'Reservations, check-in and checkout, rooms, billing, clients and the night audit.' },
+  { icon: '🎤', title: 'Events & Conferences', text: 'Halls, bookings, catering, quotations, invoices and contracts.' },
+  { icon: '🍽️', title: 'Restaurant & Bar', text: 'Touch ordering, bills, the menu, room charges and the till.' },
+  { icon: '👨‍🍳', title: 'Kitchen', text: 'The kitchen display, recipes, and ingredients taken from stock as dishes sell.' },
+  { icon: '🛏️', title: 'Housekeeping & Maintenance', text: 'Room status, cleaning tasks, inspections and repairs.' },
+  { icon: '📦', title: 'Inventory & Stores', text: 'Purchase orders, goods received, issues, transfers, stock counts and low-stock alerts.' },
+  { icon: '🚨', title: 'Security Operations', text: 'Patrols, incidents and visitor logs.' },
+  { icon: '👥', title: 'HR & Payroll', text: 'Staff, leave, time, and payroll with PAYE and SSNIT worked out for you.' },
+  { icon: '🧾', title: 'Accounting & Finance', text: 'What customers owe, what you owe suppliers, cash and bank, the books and the statements.' },
+  { icon: '⚖️', title: 'Compliance & Reports', text: 'Ghana’s taxes and the returns: VAT, levies, withholding, PAYE and SSNIT.' },
+  { icon: '⚙️', title: 'System Settings', text: 'Users, rooms and prices, documents, stock locations, and how the business is set up.' },
 ];
 
-/** What a business can shape to fit how it already works. */
+/** What a business can shape, and the features that come with every module. */
 export const CUSTOMISE_POINTS = [
+  { title: 'Ask Mamani', text: 'The assistant on a module. Ask how to do something, or ask for today’s numbers. It can draft a notice. You still send it. It does not change a booking, a bill, or the books.' },
+  { title: 'More than one currency', text: 'The books stay in cedis. Add a currency, such as US dollars, take a payment in it, and the books record the cedi value. Switch back to cedis when you are done.' },
+  { title: 'Use it anywhere, anytime', text: 'Sign in from a PC, a tablet, or a phone, at the property or away from it. Nothing to install.' },
   { title: 'Only the modules you need', text: 'A restaurant can run POS, kitchen and stores without a front desk. Switch modules on as you grow.' },
   { title: 'Your logo, your documents', text: 'Bills, quotations, receipts and registration cards carry your logo and details, laid out the way you like.' },
   { title: 'Your numbering and dates', text: 'Invoice and receipt numbers, date formats, your accounting year and check-in times, set once and used everywhere.' },
@@ -65,7 +71,7 @@ export const SETUP_OPTIONS = [
 export const GHANA_POINTS = [
   { title: 'Ghana taxes, done right', text: 'NHIL and GETFund, VAT and the Tourism Levy are worked out on every bill and printed in the order guests expect.' },
   { title: 'Bills your guests know', text: 'Check-out bills, quotations, receipts and registration cards in a familiar layout, with your logo. 80 mm till slips for the restaurant.' },
-  { title: 'Cedis and Mobile Money', text: 'Every amount in cedis. Take cash, card, Mobile Money or charge to the room, and balance each till at the end of a shift.' },
+  { title: 'Cedis, other currencies, and Mobile Money', text: 'The books stay in cedis. Take cash, card, Mobile Money, or a payment in another currency such as dollars, and balance each till at the end of a shift.' },
   { title: 'Runs on what you have', text: 'Works in the browser on desktops, laptops and tablets, including older Windows 8 computers. No installation needed.' },
   { title: 'Your data stays yours', text: 'Each business’s data is kept apart from every other’s, behind staff sign-in with roles and permissions.' },
   { title: 'Preparing for GRA E-VAT', text: 'Built on itemised, numbered documents, the foundation for electronic VAT invoicing as GRA brings businesses on board.' },
@@ -83,6 +89,8 @@ export const FAQS = [
   { q: 'We are not a hotel. Will it fit us?', a: 'Yes. Guest houses, lodges, resorts, apartments, hostels, restaurants, bars and event centres all use it. We switch on only the modules you need and set it up around how you work.' },
   { q: 'What happens if the internet goes off?', a: 'The browser version needs internet at each desk. Many businesses keep a backup Mobile data bundle or a second provider. If your connection is unreliable, ask us about an on-site installation.' },
   { q: 'Does it handle Ghana’s taxes?', a: 'Yes. NHIL, GETFund, VAT and the Tourism Levy are calculated on room, restaurant, event and service charges, printed on guest documents, and posted to the right accounts for your returns.' },
+  { q: 'Can we take US dollars as well as cedis?', a: 'Yes. The books stay in Ghana cedis. You add a currency, such as US dollars, and how many cedis one unit is worth. While that currency is on, a receipt is entered in it and the books record the cedi value. Switch back to cedis when you want.' },
+  { q: 'Is there an assistant?', a: 'Yes. Ask Mamani sits on each desk. Press F1 and ask how to do something, or ask for today’s numbers. It can draft a notice for you to send. It does not change bookings, bills, or the books on its own.' },
   { q: 'Can it print to my receipt printer?', a: 'Yes. A4 printers for invoices and bills, and standard 80 mm thermal printers for restaurant and bar slips and kitchen tickets.' },
   { q: 'How much does it cost?', a: 'Pricing depends on the size of your business, the modules you use and how you run it. Book a demo and we will send a clear quote. Our first partners get hands-on setup and launch pricing.' },
   { q: 'Can we bring in our existing guests and rooms?', a: 'Yes. During setup we enter your rooms, rates, menu and staff, and bring over your guest list so your team starts with what they know.' },

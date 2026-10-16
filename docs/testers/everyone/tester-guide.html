@@ -40,7 +40,7 @@ table{width:100%;border-collapse:collapse;font-size:15px}td{border-top:1px solid
 <header>
   <h1>AGM Sync: test the whole hotel</h1>
   <p>One of everything, through every desk: a guest, an event, stock, restaurant sales, housekeeping, the books and payroll. Everyone does the same steps with the same amounts, under their own name.</p>
-  <span class="pill">⏱ about 2.5 to 3 hours</span><span class="pill">🏨 every desk, in the order the work happens</span><span class="pill">🧾 30 short tasks</span>
+  <span class="pill">⏱ about 2.5 to 3 hours</span><span class="pill">🏨 every desk, in the order the work happens</span><span class="pill">🧾 31 short tasks</span>
   <div class="me"><label for="tname">Your first name:</label><input id="tname" placeholder="e.g. Gina" autocomplete="given-name"></div>
 </header>
 
@@ -56,7 +56,7 @@ table{width:100%;border-collapse:collapse;font-size:15px}td{border-top:1px solid
 <li>Use <strong>the same amounts</strong> as this guide. Everyone should then see the same results; a different result is a problem worth reporting.</li>
 <li><strong>Everything is already set up</strong>: taxes, rooms, rates, departments. You only do the day-to-day work.</li>
 <li>Use <strong>any room that shows available</strong>. If another tester takes it first, pick another.</li>
-<li>Do <strong>not</strong> run <strong>Night Audit</strong>, close a period or year, approve a payroll month, or change <strong>System Settings</strong>. They affect everyone.</li>
+<li>Do <strong>not</strong> run <strong>Night Audit</strong>, close a period or year, approve a payroll month, or change <strong>System Settings</strong>. They affect everyone. Task A7 is the one exception: switch dollars on, take your receipt, then switch back to cedis before you leave.</li>
 <li>If something waits for approval, note it and carry on.</li>
 <li>Press ✅ or ❌ under each task. For ❌, write what happened. This browser remembers your ticks.</li>
 <li>At the end, press <strong>Copy my results</strong> and paste them into WhatsApp.</li>
@@ -239,6 +239,18 @@ table{width:100%;border-collapse:collapse;font-size:15px}td{border-top:1px solid
   <div class="check"><strong>Check:</strong> Debits = credits. Assets = equity + liabilities.</div>
   <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
 </section>
+<section class="task" data-step="A7">
+  <div class="task-head"><span class="num">A7</span><h3>A payment in US dollars</h3></div>
+  <ol>
+    <li><strong>System Settings → Operational Policies → Currencies</strong>. Read the first line. If it is already taking a currency other than cedis, <strong>stop</strong>. Write that down and go on to HR. Do not press <strong>Use this</strong>.</li>
+    <li>If <strong>USD</strong> is not in the list: <strong>Add a currency</strong>. Code <strong>USD</strong>, main unit <strong>US dollar</strong>, small unit <strong>cents</strong>, Cedis per 1 <strong>15.50</strong>. If USD is already there, leave the rate as it is and write it down.</li>
+    <li>On the USD row, press <strong>Use this</strong>.</li>
+    <li><strong>Accounting &amp; Finance → Receivable → Receipts → Record receipt</strong>. Customer: <span class="nm">[your name]</span> Guest. Cash received: <strong>100</strong> (the box shows USD). Method: <strong>Bank transfer</strong>. Account: <strong>USD bank</strong>. Reference: <span class="nm">[your name]</span> dollars. Save.</li>
+    <li>Go straight back to <strong>Currencies</strong> and press <strong>Back to cedis</strong>. The first line must say cedis again before you do anything else.</li>
+  </ol>
+  <div class="check"><strong>Check:</strong> Under the amount it says <strong>Books ₵1,550.00</strong> when the rate is 15.50 (otherwise 100 × the rate you wrote down). The receipt list shows that cedi amount, and the note says <strong>Received USD 100.00</strong>. <strong>Accounting &amp; Finance → Cash</strong>: USD bank is up by <strong>100</strong>, not by 1,550. After <strong>Back to cedis</strong>, the first line says it is taking cedis.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
 
 <h2>👥 HR & Payroll</h2>
 <p class="intro">One employee, from hiring to payslip.</p>
@@ -288,6 +300,7 @@ table{width:100%;border-collapse:collapse;font-size:15px}td{border-top:1px solid
 <tr><td>Goods Received, Not Invoiced</td><td>Stock that has arrived but whose bill is not entered yet. The bill with the GRN number clears it.</td></tr>
 <tr><td>Payable / Receivable</td><td>Money the hotel owes suppliers / money customers owe the hotel.</td></tr>
 <tr><td>Journal</td><td>Every accounting entry, each with equal debits and credits.</td></tr>
+<tr><td>Currency</td><td>The books stay in cedis. While another currency is on, a receipt is typed in that currency and the books record the cedi value. Switch back to cedis when you are done.</td></tr>
 <tr><td>SSNIT / PAYE</td><td>Social security (5.5% of basic from the employee) / income tax taken from salary.</td></tr>
 </table></div>
 

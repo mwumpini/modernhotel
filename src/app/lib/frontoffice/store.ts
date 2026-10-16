@@ -33,7 +33,7 @@ import { isCorporateGuest } from './helpers/guests';
 import { postFirstNightAtCheckIn } from './roomCharges';
 import { nextCalendarDate, previousCalendarDate, roundCents, stayNightDates } from './folioLedger';
 import { isLateCheckoutNow } from './lateCheckout';
-import { depositBlocksConfirm, planEarlyCheckout, requiredDeposit } from './operationalPolicies';
+import { depositBlocksConfirm, planEarlyCheckout, requiredDeposit, shouldMarkRoomDirtyOnCheckout } from './operationalPolicies';
 import { type NightAuditResult } from './nightAudit';
 import { DEMO_BILLING_PERSONS, DEMO_RESERVATION_IDS as demoReservationIds, isDemoFixturesEnabled } from '../demo';
 import { notifyError } from '../notifications/notify';
@@ -1118,7 +1118,7 @@ class FrontOfficeStore {
     }
     const roomId = res.roomId && res.roomId !== 'TBD' ? res.roomId : '';
     if (roomId && (res.status === 'checked-in' || res.status === 'checked-out')) {
-      try { housekeepingStore.updateRoomStatus(roomId, 'dirty', 'FrontDesk', 'Stay voided'); } catch {}
+      this.releaseRoom(roomId, 'Stay voided');
     }
     this.reservations = this.reservations.map(r => r.id === id ? { ...r, status: 'void', roomId: '', updatedAt: new Date().toISOString() } : r);
     this.notify();
@@ -1306,6 +1306,26 @@ class FrontOfficeStore {
     }
   }
 
+  /** Checkout and a voided stay. Dirty, with a turnover task on checkout, unless the facility turned that off. */
+  private releaseRoom(roomId: string, reason: string, roomTypeId?: string) {
+    if (!roomId || roomId === 'TBD') return;
+    let dirty = true;
+    try { dirty = shouldMarkRoomDirtyOnCheckout(useSettingsStore.getState().roomManagement); } catch {}
+    try {
+      housekeepingStore.updateRoomStatus(roomId, dirty ? 'dirty' : 'vacant', 'FrontDesk', reason);
+      if (dirty && reason === 'Guest checked out') {
+        housekeepingStore.createTask({
+          roomNumber: roomId,
+          roomTypeId: roomTypeId || 'standard',
+          taskType: 'turnover',
+          priority: 'high',
+          estimatedMinutes: 45,
+          checklist: ['Change linens', 'Clean bathroom', 'Vacuum floor', 'Restock amenities'],
+        });
+      }
+    } catch {}
+  }
+
   private finalizeCheckout(reservationId: string, checkoutNotes?: string) {
     const res = this.reservations.find(r => r.id === reservationId);
     if (!res) return;
@@ -1321,12 +1341,7 @@ class FrontOfficeStore {
 
     this.notify();
 
-    if (res.roomId) {
-      try {
-        housekeepingStore.updateRoomStatus(res.roomId, 'dirty', 'FrontDesk', 'Guest checked out');
-        housekeepingStore.createTask({ roomNumber: res.roomId, roomTypeId: res.roomTypeId, taskType: 'turnover', priority: 'high', estimatedMinutes: 45, checklist: ['Change linens', 'Clean bathroom', 'Vacuum floor', 'Restock amenities'] });
-      } catch {}
-    }
+    if (res.roomId) this.releaseRoom(res.roomId, 'Guest checked out', res.roomTypeId);
 
     trackEvent('FO.Reservation.CheckedOut', { id: reservationId, reservationId, guestName: res.guestName, checkoutNotes });
     try {

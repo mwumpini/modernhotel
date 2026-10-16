@@ -245,7 +245,7 @@
   {
     "id": "gh-ssnit-tier1",
     "countryCode": "GH",
-    "name": "Tier 1",
+    "name": "SSNIT (Tier 1)",
     "rate": 5.5,
     "employerRate": 8,
     "ceiling": 69000,
@@ -254,7 +254,7 @@
     "appliesTo": [
       "TIER1"
     ],
-    "description": "Mandatory basic national pension, remitted to SSNIT: 13.5% of BASIC SALARY only (5.5% employee, 8% employer) — allowances, bonuses, and overtime are excluded from the base. Capped at the monthly insurable-earnings ceiling, floored at the minimum insurable earnings. Rename this rule to match how you refer to it on payslips (e.g. \"SSNIT\") — the rename is purely cosmetic and does not change the calculation. VERIFY the current rate/ceiling/floor against SSNIT guidance before relying on this for a real payroll run.",
+    "description": "Mandatory basic national pension, remitted to SSNIT: 13.5% of BASIC SALARY only (5.5% employee, 8% employer) — allowances, bonuses, and overtime are excluded from the base. Capped at the monthly insurable-earnings ceiling, floored at the minimum insurable earnings. A new hotel starts as SSNIT (Tier 1). You can rename the words in front; (Tier 1) stays on the name, including on payslips. The rename does not change the calculation. VERIFY the current rate/ceiling/floor against SSNIT guidance before relying on this for a real payroll run.",
     "enabled": true,
     "priority": 2,
     "calculationBase": "subtotal",
@@ -276,7 +276,7 @@
     "appliesTo": [
       "TIER2"
     ],
-    "description": "Mandatory occupational pension, remitted to a licensed private trustee (separate institution from Tier 1/SSNIT): 5% of BASIC SALARY, employer-funded only — no employee deduction. Same base rules as Tier 1 (basic salary only, capped/floored at the insurable-earnings limits). Rename this rule to your actual trustee's name — cosmetic only. VERIFY the current rate against your trustee/NPRA guidance before relying on this for a real payroll run.",
+    "description": "Mandatory occupational pension, remitted to a licensed private trustee (separate institution from Tier 1/SSNIT): 5% of BASIC SALARY, employer-funded only — no employee deduction. Same base rules as Tier 1 (basic salary only, capped/floored at the insurable-earnings limits). A new hotel starts as Tier 2. Rename the words in front to your trustee; (Tier 2) stays on the name. VERIFY the current rate against your trustee/NPRA guidance before relying on this for a real payroll run.",
     "enabled": true,
     "priority": 3,
     "calculationBase": "subtotal",
@@ -295,7 +295,7 @@
     "appliesTo": [
       "TIER3_RELIEF_CAP"
     ],
-    "description": "Voluntary provident fund, remitted to a private trustee of the employee's choosing — a separate institution from Tier 1 and Tier 2. Not itself a withholding: this rule stores the tax-relief ceiling (% of basic salary) for how much of the employee's elected contribution is tax-relieved; the elected contribution rate lives on the employee record (Employee.tier3ContributionPct), since it's chosen per employee, not statutory. Rename this rule to your provident fund provider's name — cosmetic only. VERIFY current NPRA guidance before relying on this for a real payroll run.",
+    "description": "Voluntary provident fund, remitted to a private trustee of the employee's choosing — a separate institution from Tier 1 and Tier 2. Not itself a withholding: this rule stores the tax-relief ceiling (% of basic salary) for how much of the employee's elected contribution is tax-relieved; the elected contribution rate lives on the employee record (Employee.tier3ContributionPct), since it's chosen per employee, not statutory. A new hotel starts as Tier 3. Rename the words in front to your provident fund; (Tier 3) stays on the name. VERIFY current NPRA guidance before relying on this for a real payroll run.",
     "enabled": true,
     "priority": 4,
     "calculationBase": "subtotal",

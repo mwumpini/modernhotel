@@ -162,7 +162,7 @@ export default function PayrollProcessingPanel() {
   const tier1Rule = findGhRule('TIER1');
   const tier2Rule = findGhRule('TIER2');
   const tier3Rule = findGhRule('TIER3_RELIEF_CAP');
-  const tier1Label = tier1Rule?.name || 'Tier 1';
+  const tier1Label = tier1Rule?.name || 'SSNIT (Tier 1)';
   const tier2Label = tier2Rule?.name || 'Tier 2';
   const tier3Label = tier3Rule?.name || 'Tier 3';
 

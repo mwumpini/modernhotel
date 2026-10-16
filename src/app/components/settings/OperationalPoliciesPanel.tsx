@@ -130,7 +130,7 @@ export default function OperationalPoliciesPanel() {
       </PolicyRow>
     </PolicyCard>
   </PolicyGroup>
-  <PolicyGroup id="policy-checkin" title="Check-in and checkout" description="Standard arrival and departure times, and what happens when a guest leaves early or stays past checkout.">
+  <PolicyGroup id="policy-checkin" title="Check-in and checkout" description="Standard arrival and departure times, whether checkout sends the room to housekeeping, and what happens when a guest leaves early or stays past checkout.">
     <PolicyCard title="Standard times">
       <div className="grid grid-cols-2 gap-3 max-w-md">
         <div>
@@ -142,6 +142,17 @@ export default function OperationalPoliciesPanel() {
           <input type="number" className={policyInput} value={(settingsStore.roomManagement.standardCheckOutHour ?? 11).toString()} onChange={(e)=> { const hour = Math.max(0, Math.min(23, Number(e.target.value||'0'))); settingsStore.updateNestedSetting('roomManagement.standardCheckOutHour', hour); settingsStore.updateNestedSetting('hotelSettings.checkOutTime', hourStamp(hour, 11)); }} />
         </div>
       </div>
+    </PolicyCard>
+
+    <PolicyCard title="After checkout" on={settingsStore.roomManagement.markRoomDirtyOnCheckout !== false}>
+      <PolicyRow label="Mark the room dirty" hint="On: checkout sends the room to housekeeping, and it cannot be sold until it is clean. Off: the room is free to sell as soon as the guest leaves. Turn this off when the facility has no housekeeping. A voided stay and a room move follow the same choice.">
+        <Switch
+          isSelected={settingsStore.roomManagement.markRoomDirtyOnCheckout !== false}
+          onValueChange={(v) => settingsStore.updateNestedSetting('roomManagement.markRoomDirtyOnCheckout', v)}
+        >
+          {settingsStore.roomManagement.markRoomDirtyOnCheckout !== false ? 'On' : 'Off'}
+        </Switch>
+      </PolicyRow>
     </PolicyCard>
 
     <PolicyCard title="Late checkout" on={!!settingsStore.roomManagement.lateCheckoutFeeEnabled}>

@@ -41,7 +41,7 @@ export const processFlows: HelpTopic[] = [
       { who: 'Night auditor (or automatic at 1:00am)', where: 'Front Office → Night', action: 'Close the business day.', result: 'Each in-house guest is charged that night\'s room rate and taxes, as revenue of that day.' },
       { who: 'Restaurant, bar, other outlets', where: 'POS → Room charge / folio', action: 'Charge meals, drinks or services to the room.', result: 'Added to the guest\'s folio and to revenue the same day.' },
       { who: 'Cashier', where: 'The stay → Invoices & Payments / Cashiering', action: 'Take payments during the stay or at the end (cash, card, MoMo, bank, or bill the company).', result: 'Each payment reduces the guest\'s balance and is in the books when taken.' },
-      { who: 'Front desk', where: 'The stay → Check out', action: 'Review the bill, take the final payment, check out, print the checkout bill.', result: 'Early/late checkout rules applied. Invoice and receipts created. Anything still owed moves to receivables. Room becomes dirty for housekeeping.' },
+      { who: 'Front desk', where: 'The stay → Check out', action: 'Review the bill, take the final payment, check out, print the checkout bill.', result: 'Early/late checkout rules applied. Invoice and receipts created. Anything still owed moves to receivables. The room becomes dirty for housekeeping, unless Settings → Operational Policies → After checkout has Mark the room dirty turned off, in which case the room is vacant and can be sold at once.' },
       { who: 'Housekeeping', where: 'Housekeeping → Floor', action: 'Clean and inspect the room.', result: 'Room ready to sell again.' },
     ],
     notHere: 'Fees for cancellations, no-shows and early or late checkout follow Settings → Operational Policies (see the Operations Manual).',
@@ -101,7 +101,7 @@ export const processFlows: HelpTopic[] = [
     keywords: ['housekeeping', 'dirty', 'clean', 'inspect', 'maintenance', 'out of order'],
     description: 'From checkout to a room ready to sell, and fixing faults. Roles: housekeeping, supervisor, maintenance, front desk.',
     flow: [
-      { who: 'System', where: '—', action: '—', result: 'At checkout the room becomes dirty.' },
+      { who: 'System', where: '—', action: '—', result: 'At checkout the room becomes dirty, unless Mark the room dirty is off. Then the room stays vacant and this cleaning flow does not start.' },
       { who: 'Housekeeping', where: 'Housekeeping → Floor / Work', action: 'Take the room, clean it, mark it done.', result: 'Room shows cleaned.' },
       { who: 'Supervisor', where: 'Housekeeping → Inspections', action: 'Inspect and pass the room.', result: 'Room ready; Front Office can sell or assign it.' },
       { who: 'Anyone', where: 'Housekeeping → Maintenance request', action: 'Report a fault; set the room out of order if it cannot be sold.', result: 'Out-of-order rooms are not offered for sale.' },
@@ -134,7 +134,7 @@ export const processFlows: HelpTopic[] = [
       { who: 'Cashier', where: 'Cashiering → Paid out', action: 'Pay a small expense with a reason and type (within the till\'s limit).', result: 'Expense in the books; expected cash goes down.' },
       { who: 'Cashier', where: 'Cashiering → Close', action: 'Count the drawer and read the MoMo device.', result: 'Expected vs counted: over or short recorded on the shift.' },
       { who: 'Cashier', where: 'Cash handover', action: 'Hand the takings to Accounts (or to the next cashier).', result: 'Custody moves to the receiver, recorded.' },
-      { who: 'Accountant', where: 'Accounting → Bank & Cash', action: 'Bank the cash; later reconcile the bank statement.', result: 'Cash to bank; the bank book matches the statement.' },
+      { who: 'Accountant', where: 'Accounting → Bank & Cash → Transfer between accounts', action: 'Move the takings from cash (or MoMo) into the bank.', result: 'A contra entry: the bank is debited, cash or MoMo is credited. No income or expense. A fee is a separate Bank charge.' },
     ],
   }),
 
@@ -189,7 +189,7 @@ export const processFlows: HelpTopic[] = [
     keywords: ['new hire', 'employee', 'user account', 'role'],
     description: 'Roles: HR, system administrator.',
     flow: [
-      { who: 'HR', where: 'HR & Payroll → Employees → Add Employee', action: 'Enter personal details, department, position, hire date, salary, and SSNIT / Tier 2 / PAYE choices (starred fields are required).', result: 'Employee on file; included in the next payroll.' },
+      { who: 'HR', where: 'HR & Payroll → Employees → Add Employee', action: 'Enter personal details, department, position, hire date, salary, and SSNIT (Tier 1) / Tier 2 / PAYE choices. Phone is required. Email is optional; if it is typed, it must be a real address. Starred fields are required.', result: 'Employee on file; included in the next payroll. Pension columns use the names from Compliance → Payroll tax, with the tier still on the name.' },
       { who: 'Administrator', where: 'Settings → Users & Roles', action: 'Create their sign-in with the right role (only the desks and actions they need).', result: 'They can sign in with their own account.' },
       { who: 'HR', where: 'Employee file', action: 'Add documents, contract and probation dates.', result: 'Expiry reminders appear in HR notices.' },
     ],
@@ -201,7 +201,7 @@ export const processFlows: HelpTopic[] = [
     description: 'Roles: HR / payroll officer, manager or director, accountant.',
     flow: [
       { who: 'HR', where: 'HR & Payroll → Time / Leave', action: 'Approve overtime and leave for the month.', result: 'Approved overtime is included in the pay.' },
-      { who: 'Payroll officer', where: 'Payroll → Staff Payroll → + Prepare', action: 'Prepare the month; review each person\'s gross, deductions and net.', result: 'Payroll lines created with PAYE, SSNIT, Tier 2/3, staff debt repayments.' },
+      { who: 'Payroll officer', where: 'Payroll → Staff Payroll → + Prepare', action: 'Prepare the month; review each person\'s gross, deductions and net.', result: 'Payroll lines created with PAYE and the three pensions, under the names from Compliance → Payroll tax. Each name keeps (Tier 1), (Tier 2), or (Tier 3). Staff debt repayments are included.' },
       { who: 'Manager / director', where: 'Payroll → Payment Advice', action: 'Approve the month (if approval is required).', result: 'Salaries, employer contributions and amounts owed (net pay, PAYE, pensions) posted to the books.' },
       { who: 'Accountant', where: 'Payment Advice → Mark as paid', action: 'Pay staff by bank, MoMo or cash and mark them paid.', result: 'Net pay owed cleared.' },
       { who: 'Payroll officer', where: 'Payroll → Payslips', action: 'Print payslips: one, the ticked staff, or the whole month.', result: 'Printed with the business\'s payslip design.' },
@@ -211,6 +211,17 @@ export const processFlows: HelpTopic[] = [
 
   // ---------------- Finance ----------------
   t({
+    id: 'flow-cash-transfer',
+    title: 'Moving money between cash, bank and MoMo',
+    keywords: ['transfer', 'contra', 'cash', 'bank', 'momo', 'mobile money', 'bank charge'],
+    description: 'Cash, the bank, and MoMo can pay each other. Role: accountant.',
+    flow: [
+      { who: 'Accountant', where: 'Accounting → Bank & Cash → New transaction', action: 'Set the type to Transfer between accounts. Choose the account the money leaves and the account it arrives in (cash, bank, or MoMo), the amount, and a reference.', result: 'The two accounts must be different, and in the same currency.' },
+      { who: 'System', where: '—', action: '—', result: 'One journal: debit the account that receives the money, credit the account that gives it up. Two linked cashbook lines, money out and money in. Nothing is income or an expense.' },
+      { who: 'Accountant', where: 'Bank & Cash → Bank charge', action: 'Record a MoMo or bank fee on its own, if there is one.', result: 'Bank charges go up; the account the fee left goes down.' },
+    ],
+  }),
+  t({
     id: 'flow-month-end',
     title: 'Month end close',
     keywords: ['month end', 'close period', 'bank reconciliation', 'statements', 'doubtful debts'],
@@ -218,7 +229,7 @@ export const processFlows: HelpTopic[] = [
     flow: [
       { who: 'Accountant', where: 'Front Office → Night', action: 'Make sure the last night of the month is closed.', result: 'All room nights of the month are in the month.' },
       { who: 'Accountant', where: 'Bank & Cash → Reconciliation', action: 'Reconcile each bank and MoMo account with its statement.', result: 'Bank charges and interest posted; differences explained.' },
-      { who: 'Accountant', where: 'Accounts Receivable → Doubtful debts', action: 'Update the allowance; write off lost debts.', result: 'Receivables at their expected value.' },
+      { who: 'Accountant', where: 'Accounts Receivable → Doubtful debts', action: 'Read the allowance by customer and the overdue invoices. Update the allowance, and write off a debt that will not be paid.', result: 'Receivables at their expected value. A customer\'s share of the allowance follows what they owe in each age band.' },
       { who: 'Accountant', where: 'Accounting → PPE & Assets', action: 'Check the month\x27s depreciation for each asset.', result: 'Depreciation expense in the books.' },
       { who: 'Accountant', where: 'Financial Statements → Trial balance / Balance sheet', action: 'Check the trial balance balances and review unusual balances (guest ledger, deposits, suspense).', result: '—' },
       { who: 'General manager', where: 'Financial Statements', action: 'Review the income statement and balance sheet.', result: '—' },
@@ -248,7 +259,7 @@ export const processFlowModules = [
   { id: 'flows-housekeeping', title: 'Housekeeping & Maintenance', intro: 'Room turnover and fixing faults.', topicIds: ['flow-housekeeping'] },
   { id: 'flows-inventory', title: 'Inventory & Stores', intro: 'Buying stock and moving it.', topicIds: ['flow-purchase', 'flow-stock-movement'] },
   { id: 'flows-hr', title: 'HR & Payroll', intro: 'New staff and the monthly payroll.', topicIds: ['flow-new-staff', 'flow-payroll'] },
-  { id: 'flows-accounting', title: 'Accounting & Finance', intro: 'Closing the month.', topicIds: ['flow-month-end'] },
+  { id: 'flows-accounting', title: 'Accounting & Finance', intro: 'Moving money between cash, bank and MoMo, then closing the month.', topicIds: ['flow-cash-transfer', 'flow-month-end'] },
   { id: 'flows-compliance', title: 'Compliance & Reports', intro: 'Paying taxes to GRA.', topicIds: ['flow-tax-returns'] },
 ];
 

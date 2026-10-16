@@ -94,6 +94,26 @@ export const operationsTopics: HelpTopic[] = [
     notHere: 'The money kept is room revenue on the checkout day. A refund of money already paid is given from the folio (Refund) by staff.',
   },
   {
+    id: 'ops-checkout-room',
+    title: 'Room after checkout',
+    category: 'operations',
+    keywords: ['dirty', 'housekeeping', 'vacant', 'checkout', 'sell the room', 'no housekeeping'],
+    description: `${POLICIES} → Check-in and checkout → After checkout. Whether the room needs housekeeping before it can be sold again.`,
+    rules: [
+      { name: 'Mark the room dirty (switch)', meaning: 'On, the usual: checkout marks the room dirty and opens a turnover task. A dirty room is not offered for sale until housekeeping cleans it. Off: the room becomes vacant and can be sold at once. No turnover task is opened. Turn it off when the facility has no housekeeping.' },
+      { name: 'Void and room move', meaning: 'The same switch. A voided stay, and the room a guest leaves when they are moved, become vacant instead of dirty while the switch is off.' },
+    ],
+    examples: [
+      {
+        title: 'a guesthouse with no housekeeping',
+        lines: [
+          'Turn Mark the room dirty off.',
+          'The guest checks out of room 4. Room 4 is vacant and can take the next arrival.',
+        ],
+      },
+    ],
+  },
+  {
     id: 'ops-room-charges',
     title: 'Night audit, first night at check-in, and rounding',
     category: 'operations',
@@ -239,6 +259,8 @@ export const operationsTopics: HelpTopic[] = [
     description: `Percentages: ${POLICIES} → Doubtful debts. Posting: Accounting → Accounts Receivable → Doubtful debts. Sets aside the share of what customers owe that may not be paid (IFRS 9).`,
     rules: [
       { name: 'Age bands', meaning: 'Each open invoice falls in a band by days past its due date; invoices not yet due count in the first band. The last band covers everything older. Defaults: up to 30 days 1%, 31–60 5%, 61–90 15%, 91–180 40%, older 100%.' },
+      { name: 'By customer', meaning: 'The screen lists each customer, what they still owe, and their share of the allowance in each age band. The shares in a band add up to that band\'s allowance.' },
+      { name: 'Overdue invoices', meaning: 'Invoices past their due date, with the days overdue, so a write-off starts from a named invoice.' },
       { name: 'Increase / reduce allowance', meaning: 'Posts only the change between what is required and what is already booked: bad-debt expense (5685) against the allowance (1290, shown as a minus under receivables). Do it at month end.' },
       { name: 'Write off', meaning: 'For a debt that will not be paid. It comes out of the allowance first; any part beyond it is an expense. A reason is required.' },
       { name: 'Record recovery', meaning: 'Money received later on a written-off debt. It reduces the bad-debt expense.' },
@@ -281,6 +303,29 @@ export const operationsTopics: HelpTopic[] = [
       },
     ],
     notHere: 'The home currency of the books is chosen once in setup. A purchase bill is entered in cedis. Customer receipts follow the currency switched on here.',
+  },
+  {
+    id: 'ops-cash-transfers',
+    title: 'Transfers between cash, bank and MoMo',
+    category: 'operations',
+    keywords: ['transfer', 'contra', 'cash', 'bank', 'momo', 'mobile money', 'bank charge'],
+    description: 'Accounting → Bank & Cash. Moving money from one of the hotel\'s own accounts to another. Cash in hand is 1110, Bank is 1120, Mobile Money is 1130. A foreign currency opened under Currencies has its own bank account and its own cash account.',
+    rules: [
+      { name: 'Transfer between accounts', meaning: 'One transaction, two accounts. The account the money leaves is credited. The account it arrives in is debited. Both sides are cash, bank, or MoMo, so nothing is income or an expense. This is a contra entry.' },
+      { name: 'Same currency', meaning: 'The amount leaves one account and arrives in the other unchanged. Use two accounts in the same currency. A dollar account and a cedi account are not a transfer.' },
+      { name: 'Cashbook', meaning: 'Two linked lines, money out and money in, with the same amount and reference. The two accounts\' balances move by that amount.' },
+      { name: 'Bank charge or MoMo fee', meaning: 'A separate transaction, type Bank charge. It debits Bank charges (5625) and credits the account the fee left. It is not part of the transfer.' },
+    ],
+    examples: [
+      {
+        title: '₵2,000 from the cash drawer into the bank',
+        lines: [
+          'Transfer between accounts: from Cash in hand, to Bank, ₵2,000.',
+          'Books: Bank +₵2,000, Cash in hand −₵2,000.',
+          'A ₵5 MoMo fee is its own Bank charge: Bank charges +₵5, Mobile Money −₵5.',
+        ],
+      },
+    ],
   },
 
   // ---------------- Dates and the year ----------------
@@ -345,7 +390,7 @@ export const operationsTopics: HelpTopic[] = [
     description: 'HR & Payroll. What decides each deduction, and where the rates come from.',
     rules: [
       { name: 'Staff file choices', meaning: 'Social Security (Tier 1), Tier 2 and Income Tax (PAYE) are Yes/No on each employee. Only an explicit "No" skips a deduction, in both the preview and the monthly run.' },
-      { name: 'Rates', meaning: 'Compliance & Reports → Tax Rate Builder: PAYE bands, SSNIT 5.5% of basic, Tier 2 and Tier 3 names and rates. Payroll only ever uses payroll rules; sales taxes such as VAT never apply to pay.' },
+      { name: 'Rates', meaning: 'Compliance → Payroll tax: PAYE bands, SSNIT (Tier 1) at 5.5% of basic, Tier 2, and Tier 3. A rename keeps (Tier 1), (Tier 2), or (Tier 3) on the name. Payroll only ever uses payroll rules; sales taxes such as VAT never apply to pay.' },
       { name: 'Order of deductions', meaning: 'SSNIT (Tier 1) comes off basic salary before PAYE is worked out.' },
       { name: 'Estimate vs prepared month', meaning: 'Until a month is prepared, Payroll and Employee Records show grey estimates at today\'s rates. Payslips are only printed for prepared months.' },
       { name: 'Payslips', meaning: 'Payroll → Payslips: one, the ticked staff, or the whole month, printed with the payslip design from Settings → Document Templates.' },
@@ -510,6 +555,7 @@ export const operationsTopics: HelpTopic[] = [
       { name: 'NHIL 2.5% and GETFund 2.5%', meaning: 'On the bill\'s value before tax. Claimable as input tax on purchases.' },
       { name: 'VAT 15%', meaning: 'On the same value as NHIL and GETFund, not on top of them (no tax on a tax).' },
       { name: 'Tourism Levy 1%', meaning: 'On rooms, food, events and services. Separate from VAT and not claimable.' },
+      { name: 'Hotel bill (a bill from another hotel)', meaning: 'On Accounting → Accounts Payable → New bill, set the tax to Hotel bill. NHIL 2.5%, GETFund 2.5% and VAT 15% are input tax and can be claimed. Tourism Levy 1% is a cost on that bill, not claimed. Press Tax under the total to see each line. These rates are their own type in Compliance and do not change the guest-bill rates.' },
       { name: 'Order on the bill', meaning: 'NHIL, GETFund, VAT, then Tourism Levy.' },
       { name: 'Tax-exempt guests', meaning: 'A booking marked tax-exempt pays no taxes on its room nights.' },
     ],
@@ -566,11 +612,12 @@ export const operationsTopics: HelpTopic[] = [
     title: 'SSNIT, Tier 2 and Tier 3',
     category: 'operations',
     keywords: ['SSNIT', 'tier 1', 'tier 2', 'tier 3', 'pension', 'provident fund', 'employer contribution'],
-    description: 'Pensions on basic salary. Names and rates are in the Tax Rate Builder (Payroll); each employee\'s file says which apply.',
+    description: 'Pensions on basic salary. Names and rates are on Compliance → Payroll tax. Each employee\'s file says which apply.',
     rules: [
       { name: 'Tier 1 (SSNIT)', meaning: '13.5% of basic salary: 5.5% deducted from the employee, 8% paid by the employer. Allowances, bonus and overtime are not included. Basic is counted between ₵587.80 and ₵69,000 a month.' },
       { name: 'Tier 2', meaning: '5% of basic, paid by the employer only (no deduction from the employee), to a licensed trustee.' },
       { name: 'Tier 3 (voluntary)', meaning: 'The employee\'s own chosen % of pay, to a provident fund. Tax relief is limited to 16.5% of basic.' },
+      { name: 'Names', meaning: 'A new hotel starts as SSNIT (Tier 1), Tier 2, and Tier 3. Press the name to rename it. The tier stays in brackets, and that full name is the column on payroll, the staff list, and the payslip.' },
       { name: 'In the books', meaning: 'Employee deductions are owed to the institutions (2220, 2225, 2221); the employer\'s share is an expense (5221) when the month is approved.' },
     ],
     examples: [
@@ -626,10 +673,10 @@ export const operationsTopics: HelpTopic[] = [
 /** Chapters of the Operations Manual, in reading order. */
 /** Chapters in side-menu order (Executive Management → … → System Settings); a desk with no rules yet is left out. */
 export const operationsModules = [
-  { id: 'ops-frontdesk', title: 'Front Office Operations', intro: 'Check-in and checkout times, late and early checkout, the night audit, room pricing, deposits, no-shows and cancellations, company accounts, and the tills.', topicIds: ['ops-times', 'ops-late-checkout', 'ops-early-checkout', 'ops-room-charges', 'ops-room-pricing', 'ops-deposit', 'ops-no-show', 'ops-cancellation', 'ops-fees-deposits', 'ops-company', 'ops-tills', 'ops-petty-cash'] },
+  { id: 'ops-frontdesk', title: 'Front Office Operations', intro: 'Check-in and checkout times, late and early checkout, the room after checkout, the night audit, room pricing, deposits, no-shows and cancellations, company accounts, and the tills.', topicIds: ['ops-times', 'ops-late-checkout', 'ops-early-checkout', 'ops-checkout-room', 'ops-room-charges', 'ops-room-pricing', 'ops-deposit', 'ops-no-show', 'ops-cancellation', 'ops-fees-deposits', 'ops-company', 'ops-tills', 'ops-petty-cash'] },
   { id: 'ops-inventory', title: 'Inventory & Stores', intro: 'How stock bought from suppliers reaches the books.', topicIds: ['ops-grni'] },
   { id: 'ops-hr', title: 'HR & Payroll', intro: 'PAYE bands and special rates, pensions, and what decides each deduction.', topicIds: ['ops-paye', 'ops-pensions', 'ops-payroll-rules'] },
-  { id: 'ops-accounting', title: 'Accounting & Finance', intro: 'How a stay reaches the books, doubtful debts, currencies, and the accounting year.', topicIds: ['ops-stay-books', 'ops-doubtful-debts', 'ops-currencies', 'ops-year-payments'] },
+  { id: 'ops-accounting', title: 'Accounting & Finance', intro: 'How a stay reaches the books, doubtful debts, currencies, transfers between cash, bank and MoMo, and the accounting year.', topicIds: ['ops-stay-books', 'ops-doubtful-debts', 'ops-currencies', 'ops-cash-transfers', 'ops-year-payments'] },
   { id: 'ops-compliance', title: 'Compliance & Reports', intro: 'How tax rules are built, the Ghana guest-bill taxes, and withholding tax.', topicIds: ['ops-tax-rules', 'ops-ghana-taxes', 'ops-withholding'] },
   { id: 'ops-settings', title: 'System Settings', intro: 'Document numbers, posting dates, approval limits, users and roles, and the company profile.', topicIds: ['ops-numbering', 'ops-posting-dates', 'ops-approvals', 'ops-users-modules', 'ops-company-profile'] },
 ];

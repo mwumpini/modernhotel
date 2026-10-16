@@ -1,7 +1,8 @@
 import { prisma } from '../database/client'
 import { ComplianceDB } from './db'
-import { getSeedTaxes, getSeedReports } from './config'
+import { buildTemplateRules, getSeedTaxes, getSeedReports } from './config'
 import { act1178PayePatch } from './payeBands'
+import { pensionTierMarker, pensionTierNamePatch, withPensionTierMarker } from './pensionTierName'
 
 function toStoreReport(row: any) {
   return {
@@ -209,11 +210,68 @@ async function migrateTourismServiceScope(tenantId: string, countryCode: string,
   return changed ? prisma.complianceTaxRule.findMany({ where: { tenantId, countryCode } }) : rows
 }
 
+const GHANA_HOTEL_BILL_TYPE_ID = 'gh-purchases-hotel'
+
+/** Hotel bill (standard purchase stack + tourism levy) lives in Compliance. Added once;
+ * a hotel that already has the type or a rule is left as they edited it. */
+async function ensureGhanaHotelPurchaseBill(tenantId: string, countryCode: string) {
+  if (countryCode !== 'GH') return
+  await prisma.complianceTaxType.upsert({
+    where: { tenantId_code: { tenantId, code: GHANA_HOTEL_BILL_TYPE_ID } },
+    update: { countryCode },
+    create: {
+      tenantId,
+      countryCode,
+      code: GHANA_HOTEL_BILL_TYPE_ID,
+      data: {
+        id: GHANA_HOTEL_BILL_TYPE_ID,
+        countryCode,
+        name: 'Hotel bill',
+        description: 'A bill from another hotel: NHIL, GETFund, and VAT, plus the 1% tourism levy. Tourism is a cost.',
+        domain: 'purchases',
+        operation: 'internal',
+        tags: ['template:ghana_purchases_hotel'],
+      },
+    },
+  })
+  for (const rule of buildTemplateRules('ghana_purchases_hotel', countryCode)) {
+    const code = String(rule.id || '')
+    if (!code) continue
+    await prisma.complianceTaxRule.upsert({
+      where: { tenantId_code: { tenantId, code } },
+      update: { countryCode },
+      create: {
+        tenantId,
+        countryCode,
+        code,
+        data: { ...rule, id: code, typeId: GHANA_HOTEL_BILL_TYPE_ID },
+      },
+    })
+  }
+}
+
+/** Existing hotels: bare "Tier 1" becomes "SSNIT (Tier 1)", and a renamed trustee or
+ * fund keeps "(Tier N)" on the name. Idempotent after the first pass. */
+async function migratePensionTierNames(_tenantId: string, countryCode: string, rows: any[]) {
+  if (countryCode !== 'GH') return rows
+  let changed = false
+  for (const row of rows) {
+    const data = { ...(row.data as Record<string, any>), id: row.code }
+    const patch = pensionTierNamePatch(data)
+    if (!patch) continue
+    await prisma.complianceTaxRule.update({ where: { id: row.id }, data: { data: { ...data, ...patch } } })
+    changed = true
+  }
+  return changed ? prisma.complianceTaxRule.findMany({ where: { tenantId: _tenantId, countryCode } }) : rows
+}
+
 export async function listTaxRules(tenantId: string, countryCode: string) {
   await ensureTaxRulesSeeded(tenantId, countryCode)
+  await ensureGhanaHotelPurchaseBill(tenantId, countryCode)
   const rows = await prisma.complianceTaxRule.findMany({ where: { tenantId, countryCode } })
   const migrated = await migrateAct1151(tenantId, countryCode, rows)
-  return (await migrateTourismServiceScope(tenantId, countryCode, migrated)).map(toStoreTaxRule)
+  const scoped = await migrateTourismServiceScope(tenantId, countryCode, migrated)
+  return (await migratePensionTierNames(tenantId, countryCode, scoped)).map(toStoreTaxRule)
 }
 
 export async function upsertTaxRule(tenantId: string, rule: Record<string, any>) {
@@ -225,7 +283,9 @@ export async function upsertTaxRule(tenantId: string, rule: Record<string, any>)
   // changed field), not the full rule, so a naive replace would silently drop every other field
   // (appliesTo, enabled, domain, tiers, ...) on every payroll-tax-rate save.
   const existing = await prisma.complianceTaxRule.findUnique({ where: { tenantId_code: { tenantId, code } } })
-  const data = existing ? { ...(existing.data as Record<string, any>), ...rule, id: code } : { ...rule, id: code }
+  const data: Record<string, any> = existing ? { ...(existing.data as Record<string, any>), ...rule, id: code } : { ...rule, id: code }
+  const marker = pensionTierMarker(data.appliesTo, code)
+  if (marker && typeof data.name === 'string') data.name = withPensionTierMarker(data.name, marker)
   const row = await prisma.complianceTaxRule.upsert({
     where: { tenantId_code: { tenantId, code } },
     update: { countryCode, data },
@@ -257,6 +317,7 @@ async function ensureTaxTypesSeeded(tenantId: string, countryCode: string) {
 
 export async function listTaxTypes(tenantId: string, countryCode: string) {
   await ensureTaxTypesSeeded(tenantId, countryCode)
+  await ensureGhanaHotelPurchaseBill(tenantId, countryCode)
   const rows = await prisma.complianceTaxType.findMany({ where: { tenantId, countryCode } })
   return rows.map(toStoreTaxType)
 }

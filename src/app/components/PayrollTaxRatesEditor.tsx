@@ -6,6 +6,7 @@ import { useComplianceStore } from '@/app/lib/compliance/store';
 import type { TaxRule } from '@/app/lib/models';
 import { getClientTenantSubdomain } from '@/app/lib/api/clientTenant';
 import { normalizeTenantSubdomain } from '@/app/lib/api/tenantSubdomain';
+import { pensionTierCustomName, pensionTierMarker, withPensionTierMarker } from '@/app/lib/compliance/pensionTierName';
 
 /**
  * Dedicated, simplified editor for Ghana's payroll tax rules (PAYE, Tier 1, Tier 2,
@@ -47,9 +48,10 @@ async function saveRule(patch: Partial<TaxRule> & { id: string }) {
   }));
 }
 
-function NameEditor({ rule, onSaved }: { rule: TaxRule; onSaved: () => void }) {
+function NameEditor({ rule, onSaved, marker }: { rule: TaxRule; onSaved: () => void; marker?: string | null }) {
+  const customName = marker ? pensionTierCustomName(rule.name, marker) : rule.name;
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(rule.name);
+  const [value, setValue] = useState(customName);
   const [busy, setBusy] = useState(false);
   const committingRef = React.useRef(false);
 
@@ -60,7 +62,7 @@ function NameEditor({ rule, onSaved }: { rule: TaxRule; onSaved: () => void }) {
   // just-saved value in the UI (the server-side save itself was fine — only the displayed
   // value flipped back). Each transition below sets `value` explicitly instead.
 
-  const startEditing = () => { setValue(rule.name); setEditing(true); };
+  const startEditing = () => { setValue(customName); setEditing(true); };
 
   const commit = async () => {
     // Both Enter (onKeyDown) and losing focus (onBlur) can fire in the same interaction —
@@ -69,18 +71,18 @@ function NameEditor({ rule, onSaved }: { rule: TaxRule; onSaved: () => void }) {
     // call actually runs.
     if (committingRef.current) return;
     const trimmed = value.trim();
-    if (!trimmed || trimmed === rule.name) { setEditing(false); return; }
+    const next = marker ? withPensionTierMarker(trimmed, marker) : trimmed;
+    if (!next || next === rule.name) { setEditing(false); return; }
     committingRef.current = true;
     setBusy(true);
     try {
-      await saveRule({ ...rule, name: trimmed });
+      await saveRule({ ...rule, name: next });
       onSaved();
       setEditing(false);
-      // value already holds `trimmed`, the value just confirmed saved — leave it as-is
-      // rather than deriving it from `rule.name`, which may not have re-rendered in yet.
+      setValue(marker ? pensionTierCustomName(next, marker) : next);
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Rename failed');
-      setValue(rule.name);
+      setValue(customName);
     } finally {
       committingRef.current = false;
       setBusy(false);
@@ -89,25 +91,29 @@ function NameEditor({ rule, onSaved }: { rule: TaxRule; onSaved: () => void }) {
 
   if (editing) {
     return (
-      <Input
-        autoFocus
-        size="sm"
-        value={value}
-        isDisabled={busy}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          // Call commit() directly rather than trying to trigger it via .blur() — HeroUI's
-          // Input wraps the native element, and e.target here isn't reliably the actual
-          // focused node, so a programmatic blur() call can silently do nothing. The
-          // committingRef guard above covers the case where this AND a genuine onBlur both
-          // fire for the same interaction.
-          if (e.key === 'Enter') commit();
-          if (e.key === 'Escape') { setValue(rule.name); setEditing(false); }
-        }}
-        variant="bordered"
-        className="max-w-xs"
-      />
+      <div className="flex items-center gap-2">
+        <Input
+          autoFocus
+          size="sm"
+          value={value}
+          placeholder={marker ? 'Name' : undefined}
+          isDisabled={busy}
+          onChange={(e) => setValue(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            // Call commit() directly rather than trying to trigger it via .blur() — HeroUI's
+            // Input wraps the native element, and e.target here isn't reliably the actual
+            // focused node, so a programmatic blur() call can silently do nothing. The
+            // committingRef guard above covers the case where this AND a genuine onBlur both
+            // fire for the same interaction.
+            if (e.key === 'Enter') commit();
+            if (e.key === 'Escape') { setValue(customName); setEditing(false); }
+          }}
+          variant="bordered"
+          className="max-w-xs"
+        />
+        {marker ? <span className="text-sm text-gray-500 whitespace-nowrap">({marker})</span> : null}
+      </div>
     );
   }
 
@@ -185,7 +191,7 @@ function TierCard({ rule, onSaved, kind }: { rule: TaxRule; onSaved: () => void;
   return (
     <Card className="border border-gray-200">
       <CardHeader className="flex items-center justify-between pb-2">
-        <NameEditor rule={rule} onSaved={onSaved} />
+        <NameEditor rule={rule} marker={pensionTierMarker(rule.appliesTo, rule.id)} onSaved={onSaved} />
       </CardHeader>
       <CardBody className="space-y-3">
         {kind === 'contribution' ? (

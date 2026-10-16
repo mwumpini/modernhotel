@@ -5,6 +5,7 @@ import { Button, Card, CardBody, Select, SelectItem, Switch } from '@heroui/reac
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { useSettingsStore } from '../lib/settings/store';
+import { shouldMarkRoomDirtyOnCheckout } from '../lib/frontoffice/operationalPolicies';
 import { notifyError, notifySuccess } from '../lib/notifications/notify';
 import { formatMoney } from '../lib/format/currency';
 import { logAudit } from '../lib/analytics/auditLogStore';
@@ -108,8 +109,10 @@ export default function RoomTransferPanel() {
       return;
     }
     const from = stay.roomId;
-    // A wrong room the guest never entered goes straight back to available; otherwise it needs cleaning.
-    const fromStatus = deskError && usedWrongRoom === 'no' ? 'vacant' : 'dirty';
+    // A wrong room the guest never entered goes straight back to available; otherwise it needs cleaning,
+    // unless the facility has turned off "mark the room dirty after checkout".
+    const markDirty = shouldMarkRoomDirtyOnCheckout(useSettingsStore.getState().roomManagement);
+    const fromStatus = markDirty && !(deskError && usedWrongRoom === 'no') ? 'dirty' : 'vacant';
     setBusy(true);
     try {
       frontOfficeStore.assignRoom(stay.id, roomNumber, { keepRate });
@@ -121,7 +124,7 @@ export default function RoomTransferPanel() {
           action: 'update',
           entity: 'Reservation',
           entityId: stay.id,
-          details: `Room transfer ${from} → ${roomNumber}: ${reasonLabel}${deskError ? (usedWrongRoom === 'no' ? '; guest did not enter the old room, released as available' : '; guest used the old room, sent for cleaning') : ''}`,
+          details: `Room transfer ${from} → ${roomNumber}: ${reasonLabel}${fromStatus === 'vacant' ? (deskError && usedWrongRoom === 'no' ? '; guest did not enter the old room, released as available' : '; released as available') : '; sent for cleaning'}`,
           severity: deskError ? 'medium' : 'low',
         });
       } catch {}

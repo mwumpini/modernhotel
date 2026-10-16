@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
     const notices = asLines(body?.notices, 5);
     const help = isHelpQuestion(prompt) ? findHelp(prompt, String(body?.deskKey || '')) : [];
     const system = [
-      `You are Ask Mamani, the assistant for the ${desk} desk of a Ghana hotel. You also answer how-to questions from the hotel Help topics.`,
+      `You are Ask Mamani, the assistant for the ${desk} desk of a Ghana hotel. You answer how-to questions from Help, the Operations Manual, and the Process Flows of every module, not only this desk.`,
       'Reply in at most 4 short sentences.',
       'For a how-to question, use only the help excerpts. Do not invent screens. Include the Not here note when one is listed.',
       'Use only the counts and notices below for operations questions. If a number is not listed, say you do not have it.',

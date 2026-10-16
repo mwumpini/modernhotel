@@ -79,10 +79,10 @@ export default function SitePage() {
           <a href="#top" aria-label="AGM Sync home"><Logo /></a>
           <nav className="hidden items-center gap-6 text-[15px] font-medium text-slate-600 lg:flex">
             <a href="#who" className="hover:text-slate-900">Who it’s for</a>
-            <a href="#features" className="hover:text-slate-900">Features</a>
-            <a href="#yours" className="hover:text-slate-900">Make it yours</a>
+            <a href="#modules" className="hover:text-slate-900">Modules</a>
+            <a href="#yours" className="hover:text-slate-900">Features</a>
             <a href="#setup" className="hover:text-slate-900">Setup</a>
-            <a href="#ghana" className="hover:text-slate-900">Built for Ghana</a>
+            <a href="#ghana" className="hover:text-slate-900">Ghana</a>
             <a href="#faq" className="hover:text-slate-900">FAQ</a>
           </nav>
           <div className="flex items-center gap-2">
@@ -136,7 +136,7 @@ export default function SitePage() {
             <div className="grid gap-4 sm:grid-cols-3">
               {[
                 { k: 'One record', v: 'A guest, a sale or a delivery is entered once and appears everywhere it matters.' },
-                { k: 'No double entry', v: 'Restaurant sales, room charges and payments post to your accounts automatically.' },
+                { k: 'No duplicate entries', v: 'A restaurant sale, a room charge, or a payment is entered once. The books pick it up on their own.' },
                 { k: 'Stock you can trust', v: 'Every bottle and every recipe ingredient is taken from stock as it sells.' },
               ].map((card) => (
                 <div key={card.k} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -172,14 +172,14 @@ export default function SitePage() {
           </div>
         </section>
 
-        {/* Modules */}
-        <section id="features" className="scroll-mt-20">
+        {/* Modules: the desks a business turns on */}
+        <section id="modules" className="scroll-mt-20">
           <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
             <div className="mx-auto max-w-2xl text-center">
-              <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">Everything your business runs on</h2>
-              <p className="mt-4 text-slate-600">Use the whole system, or only the parts you need today. Every module shares the same guests, stock and accounts.</p>
+              <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">The modules</h2>
+              <p className="mt-4 text-slate-600">The side menu, in this order. Use the ones your business needs. A guest house can start with Executive and Front Office. A restaurant can use Restaurant & Bar, Kitchen and Stores without rooms.</p>
             </div>
-            <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {MODULES.map((m) => (
                 <div key={m.title} className="group rounded-2xl border border-slate-200 bg-white p-5 transition hover:-translate-y-0.5 hover:border-[#0B5F64]/30 hover:shadow-lg hover:shadow-slate-200/70">
                   <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-50 text-2xl ring-1 ring-slate-100">{m.icon}</div>

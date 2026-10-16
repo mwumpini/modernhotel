@@ -13,6 +13,7 @@ import {
 } from './types';
 import { trackEvent } from '../analytics/trackEvent';
 import { useSettingsStore } from '../settings/store';
+import { shouldMarkRoomDirtyOnCheckout } from '../frontoffice/operationalPolicies';
 import { frontOfficeStore } from '../frontoffice/store';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 
@@ -956,8 +957,9 @@ class HousekeepingStore {
           if (room) {
             if (reservation.status === 'checked-in') {
               this.updateRoomStatus(reservation.roomId, 'occupied', 'Front Office', 'Guest checked in');
-            } else if (reservation.status === 'checked-out') {
-              this.updateRoomStatus(reservation.roomId, 'dirty', 'Front Office', 'Guest checked out');
+            } else if (reservation.status === 'checked-out' && room.status === 'occupied') {
+              const next = shouldMarkRoomDirtyOnCheckout(useSettingsStore.getState().roomManagement) ? 'dirty' : 'vacant';
+              this.updateRoomStatus(reservation.roomId, next, 'Front Office', 'Guest checked out');
             }
           }
         }

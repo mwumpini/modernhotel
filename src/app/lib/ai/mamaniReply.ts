@@ -312,7 +312,7 @@ export function localMamaniReply(
   const drafting = /^\s*draft\b/i.test(prompt) || /\breminder\b/i.test(prompt);
   if (!drafting && isHelpQuestion(prompt) && !asksForLiveStatus(prompt)) {
     if (brief.help?.length) return brief.help.join('\n\n');
-    return 'I do not have a help topic for that. Open Full Help for the rest of the screens.';
+    return 'I do not have that in Help, the Operations Manual, or the Process Flows. Open Full Help for the rest of the screens.';
   }
   const text = prompt.trim();
   const facts = parseSnapshot(brief.snapshot);

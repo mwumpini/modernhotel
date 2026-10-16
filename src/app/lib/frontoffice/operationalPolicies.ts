@@ -16,6 +16,8 @@ export type OperationalPolicy = {
   earlyCheckoutNote?: string;
   standardCheckInHour?: number;
   standardCheckOutHour?: number;
+  /** Default on. Off: checkout, void, and a room move leave the room vacant and sellable. */
+  markRoomDirtyOnCheckout?: boolean;
   noShowCutoffHour?: number;
   depositPolicyEnabled?: boolean;
   depositType?: 'percent' | 'flat';
@@ -46,6 +48,7 @@ const POLICY_KEYS = [
   'earlyCheckoutNote',
   'standardCheckInHour',
   'standardCheckOutHour',
+  'markRoomDirtyOnCheckout',
   'noShowPolicyEnabled',
   'noShowChargeType',
   'noShowChargeValue',
@@ -119,6 +122,13 @@ export function pickOperationalPolicy(source: Record<string, unknown> | null | u
     }
   }
   return out;
+}
+
+/** On unless the facility turned it off. Off leaves the room vacant, with no housekeeping task. */
+export function shouldMarkRoomDirtyOnCheckout(
+  policy: { markRoomDirtyOnCheckout?: boolean } | null | undefined,
+): boolean {
+  return policy?.markRoomDirtyOnCheckout !== false;
 }
 
 export function hourStamp(hour: number | undefined, fallback: number): string {

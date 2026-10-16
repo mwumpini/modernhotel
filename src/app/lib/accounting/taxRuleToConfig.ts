@@ -12,6 +12,10 @@ export function taxRuleEligibleForAccountingSync(rule: TaxRule): boolean {
   if (method !== 'rate') return false;
   const domain = rule.domain || 'sales';
   if (domain === 'payroll' || domain === 'corporate') return false;
+  // A purchase-bill type (hotel bill) is calculated from its own compliance rules.
+  // Syncing it would copy those lines onto the ordinary purchase stack and, where the
+  // GL code matches, replace the sales tax config.
+  if ((rule.tags || []).includes('purchase-bill') || String(rule.id).startsWith('gh-purch-hotel-')) return false;
   const effect = rule.effect || 'add';
   if (effect === 'informational' || effect === 'exclude_total') return false;
   return true;

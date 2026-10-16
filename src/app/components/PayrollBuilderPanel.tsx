@@ -3,58 +3,18 @@
 import React, { useMemo, useState } from 'react';
 import { Card, CardHeader, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Divider, Tooltip } from '@heroui/react';
 import UniversalPayrollBuilder from '@/app/lib/payroll/builder';
-import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
-import { useLeaveAttendanceStore } from '@/app/lib/hr/leaveAttendanceStore';
-import { usePayrollStore } from '@/app/lib/hr/payrollStore';
 import { useComplianceStore } from '@/app/lib/compliance/store';
-import { syncPayrollRunToComplianceFiling } from '@/app/lib/compliance/payrollSync';
-import { runMonthlyPayroll } from '@/app/lib/payroll/monthlyRun';
-import { useCurrentUserName } from '@/app/lib/auth/useCurrentUserName';
 import PayrollTaxRatesEditor from './PayrollTaxRatesEditor';
 import { saveRecord } from '../lib/api/tenantRecords';
 
 export default function PayrollBuilderPanel() {
   const builder = useMemo(() => new UniversalPayrollBuilder(), []);
-  const employees = useEmployeeStore((s: any) => s.employees);
-  const createPayrollPeriod = usePayrollStore((s: any) => s.createPayrollPeriod);
-  const payrollPeriods = usePayrollStore((s: any) => s.payrollPeriods);
-  const updatePayrollPeriod = usePayrollStore((s: any) => s.updatePayrollPeriod);
-  const createPayrollRecord = usePayrollStore((s: any) => s.createPayrollRecord);
   const complianceCountry = useComplianceStore((s) => s.country);
   const [selectedTemplate, setSelectedTemplate] = useState(complianceCountry);
-  const [configId, setConfigId] = useState<string>('');
   const [editableConfig, setEditableConfig] = useState<any>(null);
-  const [runMonth, setRunMonth] = useState<number>(new Date().getMonth() + 1);
-  const [runYear, setRunYear] = useState<number>(new Date().getFullYear());
-  const userName = useCurrentUserName();
-  // Overtime hours worked this period, per employee id. Defaults to the employee's
-  // HR-approved overtime for the run's month (see approvedOvertimeByEmployee below) but
-  // stays manually overridable here for employees the attendance system doesn't cover.
-  // Keyed by employee id so an override survives re-renders across employees.
-  const [overtimeHoursByEmployee, setOvertimeHoursByEmployee] = useState<Record<string, number>>({});
-  const attendances = useLeaveAttendanceStore((s: any) => s.attendances);
-  const getApprovedOvertimeHours = useLeaveAttendanceStore((s: any) => s.getApprovedOvertimeHours);
-  const approvedOvertimeByEmployee = useMemo(() => {
-    const start = new Date(runYear, runMonth - 1, 1);
-    const end = new Date(runYear, runMonth, 0);
-    const map: Record<string, number> = {};
-    (employees || []).forEach((emp: any) => {
-      const eid = emp.id || emp.employeeNumber;
-      map[eid] = getApprovedOvertimeHours(eid, start, end);
-    });
-    return map;
-    // attendances is read only to retrigger this memo when overtime gets approved elsewhere
-  }, [employees, runMonth, runYear, attendances, getApprovedOvertimeHours]);
 
   React.useEffect(() => {
     void useComplianceStore.getState().syncCountryFromSetup();
-    // This panel can be reached directly (Compliance & Reports → PAYE) without ever
-    // visiting HR & Payroll first, which is the only other place these stores get
-    // hydrated — without this, activeEmployees is silently empty and "Process Monthly
-    // Payroll" fails with "No active employees to process" despite real employees existing.
-    void useEmployeeStore.getState().hydrateFromApi();
-    void usePayrollStore.getState().hydrateFromApi();
-    void useLeaveAttendanceStore.getState().hydrateFromApi();
   }, []);
 
   React.useEffect(() => {
@@ -65,8 +25,6 @@ export default function PayrollBuilderPanel() {
     if (!editableConfig && complianceCountry) {
       try {
         const cfg = builder.getCountryTemplate(complianceCountry);
-        builder.payrollConfigs.set(cfg.id, cfg);
-        setConfigId(cfg.id);
         const saved = typeof window !== 'undefined' ? localStorage.getItem(`payroll.config.${cfg.country}`) : null;
         setEditableConfig(saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(cfg)));
       } catch {
@@ -78,8 +36,6 @@ export default function PayrollBuilderPanel() {
 
   const resetFromTemplate = () => {
     const cfg = builder.getCountryTemplate(selectedTemplate || complianceCountry);
-    builder.payrollConfigs.set(cfg.id, cfg);
-    setConfigId(cfg.id);
     setEditableConfig(JSON.parse(JSON.stringify(cfg)));
   };
 
@@ -113,8 +69,6 @@ export default function PayrollBuilderPanel() {
 
   const handleLoadTemplate = () => {
     const cfg = builder.getCountryTemplate(selectedTemplate || complianceCountry);
-    builder.payrollConfigs.set(cfg.id, cfg);
-    setConfigId(cfg.id);
     const saved = typeof window !== 'undefined' ? localStorage.getItem(`payroll.config.${cfg.country}`) : null;
     setEditableConfig(saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(cfg)));
   };
@@ -213,29 +167,6 @@ export default function PayrollBuilderPanel() {
     }
   };
 
-  const ensureConfigLoaded = () => {
-    if (!configId && !editableConfig) {
-      const cfg = builder.getCountryTemplate(selectedTemplate || complianceCountry);
-      builder.payrollConfigs.set(cfg.id, cfg);
-      setConfigId(cfg.id);
-      setEditableConfig(JSON.parse(JSON.stringify(cfg)));
-      return cfg.id;
-    }
-    return editableConfig?.id || configId;
-  };
-
-  const handleRunMonthly = () => {
-    const runtimeId = ensureConfigLoaded();
-    if (!runtimeId) return;
-    const result = runMonthlyPayroll({ builder, runtimeId, employees, periods: payrollPeriods, month: runMonth, year: runYear, overtimeOverrides: overtimeHoursByEmployee, userName, complianceCountry });
-    if (!result.ok) {
-      alert(result.error);
-      return;
-    }
-    if (result.warning) alert(result.warning);
-    alert(`Monthly payroll processed for ${result.employeeCount} employee(s). It now needs approval (which posts it to the ledger), then paying, under HR → Payroll Management → Payroll Processing.`);
-  };
-
   return (
     <Card>
       <CardHeader>
@@ -253,81 +184,10 @@ export default function PayrollBuilderPanel() {
       </CardHeader>
       <CardBody>
         {!editableConfig && (
-          <div className="text-sm text-gray-600">Load a template, then adjust PAYE brackets, SSNIT, earnings and deductions before processing monthly payroll.</div>
+          <div className="text-sm text-gray-600">Load a template, then adjust PAYE brackets, SSNIT, earnings and deductions. The monthly pay run is HR &amp; Payroll → Payroll.</div>
         )}
         {editableConfig && (
           <div className="space-y-4">
-            {/* Rate effective dates */}
-            <Card>
-              <CardHeader>
-                <h5 className="font-medium">Rate Effective Dates</h5>
-              </CardHeader>
-              <CardBody>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                  <Input label="Effective From" type="date" value={editableConfig?.effectiveFrom || ''} onChange={(e) => setEditableConfig((prev: any) => ({ ...prev, effectiveFrom: e.target.value }))} variant="bordered" />
-                  <Input label="Effective To" type="date" value={editableConfig?.effectiveTo || ''} onChange={(e) => setEditableConfig((prev: any) => ({ ...prev, effectiveTo: e.target.value }))} variant="bordered" />
-                </div>
-              </CardBody>
-            </Card>
-            {/* Monthly Payroll Run */}
-            <Card>
-              <CardHeader>
-                <h5 className="font-medium">Monthly Payroll Run</h5>
-              </CardHeader>
-              <CardBody>
-                <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
-                  <Select disallowEmptySelection label="Month" selectedKeys={[String(runMonth)]} onSelectionChange={(k) => setRunMonth(parseInt(String(Array.from(k)[0]), 10))} variant="bordered">
-                    {Array.from({ length: 12 }).map((_, i) => (
-                      <SelectItem key={String(i + 1)}>{new Date(2000, i, 1).toLocaleString(undefined, { month: 'long' })}</SelectItem>
-                    ))}
-                  </Select>
-                  <Input label="Year" type="number" value={String(runYear)} onChange={(e) => setRunYear(parseInt(e.target.value || String(new Date().getFullYear()), 10))} variant="bordered" />
-                  <div className="md:col-span-3 flex justify-end">
-                    <Button color="primary" onPress={handleRunMonthly}>Process Monthly Payroll</Button>
-                  </div>
-                </div>
-                {(employees || []).filter((e: any) => e.status === 'active').length > 0 && (
-                  <div className="mt-4">
-                    <div className="text-sm font-medium mb-1">Overtime Hours This Period</div>
-                    <div className="text-xs text-gray-500 mb-2">
-                      Pre-filled from overtime approved in HR &amp; Payroll → Overtime Management for this month;
-                      override here if needed (e.g. an employee not on the attendance system).
-                    </div>
-                    <Table aria-label="overtime-hours">
-                      <TableHeader>
-                        <TableColumn>EMPLOYEE</TableColumn>
-                        <TableColumn>HOURLY RATE</TableColumn>
-                        <TableColumn>OT HOURS</TableColumn>
-                      </TableHeader>
-                      <TableBody>
-                        {(employees || []).filter((e: any) => e.status === 'active').map((emp: any) => {
-                          const eid = emp.id || emp.employeeNumber;
-                          const value = overtimeHoursByEmployee[eid] ?? approvedOvertimeByEmployee[eid] ?? 0;
-                          return (
-                            <TableRow key={eid}>
-                              <TableCell>{emp.firstName} {emp.lastName}</TableCell>
-                              <TableCell>{Number(emp.hourlyRate || 0) > 0 ? Number(emp.hourlyRate).toFixed(2) : (
-                                <span className="text-gray-400">not set</span>
-                              )}</TableCell>
-                              <TableCell>
-                                <Input
-                                  type="number"
-                                  size="sm"
-                                  value={String(value)}
-                                  onChange={(e) => setOvertimeHoursByEmployee(prev => ({ ...prev, [eid]: parseFloat(e.target.value || '0') }))}
-                                  variant="bordered"
-                                  isDisabled={!Number(emp.hourlyRate || 0)}
-                                />
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </CardBody>
-            </Card>
             {/* Editors */}
             {editableConfig?.country === 'GH' && (
               <PayrollTaxRatesEditor />

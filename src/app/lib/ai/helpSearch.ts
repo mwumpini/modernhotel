@@ -1,4 +1,6 @@
-import { helpTopics, type HelpTopic } from '../../help/helpContent';
+import { helpTopics, type HelpNavSection, type HelpTopic } from '../../help/helpContent';
+import { operationsModules, operationsTopics } from '../../help/operationsContent';
+import { processFlowModules, processFlows } from '../../help/processFlowsContent';
 
 export type HelpMatch = {
   title: string;
@@ -8,6 +10,46 @@ export type HelpMatch = {
   settingsTab?: HelpTopic['settingsTab'];
   complianceTab?: HelpTopic['complianceTab'];
 };
+
+/** Which side-menu module an operations chapter or a process flow belongs to. */
+const MODULE_SECTION: Record<string, HelpNavSection> = {
+  'ops-frontdesk': 'frontdesk',
+  'ops-inventory': 'inventory',
+  'ops-hr': 'hr',
+  'ops-accounting': 'accounting-management',
+  'ops-compliance': 'compliance',
+  'ops-settings': 'settings',
+  'flows-exec': 'dashboard',
+  'flows-frontdesk': 'frontdesk',
+  'flows-events': 'events-conferences-standalone',
+  'flows-restaurant': 'food-beverage',
+  'flows-housekeeping': 'housekeeping',
+  'flows-inventory': 'inventory',
+  'flows-hr': 'hr',
+  'flows-accounting': 'accounting-management',
+  'flows-compliance': 'compliance',
+};
+
+function sectionFor(id: string): HelpNavSection | undefined {
+  for (const mod of [...operationsModules, ...processFlowModules]) {
+    if (mod.topicIds.includes(id)) return MODULE_SECTION[mod.id];
+  }
+  return undefined;
+}
+
+/** Help steps, plus the rules and worked examples in each module's operations chapter and process flow. */
+function corpus(): HelpTopic[] {
+  const fromModule = (topic: HelpTopic, href: string): HelpTopic => ({
+    ...topic,
+    section: topic.section || sectionFor(topic.id),
+    href,
+  });
+  return [
+    ...helpTopics,
+    ...operationsTopics.map((topic) => fromModule(topic, `/help/operations#topic-${topic.id}`)),
+    ...processFlows.map((topic) => fromModule(topic, `/help/process-flows#topic-${topic.id}`)),
+  ];
+}
 
 const DESK_SECTION: Record<string, NonNullable<HelpTopic['section']>> = {
   frontdesk: 'frontdesk',
@@ -84,12 +126,23 @@ type IndexedTopic = {
 
 let index: { topics: IndexedTopic[]; df: Map<string, number> } | null = null;
 
+function topicDetail(topic: HelpTopic): string {
+  const rules = (topic.rules || []).map((rule) => `${rule.name}: ${rule.meaning}`).join(' ');
+  const examples = (topic.examples || [])
+    .map((example) => `${example.title}. ${example.lines.join(' ')}`)
+    .join(' ');
+  const flow = (topic.flow || [])
+    .map((step) => `${step.who} at ${step.where}: ${step.action} ${step.result}`)
+    .join(' ');
+  return [rules, examples, flow].filter(Boolean).join(' ');
+}
+
 function getIndex() {
   if (index) return index;
-  const topics = helpTopics.map((topic) => {
+  const topics = corpus().map((topic) => {
     const title = new Set(tokens(topic.title));
     const keywords = new Set(tokens(topic.keywords.join(' ')));
-    const body = new Set(tokens(`${topic.description} ${(topic.steps || []).join(' ')} ${topic.notHere || ''}`));
+    const body = new Set(tokens(`${topic.description} ${(topic.steps || []).join(' ')} ${topic.notHere || ''} ${topicDetail(topic)}`));
     const all = new Set([...title, ...keywords, ...body]);
     return { topic, title, keywords, body, all };
   });
@@ -101,10 +154,15 @@ function getIndex() {
 
 function toMatch(topic: HelpTopic): HelpMatch {
   const steps = (topic.steps || []).slice(0, 4).map((step, i) => `${i + 1}. ${step}`).join(' ');
+  const rules = (topic.rules || []).slice(0, 6).map((rule) => `${rule.name}: ${rule.meaning}`).join(' ');
+  const example = topic.examples?.[0];
+  const exampleText = example ? `Example, ${example.title}: ${example.lines.slice(0, 3).join(' ')}` : '';
+  const flow = (topic.flow || []).slice(0, 5).map((step) => `${step.who} at ${step.where}: ${step.action} Result: ${step.result}`).join(' ');
   const notHere = topic.notHere ? ` Not here: ${topic.notHere}` : '';
+  const detail = [steps, rules, exampleText, flow].filter(Boolean).join(' ');
   return {
     title: topic.title,
-    text: `${topic.title}. ${topic.description}${steps ? ` ${steps}` : ''}${notHere}`,
+    text: `${topic.title}. ${topic.description}${detail ? ` ${detail}` : ''}${notHere}`,
     section: topic.section,
     href: topic.href,
     settingsTab: topic.settingsTab,

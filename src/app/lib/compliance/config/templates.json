@@ -201,6 +201,96 @@
         }
       ]
     },
+    "ghana_purchases_hotel": {
+      "meta": {
+        "title": "Hotel bill",
+        "domain": "purchases",
+        "operation": "internal",
+        "effect": "add"
+      },
+      "rules": [
+        {
+          "id": "gh-purch-hotel-nhil",
+          "name": "NHIL",
+          "rate": 2.5,
+          "glCode": "2120",
+          "appliesTo": ["HOTEL_BILL"],
+          "description": "Input NHIL on a bill from another hotel. Claimable (Act 1151).",
+          "enabled": true,
+          "priority": 10,
+          "calculationBase": "subtotal",
+          "method": "rate",
+          "stacking": "additive",
+          "rounding": "nearest",
+          "roundTo": 0.01,
+          "domain": "purchases",
+          "operation": "internal",
+          "effect": "add",
+          "isRecoverable": true,
+          "tags": ["purchase-bill"]
+        },
+        {
+          "id": "gh-purch-hotel-getfund",
+          "name": "GETFund Levy",
+          "rate": 2.5,
+          "glCode": "2130",
+          "appliesTo": ["HOTEL_BILL"],
+          "description": "Input GETFund on a bill from another hotel. Claimable (Act 1151).",
+          "enabled": true,
+          "priority": 11,
+          "calculationBase": "subtotal",
+          "method": "rate",
+          "stacking": "additive",
+          "rounding": "nearest",
+          "roundTo": 0.01,
+          "domain": "purchases",
+          "operation": "internal",
+          "effect": "add",
+          "isRecoverable": true,
+          "tags": ["purchase-bill"]
+        },
+        {
+          "id": "gh-purch-hotel-vat",
+          "name": "VAT (Standard Rate)",
+          "rate": 15,
+          "glCode": "2110",
+          "appliesTo": ["HOTEL_BILL"],
+          "description": "Input VAT on a bill from another hotel. Claimable (Act 1151).",
+          "enabled": true,
+          "priority": 20,
+          "calculationBase": "subtotal",
+          "method": "rate",
+          "stacking": "additive",
+          "rounding": "nearest",
+          "roundTo": 0.01,
+          "domain": "purchases",
+          "operation": "internal",
+          "effect": "add",
+          "isRecoverable": true,
+          "tags": ["purchase-bill"]
+        },
+        {
+          "id": "gh-purch-hotel-tourism",
+          "name": "Tourism Levy",
+          "rate": 1,
+          "glCode": "2150",
+          "appliesTo": ["HOTEL_BILL"],
+          "description": "Tourism levy on a bill from another hotel. A cost, not claimable.",
+          "enabled": true,
+          "priority": 30,
+          "calculationBase": "subtotal",
+          "method": "rate",
+          "stacking": "additive",
+          "rounding": "nearest",
+          "roundTo": 0.01,
+          "domain": "purchases",
+          "operation": "internal",
+          "effect": "add",
+          "isRecoverable": false,
+          "tags": ["purchase-bill"]
+        }
+      ]
+    },
     "ghana_withholding": {
       "meta": {
         "title": "Withholding (resident)",

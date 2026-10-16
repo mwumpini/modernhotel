@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getSeedReports, getSeedTaxes } from './config';
 import { act1178PayePatch } from './payeBands';
+import { pensionTierNamePatch } from './pensionTierName';
 
 type JsonObject = Record<string, any>;
 
@@ -100,11 +101,12 @@ function migrateLegacyGhanaRates(items: JsonObject[]): JsonObject[] {
       changed = true;
       return { ...t, rate: 7.5, description: 'Resident WHT on services (2026)' };
     }
-    // Tier 3's rule id/shape didn't change, just its default display name — only touch it
-    // if it's still the untouched default, never a name the tenant already customized.
-    if (t.id === 'gh-tier3-relief-cap' && t.name === 'Tier 3 Relief Cap') {
+    // Pension names keep their tier. Untouched "Tier 1" becomes "SSNIT (Tier 1)" once.
+    // A name the hotel already chose, such as "Enterprise Trustees", gains "(Tier 2)".
+    const pension = pensionTierNamePatch(t);
+    if (pension) {
       changed = true;
-      return { ...t, name: 'Tier 3' };
+      return { ...t, ...pension };
     }
     // Tourism Levy originally covered only rooms, food, and (later) events. Hotel ancillary
     // charges — pool, laundry, spa — are category SERVICE, so they picked up VAT+NHIL+GETFund

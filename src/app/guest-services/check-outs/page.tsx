@@ -40,6 +40,7 @@ import { resolveGuestAddress } from '../../lib/frontoffice/helpers/guests';
 import { listAllTemplates, openPrintPreview } from '../../lib/print/engine';
 import { buildOrgProfile } from '../../lib/print/buildOrgProfile';
 import { useSettingsStore } from '../../lib/settings/store';
+import { shouldMarkRoomDirtyOnCheckout } from '../../lib/frontoffice/operationalPolicies';
 import { useCurrentUserName } from '../../lib/auth/useCurrentUserName';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import { salesTaxBreakdown } from '../../lib/tax/engine';
@@ -222,6 +223,7 @@ export default function CheckOutsPage() {
           : (folioTotals.outstandingBalance || 0) > 0   // use clamped value for status only
           ? 'pending'
           : 'processing';
+      const markDirty = shouldMarkRoomDirtyOnCheckout(useSettingsStore.getState().roomManagement);
 
       return {
         id: reservation.id,
@@ -248,13 +250,13 @@ export default function CheckOutsPage() {
         discount: 0,
         finalPaymentMethod: reservation.paymentMethod || 'Not specified',
         confirmationNumber: undefined,
-        roomStatus: reservation.status === 'checked-out' ? 'Dirty' : 'Occupied',
+        roomStatus: reservation.status === 'checked-out' ? (markDirty ? 'Dirty' : 'Vacant') : 'Occupied',
         phone: reservation.guestPhone,
         email: reservation.guestEmail,
         specialRequests: reservation.remarksToGuest,
         billingPerson: reservation.billingPersonName,
         lateCheckout: false,
-        housekeepingStatus: reservation.status === 'checked-out' ? 'turnover' : 'pending',
+        housekeepingStatus: reservation.status === 'checked-out' ? (markDirty ? 'turnover' : 'available') : 'pending',
         source: reservation.source || 'Front Office',
         staffId: 'pending',
         staffUsername: 'Pending',

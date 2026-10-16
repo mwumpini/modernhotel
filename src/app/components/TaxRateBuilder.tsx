@@ -626,7 +626,9 @@ export default function TaxRateBuilder() {
     for (const rule of rules) {
       try {
         const key = `${String(rule.countryCode)}:${String(rule.name)}`;
-        const found = existingByKey[key];
+        const found = rule.id
+          ? taxRules.find((r) => r.countryCode === selectedCountry && r.id === rule.id)
+          : existingByKey[key];
         const payload = found ? { ...found, ...rule, id: found.id, typeId: typeIdForTemplate || (found as any).typeId } : { ...rule, typeId: typeIdForTemplate || undefined };
         await fetch('/api/compliance/taxes/manage', {
           method: found ? 'PUT' : 'POST',
