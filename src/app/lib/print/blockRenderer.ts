@@ -6,6 +6,7 @@ import { homeCurrencyNames } from '../settings/currencies';
 import { computeTotalsBreakdown } from './taxBreakdown';
 import { renderRetailSlipDocument } from './retailSlip';
 import { renderNodaBillDocument } from './nodaBill';
+import { renderLedgerVoucherDocument } from './ledgerVoucher';
 import { formatHotelDate } from '../settings/hotelDates';
 
 function spoken(amount: number): string {
@@ -933,6 +934,7 @@ function renderBlock(block: BlockConfig, data: PrintData, currency: string): str
     case 'payslip-summary': return renderPayslipSummary(block, data, currency);
     case 'retail-slip': return '';
     case 'noda-bill': return '';
+    case 'ledger-voucher': return '';
     default: return '';
   }
 }
@@ -1054,6 +1056,9 @@ export function renderBlockTemplate(template: BlockTemplate, data: PrintData): s
   }
   if (template.blocks.some(b => b.visible && b.type === 'noda-bill')) {
     return renderNodaBillDocument(data);
+  }
+  if (template.blocks.some(b => b.visible && b.type === 'ledger-voucher')) {
+    return renderLedgerVoucherDocument(data);
   }
   const currency = data.currency || '₵';
   const style = template.style;

@@ -55,16 +55,21 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
     case 'payment-voucher':
       return {
         org: sampleOrg,
-        guest: { name: 'Accra Fresh Produce Ltd' },
+        guest: {
+          name: 'Accra Fresh Produce Ltd',
+          address: 'Ring Road Central, Accra\n+233 30 222 4455\naccounts@accrafresh.example',
+        },
         docNumber: 'PV-2026-0014',
         docDate: new Date().toISOString(),
         title: 'Payment Voucher',
         items: [],
         totals: { subTotal: 0 },
         debitCreditLines: [
-          { accountName: 'Kitchen Supplies', details: 'Weekly produce order', debit: 1250, credit: 0 },
-          { accountName: 'Cash / Bank', debit: 0, credit: 1250 },
+          { accountCode: '5110', accountName: 'Kitchen Supplies', details: 'Weekly produce order', debit: 1250, credit: 0 },
+          { accountCode: '1010', accountName: 'Cash / Bank', debit: 0, credit: 1250 },
         ],
+        bankDetails: { bankName: 'GCB Bank', accountName: 'Demo Hotel Current', accountNumber: '1011223344' },
+        chequeNumber: '004821',
         signatures: [
           { label: 'Prepared By', name: 'Ama Owusu', signedDate: new Date().toISOString() },
           { label: 'Approved By', name: 'Kofi Adjei', signedDate: new Date().toISOString() },

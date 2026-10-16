@@ -23,6 +23,8 @@ import { filterFinanceApInvoices, computeSupplierAgingFromInvoices } from '@/app
 import { GL_ACCOUNTS } from '@/app/lib/accounting/integration';
 import { isManualArApSource } from '@/app/lib/accounting/journalReversal';
 import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
+import { buildOrgProfile } from '@/app/lib/print/buildOrgProfile';
+import { buildSupplierPaymentVoucherPrintData, printSupplierPaymentVoucher } from '@/app/lib/accounting/paymentVoucherPrint';
 import AttachmentUpload from '@/app/components/shared/AttachmentUpload';
 import PostingDateField from '@/app/components/shared/PostingDateField';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
@@ -51,6 +53,26 @@ const billColumnWidths: Record<BillSortKey, number> = {
 const paymentColumnWidths: Record<PaymentSortKey, number> = {
   payment: 128, supplier: 152, date: 92, amount: 108, method: 96, status: 132,
 };
+
+function signedInPersonName() {
+  const user = useSettingsStore.getState().currentUser;
+  return `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || user?.email || user?.username || '';
+}
+
+function billProcessedBy(invoice: { preparedBy?: string; department?: string }) {
+  const settings = useSettingsStore.getState();
+  const user = settings.currentUser;
+  const signedIn = signedInPersonName();
+  const stored = String(invoice.preparedBy || '').trim();
+  const name = stored && !/^system$/i.test(stored) ? stored : signedIn;
+  const isSelf = !!name && (!stored || name === signedIn);
+  const role = isSelf
+    ? (user?.profile?.position || settings.roles.find((item) => item.id === user?.roleId)?.name || '')
+    : '';
+  const staffId = isSelf ? String(user?.profile?.employeeId || '').trim() : '';
+  const department = String(invoice.department || (isSelf ? user?.profile?.department : '') || '').trim();
+  return { name, role, staffId, department };
+}
 
 export default function AccountsPayablePage() {
   const {
@@ -115,7 +137,6 @@ export default function AccountsPayablePage() {
   const [lineEntryKind, setLineEntryKind] = useState<'item' | 'service'>('item');
   const [viewKind, setViewKind] = useState<'supplier' | 'invoice' | 'payment' | null>(null);
   const [viewItem, setViewItem] = useState<any>(null);
-  const [showBillLines, setShowBillLines] = useState(false);
   const purchaseOrders = useSupplierStore((s) => s.purchaseOrders);
   const isViewOpen = viewKind != null && viewItem != null;
 
@@ -650,6 +671,7 @@ export default function AccountsPayablePage() {
       taxType: 'STANDARD',
       claimInputTax: vatCfg ? vatCfg.isRecoverable !== false : true,
       description: '',
+      preparedBy: signedInPersonName(),
       lines: [{ id: `INL-${Date.now()}`, lineKind: 'item', description: '', quantity: 1, unitPrice: 0, glAccountCode: defaultExpenseCode('item'), uom: 'Each' }],
     });
     setIsOpen(true);
@@ -710,6 +732,12 @@ export default function AccountsPayablePage() {
       whtVatApplicable: Number(invoice.taxBreakdown?.withholdingVat || 0) > 0,
       whtCategory: invoice.whtCategory || 'SERVICE',
       attachments: invoice.attachments || [],
+      preparedBy: invoice.preparedBy || '',
+      checkedBy: invoice.checkedBy || '',
+      approvedBy: invoice.approvedBy || '',
+      authorizedBy: invoice.authorizedBy || '',
+      paymentApprovedBy: invoice.paymentApprovedBy || '',
+      department: invoice.department || '',
       lines: normalized,
     });
     setIsOpen(true);
@@ -724,68 +752,161 @@ export default function AccountsPayablePage() {
         window.alert('No bill selected to print.');
         return;
       }
+      const esc = (value: unknown) => String(value ?? '').replace(/[&<>"]/g, (ch) => (
+        ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : '&quot;'
+      ));
+      const money = (amount: number) => esc(formatAccountingCurrency(amount));
       const supplier = suppliers.find((s) => s.id === invoice.businessPartnerId);
       const paidAmount = (invoice.paidAmount != null)
         ? invoice.paidAmount
         : supplierPayments.filter((p) => p.invoiceId === invoice.id).reduce((sum, p) => sum + p.amount, 0);
       const balance = (invoice.total || 0) - paidAmount;
-      const lineItems = invoice.lines || invoice.items || invoice.lineItems || [];
-      const lineRows = lineItems.map((ln: any) => `<tr>
-        <td>${ln.description || '—'}</td>
-        <td class="amount">${ln.quantity ?? '—'}</td>
-        <td class="amount">${formatAccountingCurrency(Number(ln.unitPrice || 0))}</td>
-        <td class="amount">${formatAccountingCurrency(Number(ln.amount ?? ((ln.quantity || 0) * (ln.unitPrice || 0))))}</td>
-      </tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#6b7280">No line items</td></tr>';
-      const paymentRows = billActivePayments(invoice.id).map((p) => `<tr>
-        <td>${p.paymentNumber || p.id}</td>
-        <td>${new Date(p.date).toLocaleDateString()}</td>
-        <td>${p.paymentMethod || '—'}</td>
-        <td class="amount">${formatAccountingCurrency(Number(p.amount || 0))}</td>
-      </tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#6b7280">No payments recorded</td></tr>';
-      const html = generatePdfHtml('Purchase Bill', `
-        <div class="header">
-          <h1>PURCHASE BILL</h1>
-          <div class="subtitle">${invoice.invoiceNumber || invoice.id}</div>
-        </div>
-        <div class="section">
-          <div class="section-title">Supplier</div>
-          <div class="detail-grid">
-            <div class="detail-item"><div class="label">Name</div><div class="value">${supplier?.name || '—'}</div></div>
-            <div class="detail-item"><div class="label">Code</div><div class="value">${supplier?.code || invoice.businessPartnerId || '—'}</div></div>
-            <div class="detail-item"><div class="label">Date</div><div class="value">${new Date(invoice.date).toLocaleDateString()}</div></div>
-            <div class="detail-item"><div class="label">Due</div><div class="value">${new Date(invoice.dueDate || invoice.date).toLocaleDateString()}</div></div>
-            <div class="detail-item"><div class="label">PO</div><div class="value">${invoice.poNumber || '—'}</div></div>
-            <div class="detail-item"><div class="label">Status</div><div class="value">${invoice.status || '—'}</div></div>
+      const dueRaw = invoice.dueDate || invoice.date;
+      const dueDate = new Date(dueRaw);
+      const dueValid = !Number.isNaN(dueDate.getTime());
+      const daysOverdue = dueValid ? Math.floor((Date.now() - dueDate.getTime()) / 86400000) : 0;
+      const statusLabel = balance <= 0 ? 'Paid' : daysOverdue > 0 ? 'Overdue' : 'Still owed';
+      const storedLines = (invoice.lines || invoice.items || invoice.lineItems || []).map((ln: any) => {
+        const quantity = Number(ln.quantity || 1) || 1;
+        const unitPrice = Number(ln.unitPrice || 0);
+        const amount = ln.amount != null && ln.amount !== '' ? Number(ln.amount) : quantity * unitPrice;
+        return {
+          description: String(ln.description || ln.itemName || ''),
+          quantity,
+          unitPrice: unitPrice || (quantity ? amount / quantity : amount),
+          amount,
+        };
+      });
+      const linkedPo = purchaseOrders.find((po) => po.poNumber && po.poNumber === invoice.poNumber);
+      const poLines = (linkedPo?.items || []).map((item) => ({
+        description: item.itemName,
+        quantity: Number(item.quantity || 0),
+        unitPrice: Number(item.unitCost || 0),
+        amount: Number(item.totalCost || (Number(item.quantity || 0) * Number(item.unitCost || 0))),
+      }));
+      const linesToShow = storedLines.length > 1 ? storedLines : (poLines.length > storedLines.length ? poLines : storedLines);
+      const rows = (linesToShow.length ? linesToShow : [{
+        description: invoice.description || 'Purchase',
+        quantity: 1,
+        unitPrice: Number(invoice.subtotal || 0),
+        amount: Number(invoice.subtotal || 0),
+      }]).map((ln: { description: string; quantity: number; unitPrice: number; amount: number }) => `<tr>
+        <td>${esc(ln.description || '—')}</td>
+        <td class="num">${esc(ln.quantity)}</td>
+        <td class="num">${money(ln.unitPrice)}</td>
+        <td class="num strong">${money(ln.amount)}</td>
+      </tr>`).join('');
+      const wht = Number(invoice.taxBreakdown?.withholding || 0);
+      const whtVat = Number(invoice.taxBreakdown?.withholdingVat || 0);
+      const payments = billActivePayments(invoice.id);
+      const paymentRows = payments.map((p) => `<tr>
+        <td class="mono">${esc(p.paymentNumber || p.id)}</td>
+        <td>${esc(new Date(p.date).toLocaleDateString())}</td>
+        <td>${esc(p.paymentMethod || '—')}</td>
+        <td class="num strong">${money(Number(p.amount || 0))}</td>
+      </tr>`).join('');
+      const processed = billProcessedBy(invoice);
+      const hero = balance > 0 ? balance : Number(invoice.total || 0);
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Purchase bill ${esc(invoice.invoiceNumber || invoice.id)}</title>
+        <style>
+          * { box-sizing: border-box; }
+          body { font-family: 'Segoe UI', Arial, sans-serif; color: #111827; margin: 0; padding: 28px; }
+          .top { display: flex; justify-content: space-between; gap: 16px; border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; }
+          h1 { font-size: 16px; margin: 0; }
+          .chip { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: #f3f4f6; font-size: 12px; font-weight: 600; }
+          .chip.ok { background: #dcfce7; color: #166534; }
+          .chip.warn { background: #fee2e2; color: #991b1b; }
+          .num-no { font-family: ui-monospace, monospace; font-size: 13px; color: #374151; margin: 2px 0 0; }
+          .meta { text-align: right; font-size: 12px; color: #4b5563; }
+          .hero { text-align: center; padding: 16px 0; border-bottom: 1px solid #e5e7eb; }
+          .kicker { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: #6b7280; margin: 0; }
+          .hero .sum { font-size: 28px; font-weight: 700; margin: 2px 0; }
+          .hero .sum.owed { color: #111827; }
+          .hero .sum.paid { color: #15803d; }
+          .fine { font-size: 12px; color: #6b7280; margin: 0; }
+          .pair { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; padding: 12px 0; border-bottom: 1px solid #e5e7eb; font-size: 13px; }
+          .label { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #6b7280; margin: 0 0 4px; }
+          .name { font-weight: 700; }
+          .muted { color: #6b7280; font-size: 12px; }
+          .row { display: flex; justify-content: space-between; gap: 12px; }
+          .split { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 12px; margin-top: 12px; }
+          table.grid { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; }
+          table.grid th, table.grid td { border: 1px solid #d1d5db; padding: 6px 8px; vertical-align: top; }
+          table.grid th { background: #f3f4f6; color: #374151; font-size: 12px; font-weight: 600; text-align: left; }
+          .num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+          .strong { font-weight: 600; }
+          .mono { font-family: ui-monospace, monospace; font-size: 12px; }
+          .green { color: #15803d; }
+          .red { color: #dc2626; }
+          h2 { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: #6b7280; margin: 0 0 6px; }
+          .pay-break { border-top: 1px solid #111827; margin-top: 16px; padding-top: 12px; }
+        </style></head><body>
+        <div class="top">
+          <div>
+            <h1>PURCHASE BILL <span class="chip ${balance <= 0 ? 'ok' : daysOverdue > 0 ? 'warn' : ''}">${esc(statusLabel)}</span></h1>
+            <p class="num-no">${esc(invoice.invoiceNumber || invoice.id)}</p>
+          </div>
+          <div class="meta">
+            <div>Supplier: <strong>${esc(supplier?.name || '—')}</strong></div>
+            <div>Date: ${esc(new Date(invoice.date).toLocaleDateString())}</div>
           </div>
         </div>
-        ${invoice.description ? `<div class="section"><div class="section-title">Memo</div><p>${invoice.description}</p></div>` : ''}
-        <div class="section">
-          <div class="section-title">Line Items</div>
-          <table>
-            <thead><tr><th>Description</th><th>Qty</th><th>Unit</th><th>Amount</th></tr></thead>
-            <tbody>${lineRows}</tbody>
-          </table>
+        <div class="hero">
+          <p class="kicker">${balance > 0 ? 'Still owed' : 'Paid in full'}</p>
+          <p class="sum ${balance > 0 ? 'owed' : 'paid'}">${money(hero)}</p>
+          <p class="fine">Total ${money(Number(invoice.total || 0))} · Paid ${money(paidAmount)}</p>
         </div>
-        <div class="section">
-          <div class="section-title">Totals</div>
-          <table>
-            <tr><td style="width:70%">Subtotal</td><td class="amount">${formatAccountingCurrency(Number(invoice.subtotal || 0))}</td></tr>
-            <tr><td>Tax</td><td class="amount">${formatAccountingCurrency(Number(invoice.taxAmount || 0))}</td></tr>
-            ${Number(invoice.taxBreakdown?.withholding || 0) > 0 ? `<tr><td>WHT</td><td class="amount">−${formatAccountingCurrency(Number(invoice.taxBreakdown.withholding))}</td></tr>` : ''}
-            ${Number(invoice.taxBreakdown?.withholdingVat || 0) > 0 ? `<tr><td>WHT-VAT</td><td class="amount">−${formatAccountingCurrency(Number(invoice.taxBreakdown.withholdingVat))}</td></tr>` : ''}
-            <tr class="total-row"><td><strong>Total</strong></td><td class="amount"><strong>${formatAccountingCurrency(Number(invoice.total || 0))}</strong></td></tr>
-            <tr><td>Paid</td><td class="amount" style="color:#16a34a">${formatAccountingCurrency(paidAmount)}</td></tr>
-            <tr><td><strong>Balance</strong></td><td class="amount" style="color:${balance > 0 ? '#ea580c' : '#16a34a'};font-weight:bold">${formatAccountingCurrency(balance)}</td></tr>
-          </table>
+        <div class="pair">
+          <div>
+            <p class="label">Supplier</p>
+            <div class="name">${esc(supplier?.name || 'Unknown')}</div>
+            <div class="muted">${esc(supplier?.code || invoice.businessPartnerId || '')}</div>
+            ${supplier?.phone ? `<div class="muted">${esc(supplier.phone)}</div>` : ''}
+            ${supplier?.taxNumber ? `<div class="muted">TIN ${esc(supplier.taxNumber)}</div>` : ''}
+          </div>
+          <div>
+            <p class="label">Bill</p>
+            <div class="row"><span class="muted">Invoice date</span><span>${esc(new Date(invoice.date).toLocaleDateString())}</span></div>
+            <div class="row"><span class="muted">Due</span><span class="${daysOverdue > 0 && balance > 0 ? 'red' : ''}">${dueValid ? esc(dueDate.toLocaleDateString()) : '—'}</span></div>
+            ${invoice.poNumber ? `<div class="row"><span class="muted">Purchase order</span><span class="mono">${esc(invoice.poNumber)}</span></div>` : ''}
+            ${invoice.description ? `<p class="muted">${esc(invoice.description)}</p>` : ''}
+          </div>
+          ${processed.name ? `<div>
+            <p class="label">Processed by</p>
+            <div class="name">${esc(processed.name)}</div>
+            ${processed.staffId ? `<div class="muted">${esc(processed.staffId)}</div>` : ''}
+            ${processed.role ? `<div class="muted">${esc(processed.role)}</div>` : ''}
+            ${processed.department ? `<div class="muted">${esc(processed.department)}</div>` : ''}
+          </div>` : ''}
         </div>
-        <div class="section">
-          <div class="section-title">Payments</div>
-          <table>
-            <thead><tr><th>Payment #</th><th>Date</th><th>Method</th><th>Amount</th></tr></thead>
-            <tbody>${paymentRows}</tbody>
-          </table>
+        <div class="split">
+          <div>
+            <h2>Lines</h2>
+            <table class="grid">
+              <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Amount</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+          <div>
+            <h2>Totals</h2>
+            <table class="grid">
+              <tbody>
+                <tr><td>Subtotal</td><td class="num">${money(Number(invoice.subtotal || 0))}</td></tr>
+                <tr><td>Tax</td><td class="num">${money(Number(invoice.taxAmount || 0))}</td></tr>
+                ${wht > 0 ? `<tr><td>WHT</td><td class="num">−${money(wht)}</td></tr>` : ''}
+                ${whtVat > 0 ? `<tr><td>WHT-VAT</td><td class="num">−${money(whtVat)}</td></tr>` : ''}
+                <tr class="strong"><td>Total</td><td class="num">${money(Number(invoice.total || 0))}</td></tr>
+                <tr class="green"><td>Paid</td><td class="num">${money(paidAmount)}</td></tr>
+                <tr class="strong ${balance > 0 ? 'red' : 'green'}"><td>Balance</td><td class="num">${money(balance)}</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
-      `);
+        ${payments.length ? `<div class="pay-break"><h2>Payments</h2><table class="grid">
+          <thead><tr><th>Payment</th><th>Date</th><th>Method</th><th class="num">Amount</th></tr></thead>
+          <tbody>${paymentRows}</tbody>
+        </table></div>` : ''}
+        </body></html>`;
       openPrintPreview(html);
     } catch (err) {
       console.error('[AP] Print bill failed', err);
@@ -799,34 +920,34 @@ export default function AccountsPayablePage() {
         window.alert('No payment selected to print.');
         return;
       }
+      const settings = useSettingsStore.getState();
       const supplier = suppliers.find((s) => s.id === payment.businessPartnerId);
       const linkedBill = payment.invoiceId ? purchaseInvoices.find((i) => i.id === payment.invoiceId) : undefined;
-      const html = generatePdfHtml('Supplier Payment', `
-        <div class="header">
-          <h1>SUPPLIER PAYMENT</h1>
-          <div class="subtitle">${payment.paymentNumber || payment.id}</div>
-        </div>
-        <div class="section">
-          <div class="section-title">Payment Details</div>
-          <div class="detail-grid">
-            <div class="detail-item"><div class="label">Supplier</div><div class="value">${supplier?.name || payment.businessPartnerId || '—'}</div></div>
-            <div class="detail-item"><div class="label">Date</div><div class="value">${new Date(payment.date).toLocaleDateString()}</div></div>
-            <div class="detail-item"><div class="label">Method</div><div class="value">${payment.paymentMethod || '—'}</div></div>
-            <div class="detail-item"><div class="label">Status</div><div class="value">${payment.status || '—'}</div></div>
-            <div class="detail-item"><div class="label">Reference</div><div class="value">${payment.reference || '—'}</div></div>
-            <div class="detail-item"><div class="label">Bill</div><div class="value">${linkedBill?.invoiceNumber || payment.invoiceId || '—'}</div></div>
-          </div>
-        </div>
-        <div class="section">
-          <div class="section-title">Amount</div>
-          <table>
-            <tr class="total-row"><td><strong>Cash paid</strong></td><td class="amount"><strong>${formatAccountingCurrency(Number(payment.amount || 0))}</strong></td></tr>
-            ${Number(payment.whtAmount || 0) > 0 ? `<tr><td>WHT withheld</td><td class="amount">${formatAccountingCurrency(Number(payment.whtAmount))}</td></tr>` : ''}
-            ${Number(payment.whtVatAmount || 0) > 0 ? `<tr><td>WHT-VAT withheld</td><td class="amount">${formatAccountingCurrency(Number(payment.whtVatAmount))}</td></tr>` : ''}
-          </table>
-        </div>
-      `);
-      openPrintPreview(html);
+      const bank = payment.bankAccountId ? bankAccounts.find((b) => b.id === payment.bankAccountId) : undefined;
+      const user = settings.currentUser;
+      const preparedBy = `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || user?.email || user?.username || payment.staffName;
+      const data = buildSupplierPaymentVoucherPrintData({
+        payment,
+        payee: {
+          name: supplier?.name || 'Supplier',
+          address: supplier?.address,
+          phone: supplier?.phone,
+          email: supplier?.email,
+          contactPerson: supplier?.contactPerson,
+          taxNumber: supplier?.taxNumber,
+        },
+        bill: linkedBill,
+        bank,
+        accountName: (code) => chartOfAccounts.find((a) => a.code === code)?.name,
+        org: buildOrgProfile(settings),
+        currency: settings.countryCompliance?.[settings.defaultCountry]?.currencySymbol || '₵',
+        preparedBy,
+      });
+      const selectedVoucher = settings.printing?.['payment-voucher'];
+      const voucherKey = !selectedVoucher || selectedVoucher === 'builtin-payment-voucher-standard'
+        ? 'builtin-payment-voucher-ledger'
+        : selectedVoucher;
+      printSupplierPaymentVoucher(voucherKey, data);
     } catch (err) {
       console.error('[AP] Print payment failed', err);
       window.alert('Could not print this payment.');
@@ -1969,6 +2090,12 @@ export default function AccountsPayablePage() {
               taxBreakdown: form.taxBreakdown || undefined,
               claimInputTax: form.taxType === 'NONE' ? false : form.claimInputTax !== false,
               sourceModule: editing?.sourceModule || 'manual',
+              preparedBy: String(form.preparedBy || '').trim() || signedInPersonName() || undefined,
+              checkedBy: form.checkedBy || undefined,
+              approvedBy: form.approvedBy || undefined,
+              authorizedBy: form.authorizedBy || undefined,
+              paymentApprovedBy: form.paymentApprovedBy || undefined,
+              department: form.department || editing?.department || undefined,
               lines
             } as any;
             if (editing) updateInvoice(editing.id, payload); else addInvoice(payload);
@@ -3442,7 +3569,6 @@ export default function AccountsPayablePage() {
               const daysOverdue = dueValid ? Math.floor((Date.now() - dueDate.getTime()) / 86400000) : 0;
               const statusLabel = balance <= 0 ? 'Paid' : daysOverdue > 0 ? 'Overdue' : 'Still owed';
               const statusColor = balance <= 0 ? 'success' : daysOverdue > 0 ? 'danger' : 'warning';
-              const lineItems = viewItem.lines || viewItem.items || viewItem.lineItems || [];
               const storedLines = (viewItem.lines || viewItem.items || viewItem.lineItems || []).map((ln: any) => {
                 const quantity = Number(ln.quantity || 1) || 1;
                 const unitPrice = Number(ln.unitPrice || 0);
@@ -3455,8 +3581,6 @@ export default function AccountsPayablePage() {
                   amount,
                 };
               });
-              const summaryText = viewItem.description || storedLines[0]?.description || 'Purchase';
-              const summaryAmount = Number(viewItem.subtotal || 0);
               const linkedPo = purchaseOrders.find((po) => po.poNumber && po.poNumber === viewItem.poNumber);
               const poLines = (linkedPo?.items || []).map((item) => ({
                 id: item.id,
@@ -3465,94 +3589,128 @@ export default function AccountsPayablePage() {
                 unitPrice: Number(item.unitCost || 0),
                 amount: Number(item.totalCost || (Number(item.quantity || 0) * Number(item.unitCost || 0))),
               }));
-              const detailLines = storedLines.length > 1 ? storedLines : (poLines.length > 1 ? poLines : storedLines);
-              const chargesDiffer = detailLines.length > 1 || detailLines.some((line: { description: string; amount: number }) =>
-                line.description.trim() !== String(summaryText).trim() || Math.abs(line.amount - summaryAmount) > 0.01,
-              );
+              const linesToShow = storedLines.length > 1 ? storedLines : (poLines.length > storedLines.length ? poLines : storedLines);
+              const billPayments = billActivePayments(viewItem.id);
+              const processed = billProcessedBy(viewItem);
+              const wht = Number(viewItem.taxBreakdown?.withholding || 0);
+              const whtVat = Number(viewItem.taxBreakdown?.withholdingVat || 0);
               return (
                 <>
-                  <ModalHeader className="border-b bg-white px-6 py-4">
-                    <div className="flex justify-between items-start w-full pr-6">
+                  <ModalHeader className="border-b bg-white px-4 py-2.5 pe-12">
+                    <div className="flex justify-between items-start w-full gap-3">
                       <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <h3 className="text-xl font-bold text-gray-900">PURCHASE BILL</h3>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-base font-bold text-gray-900">PURCHASE BILL</h3>
                           <Chip size="sm" variant="flat" color={statusColor as any}>{statusLabel}</Chip>
-                          <Chip size="sm" variant="flat" color="default">{viewItem.status || '—'}</Chip>
                         </div>
-                        <p className="text-lg font-mono text-gray-700">{viewItem.invoiceNumber || viewItem.id}</p>
+                        <p className="text-sm font-mono text-gray-700">{viewItem.invoiceNumber || viewItem.id}</p>
                       </div>
-                      <div className="text-right text-sm text-gray-600">
+                      <div className="text-right text-xs text-gray-600 leading-snug">
                         <div>Supplier: <span className="font-medium">{supplier?.name || '—'}</span></div>
                         <div>Date: {new Date(viewItem.date).toLocaleDateString()}</div>
                       </div>
                     </div>
                   </ModalHeader>
-                  <ModalBody className="p-6 bg-white">
-                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-3 pb-6 border-b text-sm">
-                      <div>
-                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Supplier</h4>
-                        <div className="font-semibold">{supplier?.name || 'Unknown'}</div>
-                        <div className="text-xs text-gray-500 font-mono">{supplier?.code || viewItem.businessPartnerId}</div>
-                        {viewItem.description && <div className="mt-2 text-gray-600">{viewItem.description}</div>}
+                  <ModalBody className="px-4 py-3 bg-white">
+                    <div className="space-y-3">
+                      <div className="text-center py-3 border-b">
+                        <p className="text-[11px] text-gray-500 uppercase tracking-wide mb-0.5">{balance > 0 ? 'Still owed' : 'Paid in full'}</p>
+                        <p className={`text-2xl font-bold tabular-nums ${balance > 0 ? 'text-gray-900' : 'text-green-700'}`}>{formatAccountingCurrency(balance > 0 ? balance : (viewItem.total || 0))}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">Total {formatAccountingCurrency(viewItem.total || 0)} · Paid {formatAccountingCurrency(paidAmount)}</p>
                       </div>
-                      <div>
-                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Dates</h4>
-                        <div className="flex justify-between"><span className="text-gray-500">Invoice:</span><span>{new Date(viewItem.date).toLocaleDateString()}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-500">Due:</span><span className={daysOverdue > 0 && balance > 0 ? 'text-red-600 font-medium' : ''}>{dueValid ? dueDate.toLocaleDateString() : '—'}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-500">PO:</span><span className="font-mono text-xs">{viewItem.poNumber || '—'}</span></div>
-                      </div>
-                      <div>
-                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Amounts</h4>
-                        <div className="flex justify-between"><span className="text-gray-500">Subtotal:</span><span className="tabular-nums">{formatAccountingCurrency(viewItem.subtotal || 0)}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-500">Tax:</span><span className="tabular-nums">{formatAccountingCurrency(viewItem.taxAmount || 0)}</span></div>
-                        <div className="flex justify-between font-semibold"><span>Total:</span><span className="tabular-nums">{formatAccountingCurrency(viewItem.total || 0)}</span></div>
-                        <div className="flex justify-between text-green-700"><span>Paid:</span><span className="tabular-nums">{formatAccountingCurrency(paidAmount)}</span></div>
-                        <div className={`flex justify-between font-bold ${balance > 0 ? 'text-red-600' : 'text-green-600'}`}><span>Balance:</span><span className="tabular-nums">{formatAccountingCurrency(balance)}</span></div>
-                      </div>
-                    </div>
-                    {lineItems.length > 0 && (
-                    <div className="pb-3">
-                      <div className="flex items-center justify-between mb-1.5">
-                        <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Line Items</h4>
-                        {chargesDiffer && (
-                          <button
-                            type="button"
-                            className="text-xs text-blue-600 hover:underline"
-                            onClick={() => setShowBillLines((open) => !open)}
-                          >
-                            {showBillLines ? 'Show summary' : 'View charges'}
-                          </button>
+
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 pb-3 border-b text-sm">
+                        <div>
+                          <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Supplier</h4>
+                          <div className="font-semibold text-gray-900">{supplier?.name || 'Unknown'}</div>
+                          <div className="text-xs text-gray-500 font-mono">{supplier?.code || viewItem.businessPartnerId}</div>
+                          {supplier?.phone && <div className="text-xs text-gray-600 mt-1">{supplier.phone}</div>}
+                          {supplier?.taxNumber && <div className="text-xs text-gray-500 font-mono">TIN {supplier.taxNumber}</div>}
+                        </div>
+                        <div>
+                          <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Bill</h4>
+                          <div className="flex justify-between gap-2"><span className="text-gray-500">Invoice date</span><span>{new Date(viewItem.date).toLocaleDateString()}</span></div>
+                          <div className="flex justify-between gap-2"><span className="text-gray-500">Due</span><span className={daysOverdue > 0 && balance > 0 ? 'text-red-600 font-medium' : ''}>{dueValid ? dueDate.toLocaleDateString() : '—'}</span></div>
+                          {viewItem.poNumber && <div className="flex justify-between gap-2"><span className="text-gray-500">Purchase order</span><span className="font-mono text-xs">{viewItem.poNumber}</span></div>}
+                          {viewItem.description && <p className="mt-1 text-gray-600">{viewItem.description}</p>}
+                        </div>
+                        {processed.name && (
+                          <div>
+                            <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Processed by</h4>
+                            <div className="font-semibold text-gray-900">{processed.name}</div>
+                            {processed.staffId && <div className="text-xs text-gray-500 font-mono">{processed.staffId}</div>}
+                            {processed.role && <div className="text-xs text-gray-600">{processed.role}</div>}
+                            {processed.department && <div className="text-xs text-gray-600">{processed.department}</div>}
+                          </div>
                         )}
                       </div>
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-gray-200">
-                            <th className="text-left py-1 text-gray-600 font-semibold">Description</th>
-                            <th className="text-right py-1 text-gray-600 font-semibold">Qty</th>
-                            <th className="text-right py-1 text-gray-600 font-semibold">Unit</th>
-                            <th className="text-right py-1 text-gray-600 font-semibold">Amount</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {showBillLines && chargesDiffer ? detailLines.map((ln: { id?: string; description: string; quantity: number; unitPrice: number; amount: number }, i: number) => (
-                            <tr key={ln.id || i} className="border-b border-gray-100">
-                              <td className="py-1">{ln.description || '—'}</td>
-                              <td className="py-1 text-right tabular-nums">{ln.quantity}</td>
-                              <td className="py-1 text-right tabular-nums">{formatAccountingCurrency(ln.unitPrice)}</td>
-                              <td className="py-1 text-right tabular-nums font-medium">{formatAccountingCurrency(ln.amount)}</td>
-                            </tr>
-                          )) : (
-                            <tr className="border-b border-gray-100">
-                              <td className="py-1">{summaryText}</td>
-                              <td className="py-1 text-right tabular-nums">1</td>
-                              <td className="py-1 text-right tabular-nums">{formatAccountingCurrency(summaryAmount)}</td>
-                              <td className="py-1 text-right tabular-nums font-medium">{formatAccountingCurrency(summaryAmount)}</td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
+
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+                        <div>
+                          <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Lines</h4>
+                          <table className="w-full text-sm border-collapse">
+                            <thead>
+                              <tr>
+                                <th className="text-left py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Description</th>
+                                <th className="text-right py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Qty</th>
+                                <th className="text-right py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Unit</th>
+                                <th className="text-right py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(linesToShow.length ? linesToShow : [{ id: 'summary', description: viewItem.description || 'Purchase', quantity: 1, unitPrice: Number(viewItem.subtotal || 0), amount: Number(viewItem.subtotal || 0) }]).map((ln: { id?: string; description: string; quantity: number; unitPrice: number; amount: number }, i: number) => (
+                                <tr key={ln.id || i}>
+                                  <td className="py-1.5 px-2 border border-gray-300">{ln.description || '—'}</td>
+                                  <td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums">{ln.quantity}</td>
+                                  <td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums">{formatAccountingCurrency(ln.unitPrice)}</td>
+                                  <td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums font-medium">{formatAccountingCurrency(ln.amount)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div>
+                          <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Totals</h4>
+                          <table className="w-full text-sm border-collapse">
+                            <tbody>
+                              <tr><td className="py-1.5 px-2 border border-gray-300 text-gray-600">Subtotal</td><td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums">{formatAccountingCurrency(viewItem.subtotal || 0)}</td></tr>
+                              <tr><td className="py-1.5 px-2 border border-gray-300 text-gray-600">Tax</td><td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums">{formatAccountingCurrency(viewItem.taxAmount || 0)}</td></tr>
+                              {wht > 0 && <tr><td className="py-1.5 px-2 border border-gray-300 text-gray-600">WHT</td><td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums">−{formatAccountingCurrency(wht)}</td></tr>}
+                              {whtVat > 0 && <tr><td className="py-1.5 px-2 border border-gray-300 text-gray-600">WHT-VAT</td><td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums">−{formatAccountingCurrency(whtVat)}</td></tr>}
+                              <tr><td className="py-1.5 px-2 border border-gray-300 font-semibold">Total</td><td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums font-semibold">{formatAccountingCurrency(viewItem.total || 0)}</td></tr>
+                              <tr><td className="py-1.5 px-2 border border-gray-300 text-green-700">Paid</td><td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums text-green-700">{formatAccountingCurrency(paidAmount)}</td></tr>
+                              <tr><td className={`py-1.5 px-2 border border-gray-300 font-bold ${balance > 0 ? 'text-red-600' : 'text-green-700'}`}>Balance</td><td className={`py-1.5 px-2 border border-gray-300 text-right tabular-nums font-bold ${balance > 0 ? 'text-red-600' : 'text-green-700'}`}>{formatAccountingCurrency(balance)}</td></tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      {billPayments.length > 0 && (
+                        <div className="border-t border-gray-900 pt-3">
+                          <h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Payments</h4>
+                          <table className="w-full text-sm border-collapse">
+                            <thead>
+                              <tr>
+                                <th className="text-left py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Payment</th>
+                                <th className="text-left py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Date</th>
+                                <th className="text-left py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Method</th>
+                                <th className="text-right py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {billPayments.map((p) => (
+                                <tr key={p.id}>
+                                  <td className="py-1.5 px-2 border border-gray-300 font-mono text-xs">{p.paymentNumber || p.id}</td>
+                                  <td className="py-1.5 px-2 border border-gray-300">{new Date(p.date).toLocaleDateString()}</td>
+                                  <td className="py-1.5 px-2 border border-gray-300">{p.paymentMethod || '—'}</td>
+                                  <td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums font-medium">{formatAccountingCurrency(Number(p.amount || 0))}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
                     </div>
-                    )}
                   </ModalBody>
                   <ModalFooter className="border-t bg-white px-4 py-2.5">
                     <Button variant="flat" size="sm" onPress={onClose}>Close</Button>

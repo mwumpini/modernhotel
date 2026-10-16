@@ -789,6 +789,10 @@ function paymentVoucherApprovalTail(order: number, opts?: { signatureDisplay?: '
   ];
 }
 
+function paymentVoucherLedgerBlocks(): BlockConfig[] {
+  return [block({ id: 'ledger-voucher', type: 'ledger-voucher', order: 0 })];
+}
+
 function paymentVoucherStandardBlocks(): BlockConfig[] {
   return [
     block({ id: 'company-name', type: 'company-name', order: 0 }),
@@ -1433,6 +1437,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-accommodation-invoice-premium', 'accommodation-invoice', 'Premium', premiumBlocks('Guest / Client', [
       { label: 'Guest Signature' }, { label: 'Cashier Signature' },
     ]), { showWatermark: true, watermarkText: 'INVOICE' }),
+    template('builtin-accommodation-invoice-checkout-bill', 'accommodation-invoice', 'Checkout Bill', checkoutBillBlocks(), CHECKOUT_BILL_STYLE),
     template('builtin-accommodation-invoice-modern-banner', 'accommodation-invoice', 'Modern Banner', modernBannerBlocks('Guest / Client')),
     template('builtin-accommodation-invoice-statement', 'accommodation-invoice', 'Statement (corporate account)', statementBlocks('Guest / Client')),
     template('builtin-accommodation-invoice-tax-invoice', 'accommodation-invoice', 'Tax Invoice (GRA compliance)', taxInvoiceBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
@@ -1476,6 +1481,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-event-invoice-premium', 'event-invoice', 'Premium', premiumBlocks('Guest / Client', [
       { label: 'Guest Signature' }, { label: 'Cashier Signature' },
     ]), { showWatermark: true, watermarkText: 'INVOICE' }),
+    template('builtin-event-invoice-checkout-bill', 'event-invoice', 'Checkout Bill', checkoutBillBlocks(), CHECKOUT_BILL_STYLE),
     template('builtin-event-invoice-itemized-letter', 'event-invoice', 'Itemized List (Letter Style)', itemizedLetterBlocks([
       { label: 'Guest Signature' }, { label: 'Cashier Signature' },
     ])),
@@ -1503,6 +1509,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-event-contract-bottom', 'event-contract', 'Parties at the bottom', bottomContractBlocks(), { fontFamily: 'serif' }),
   ],
   'payment-voucher': [
+    template('builtin-payment-voucher-ledger', 'payment-voucher', 'Ledger', paymentVoucherLedgerBlocks(), { fontFamily: 'sans', corners: 'square', borderWidth: 'thick' }),
     template('builtin-payment-voucher-standard', 'payment-voucher', 'Standard', paymentVoucherStandardBlocks()),
     template('builtin-payment-voucher-premium', 'payment-voucher', 'Premium', [
       block({ id: 'logo', type: 'logo', order: 0 }),

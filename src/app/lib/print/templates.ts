@@ -138,6 +138,8 @@ export interface PrintBankDetails {
 
 export interface PrintDebitCreditLine {
   accountName: string;
+  /** General-ledger code, printed in the ledger voucher's Account Code column. */
+  accountCode?: string;
   details?: string;
   debit?: number;
   credit?: number;
@@ -249,6 +251,8 @@ export interface PrintData {
   tender?: PrintTender;
   /** Restaurant table on a Noda bill, such as "01" or "T01". */
   tableNumber?: string;
+  /** Cheque number on a payment voucher. */
+  chequeNumber?: string;
   /** 'short' prints NHIL/GFL (restaurant till slips); otherwise NHIL/GETFund. Set by renderPrint. */
   taxLabelStyle?: TaxLabelStyle;
 }

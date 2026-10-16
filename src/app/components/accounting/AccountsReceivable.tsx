@@ -1109,115 +1109,176 @@ export default function AccountsReceivable() {
 				window.alert('No invoice selected to print.');
 				return;
 			}
-		const isProforma = invoice.isProforma || invoice.invoiceNumber?.startsWith('PRO-');
-		const source = getSourceLabel(invoice.sourceModule);
-		const balance = (invoice.total || 0) - (invoice.paidAmount || 0);
-		const relatedReceipts = getInvoiceReceipts(invoice.id);
-		
-		const receiptRows = relatedReceipts.map((r: any) => `<tr>
-			<td>${r.paymentNumber || r.id}</td>
-			<td>${new Date(r.date).toLocaleString()}</td>
-			<td>${r.paymentMethod}</td>
-			<td class="amount">${formatAccountingCurrency(Number(r.amount))}</td>
-		</tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#6b7280">No payments recorded</td></tr>';
-
-		// Same canonical stacked-tax reconstruction as the on-screen invoice modal, so the
-		// PDF itemizes VAT/NHIL/GETFund/Tourism instead of a single opaque "Tax" line.
-		const pdfSubtotal = Number(invoice.subtotal || 0);
-		const pdfTotalTax = Number(invoice.taxAmount || 0);
-		const pdfTaxBreakdown: { name: string; rate: number; amount: number }[] =
-			invoice.taxBreakdown && invoice.taxBreakdown.length > 0
-				? invoice.taxBreakdown
-				: (pdfSubtotal > 0 ? computeSalesTax(pdfSubtotal, pdfTotalTax).lines.map(l => ({ name: l.name, rate: l.rate, amount: l.amount })) : []);
-		const taxBreakdownRows = displayTaxLines(pdfTaxBreakdown).map(t =>
-			`<tr><td>${taxLineLabel(t)}</td><td class="amount">${formatAccountingCurrency(Number(t.amount))}</td></tr>`
-		).join('');
-
-		const html = generatePdfHtml(isProforma ? 'Proforma Invoice' : 'Sales Invoice', `
-			<div class="header">
-				<h1>${isProforma ? '📋' : '🧾'} ${isProforma ? 'PROFORMA INVOICE' : 'SALES INVOICE'}</h1>
-				<div class="subtitle">${invoice.invoiceNumber || invoice.id}</div>
-			</div>
-			
-			<div class="section">
-				<div class="section-title">Transaction Details</div>
-				<div class="detail-grid">
-					<div class="detail-item"><div class="label">Type</div><div class="value">${isProforma ? 'Proforma' : 'Invoice'}</div></div>
-					<div class="detail-item"><div class="label">Source</div><div class="value">${source.icon} ${source.label}</div></div>
-					<div class="detail-item"><div class="label">Date</div><div class="value">${new Date(invoice.date).toLocaleDateString()}</div></div>
-					<div class="detail-item"><div class="label">${isProforma ? 'Valid Until' : 'Due Date'}</div><div class="value">${new Date(invoice.dueDate).toLocaleDateString()}</div></div>
+			const esc = (value: unknown) => String(value ?? '').replace(/[&<>"]/g, (ch) => (
+				ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : '&quot;'
+			));
+			const money = (amount: number) => esc(formatAccountingCurrency(amount));
+			const isProforma = invoice.isProforma || invoice.invoiceNumber?.startsWith('PRO-');
+			const source = getSourceLabel(invoice.sourceModule);
+			const balance = (invoice.total || 0) - (invoice.paidAmount || 0);
+			const dueDate = invoice.dueDate ? new Date(invoice.dueDate) : null;
+			const dueValid = !!dueDate && !Number.isNaN(dueDate.getTime());
+			const isOverdue = !isProforma && balance > 0 && dueValid && dueDate < new Date();
+			const statusLabel = !isProforma && balance <= 0 ? 'Paid' : isOverdue ? 'Overdue' : isProforma ? 'Proforma' : 'Open';
+			const relatedReceipts = getInvoiceReceipts(invoice.id);
+			const pdfSubtotal = Number(invoice.subtotal || 0);
+			const pdfTotalTax = Number(invoice.taxAmount || 0);
+			const pdfTaxBreakdown: { name: string; rate: number; amount: number }[] =
+				invoice.taxBreakdown && invoice.taxBreakdown.length > 0
+					? invoice.taxBreakdown
+					: (pdfSubtotal > 0 ? computeSalesTax(pdfSubtotal, pdfTotalTax).lines.map(l => ({ name: l.name, rate: l.rate, amount: l.amount })) : []);
+			const taxLines = displayTaxLines(pdfTaxBreakdown);
+			const totalTaxRate = taxLines.reduce((sum, line) => sum + Number(line.rate || 0), 0);
+			const sourceLines = invoiceSourceLines(invoice, foReservations, foFolios);
+			const summaryText = invoice.description || 'Services';
+			const lines = sourceLines.length > 1 ? sourceLines : [{
+				description: summaryText,
+				quantity: 1,
+				unitPrice: pdfSubtotal,
+				amount: pdfSubtotal,
+			}];
+			const lineRows = lines.map((line, index) => `<tr>
+				<td class="num">${index + 1}</td>
+				<td>${esc(line.description || '—')}</td>
+				<td class="num">${esc(line.quantity)}</td>
+				<td class="num">${money(line.unitPrice)}</td>
+				<td class="num strong">${money(line.amount)}</td>
+			</tr>`).join('');
+			const taxRows = taxLines.map((line) => `<tr>
+				<td>${esc(taxLineLabel(line))}</td>
+				<td class="num">${money(Number(line.amount || 0))}</td>
+			</tr>`).join('');
+			const customerId = partyDisplayId(invoice.businessPartnerId, foGuests, foReservations);
+			const staffName = invoice.staffName && !/^system$/i.test(String(invoice.staffName)) ? String(invoice.staffName) : '';
+			const staffId = invoice.staffId && invoice.staffId !== '-' ? String(invoice.staffId) : '';
+			const reference = invoice.poNumber || invoice.reference || '';
+			const hero = !isProforma && balance > 0 ? balance : Number(invoice.total || 0);
+			const receiptRows = relatedReceipts.map((receipt) => `<tr>
+				<td class="mono">${esc(receipt.paymentNumber || receipt.id)}</td>
+				<td>${esc(new Date(receipt.date).toLocaleString())}</td>
+				<td>${esc(receipt.paymentMethod || '—')}</td>
+				<td>${esc(receipt.staffName || '')}</td>
+				<td class="num strong">${money(Number(receipt.amount || 0))}</td>
+			</tr>`).join('');
+			const eventBits = [
+				invoice.eventId ? `<div class="row"><span class="muted">Event</span><span class="mono">${esc(invoice.eventId)}</span></div>` : '',
+				invoice.checkIn ? `<div class="row"><span class="muted">Check-in</span><span>${esc(new Date(invoice.checkIn).toLocaleDateString())}</span></div>` : '',
+				invoice.checkOut ? `<div class="row"><span class="muted">Check-out</span><span>${esc(new Date(invoice.checkOut).toLocaleDateString())}</span></div>` : '',
+				invoice.pax ? `<div class="row"><span class="muted">Guests</span><span>${esc(invoice.pax)}</span></div>` : '',
+				invoice.venue ? `<div class="row"><span class="muted">Venue</span><span>${esc(invoice.venue)}</span></div>` : '',
+			].filter(Boolean).join('');
+			const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${isProforma ? 'Proforma' : 'Sales invoice'} ${esc(invoice.invoiceNumber || invoice.id)}</title>
+				<style>
+					* { box-sizing: border-box; }
+					body { font-family: 'Segoe UI', Arial, sans-serif; color: #111827; margin: 0; padding: 28px; }
+					.top { display: flex; justify-content: space-between; gap: 16px; border-bottom: 1px solid #e5e7eb; padding-bottom: 10px; }
+					h1 { font-size: 16px; margin: 0; }
+					.chip { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: #f3f4f6; font-size: 12px; font-weight: 600; }
+					.chip.ok { background: #dcfce7; color: #166534; }
+					.chip.warn { background: #fee2e2; color: #991b1b; }
+					.num-no { font-family: ui-monospace, monospace; font-size: 13px; color: #374151; margin: 2px 0 0; }
+					.meta { text-align: right; font-size: 12px; color: #4b5563; }
+					.hero { text-align: center; padding: 16px 0; border-bottom: 1px solid #e5e7eb; }
+					.kicker { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: #6b7280; margin: 0; }
+					.hero .sum { font-size: 28px; font-weight: 700; margin: 2px 0; }
+					.hero .sum.owed { color: #111827; }
+					.hero .sum.paid { color: #15803d; }
+					.fine { font-size: 12px; color: #6b7280; margin: 0; }
+					.pair { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; padding: 12px 0; border-bottom: 1px solid #e5e7eb; font-size: 13px; }
+					.label { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #6b7280; margin: 0 0 4px; }
+					.name { font-weight: 700; }
+					.muted { color: #6b7280; font-size: 12px; }
+					.row { display: flex; justify-content: space-between; gap: 12px; }
+					.split { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 12px; margin-top: 12px; }
+					table.grid { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; }
+					table.grid th, table.grid td { border: 1px solid #d1d5db; padding: 6px 8px; vertical-align: top; }
+					table.grid th { background: #f3f4f6; color: #374151; font-size: 12px; font-weight: 600; text-align: left; }
+					.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+					.strong { font-weight: 600; }
+					.mono { font-family: ui-monospace, monospace; font-size: 12px; }
+					.green { color: #15803d; }
+					.red { color: #dc2626; }
+					h2 { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: #6b7280; margin: 14px 0 6px; }
+					.pay-break { border-top: 1px solid #111827; margin-top: 16px; padding-top: 12px; }
+				</style></head><body>
+				<div class="top">
+					<div>
+						<h1>${isProforma ? 'PROFORMA INVOICE' : 'SALES INVOICE'} <span class="chip ${!isProforma && balance <= 0 ? 'ok' : isOverdue ? 'warn' : ''}">${esc(statusLabel)}</span></h1>
+						<p class="num-no">${esc(invoice.invoiceNumber || invoice.id)}</p>
+					</div>
+					<div class="meta">
+						<div>Customer: <strong>${esc(invoice.customerName || 'Walk-in guest')}</strong></div>
+						<div>Date: ${esc(new Date(invoice.date).toLocaleDateString())}</div>
+					</div>
 				</div>
-			</div>
-
-			<div class="section">
-				<div class="section-title">Customer Details</div>
-				<div class="detail-grid">
-					<div class="detail-item"><div class="label">Name</div><div class="value">${invoice.customerName || '-'}</div></div>
-					<div class="detail-item"><div class="label">Email</div><div class="value">${invoice.customerEmail || '-'}</div></div>
-					<div class="detail-item"><div class="label">Phone</div><div class="value">${invoice.customerPhone || '-'}</div></div>
-					<div class="detail-item"><div class="label">ID</div><div class="value">${invoice.businessPartnerId || '-'}</div></div>
+				<div class="hero">
+					<p class="kicker">${isProforma ? 'Proforma total' : balance > 0 ? 'Still owed' : 'Paid in full'}</p>
+					<p class="sum ${!isProforma && balance > 0 ? 'owed' : 'paid'}">${money(hero)}</p>
+					<p class="fine">Total ${money(Number(invoice.total || 0))}${isProforma ? '' : ` · Paid ${money(Number(invoice.paidAmount || 0))}`}</p>
 				</div>
-			</div>
-
-			${isProforma && (invoice.eventId || invoice.venue) ? `
-			<div class="section">
-				<div class="section-title">Event Details</div>
-				<div class="detail-grid">
-					${invoice.eventId ? `<div class="detail-item"><div class="label">Event ID</div><div class="value">${invoice.eventId}</div></div>` : ''}
-					${invoice.checkIn ? `<div class="detail-item"><div class="label">Check-In</div><div class="value">${new Date(invoice.checkIn).toLocaleDateString()}</div></div>` : ''}
-					${invoice.checkOut ? `<div class="detail-item"><div class="label">Check-Out</div><div class="value">${new Date(invoice.checkOut).toLocaleDateString()}</div></div>` : ''}
-					${invoice.pax ? `<div class="detail-item"><div class="label">Pax</div><div class="value">${invoice.pax}</div></div>` : ''}
-					${invoice.venue ? `<div class="detail-item"><div class="label">Venue</div><div class="value">${invoice.venue}</div></div>` : ''}
+				<div class="pair">
+					<div>
+						<p class="label">Bill to</p>
+						<div class="name">${esc(invoice.customerName || 'Walk-in guest')}</div>
+						${invoice.customerEmail ? `<div class="muted">${esc(invoice.customerEmail)}</div>` : ''}
+						${invoice.customerPhone ? `<div class="muted">${esc(invoice.customerPhone)}</div>` : ''}
+						${customerId ? `<div class="muted">ID ${esc(customerId)}</div>` : ''}
+					</div>
+					<div>
+						<p class="label">Invoice</p>
+						<div class="row"><span class="muted">Invoice date</span><span>${esc(new Date(invoice.date).toLocaleDateString())}</span></div>
+						<div class="row"><span class="muted">${isProforma ? 'Valid until' : 'Due'}</span><span class="${isOverdue ? 'red' : ''}">${dueValid ? esc(dueDate.toLocaleDateString()) : '—'}</span></div>
+						${reference ? `<div class="row"><span class="muted">Reference</span><span class="mono">${esc(reference)}</span></div>` : ''}
+						<div class="row"><span class="muted">Source</span><span>${esc(source.label)}</span></div>
+						${eventBits}
+					</div>
+					<div>
+						<p class="label">Processed by</p>
+						${staffName ? `<div class="name">${esc(staffName)}</div>` : ''}
+						${staffId ? `<div class="muted">${esc(staffId)}</div>` : ''}
+						${invoice.staffRole ? `<div class="muted">${esc(invoice.staffRole)}</div>` : ''}
+						<div class="muted">${esc(source.label)}</div>
+					</div>
 				</div>
-			</div>
-			` : ''}
-
-			${taxBreakdownRows ? `
-			<div class="section">
-				<div class="section-title">Tax Breakdown (Ghana GRA)</div>
-				<table>
-					${taxBreakdownRows}
+				<h2>Lines</h2>
+				<table class="grid">
+					<thead><tr><th class="num">#</th><th>Description</th><th class="num">Qty</th><th class="num">Unit</th><th class="num">Amount</th></tr></thead>
+					<tbody>${lineRows}</tbody>
 				</table>
-			</div>
-			` : ''}
-
-			<div class="section">
-				<div class="section-title">Financial Summary</div>
-				<table>
-					<tr><td style="width:70%">Subtotal</td><td class="amount">${formatAccountingCurrency(Number(invoice.subtotal || 0))}</td></tr>
-					<tr><td>Total Tax</td><td class="amount">${formatAccountingCurrency(Number(invoice.taxAmount || 0))}</td></tr>
-					<tr class="total-row"><td><strong>Total</strong></td><td class="amount"><strong>${formatAccountingCurrency(Number(invoice.total || 0))}</strong></td></tr>
-					${!isProforma ? `
-					<tr><td>Paid</td><td class="amount" style="color:#16a34a">${formatAccountingCurrency(Number(invoice.paidAmount || 0))}</td></tr>
-					<tr><td><strong>Balance Due</strong></td><td class="amount" style="color:${balance > 0 ? '#ea580c' : '#16a34a'};font-weight:bold">${formatAccountingCurrency(balance)}</td></tr>
-					` : ''}
-				</table>
-			</div>
-
-			${!isProforma ? `
-			<div class="section">
-				<div class="section-title">Payment History</div>
-				<table>
-					<thead><tr><th>Receipt #</th><th>Date/Time</th><th>Method</th><th>Amount</th></tr></thead>
+				<div class="split">
+					<div>
+						<h2>Tax</h2>
+						<table class="grid">
+							<tbody>
+								${taxRows || '<tr><td colspan="2">No tax</td></tr>'}
+								<tr class="strong"><td>Total tax${totalTaxRate ? ` (${esc(totalTaxRate.toFixed(1))}%)` : ''}</td><td class="num">${money(pdfTotalTax)}</td></tr>
+							</tbody>
+						</table>
+					</div>
+					<div>
+						<h2>Totals</h2>
+						<table class="grid">
+							<tbody>
+								<tr><td>Subtotal</td><td class="num">${money(pdfSubtotal)}</td></tr>
+								<tr><td>Tax</td><td class="num">${money(pdfTotalTax)}</td></tr>
+								<tr class="strong"><td>Total</td><td class="num">${money(Number(invoice.total || 0))}</td></tr>
+								${!isProforma ? `<tr class="green"><td>Paid</td><td class="num">${money(Number(invoice.paidAmount || 0))}</td></tr>
+								<tr class="strong ${balance > 0 ? 'red' : 'green'}"><td>Balance</td><td class="num">${money(balance)}</td></tr>` : ''}
+							</tbody>
+						</table>
+					</div>
+				</div>
+				${!isProforma && relatedReceipts.length ? `<div class="pay-break"><h2>Payments</h2><table class="grid">
+					<thead><tr><th>Receipt</th><th>Date</th><th>Method</th><th>Processed by</th><th class="num">Amount</th></tr></thead>
 					<tbody>${receiptRows}</tbody>
-				</table>
-			</div>
-			` : ''}
-
-			<div class="section">
-				<div class="section-title">Processed By</div>
-				<div class="detail-grid">
-					<div class="detail-item"><div class="label">Staff</div><div class="value">${invoice.staffName || 'System'}</div></div>
-					<div class="detail-item"><div class="label">Role</div><div class="value">${invoice.staffRole || '-'}</div></div>
-				</div>
-			</div>
-		`, `Generated on ${new Date().toLocaleString()}`);
-		openPrintPreview(html);
+				</table></div>` : ''}
+				</body></html>`;
+			openPrintPreview(html);
 		} catch (err) {
 			console.error('[AR] Print invoice failed', err);
 			window.alert('Could not print this invoice. Please try again.');
 		}
-	}, [getInvoiceReceipts]);
+	}, [foFolios, foGuests, foReservations, getInvoiceReceipts]);
 
 	// Print Individual Receipt (hotel template via folio/invoice picker context)
 	const printReceiptPDF = useCallback(
@@ -4592,8 +4653,10 @@ export default function AccountsReceivable() {
 						);
 
 						const totalTaxRate = taxBreakdown.reduce((sum: number, t: any) => sum + t.rate, 0);
-						
-						// Line items
+						const customerId = partyDisplayId(selectedInvoice.businessPartnerId, foGuests, foReservations);
+						const staffName = selectedInvoice.staffName && !/^system$/i.test(selectedInvoice.staffName) ? selectedInvoice.staffName : '';
+						const staffId = selectedInvoice.staffId && selectedInvoice.staffId !== '-' ? selectedInvoice.staffId : '';
+						const shownTaxLines = displayTaxLines(taxBreakdown);
 						
                                                 return (
 							<>
@@ -4625,7 +4688,7 @@ export default function AccountsReceivable() {
 													<div className="font-semibold text-gray-900">{selectedInvoice.customerName || 'Walk-in Customer'}</div>
 													{selectedInvoice.customerEmail && <div className="text-gray-600 text-xs">{selectedInvoice.customerEmail}</div>}
 													{selectedInvoice.customerPhone && <div className="text-gray-600 text-xs">{selectedInvoice.customerPhone}</div>}
-													<div className="text-gray-500 font-mono text-xs mt-1">ID: {partyDisplayId(selectedInvoice.businessPartnerId, foGuests, foReservations) || '—'}</div>
+													{customerId && <div className="text-gray-500 font-mono text-xs mt-1">ID: {customerId}</div>}
                                     </div>
                                 </div>
 
@@ -4644,9 +4707,9 @@ export default function AccountsReceivable() {
 											<div>
 												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Processed By</h4>
 												<div className="text-sm space-y-0.5">
-													<div className="flex justify-between gap-2"><span className="text-gray-500">Staff:</span><span className="font-medium">{selectedInvoice.staffName && !/^system$/i.test(selectedInvoice.staffName) ? selectedInvoice.staffName : '—'}</span></div>
-													<div className="flex justify-between gap-2"><span className="text-gray-500">Staff ID:</span><span className="font-mono text-xs">{selectedInvoice.staffId || '-'}</span></div>
-													<div className="flex justify-between gap-2"><span className="text-gray-500">Role:</span><span>{selectedInvoice.staffRole || 'Staff'}</span></div>
+													{staffName && <div className="flex justify-between gap-2"><span className="text-gray-500">Staff:</span><span className="font-medium">{staffName}</span></div>}
+													{staffId && <div className="flex justify-between gap-2"><span className="text-gray-500">Staff ID:</span><span className="font-mono text-xs">{staffId}</span></div>}
+													{selectedInvoice.staffRole && <div className="flex justify-between gap-2"><span className="text-gray-500">Role:</span><span>{selectedInvoice.staffRole}</span></div>}
 													<div className="flex justify-between gap-2"><span className="text-gray-500">Department:</span><span>{source.label}</span></div>
 												</div>
 											</div>
@@ -4679,32 +4742,32 @@ export default function AccountsReceivable() {
 													</button>
 												)}
 											</div>
-											<table className="w-full text-sm">
+											<table className="w-full text-sm border-collapse">
 												<thead>
-													<tr className="border-b border-gray-200">
-														<th className="text-left py-1 text-gray-600 font-semibold">#</th>
-														<th className="text-left py-1 text-gray-600 font-semibold">Description</th>
-														<th className="text-right py-1 text-gray-600 font-semibold">Qty</th>
-														<th className="text-right py-1 text-gray-600 font-semibold">Unit Price</th>
-														<th className="text-right py-1 text-gray-600 font-semibold">Amount</th>
+													<tr>
+														<th className="text-left py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">#</th>
+														<th className="text-left py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Description</th>
+														<th className="text-right py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Qty</th>
+														<th className="text-right py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Unit Price</th>
+														<th className="text-right py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Amount</th>
 													</tr>
 												</thead>
 												<tbody>
 													{showInvoiceCharges && chargesDiffer ? chargeLines.map((item, idx) => (
-														<tr key={idx} className="border-b border-gray-100">
-															<td className="py-1 text-gray-500">{idx + 1}</td>
-															<td className="py-1">{item.description}</td>
-															<td className="py-1 text-right">{item.quantity}</td>
-															<td className="py-1 text-right">{formatAccountingCurrency(item.unitPrice)}</td>
-															<td className="py-1 text-right font-medium">{formatAccountingCurrency(item.amount)}</td>
+														<tr key={idx}>
+															<td className="py-1.5 px-2 border border-gray-300 text-gray-500">{idx + 1}</td>
+															<td className="py-1.5 px-2 border border-gray-300">{item.description}</td>
+															<td className="py-1.5 px-2 border border-gray-300 text-right">{item.quantity}</td>
+															<td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums">{formatAccountingCurrency(item.unitPrice)}</td>
+															<td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums font-medium">{formatAccountingCurrency(item.amount)}</td>
 														</tr>
 													)) : (
-														<tr className="border-b border-gray-100">
-															<td className="py-1 text-gray-500">1</td>
-															<td className="py-1">{summaryText}</td>
-															<td className="py-1 text-right">1</td>
-															<td className="py-1 text-right">{formatAccountingCurrency(subtotal)}</td>
-															<td className="py-1 text-right font-medium">{formatAccountingCurrency(subtotal)}</td>
+														<tr>
+															<td className="py-1.5 px-2 border border-gray-300 text-gray-500">1</td>
+															<td className="py-1.5 px-2 border border-gray-300">{summaryText}</td>
+															<td className="py-1.5 px-2 border border-gray-300 text-right">1</td>
+															<td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums">{formatAccountingCurrency(subtotal)}</td>
+															<td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums font-medium">{formatAccountingCurrency(subtotal)}</td>
 														</tr>
 													)}
 												</tbody>
@@ -4721,92 +4784,86 @@ export default function AccountsReceivable() {
 														<span className="text-xs text-gray-400 cursor-help">ⓘ</span>
 													</Tooltip>
 												</div>
-												<div className="bg-gray-50 rounded-md p-2.5 text-sm">
-													<table className="w-full">
-														<tbody>
-															{taxBreakdown.length > 0 ? displayTaxLines(taxBreakdown).map((tax, idx: number) => (
-																<tr key={tax.name || idx} className="border-b border-gray-200">
-																	<td className="py-1 text-gray-600">{taxLineLabel(tax)}</td>
-																	<td className="py-1 text-right font-mono">{formatAccountingCurrency(Number(tax.amount || 0))}</td>
-																</tr>
-															)) : (
-																<tr className="border-b border-gray-200">
-																	<td className="py-1 text-gray-400 italic" colSpan={2}>No taxes applied</td>
-																</tr>
-															)}
-															<tr className="font-semibold">
-																<td className="py-1 text-gray-800">Total Tax ({totalTaxRate.toFixed(1)}%)</td>
-																<td className="py-1 text-right font-mono">{formatAccountingCurrency(totalTax)}</td>
+												<table className="w-full text-sm border-collapse">
+													<tbody>
+														{shownTaxLines.length > 0 ? shownTaxLines.map((tax, idx: number) => (
+															<tr key={tax.name || idx}>
+																<td className="py-1.5 px-2 border border-gray-300 text-gray-600">{taxLineLabel(tax)}</td>
+																<td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums">{formatAccountingCurrency(Number(tax.amount || 0))}</td>
 															</tr>
-														</tbody>
-													</table>
-												</div>
+														)) : (
+															<tr>
+																<td className="py-1.5 px-2 border border-gray-300 text-gray-400" colSpan={2}>No tax</td>
+															</tr>
+														)}
+														<tr>
+															<td className="py-1.5 px-2 border border-gray-300 font-semibold text-gray-800">Total tax{totalTaxRate ? ` (${totalTaxRate.toFixed(1)}%)` : ''}</td>
+															<td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums font-semibold">{formatAccountingCurrency(totalTax)}</td>
+														</tr>
+													</tbody>
+												</table>
 											</div>
 											
 											{/* Amount Summary */}
 											<div>
 												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Amount Summary</h4>
-												<div className="bg-gray-50 rounded-md p-2.5 text-sm">
-													<table className="w-full">
-														<tbody>
-															<tr className="border-b border-gray-200">
-																<td className="py-1 text-gray-600">Subtotal</td>
-																<td className="py-1 text-right font-mono">{formatAccountingCurrency(subtotal)}</td>
+												<table className="w-full text-sm border-collapse">
+													<tbody>
+														<tr>
+															<td className="py-1.5 px-2 border border-gray-300 text-gray-600">Subtotal</td>
+															<td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums">{formatAccountingCurrency(subtotal)}</td>
+														</tr>
+														<tr>
+															<td className="py-1.5 px-2 border border-gray-300 text-gray-600">Tax</td>
+															<td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums">{formatAccountingCurrency(totalTax)}</td>
+														</tr>
+														<tr>
+															<td className="py-1.5 px-2 border border-gray-300 font-semibold">Total</td>
+															<td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums font-semibold">{formatAccountingCurrency(Number(selectedInvoice.total || 0))}</td>
+														</tr>
+														{!isProforma && (
+															<tr>
+																<td className="py-1.5 px-2 border border-gray-300 text-green-700">Paid</td>
+																<td className="py-1.5 px-2 border border-gray-300 text-right tabular-nums text-green-700">{formatAccountingCurrency(Number(selectedInvoice.paidAmount || 0))}</td>
 															</tr>
-															<tr className="border-b border-gray-200">
-																<td className="py-1 text-gray-600">Total Tax</td>
-																<td className="py-1 text-right font-mono">{formatAccountingCurrency(totalTax)}</td>
+														)}
+														{!isProforma && (
+															<tr>
+																<td className={`py-1.5 px-2 border border-gray-300 font-bold ${balance > 0 ? 'text-red-600' : 'text-green-700'}`}>Balance</td>
+																<td className={`py-1.5 px-2 border border-gray-300 text-right tabular-nums font-bold ${balance > 0 ? 'text-red-600' : 'text-green-700'}`}>{formatAccountingCurrency(balance)}</td>
 															</tr>
-															<tr className="border-b border-gray-200 font-semibold">
-																<td className="py-1.5 text-gray-900">TOTAL AMOUNT</td>
-																<td className="py-1.5 text-right font-mono">{formatAccountingCurrency(Number(selectedInvoice.total || 0))}</td>
-															</tr>
-															<tr className="border-b border-gray-200">
-																<td className="py-1 text-green-700">Amount Paid</td>
-																<td className="py-1 text-right font-mono text-green-700">{formatAccountingCurrency(Number(selectedInvoice.paidAmount || 0))}</td>
-															</tr>
-															<tr className={`font-bold ${balance > 0 ? 'text-red-700' : 'text-green-700'}`}>
-																<td className="py-1.5">BALANCE DUE</td>
-																<td className="py-1.5 text-right font-mono">{formatAccountingCurrency(balance)}</td>
-															</tr>
-														</tbody>
-													</table>
-												</div>
+														)}
+													</tbody>
+												</table>
 											</div>
 										</div>
 
 										{/* Payment History */}
-										{!isProforma && (
-											<div className="pt-3 border-t">
-												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Payment History ({invoiceReceipts.length})</h4>
-												{invoiceReceipts.length > 0 ? (
-													<table className="w-full text-sm">
-														<thead>
-															<tr className="border-b border-gray-200">
-																<th className="text-left py-1 text-gray-600 font-semibold">Receipt #</th>
-																<th className="text-left py-1 text-gray-600 font-semibold">Date/Time</th>
-																<th className="text-left py-1 text-gray-600 font-semibold">Method</th>
-																<th className="text-left py-1 text-gray-600 font-semibold">Processed By</th>
-																<th className="text-right py-1 text-gray-600 font-semibold">Amount</th>
+										{!isProforma && invoiceReceipts.length > 0 && (
+											<div className="border-t border-gray-900 pt-3">
+												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Payments</h4>
+												<table className="w-full text-sm border-collapse">
+													<thead>
+														<tr>
+															<th className="text-left py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Receipt</th>
+															<th className="text-left py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Date</th>
+															<th className="text-left py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Method</th>
+															<th className="text-left py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Processed by</th>
+															<th className="text-right py-1.5 px-2 border border-gray-300 bg-gray-50 text-gray-600 font-semibold">Amount</th>
+														</tr>
+													</thead>
+													<tbody>
+														{invoiceReceipts.map((r: any) => (
+															<tr key={r.id}>
+																<td className="py-1.5 px-2 border border-gray-300 font-mono text-xs">{r.paymentNumber || r.id}</td>
+																<td className="py-1.5 px-2 border border-gray-300">{new Date(r.date).toLocaleString()}</td>
+																<td className="py-1.5 px-2 border border-gray-300">{r.paymentMethod}</td>
+																<td className="py-1.5 px-2 border border-gray-300">{r.staffName || ''}</td>
+																<td className={`py-1.5 px-2 border border-gray-300 text-right tabular-nums font-semibold ${r.status === 'Void' ? 'text-slate-400 line-through' : 'text-green-700'}`}>{formatAccountingCurrency(Number(r.amount))}</td>
 															</tr>
-														</thead>
-														<tbody>
-															{invoiceReceipts.map((r: any) => (
-																<tr key={r.id} className="border-b border-gray-100 hover:bg-gray-50">
-																	<td className="py-1 font-mono text-xs">{r.paymentNumber || r.id}</td>
-																	<td className="py-1">{new Date(r.date).toLocaleString()}</td>
-																	<td className="py-1">{r.paymentMethod}</td>
-																	<td className="py-1">{r.staffName || '-'}</td>
-																	<td className={`py-1 text-right font-semibold ${r.status === 'Void' ? 'text-slate-400 line-through' : 'text-green-700'}`}>{formatAccountingCurrency(Number(r.amount))}</td>
-																</tr>
-															))}
-														</tbody>
-													</table>
-												) : (
-													<div className="text-center py-3 text-sm text-gray-500 bg-gray-50 rounded-md">
-														No payments recorded
-													</div>
-												)}
+														))}
+													</tbody>
+												</table>
 											</div>
 										)}
 									</div>
@@ -4870,6 +4927,7 @@ export default function AccountsReceivable() {
 						const source = getSourceLabel(selectedReceipt.sourceModule);
 						const linkedInvoice = getReceiptInvoice(selectedReceipt.invoiceId);
 						const invoiceBalance = linkedInvoice ? (linkedInvoice.total || 0) - (linkedInvoice.paidAmount || 0) : 0;
+						const payerId = partyDisplayId(selectedReceipt.businessPartnerId, foGuests, foReservations);
 						
 						return (
 							<>
@@ -4920,7 +4978,9 @@ export default function AccountsReceivable() {
 												<h4 className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">Received From</h4>
 												<div className="text-sm space-y-0.5">
 													<div className="font-semibold text-gray-900">{selectedReceipt.customerName || 'Walk-in Customer'}</div>
-													<div className="text-gray-500 font-mono text-xs mt-1">ID: {partyDisplayId(selectedReceipt.businessPartnerId, foGuests, foReservations) || '—'}</div>
+													{payerId ? (
+														<div className="text-gray-500 font-mono text-xs mt-1">ID: {payerId}</div>
+													) : null}
 												</div>
 											</div>
 											
@@ -4946,23 +5006,25 @@ export default function AccountsReceivable() {
 												<div className="bg-gray-50 rounded-md p-2.5 text-sm h-full">
 													<table className="w-full">
 														<tbody>
-															<tr className="border-b border-gray-200">
+															<tr>
 																<td className="py-1 text-gray-600">Payment Method</td>
 																<td className="py-1 text-right font-medium">{selectedReceipt.paymentMethod || 'Cash'}</td>
 															</tr>
-															<tr className="border-b border-gray-200">
+															<tr>
 																<td className="py-1 text-gray-600">Transaction Date</td>
 																<td className="py-1 text-right">{new Date(selectedReceipt.date).toLocaleDateString()}</td>
 															</tr>
-															<tr className="border-b border-gray-200">
+															<tr>
 																<td className="py-1 text-gray-600">Transaction Time</td>
 																<td className="py-1 text-right">{new Date(selectedReceipt.date).toLocaleTimeString()}</td>
 															</tr>
-															<tr className="border-b border-gray-200">
-																<td className="py-1 text-gray-600">Reference</td>
-																<td className="py-1 text-right font-mono text-xs">{selectedReceipt.reference || '-'}</td>
-															</tr>
-															<tr className="border-b border-gray-200">
+															{selectedReceipt.reference ? (
+																<tr>
+																	<td className="py-1 text-gray-600">Reference</td>
+																	<td className="py-1 text-right font-mono text-xs">{selectedReceipt.reference}</td>
+																</tr>
+															) : null}
+															<tr>
 																<td className="py-1 text-gray-600">Currency</td>
 																<td className="py-1 text-right">
 																	{(() => {
@@ -4988,15 +5050,15 @@ export default function AccountsReceivable() {
 													<div className="bg-gray-50 rounded-md p-2.5 text-sm h-full">
 														<table className="w-full">
 															<tbody>
-																<tr className="border-b border-gray-200">
+																<tr>
 																	<td className="py-1 pe-2 text-gray-600">Invoice Number</td>
 																	<td className="py-1 text-right font-mono">{(linkedInvoice as any).invoiceNumber || linkedInvoice.id}</td>
 																</tr>
-																<tr className="border-b border-gray-200">
+																<tr>
 																	<td className="py-1 pe-2 text-gray-600">Invoice Total</td>
 																	<td className="py-1 text-right font-mono">{formatAccountingCurrency(Number(linkedInvoice.total || 0))}</td>
 																</tr>
-																<tr className="border-b border-gray-200">
+																<tr>
 																	<td className="py-1 pe-2 text-gray-600">Total Paid (incl. this receipt)</td>
 																	<td className="py-1 text-right font-mono text-green-700 whitespace-nowrap">{formatAccountingCurrency(Number(linkedInvoice.paidAmount || 0))}</td>
 																</tr>

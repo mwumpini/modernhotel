@@ -2653,7 +2653,7 @@ const defaultSettings: SystemSettings = {
 };
 
 const DEFAULT_PRINTING: SettingsStore['printing'] = {
-  receipt: 'simple-receipt', invoice: 'corporate-invoice', proforma: 'conference-proforma-grid', 'payment-voucher': 'builtin-payment-voucher-standard',
+  receipt: 'simple-receipt', invoice: 'corporate-invoice', proforma: 'conference-proforma-grid', 'payment-voucher': 'builtin-payment-voucher-ledger',
   'accommodation-proforma': 'builtin-accommodation-proforma-standard',
   'accommodation-invoice': 'builtin-accommodation-invoice-standard',
   'accommodation-receipt': 'builtin-accommodation-receipt-standard',

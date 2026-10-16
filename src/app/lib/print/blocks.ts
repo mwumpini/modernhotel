@@ -54,6 +54,8 @@ export type BlockType =
   | 'retail-slip'
   // Full-page Noda restaurant bill. The renderer prints the paper itself.
   | 'noda-bill'
+  // Full-page boxed payment voucher. The renderer prints the paper itself.
+  | 'ledger-voucher'
   // Structural — holds other blocks (including other containers, for arbitrary
   // nesting depth) laid out as a row or column, independent of the top-level
   // "Share a row" pairing. See BlockConfig.children/direction/gap.
