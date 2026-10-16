@@ -7,6 +7,8 @@ const DEPARTMENTS = [
   { key: 'fb', name: 'Food & Beverage', code: 'FB', description: 'Restaurant and bar service', budget: 75000 },
   { key: 'kit', name: 'Kitchen', code: 'KIT', description: 'Food preparation and kitchen stores', budget: 80000 },
   { key: 'acc', name: 'Accounts & Administration', code: 'ACC', description: 'Accounting, payroll and administration', budget: 50000 },
+  { key: 'mgt', name: 'Management', code: 'MGT', description: 'General management of the hotel', budget: 40000 },
+  { key: 'str', name: 'Stores', code: 'STR', description: 'Receiving, storing and issuing stock', budget: 30000 },
 ]
 
 const POSITIONS = [
@@ -19,21 +21,41 @@ const POSITIONS = [
   { key: 'chef', dept: 'kit', title: 'Head Chef', code: 'KIT-CHF', baseSalary: 4500 },
   { key: 'cook', dept: 'kit', title: 'Cook', code: 'KIT-COK', baseSalary: 2200 },
   { key: 'clerk', dept: 'acc', title: 'Accounts Clerk', code: 'ACC-CLK', baseSalary: 2800 },
+  { key: 'gm', dept: 'mgt', title: 'General Manager', code: 'MGT-GM', baseSalary: 12000 },
+  { key: 'store', dept: 'str', title: 'Storekeeper', code: 'STR-KPR', baseSalary: 2500 },
 ]
 
+/** Signs off leave, payroll, reviews and approvals in the demo hotel. */
+export const MANAGER = 'Yusif Abubakar'
+export const STOREKEEPER = 'Rashid Osman'
+
 // key, first, last, gender, position, allowances, hired (days ago), born (years ago), health certificate expiry (days from today)
+// Staff from across Ghana: north and south, Muslim and Christian, women and men.
 const STAFF: Array<[string, string, string, 'female' | 'male', string, number, number, number, number | null]> = [
+  ['yusif', 'Yusif', 'Abubakar', 'male', 'gm', 1500, 2600, 47, null],
   ['akosua', 'Akosua', 'Mensah', 'female', 'recep', 300, 900, 28, null],
   ['kwabena', 'Kwabena', 'Owusu', 'male', 'fosup', 500, 1800, 36, null],
+  ['ibrahim', 'Ibrahim', 'Sulemana', 'male', 'recep', 300, 300, 27, null],
   ['ama', 'Ama', 'Serwaa', 'female', 'maid', 200, 500, 31, null],
+  ['salamatu', 'Salamatu', 'Iddrisu', 'female', 'maid', 200, 420, 26, null],
   ['yaw', 'Yaw', 'Boateng', 'male', 'hksup', 350, 1500, 40, null],
   ['efua', 'Efua', 'Quaye', 'female', 'waiter', 200, 400, 25, 18],
+  ['mavis', 'Mavis', 'Anane', 'female', 'waiter', 200, 640, 24, 120],
   ['kofi', 'Kofi', 'Adjei', 'male', 'barman', 250, 700, 30, 300],
   ['nanayaa', 'Nana Yaa', 'Asare', 'female', 'chef', 600, 2100, 38, 45],
   ['kojo', 'Kojo', 'Antwi', 'male', 'cook', 250, 600, 29, 40],
+  ['hamza', 'Hamza', 'Mumuni', 'male', 'cook', 250, 380, 33, 75],
   ['abena', 'Abena', 'Danso', 'female', 'clerk', 350, 1200, 34, null],
-  ['ibrahim', 'Ibrahim', 'Mahama', 'male', 'recep', 300, 300, 27, null],
+  ['rashid', 'Rashid', 'Osman', 'male', 'store', 250, 1100, 35, null],
   ['selasi', 'Selasi', 'Agbeko', 'female', 'waiter', 200, 6, 23, 60],
+]
+
+// Next of kin, one per staff member in order.
+const NEXT_OF_KIN: Array<[string, string]> = [
+  ['Hajia Zuweira Abubakar', 'spouse'], ['Kwasi Mensah', 'father'], ['Esther Owusu', 'spouse'], ['Amina Sulemana', 'sister'],
+  ['Yaa Serwaa', 'mother'], ['Alhassan Iddrisu', 'brother'], ['Gladys Boateng', 'spouse'], ['Joseph Quaye', 'father'],
+  ['Comfort Anane', 'mother'], ['Akosua Adjei', 'spouse'], ['Kwame Asare', 'spouse'], ['Afia Antwi', 'mother'],
+  ['Fatima Mumuni', 'spouse'], ['Kofi Danso', 'brother'], ['Ramatu Osman', 'spouse'], ['Elikem Agbeko', 'brother'],
 ]
 
 /** Ghana PAYE on a month's chargeable income (resident bands). */
@@ -60,7 +82,7 @@ export async function loadHr(ctx: SampleCtx) {
   })))
 
   await seedRows(prisma.hrPosition, POSITIONS.map((x) => ({
-    id: pos(x.key), tenantId, title: x.title, code: x.code, departmentId: dept(x.dept), description: `${x.title} — sample position`,
+    id: pos(x.key), tenantId, title: x.title, code: x.code, departmentId: dept(x.dept), description: x.title,
     baseSalary: x.baseSalary, minSalary: Math.round(x.baseSalary * 0.85), maxSalary: Math.round(x.baseSalary * 1.3), isActive: true, status: 'active',
   })))
 
@@ -68,9 +90,9 @@ export async function loadHr(ctx: SampleCtx) {
   await seedRows(prisma.hrEmployee, STAFF.map(([key, first, last, gender, position, allowances, hiredDaysAgo, age, healthCert], i) => {
     const posRow = POSITIONS.find((x) => x.key === position)!
     return {
-      id: emp(key), tenantId, employeeNumber: `SMP-${String(i + 1).padStart(3, '0')}`,
+      id: emp(key), tenantId, employeeNumber: `EMP-${String(i + 101)}`,
       firstName: first, lastName: last, gender, nationality: 'Ghanaian', maritalStatus: i % 2 ? 'married' : 'single',
-      email: `${first.toLowerCase().replace(/\s+/g, '')}.${last.toLowerCase()}@sample.hotel`, phone: `+233 24 555 ${String(100 + i).padStart(4, '0')}`,
+      email: `${first.toLowerCase().replace(/\s+/g, '')}.${last.toLowerCase()}@demo.agmsync.com`, phone: `+233 24 555 ${String(100 + i).padStart(4, '0')}`,
       dateOfBirth: yearsAgo(age), hireDate: dayOffset(ctx, -hiredDaysAgo),
       departmentId: dept(posRow.dept), positionId: pos(position), workLocation: 'Main building',
       employmentType: 'full_time', status: 'active', residencyStatus: 'resident', employmentClass: 'permanent',
@@ -78,7 +100,7 @@ export async function loadHr(ctx: SampleCtx) {
       compensationType: 'salary', paymentFrequency: 'monthly', salary: posRow.baseSalary, basicSalary: posRow.baseSalary, allowances,
       details: {
         bankAccount: { accountNumber: `01230456${String(i).padStart(2, '0')}`, bankName: 'GCB Bank', branchCode: 'Accra Main' },
-        emergencyContact: { name: 'Sample Contact', relationship: 'family', phone: '+233 20 000 0000' },
+        emergencyContact: { name: NEXT_OF_KIN[i]?.[0] || 'Next of kin', relationship: NEXT_OF_KIN[i]?.[1] || 'family', phone: `+233 20 455 ${String(100 + i).padStart(4, '0')}` },
         ...(healthCert !== null ? { healthCertificateExpiryDate: dayString(ctx, healthCert) } : {}),
       },
     }
@@ -90,15 +112,17 @@ export async function loadHr(ctx: SampleCtx) {
     requestedAt: dayOffset(ctx, from - 10), ...extra,
   })
   await seedRows(prisma.hrLeaveRequest, [
-    leave('1', 'akosua', 'annual', 7, 11, 5, 'approved', { reason: 'Family visit', approvedBy: 'Sample Manager', approvedAt: dayOffset(ctx, -2), coveringEmployeeId: emp('ibrahim'), handoverNotes: 'Cover the morning desk; the arrivals list is printed daily.' }),
-    leave('2', 'kofi', 'sick', -1, 0, 2, 'approved', { reason: 'Unwell', approvedBy: 'Sample Manager', approvedAt: dayOffset(ctx, -1) }),
+    leave('1', 'akosua', 'annual', 7, 11, 5, 'approved', { reason: 'Family visit', approvedBy: MANAGER, approvedAt: dayOffset(ctx, -2), coveringEmployeeId: emp('ibrahim'), handoverNotes: 'Cover the morning desk; the arrivals list is printed daily.' }),
+    leave('2', 'kofi', 'sick', -1, 0, 2, 'approved', { reason: 'Unwell', approvedBy: MANAGER, approvedAt: dayOffset(ctx, -1) }),
     leave('3', 'efua', 'annual', 20, 24, 5, 'pending', { reason: 'Travel' }),
     leave('4', 'kojo', 'personal', -14, -13, 2, 'rejected', { reason: 'Personal errand', rejectionReason: 'Kitchen was short-staffed that week.' }),
+    leave('5', 'hamza', 'personal', 12, 13, 2, 'approved', { reason: 'Family wedding in Tamale', approvedBy: MANAGER, approvedAt: dayOffset(ctx, -1), coveringEmployeeId: emp('kojo') }),
+    leave('6', 'salamatu', 'maternity', 40, 123, 84, 'pending', { reason: 'Maternity leave' }),
   ])
 
   // Attendance for the last five days for six staff — one late morning, one absence, and one long
   // shift whose overtime waits for approval (shown in the Approvals inbox when Settings requires it).
-  const attendanceStaff = ['akosua', 'ibrahim', 'ama', 'efua', 'kofi', 'kojo']
+  const attendanceStaff = ['akosua', 'ibrahim', 'ama', 'salamatu', 'efua', 'kofi', 'kojo', 'hamza']
   const attendance: Array<Record<string, any>> = []
   for (let back = 1; back <= 5; back++) {
     attendanceStaff.forEach((key, i) => {
@@ -127,8 +151,8 @@ export async function loadHr(ctx: SampleCtx) {
 
   // Training: a mandatory food-safety course coming up, and a completed guest-service course.
   await seedRows(prisma.hrTrainingProgram, [
-    { id: `${p}trn_food`, tenantId, title: 'Food Safety & Hygiene', code: 'SMP-FSH', description: 'Mandatory safe food handling for kitchen and restaurant staff', category: 'compliance', duration: 8, cost: 0, maxParticipants: 12, instructor: 'Environmental Health Officer', location: 'Conference room', startDate: dayOffset(ctx, 10), endDate: dayOffset(ctx, 10), status: 'scheduled', mandatory: true },
-    { id: `${p}trn_guest`, tenantId, title: 'Guest Service Excellence', code: 'SMP-GSE', description: 'Handling guests, complaints and first impressions', category: 'soft_skills', duration: 6, cost: 450, maxParticipants: 15, instructor: 'External trainer', location: 'Conference room', startDate: dayOffset(ctx, -30), endDate: dayOffset(ctx, -30), status: 'completed', mandatory: false },
+    { id: `${p}trn_food`, tenantId, title: 'Food Safety & Hygiene', code: 'TRN-FSH', description: 'Mandatory safe food handling for kitchen and restaurant staff', category: 'compliance', duration: 8, cost: 0, maxParticipants: 12, instructor: 'Environmental Health Officer', location: 'Conference room', startDate: dayOffset(ctx, 10), endDate: dayOffset(ctx, 10), status: 'scheduled', mandatory: true },
+    { id: `${p}trn_guest`, tenantId, title: 'Guest Service Excellence', code: 'TRN-GSE', description: 'Handling guests, complaints and first impressions', category: 'soft_skills', duration: 6, cost: 450, maxParticipants: 15, instructor: 'External trainer', location: 'Conference room', startDate: dayOffset(ctx, -30), endDate: dayOffset(ctx, -30), status: 'completed', mandatory: false },
   ])
   const record = (id: string, program: string, employee: string, status: string, extra: Record<string, any> = {}) => ({
     id: `${p}trnrec_${id}`, tenantId, trainingProgramId: `${p}trn_${program}`, employeeId: emp(employee), enrollmentDate: dayOffset(ctx, -35), status, ...extra,
@@ -141,7 +165,7 @@ export async function loadHr(ctx: SampleCtx) {
 
   // Performance log: good and not-so-good moments.
   const log = (id: string, employee: string, offset: number, score: number, category: string, note: string) => ({
-    id: `${p}perf_${id}`, tenantId, employeeId: emp(employee), date: dayOffset(ctx, offset), score, category, note, recordedByName: 'Sample Manager', status: 'active',
+    id: `${p}perf_${id}`, tenantId, employeeId: emp(employee), date: dayOffset(ctx, offset), score, category, note, recordedByName: MANAGER, status: 'active',
   })
   await seedRows(prisma.hrPerformanceLog, [
     log('1', 'akosua', -6, 4, 'guest_service', 'Calmly resolved a double-booking complaint and the guest left a compliment.'),
@@ -159,8 +183,8 @@ export async function loadHr(ctx: SampleCtx) {
 
   // A promotion and a pay rise in the change history.
   await seedRows(prisma.hrEmployeeChange, [
-    { id: `${p}chg_1`, tenantId, employeeId: emp('yaw'), employeeName: 'Yaw Boateng', type: 'promotion', field: 'position', previousValue: 'Housekeeper', newValue: 'Housekeeping Supervisor', changedBy: 'Sample Manager', notes: 'Promoted after a strong year running the second floor.', timestamp: dayOffset(ctx, -200) },
-    { id: `${p}chg_2`, tenantId, employeeId: emp('ibrahim'), employeeName: 'Ibrahim Mahama', type: 'salary_change', field: 'allowances', previousValue: 200, newValue: 300, changedBy: 'Sample Manager', notes: 'Night-shift allowance added.', timestamp: dayOffset(ctx, -60) },
+    { id: `${p}chg_1`, tenantId, employeeId: emp('yaw'), employeeName: 'Yaw Boateng', type: 'promotion', field: 'position', previousValue: 'Housekeeper', newValue: 'Housekeeping Supervisor', changedBy: MANAGER, notes: 'Promoted after a strong year running the second floor.', timestamp: dayOffset(ctx, -200) },
+    { id: `${p}chg_2`, tenantId, employeeId: emp('ibrahim'), employeeName: 'Ibrahim Mahama', type: 'salary_change', field: 'allowances', previousValue: 200, newValue: 300, changedBy: MANAGER, notes: 'Night-shift allowance added.', timestamp: dayOffset(ctx, -60) },
   ])
 
   // The newest hire is half-way through onboarding.
@@ -215,10 +239,10 @@ async function loadPayroll(ctx: SampleCtx) {
     const tax = monthlyPaye(gross - ssnit)
     const net = round2(gross - ssnit - tax)
     return {
-      id: `${periodId}_${key}`, tenantId, payrollPeriodId: periodId, employeeId: emp(key), employeeNumber: `SMP-${String(STAFF.findIndex((s) => s[0] === key) + 1).padStart(3, '0')}`,
+      id: `${periodId}_${key}`, tenantId, payrollPeriodId: periodId, employeeId: emp(key), employeeNumber: `EMP-${String(STAFF.findIndex((s) => s[0] === key) + 101)}`,
       employeeName: `${first} ${last}`, department: DEPARTMENTS.find((d) => d.key === posRow.dept)!.name, position: posRow.title,
       basicSalary: basic, allowances, overtimePay: 0, bonuses: 0, grossPay: gross, deductions: { tax, socialSecurity: ssnit, pension: 0, tier3: 0, healthInsurance: 0, other: 0 }, netPay: net,
-      bankAccount: `01230456${String(i).padStart(2, '0')}`, paymentMethod: 'bank_transfer', status: 'paid', paidAt: end, notes: JSON.stringify({ source: 'Sample payroll', debtRepayments: [] }),
+      bankAccount: `01230456${String(i).padStart(2, '0')}`, paymentMethod: 'bank_transfer', status: 'paid', paidAt: end, notes: JSON.stringify({ source: 'Payroll run', debtRepayments: [] }),
     }
   })
   const sum = (pick: (r: (typeof records)[number]) => number) => round2(records.reduce((s, r) => s + pick(r), 0))
@@ -229,7 +253,7 @@ async function loadPayroll(ctx: SampleCtx) {
 
   await seedRows(prisma.hrPayrollPeriod, [{
     id: periodId, tenantId, periodNumber, startDate: start, endDate: end, status: 'paid', totalGrossPay: gross, totalNetPay: net, totalDeductions: ssnit, totalTaxes: paye, employeeCount: records.length,
-    processedBy: 'Sample Manager', processedAt: new Date(end.getTime() - 2 * 86_400_000), approvedBy: 'Sample Manager', approvedAt: new Date(end.getTime() - 86_400_000),
+    processedBy: MANAGER, processedAt: new Date(end.getTime() - 2 * 86_400_000), approvedBy: MANAGER, approvedAt: new Date(end.getTime() - 86_400_000),
     notes: JSON.stringify({ employerContribution: round2(tier1Employer + tier2Employer), tier1Employer, tier2Employer }),
   }])
   await seedRows(prisma.hrPayrollRecord, records)
@@ -237,7 +261,7 @@ async function loadPayroll(ctx: SampleCtx) {
   if (!(await hasChartOfAccounts(ctx))) return
   await postEntries(ctx, [
     {
-      id: `${p}je_payroll`, entryNumber: `SMP-JE-PR-${periodNumber}`, date: end, reference: periodNumber, description: `Payroll run — ${periodNumber} (${records.length} employees)`, sourceModule: 'payroll', sourceTransactionId: periodId,
+      id: `${p}je_payroll`, entryNumber: `JE-PR-${periodNumber}`, date: end, reference: periodNumber, description: `Payroll run — ${periodNumber} (${records.length} employees)`, sourceModule: 'payroll', sourceTransactionId: periodId,
       lines: [
         { account: '5210', description: `Gross pay — ${periodNumber}`, debit: gross },
         { account: '5221', description: `Employer statutory contributions — ${periodNumber}`, debit: round2(tier1Employer + tier2Employer) },
@@ -248,7 +272,7 @@ async function loadPayroll(ctx: SampleCtx) {
       ],
     },
     {
-      id: `${p}je_payroll_paid`, entryNumber: `SMP-JE-PRPAY-${periodNumber}`, date: payday, reference: periodNumber, description: `Salaries paid — ${periodNumber}`, sourceModule: 'payroll', sourceTransactionId: periodId,
+      id: `${p}je_payroll_paid`, entryNumber: `JE-PRPAY-${periodNumber}`, date: payday, reference: periodNumber, description: `Salaries paid — ${periodNumber}`, sourceModule: 'payroll', sourceTransactionId: periodId,
       lines: [{ account: '2300', description: `Net pay settled — ${periodNumber}`, debit: net }, { account: '1120', description: `Salary transfers — ${periodNumber}`, credit: net }],
     },
   ])

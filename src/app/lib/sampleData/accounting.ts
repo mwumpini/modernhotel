@@ -1,5 +1,6 @@
 import { SampleCtx, prisma, seedRows, bySampleId, dayOffset, atTime, round2 } from './common'
 import { Entry, postEntries, removeEntries, salesTax, cashAccountFor, hasChartOfAccounts } from './ledger'
+import { CORPORATE_NAME } from './frontOffice'
 
 /**
  * Sample books: who the hotel buys from and bills, the checked-out sample stays posted to the ledger,
@@ -8,27 +9,27 @@ import { Entry, postEntries, removeEntries, salesTax, cashAccountFor, hasChartOf
  * trial balance, P&L, balance sheet, AR/AP aging and the cash book.
  */
 
-const CORPORATE = { key: 'mining', code: 'SMP-CUST-01', name: 'Sample Mining Ltd', contact: 'Adwoa Frimpong', phone: '+233 30 277 0001', email: 'accounts@samplemining.sample.hotel', terms: 30, limit: 50000 }
+const CORPORATE = { key: 'mining', code: 'CUS-101', name: CORPORATE_NAME, contact: 'Adwoa Frimpong', phone: '+233 30 277 0001', terms: 30, limit: 50000 }
 
 // key, name, contact, phone, terms (days)
 const SUPPLIERS: Array<[string, string, string, string, number]> = [
   ['fresh', 'Accra Fresh Foods Ltd', 'Yaa Asantewaa', '+233 30 200 1001', 30],
   ['clean', 'Tema Cleaning Supplies', 'Selorm Agbenu', '+233 30 200 1004', 14],
-  ['ecg', 'Electricity Company of Ghana (sample)', 'Customer Service', '+233 30 261 1611', 14],
+  ['ecg', 'Electricity Company of Ghana', 'Customer Service', '+233 30 261 1611', 14],
 ]
 
 // key, number, days ago issued, days until due (negative = overdue), description, net, amount already paid
 const CORPORATE_INVOICES: Array<[string, string, number, number, string, number, number]> = [
-  ['c1', 'SMP-AR-001', 75, -45, 'Room block — site engineers (6 rooms × 5 nights)', 10500, 0],
-  ['c2', 'SMP-AR-002', 40, -10, 'Boardroom hire and lunch — quarterly review', 3200, 1500],
-  ['c3', 'SMP-AR-003', 12, 18, 'Room block — audit team (3 rooms × 4 nights)', 4200, 0],
+  ['c1', 'SI-0901', 75, -45, 'Room block — site engineers (6 rooms × 5 nights)', 10500, 0],
+  ['c2', 'SI-0902', 40, -10, 'Boardroom hire and lunch — quarterly review', 3200, 1500],
+  ['c3', 'SI-0903', 12, 18, 'Room block — audit team (3 rooms × 4 nights)', 4200, 0],
 ]
 
 // key, number, supplier, days ago, days until due, description, GL, amount, paid by (bank / cash) or null if still open
 const SUPPLIER_BILLS: Array<[string, string, string, number, number, string, string, number, string | null]> = [
-  ['b1', 'SMP-AP-001', 'fresh', 7, 23, 'Produce delivery against SMP-PO-001', '1310', 4820, null],
-  ['b2', 'SMP-AP-002', 'clean', 19, -5, 'Detergent, toilet rolls and cleaning chemicals', '1320', 1180, null],
-  ['b3', 'SMP-AP-003', 'ecg', 25, -11, 'Electricity — last month', '5310', 3450, 'Bank Transfer'],
+  ['b1', 'AFF/2026/1187', 'fresh', 7, 23, 'Produce delivery against PO-0901', '1310', 4820, null],
+  ['b2', 'TCS-4431', 'clean', 19, -5, 'Detergent, toilet rolls and cleaning chemicals', '1320', 1180, null],
+  ['b3', 'ECG-88120457', 'ecg', 25, -11, 'Electricity — last month', '5310', 3450, 'Bank Transfer'],
 ]
 
 // key, days ago, description, expense GL, amount, paid from (1110 cash / 1120 bank)
@@ -42,9 +43,9 @@ const EXPENSES: Array<[string, number, string, string, number, string]> = [
 
 // key, code, name, category (matched by name prefix), days ago bought, qty, unit price
 const ASSETS: Array<[string, string, string, string, number, number, number]> = [
-  ['oven', 'SMP-KE-01', 'Commercial gas oven (6-burner)', 'Kitchen', 120, 1, 18500],
-  ['beds', 'SMP-FFE-01', 'Guest room beds and mattresses', 'Furniture', 200, 9, 4200],
-  ['laptop', 'SMP-CE-01', 'Front desk laptop', 'Computer', 60, 1, 7800],
+  ['oven', 'KE-0901', 'Commercial gas oven (6-burner)', 'Kitchen', 120, 1, 18500],
+  ['beds', 'FFE-0901', 'Guest room beds and mattresses', 'Furniture', 200, 9, 4200],
+  ['laptop', 'CE-0901', 'Front desk laptop', 'Computer', 60, 1, 7800],
 ]
 
 const SAMPLE_CATEGORIES = [
@@ -62,19 +63,19 @@ export async function loadAccounting(ctx: SampleCtx): Promise<string[]> {
   // ---- business partners ----
   const sampleGuests = await prisma.guest.findMany({ where: bySampleId(ctx), select: { id: true, name: true, email: true, phone: true } })
   await seedRows(prisma.businessPartner, [
-    { id: `${p}bp_${CORPORATE.key}`, tenantId, code: CORPORATE.code, name: CORPORATE.name, type: 'Customer', contactPerson: CORPORATE.contact, phone: CORPORATE.phone, email: CORPORATE.email, creditLimit: CORPORATE.limit, paymentTerms: CORPORATE.terms, glAccountCode: '1210', taxNumber: 'C0001234567' },
-    ...SUPPLIERS.map(([key, name, contact, phone, terms], i) => ({ id: `${p}bp_${key}`, tenantId, code: `SMP-SUP-${String(i + 1).padStart(2, '0')}`, name, type: 'Supplier', contactPerson: contact, phone, paymentTerms: terms, glAccountCode: '2205' })),
-    ...sampleGuests.map((g, i) => ({ id: `${p}bp_${g.id.slice(p.length)}`, tenantId, code: `SMP-G-${String(i + 1).padStart(2, '0')}`, name: g.name, type: 'Customer', email: g.email, phone: g.phone, glAccountCode: '1210' })),
+    { id: `${p}bp_${CORPORATE.key}`, tenantId, code: CORPORATE.code, name: CORPORATE.name, type: 'Customer', contactPerson: CORPORATE.contact, phone: CORPORATE.phone, creditLimit: CORPORATE.limit, paymentTerms: CORPORATE.terms, glAccountCode: '1210', taxNumber: 'C0001234567' },
+    ...SUPPLIERS.map(([key, name, contact, phone, terms], i) => ({ id: `${p}bp_${key}`, tenantId, code: `V-${String(i + 101)}`, name, type: 'Supplier', contactPerson: contact, phone, paymentTerms: terms, glAccountCode: '2205' })),
+    ...sampleGuests.map((g, i) => ({ id: `${p}bp_${g.id.slice(p.length)}`, tenantId, code: `G-${String(i + 101)}`, name: g.name, type: 'Customer', email: g.email || undefined, phone: g.phone, glAccountCode: '1210' })),
   ])
-  await seedRows(prisma.company, [{ id: `${p}co_${CORPORATE.key}`, tenantId, code: CORPORATE.code, name: CORPORATE.name, email: CORPORATE.email, phone: CORPORATE.phone, taxNumber: 'C0001234567', billingAddress: { street: '12 Independence Avenue', city: 'Accra', country: 'Ghana' } }])
+  await seedRows(prisma.company, [{ id: `${p}co_${CORPORATE.key}`, tenantId, code: CORPORATE.code, name: CORPORATE.name, phone: CORPORATE.phone, taxNumber: 'C0001234567', billingAddress: { street: '12 Independence Avenue', city: 'Accra', country: 'Ghana' } }])
 
   // ---- opening capital, so the cash book and bank start from a sensible balance ----
   entries.push({
-    id: `${p}je_open`, entryNumber: 'SMP-JE-OPEN', date: dayOffset(ctx, -90), reference: 'SMP-OPENING', description: 'Sample opening balance — owner capital and a cash float', sourceModule: 'manual',
+    id: `${p}je_open`, entryNumber: 'JE-OPEN', date: dayOffset(ctx, -90), reference: 'OPENING', description: 'Opening balance — owner capital and a cash float', sourceModule: 'manual',
     lines: [
-      { account: '1120', description: 'Opening bank balance (sample)', debit: 100000 },
-      { account: '1110', description: 'Opening cash float (sample)', debit: 5000 },
-      { account: '3100', description: 'Owner capital (sample)', credit: 105000 },
+      { account: '1120', description: 'Opening bank balance', debit: 100000 },
+      { account: '1110', description: 'Opening cash float', debit: 5000 },
+      { account: '3100', description: 'Owner capital', credit: 105000 },
     ],
   })
 
@@ -101,7 +102,7 @@ export async function loadAccounting(ctx: SampleCtx): Promise<string[]> {
     const total = round2(folio.totalCharges)
     const rounding = round2(total - net - tax.total)
     const invId = `${p}inv_fo_${key}`
-    const invNumber = `SMP-INV-FO-${key.toUpperCase()}`
+    const invNumber = `FO-INV-${String(Number(key.slice(1)) + 900).padStart(4, '0')}`
     invoices.push({
       id: invId, tenantId, invoiceNumber: invNumber, type: 'Sales', date: when, dueDate: when, businessPartnerId: `${p}bp_${res.guestId.slice(p.length)}`, reference: res.resId,
       description: `Guest stay folio for ${guestName}`, subtotal: net, taxAmount: round2(total - net), total, status: 'Paid', paidAmount: total, paidDate: when,
@@ -112,7 +113,7 @@ export async function loadAccounting(ctx: SampleCtx): Promise<string[]> {
       glAccountCode: c.category === 'room' ? '4100' : c.category === 'f&b' ? '4210' : '4330',
     }))
     entries.push({
-      id: `${p}je_fo_${key}`, entryNumber: `SMP-JE-FO-${key.toUpperCase()}`, date: when, reference: res.resId || invNumber, description: `Guest folio posted — ${invNumber}`, sourceModule: 'front_office_checkout', sourceTransactionId: res.id,
+      id: `${p}je_fo_${key}`, entryNumber: `JE-FO-${invNumber.slice(-4)}`, date: when, reference: res.resId || invNumber, description: `Guest folio posted — ${invNumber}`, sourceModule: 'front_office_checkout', sourceTransactionId: res.id,
       lines: [
         { account: '1210', description: `AR — Folio ${invNumber}`, debit: total, costCenter: 'RM' },
         ...Array.from(byGl).map(([gl, amount]) => ({ account: gl, description: `Revenue — ${guestName}`, credit: amount, costCenter: 'RM' })),
@@ -123,11 +124,11 @@ export async function loadAccounting(ctx: SampleCtx): Promise<string[]> {
     for (const [n, pay] of ((folio.payments as any[]) || []).entries()) {
       const payId = `${p}rcp_fo_${key}_${n}`
       payments.push({
-        id: payId, tenantId, paymentNumber: `SMP-RCP-FO-${key.toUpperCase()}-${n + 1}`, date: new Date(pay.date), type: 'Receipt', businessPartnerId: `${p}bp_${res.guestId.slice(p.length)}`, invoiceId: invId,
+        id: payId, tenantId, paymentNumber: `RCP-FO-${invNumber.slice(-4)}-${n + 1}`, date: new Date(pay.date), type: 'Receipt', businessPartnerId: `${p}bp_${res.guestId.slice(p.length)}`, invoiceId: invId,
         reference: invNumber, description: `Guest payment — ${guestName}`, amount: Number(pay.amount), paymentMethod: pay.method, status: 'Posted', journalEntryId: `${p}je_fopay_${key}_${n}`,
       })
       entries.push({
-        id: `${p}je_fopay_${key}_${n}`, entryNumber: `SMP-JE-FOPAY-${key.toUpperCase()}-${n + 1}`, date: new Date(pay.date), reference: invNumber, description: `Guest payment — ${guestName}`, sourceModule: 'front_office_checkout', sourceTransactionId: res.id,
+        id: `${p}je_fopay_${key}_${n}`, entryNumber: `JE-FOPAY-${invNumber.slice(-4)}-${n + 1}`, date: new Date(pay.date), reference: invNumber, description: `Guest payment — ${guestName}`, sourceModule: 'front_office_checkout', sourceTransactionId: res.id,
         lines: [
           { account: cashAccountFor(pay.method), description: `Receipt — ${pay.method}`, debit: Number(pay.amount), costCenter: 'RM' },
           { account: '1210', description: `Clear AR — ${invNumber}`, credit: Number(pay.amount), costCenter: 'RM' },
@@ -148,7 +149,7 @@ export async function loadAccounting(ctx: SampleCtx): Promise<string[]> {
     })
     invoiceLines.push({ id: `${p}inv_${key}_l1`, tenantId, invoiceId: `${p}inv_${key}`, description, quantity: 1, unitPrice: net, amount: net, taxAmount: tax.total, glAccountCode: gl })
     entries.push({
-      id: `${p}je_${key}`, entryNumber: `SMP-JE-${number}`, date: when, reference: number, description: `Sales invoice ${number} — ${CORPORATE.name}`, sourceModule: 'manual_ar_ap', sourceTransactionId: `${p}inv_${key}`,
+      id: `${p}je_${key}`, entryNumber: `JE-${number}`, date: when, reference: number, description: `Sales invoice ${number} — ${CORPORATE.name}`, sourceModule: 'manual_ar_ap', sourceTransactionId: `${p}inv_${key}`,
       lines: [
         { account: '1210', description: `AR — ${number}`, debit: total },
         { account: gl, description, credit: net },
@@ -157,9 +158,9 @@ export async function loadAccounting(ctx: SampleCtx): Promise<string[]> {
     })
     if (paid > 0) {
       const payDate = dayOffset(ctx, -ago + 20)
-      payments.push({ id: `${p}rcp_${key}`, tenantId, paymentNumber: `SMP-RCP-${number.slice(-3)}`, date: payDate, type: 'Receipt', businessPartnerId: `${p}bp_${CORPORATE.key}`, invoiceId: `${p}inv_${key}`, reference: number, description: `Part payment for ${number}`, amount: paid, paymentMethod: 'Bank Transfer', status: 'Posted', journalEntryId: `${p}je_rcp_${key}` })
+      payments.push({ id: `${p}rcp_${key}`, tenantId, paymentNumber: `RCP-${number}`, date: payDate, type: 'Receipt', businessPartnerId: `${p}bp_${CORPORATE.key}`, invoiceId: `${p}inv_${key}`, reference: number, description: `Part payment for ${number}`, amount: paid, paymentMethod: 'Bank Transfer', status: 'Posted', journalEntryId: `${p}je_rcp_${key}` })
       entries.push({
-        id: `${p}je_rcp_${key}`, entryNumber: `SMP-JE-RCP-${number.slice(-3)}`, date: payDate, reference: number, description: `Receipt from ${CORPORATE.name} — ${number}`, sourceModule: 'manual_ar_ap',
+        id: `${p}je_rcp_${key}`, entryNumber: `JE-RCP-${number}`, date: payDate, reference: number, description: `Receipt from ${CORPORATE.name} — ${number}`, sourceModule: 'manual_ar_ap',
         lines: [{ account: '1120', description: `Bank receipt — ${number}`, debit: paid }, { account: '1210', description: `Clear AR — ${number}`, credit: paid }],
       })
     }
@@ -175,14 +176,14 @@ export async function loadAccounting(ctx: SampleCtx): Promise<string[]> {
     })
     invoiceLines.push({ id: `${p}inv_${key}_l1`, tenantId, invoiceId: `${p}inv_${key}`, description, quantity: 1, unitPrice: amount, amount, taxAmount: 0, glAccountCode: gl })
     entries.push({
-      id: `${p}je_${key}`, entryNumber: `SMP-JE-${number}`, date: when, reference: number, description: `Supplier bill ${number} — ${description}`, sourceModule: 'manual_ar_ap', sourceTransactionId: `${p}inv_${key}`,
+      id: `${p}je_${key}`, entryNumber: `JE-AP-${String(SUPPLIER_BILLS.findIndex((b) => b[0] === key) + 901)}`, date: when, reference: number, description: `Supplier bill ${number} — ${description}`, sourceModule: 'manual_ar_ap', sourceTransactionId: `${p}inv_${key}`,
       lines: [{ account: gl, description, debit: amount }, { account: '2205', description: `AP — ${number}`, credit: amount }],
     })
     if (paidBy) {
       const payDate = dayOffset(ctx, -ago + 10)
-      payments.push({ id: `${p}pay_${key}`, tenantId, paymentNumber: `SMP-PAY-${number.slice(-3)}`, date: payDate, type: 'Payment', businessPartnerId: `${p}bp_${supplier}`, invoiceId: `${p}inv_${key}`, description: `Payment for invoice ${number}`, amount, paymentMethod: paidBy, status: 'Posted', journalEntryId: `${p}je_pay_${key}` })
+      payments.push({ id: `${p}pay_${key}`, tenantId, paymentNumber: `PAY-${String(SUPPLIER_BILLS.findIndex((b) => b[0] === key) + 901)}`, date: payDate, type: 'Payment', businessPartnerId: `${p}bp_${supplier}`, invoiceId: `${p}inv_${key}`, description: `Payment for invoice ${number}`, amount, paymentMethod: paidBy, status: 'Posted', journalEntryId: `${p}je_pay_${key}` })
       entries.push({
-        id: `${p}je_pay_${key}`, entryNumber: `SMP-JE-PAY-${number.slice(-3)}`, date: payDate, reference: number, description: `Supplier payment — ${number}`, sourceModule: 'manual_ar_ap',
+        id: `${p}je_pay_${key}`, entryNumber: `JE-PAY-${String(SUPPLIER_BILLS.findIndex((b) => b[0] === key) + 901)}`, date: payDate, reference: number, description: `Supplier payment — ${number}`, sourceModule: 'manual_ar_ap',
         lines: [{ account: '2205', description: `Payment for ${number}`, debit: amount }, { account: '1120', description: `Payment for ${number}`, credit: amount }],
       })
     }
@@ -192,12 +193,12 @@ export async function loadAccounting(ctx: SampleCtx): Promise<string[]> {
   // Paying the produce bill (SMP-AP-001): no journal yet — approving it posts the payment the app's own way.
   const [, produceBill, produceSupplier, , , , , produceAmount] = SUPPLIER_BILLS[0]
   payments.push({
-    id: `${p}pay_pending`, tenantId, paymentNumber: 'SMP-PAY-004', date: dayOffset(ctx, 0), type: 'Payment', businessPartnerId: `${p}bp_${produceSupplier}`, invoiceId: `${p}inv_b1`,
+    id: `${p}pay_pending`, tenantId, paymentNumber: 'PAY-0904', date: dayOffset(ctx, 0), type: 'Payment', businessPartnerId: `${p}bp_${produceSupplier}`, invoiceId: `${p}inv_b1`,
     reference: produceBill, description: `Payment for invoice ${produceBill}`, amount: produceAmount, paymentMethod: 'Bank Transfer', status: 'Pending Approval',
   })
   // A manual accrual keyed in by the accountant: parked until approved, so it is not in the GL or the cash book yet.
   entries.push({
-    id: `${p}je_accrual`, entryNumber: 'SMP-JE-ACR-001', date: atTime(ctx, 0, 9), reference: 'SMP-ACR-001', description: 'Accrual — generator service done this month, invoice to follow', sourceModule: 'manual',
+    id: `${p}je_accrual`, entryNumber: 'JE-ACR-0901', date: atTime(ctx, 0, 9), reference: 'ACR-0901', description: 'Accrual — generator service done this month, invoice to follow', sourceModule: 'manual',
     status: 'Pending Approval',
     lines: [{ account: '5415', description: 'Generator servicing', debit: 1500 }, { account: '2205', description: 'Accrued — Power Solutions invoice to follow', credit: 1500 }],
   })
@@ -205,12 +206,12 @@ export async function loadAccounting(ctx: SampleCtx): Promise<string[]> {
   // ---- day-to-day expenses and a cash deposit ----
   for (const [key, ago, description, gl, amount, from] of EXPENSES) {
     entries.push({
-      id: `${p}je_exp_${key}`, entryNumber: `SMP-JE-EXP-${key.toUpperCase()}`, date: atTime(ctx, -ago, 11), reference: `SMP-EXP-${key.toUpperCase()}`, description, sourceModule: from === '1110' ? 'petty_cash' : 'bank_manual_transaction',
+      id: `${p}je_exp_${key}`, entryNumber: `JE-EXP-${key.toUpperCase()}`, date: atTime(ctx, -ago, 11), reference: `EXP-${key.toUpperCase()}`, description, sourceModule: from === '1110' ? 'petty_cash' : 'bank_manual_transaction',
       lines: [{ account: gl, description, debit: amount }, { account: from, description, credit: amount }],
     })
   }
   entries.push({
-    id: `${p}je_deposit`, entryNumber: 'SMP-JE-DEP-001', date: atTime(ctx, -2, 10), reference: 'SMP-DEP-001', description: 'Cash takings banked', sourceModule: 'bank_manual_transaction',
+    id: `${p}je_deposit`, entryNumber: 'JE-DEP-0901', date: atTime(ctx, -2, 10), reference: 'DEP-0901', description: 'Cash takings banked', sourceModule: 'bank_manual_transaction',
     lines: [{ account: '1120', description: 'Deposit — cash takings', debit: 2000 }, { account: '1110', description: 'Cash taken to the bank', credit: 2000 }],
   })
 
@@ -226,7 +227,7 @@ export async function loadAccounting(ctx: SampleCtx): Promise<string[]> {
     const cost = round2(quantity * unitPrice)
     assetRows.push({ id: `${p}ppe_${key}`, tenantId, purchaseDate: dayOffset(ctx, -ago), assetCode: code, assetName: name, categoryId: cat.id, quantity, unitPrice, capExp: 'Capitalise', organisationId: 'default-org', capitalizationJournalEntryId: `${p}je_ppe_${key}` })
     entries.push({
-      id: `${p}je_ppe_${key}`, entryNumber: `SMP-JE-PPE-${key.toUpperCase()}`, date: dayOffset(ctx, -ago), reference: code, description: `PPE capitalization — ${name}`, sourceModule: 'ppe_register_capitalize', sourceTransactionId: `${p}ppe_${key}`,
+      id: `${p}je_ppe_${key}`, entryNumber: `JE-PPE-${key.toUpperCase()}`, date: dayOffset(ctx, -ago), reference: code, description: `PPE capitalization — ${name}`, sourceModule: 'ppe_register_capitalize', sourceTransactionId: `${p}ppe_${key}`,
       lines: [{ account: '1510', description: 'Property & equipment', debit: cost }, { account: '1120', description: 'Settlement — bank', credit: cost }],
     })
   }

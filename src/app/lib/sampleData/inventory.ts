@@ -1,14 +1,16 @@
 import { SampleCtx, prisma, seedRows, bySampleId, sampleIds, dayOffset, round2 } from './common'
 import { ensureDepartmentLocations, getDepartmentLocationId } from '../inventory/repository'
+import { MANAGER, STOREKEEPER } from './hr'
 
 const UNITS: Array<[string, string]> = [['KG', 'Kilogram'], ['LTR', 'Litre'], ['PCS', 'Piece'], ['BAG', 'Bag'], ['CRATE', 'Crate'], ['CTN', 'Carton']]
 const CATEGORIES: Array<[string, string]> = [['FOOD', 'Food & Produce'], ['BEV', 'Beverages'], ['HK', 'Housekeeping'], ['MNT', 'Maintenance']]
 
 const SUPPLIERS = [
-  { key: 'fresh', name: 'Accra Fresh Foods Ltd', contact: 'Yaa Asantewaa', phone: '+233 30 200 1001', email: 'orders@accrafresh.sample.hotel', city: 'Accra' },
-  { key: 'bev', name: 'Ghana Beverages Distribution', contact: 'Kojo Bediako', phone: '+233 30 200 1002', email: 'sales@ghanabev.sample.hotel', city: 'Tema' },
-  { key: 'linen', name: 'Kumasi Linen & Supplies', contact: 'Adjoa Pokuaa', phone: '+233 32 200 1003', email: 'info@kumasilinen.sample.hotel', city: 'Kumasi' },
-  { key: 'clean', name: 'Tema Cleaning Supplies', contact: 'Selorm Agbenu', phone: '+233 30 200 1004', email: 'hello@temaclean.sample.hotel', city: 'Tema' },
+  { key: 'fresh', name: 'Accra Fresh Foods Ltd', contact: 'Yaa Asantewaa', phone: '+233 30 200 1001', street: 'Spintex Road', city: 'Accra' },
+  { key: 'bev', name: 'Coastal Beverages Distribution', contact: 'Kojo Bediako', phone: '+233 30 200 1002', street: 'Community 1', city: 'Tema' },
+  { key: 'linen', name: 'Kumasi Linen & Supplies', contact: 'Adjoa Pokuaa', phone: '+233 32 200 1003', street: 'Adum', city: 'Kumasi' },
+  { key: 'clean', name: 'Tema Cleaning Supplies', contact: 'Selorm Agbenu', phone: '+233 30 200 1004', street: 'Community 9', city: 'Tema' },
+  { key: 'shea', name: 'Savelugu Shea & Grains Co-operative', contact: 'Hajia Mariam Fuseini', phone: '+233 37 200 1005', street: 'Savelugu Road', city: 'Tamale' },
 ]
 
 // key, name, category, unit, supplier, cost, selling price (for resale), on hand, reorder level, minimum, maximum, perishable
@@ -22,6 +24,8 @@ const ITEMS: Item[] = [
   ['fish', 'Fresh Tilapia', 'FOOD', 'KG', 'fresh', 55, null, 22, 12, 8, 50, true],
   ['flour', 'Flour (25kg bag)', 'FOOD', 'BAG', 'fresh', 280, null, 9, 4, 3, 20, false],
   ['star', 'Star Beer (crate of 24)', 'BEV', 'CRATE', 'bev', 190, 600, 4, 8, 5, 30, false],
+  // Single bottles on the bar floor, linked to the menu's Star Beer: each one sold comes off this count.
+  ['starbtl', 'Star Beer (bottle)', 'BEV', 'PCS', 'bev', 10, 25, 48, 12, 6, 96, false],
   ['club', 'Club Beer (crate of 24)', 'BEV', 'CRATE', 'bev', 185, 600, 12, 8, 5, 30, false],
   ['water', 'Bottled Water 500ml (carton of 24)', 'BEV', 'CTN', 'bev', 45, 240, 25, 10, 6, 60, false],
   ['soda', 'Soft Drinks (crate of 24)', 'BEV', 'CRATE', 'bev', 95, 360, 14, 8, 5, 30, false],
@@ -30,12 +34,14 @@ const ITEMS: Item[] = [
   ['tissue', 'Toilet Rolls (carton of 48)', 'HK', 'CTN', 'clean', 110, null, 5, 10, 6, 40, false],
   ['detergent', 'Laundry Detergent', 'HK', 'KG', 'clean', 28, null, 35, 15, 10, 60, false],
   ['bulb', 'LED Light Bulbs', 'MNT', 'PCS', 'clean', 15, null, 60, 20, 10, 100, false],
+  ['beans', 'Beans (50kg bag)', 'FOOD', 'BAG', 'shea', 650, null, 4, 2, 1, 10, false],
+  ['shea', 'Shea Butter Soap (bars)', 'HK', 'PCS', 'shea', 8, null, 200, 80, 50, 400, false],
 ]
 
 // item key -> [department, quantity] moved out of the main store
 const TRANSFERS: Array<[string, 'kitchen' | 'restaurant', number]> = [
   ['rice', 'kitchen', 4], ['chicken', 'kitchen', 15], ['tomato', 'kitchen', 8], ['oil', 'kitchen', 3], ['plantain', 'kitchen', 10],
-  ['star', 'restaurant', 3], ['club', 'restaurant', 4], ['water', 'restaurant', 5], ['soda', 'restaurant', 4],
+  ['star', 'restaurant', 3], ['starbtl', 'restaurant', 24], ['club', 'restaurant', 4], ['water', 'restaurant', 5], ['soda', 'restaurant', 4],
 ]
 
 // Housekeeping supplies issued to the floors: item key, quantity, reason
@@ -59,13 +65,13 @@ export async function loadInventory(ctx: SampleCtx) {
   for (const [code, name] of CATEGORIES) categoryId.set(code, await ensureRef(prisma.itemCategory, ctx, code, name, {}))
 
   await seedRows(prisma.supplier, SUPPLIERS.map((s, i) => ({
-    id: `${p}sup_${s.key}`, tenantId, code: `SMP-SUP-${String(i + 1).padStart(2, '0')}`, name: s.name, contactPerson: s.contact, phone: s.phone, email: s.email,
-    address: { street: 'Sample Street', city: s.city, country: 'Ghana' }, isActive: true,
+    id: `${p}sup_${s.key}`, tenantId, code: `SUP-${String(i + 101)}`, name: s.name, contactPerson: s.contact, phone: s.phone,
+    address: { street: s.street, city: s.city, country: 'Ghana' }, isActive: true,
   })))
 
   const itemId = (key: string) => `${p}item_${key}`
   await seedRows(prisma.inventoryItem, ITEMS.map(([key, name, category, unit, supplier, cost, price, onHand, reorder, min, max, perishable], i) => ({
-    id: itemId(key), tenantId, code: `SMP-ITM-${String(i + 1).padStart(3, '0')}`, name, categoryId: categoryId.get(category), unitId: unitId.get(unit),
+    id: itemId(key), tenantId, code: `STK-${String(i + 101)}`, name, categoryId: categoryId.get(category), unitId: unitId.get(unit),
     supplierId: `${p}sup_${supplier}`, defaultCost: cost, sellingPrice: price, quantityOnHand: onHand - issuedQty(key), reorderLevel: reorder, minimumStock: min, maximumStock: max,
     location: 'Main Store', isPerishable: perishable, isActive: true,
   })))
@@ -74,17 +80,17 @@ export async function loadInventory(ctx: SampleCtx) {
   await ensureDepartmentLocations(tenantId)
   const location = { kitchen: await getDepartmentLocationId(tenantId, 'kitchen'), restaurant: await getDepartmentLocationId(tenantId, 'restaurant') }
   const transactions: Array<Record<string, any>> = ITEMS.map(([key, , , , , cost, , onHand]) => ({
-    id: `${p}tx_open_${key}`, tenantId, itemId: itemId(key), type: 'receipt', quantity: onHand, unitCost: cost, referenceType: 'manual', notes: 'Opening stock (sample)', performedBy: 'Sample Storekeeper',
+    id: `${p}tx_open_${key}`, tenantId, itemId: itemId(key), type: 'receipt', quantity: onHand, unitCost: cost, referenceType: 'manual', notes: 'Opening stock', performedBy: STOREKEEPER,
   }))
   for (const [key, department, quantity] of TRANSFERS) {
     const ref = `${p}xfer_${key}`
     transactions.push(
-      { id: `${ref}_out`, tenantId, itemId: itemId(key), type: 'transfer_out', quantity: -quantity, referenceType: 'transfer', referenceId: ref, notes: `To ${department} (sample)`, performedBy: 'Sample Storekeeper' },
-      { id: `${ref}_in`, tenantId, itemId: itemId(key), locationId: location[department], type: 'transfer_in', quantity, referenceType: 'transfer', referenceId: ref, notes: `To ${department} (sample)`, performedBy: 'Sample Storekeeper' },
+      { id: `${ref}_out`, tenantId, itemId: itemId(key), type: 'transfer_out', quantity: -quantity, referenceType: 'transfer', referenceId: ref, notes: `To ${department}`, performedBy: STOREKEEPER },
+      { id: `${ref}_in`, tenantId, itemId: itemId(key), locationId: location[department], type: 'transfer_in', quantity, referenceType: 'transfer', referenceId: ref, notes: `To ${department}`, performedBy: STOREKEEPER },
     )
   }
   for (const [key, quantity, reason] of ISSUED) {
-    transactions.push({ id: `${p}tx_issue_${key}`, tenantId, itemId: itemId(key), type: 'issue', quantity: -quantity, unitCost: ITEMS.find((x) => x[0] === key)![5], referenceType: 'goods_issue', referenceId: `${p}issue_1`, notes: `${reason} (sample)`, performedBy: 'Sample Storekeeper' })
+    transactions.push({ id: `${p}tx_issue_${key}`, tenantId, itemId: itemId(key), type: 'issue', quantity: -quantity, unitCost: ITEMS.find((x) => x[0] === key)![5], referenceType: 'goods_issue', referenceId: `${p}issue_1`, notes: reason, performedBy: STOREKEEPER })
   }
   await seedRows(prisma.inventoryTransaction, transactions)
 
@@ -92,15 +98,15 @@ export async function loadInventory(ctx: SampleCtx) {
   const itemRow = (key: string) => ITEMS.find((x) => x[0] === key)!
   const orderLines = (lines: Array<[string, number]>, poId: string) => lines.map(([key, quantity], n) => {
     const [, name, , , , cost] = itemRow(key)
-    return { id: `${poId}_l${n + 1}`, tenantId, purchaseOrderId: poId, itemId: itemId(key), itemCode: `SMP-ITM-${String(ITEMS.findIndex((x) => x[0] === key) + 1).padStart(3, '0')}`, itemName: name, quantity, unitCost: cost, totalCost: round2(quantity * cost) }
+    return { id: `${poId}_l${n + 1}`, tenantId, purchaseOrderId: poId, itemId: itemId(key), itemCode: `STK-${String(ITEMS.findIndex((x) => x[0] === key) + 101)}`, itemName: name, quantity, unitCost: cost, totalCost: round2(quantity * cost) }
   })
   const po1 = `${p}po_1`, po2 = `${p}po_2`
   const lines1 = orderLines([['rice', 10], ['chicken', 30], ['tomato', 20]], po1).map((l) => ({ ...l, receivedQuantity: l.quantity }))
   const lines2 = orderLines([['star', 6], ['club', 4], ['soda', 5]], po2)
   const total = (lines: Array<{ totalCost: number }>) => round2(lines.reduce((s, l) => s + l.totalCost, 0))
   await seedRows(prisma.purchaseOrder, [
-    { id: po1, tenantId, poNumber: 'SMP-PO-001', supplierId: `${p}sup_fresh`, supplierName: SUPPLIERS[0].name, orderDate: dayOffset(ctx, -10), expectedDeliveryDate: dayOffset(ctx, -7), actualDeliveryDate: dayOffset(ctx, -7), status: 'delivered', priority: 'medium', totalAmount: total(lines1), finalAmount: total(lines1), paymentTerms: 'Net 30', createdBy: 'Sample Storekeeper', approvedBy: 'Sample Manager', approvedAt: dayOffset(ctx, -10) },
-    { id: po2, tenantId, poNumber: 'SMP-PO-002', supplierId: `${p}sup_bev`, supplierName: SUPPLIERS[1].name, orderDate: dayOffset(ctx, -2), expectedDeliveryDate: dayOffset(ctx, 3), status: 'sent', priority: 'high', totalAmount: total(lines2), finalAmount: total(lines2), paymentTerms: 'Net 14', createdBy: 'Sample Storekeeper', approvedBy: 'Sample Manager', approvedAt: dayOffset(ctx, -2) },
+    { id: po1, tenantId, poNumber: 'PO-0901', supplierId: `${p}sup_fresh`, supplierName: SUPPLIERS[0].name, orderDate: dayOffset(ctx, -10), expectedDeliveryDate: dayOffset(ctx, -7), actualDeliveryDate: dayOffset(ctx, -7), status: 'delivered', priority: 'medium', totalAmount: total(lines1), finalAmount: total(lines1), paymentTerms: 'Net 30', createdBy: STOREKEEPER, approvedBy: MANAGER, approvedAt: dayOffset(ctx, -10) },
+    { id: po2, tenantId, poNumber: 'PO-0902', supplierId: `${p}sup_bev`, supplierName: SUPPLIERS[1].name, orderDate: dayOffset(ctx, -2), expectedDeliveryDate: dayOffset(ctx, 3), status: 'sent', priority: 'high', totalAmount: total(lines2), finalAmount: total(lines2), paymentTerms: 'Net 14', createdBy: STOREKEEPER, approvedBy: MANAGER, approvedAt: dayOffset(ctx, -2) },
   ])
   await seedRows(prisma.purchaseOrderItem, [...lines1, ...lines2])
 
@@ -109,12 +115,12 @@ export async function loadInventory(ctx: SampleCtx) {
   const req1 = `${p}req_1`, req2 = `${p}req_2`, req3 = `${p}req_3`
   const reqLines = (lines: Array<[string, number]>, reqId: string) => lines.map(([key, quantity], n) => {
     const [, name, , , , cost] = itemRow(key)
-    return { id: `${reqId}_l${n + 1}`, tenantId, requisitionId: reqId, itemId: itemId(key), itemCode: `SMP-ITM-${String(ITEMS.findIndex((x) => x[0] === key) + 1).padStart(3, '0')}`, itemName: name, quantity, estimatedPrice: cost, totalCost: round2(quantity * cost) }
+    return { id: `${reqId}_l${n + 1}`, tenantId, requisitionId: reqId, itemId: itemId(key), itemCode: `STK-${String(ITEMS.findIndex((x) => x[0] === key) + 101)}`, itemName: name, quantity, estimatedPrice: cost, totalCost: round2(quantity * cost) }
   })
   await seedRows(prisma.requisition, [
-    { id: req1, tenantId, requisitionNumber: 'SMP-REQ-001', requestedBy: 'Nana Yaa Asare', requestedDate: dayOffset(ctx, -1), status: 'pending', department: 'kitchen', notes: 'Weekend banquet prep' },
-    { id: req2, tenantId, requisitionNumber: 'SMP-REQ-002', requestedBy: 'Kofi Adjei', requestedDate: dayOffset(ctx, -3), status: 'approved', department: 'restaurant', approvedBy: 'Sample Manager', approvedAt: dayOffset(ctx, -2), notes: 'Bar restock' },
-    { id: req3, tenantId, requisitionNumber: 'SMP-REQ-003', requestedBy: 'Nana Yaa Asare', requestedDate: dayOffset(ctx, 0), status: 'pending-director-approval', department: 'kitchen', notes: 'Owusu–Mensah wedding reception — 150 guests' },
+    { id: req1, tenantId, requisitionNumber: 'REQ-0901', requestedBy: 'Nana Yaa Asare', requestedDate: dayOffset(ctx, -1), status: 'pending', department: 'kitchen', notes: 'Weekend banquet prep' },
+    { id: req2, tenantId, requisitionNumber: 'REQ-0902', requestedBy: 'Kofi Adjei', requestedDate: dayOffset(ctx, -3), status: 'approved', department: 'restaurant', approvedBy: MANAGER, approvedAt: dayOffset(ctx, -2), notes: 'Bar restock' },
+    { id: req3, tenantId, requisitionNumber: 'REQ-0903', requestedBy: 'Nana Yaa Asare', requestedDate: dayOffset(ctx, 0), status: 'pending-director-approval', department: 'kitchen', notes: 'Owusu–Mensah wedding reception — 150 guests' },
   ])
   await seedRows(prisma.requisitionItem, [
     ...reqLines([['rice', 5], ['oil', 6], ['fish', 10]], req1),
@@ -122,7 +128,7 @@ export async function loadInventory(ctx: SampleCtx) {
     ...reqLines([['rice', 40], ['chicken', 120], ['oil', 30], ['fish', 60]], req3),
   ])
 
-  const code = (key: string) => `SMP-ITM-${String(ITEMS.findIndex((x) => x[0] === key) + 1).padStart(3, '0')}`
+  const code = (key: string) => `STK-${String(ITEMS.findIndex((x) => x[0] === key) + 101)}`
 
   // The paperwork behind the store-to-department moves recorded above.
   for (const department of ['kitchen', 'restaurant'] as const) {
@@ -133,9 +139,9 @@ export async function loadInventory(ctx: SampleCtx) {
       return { id: `${id}_l${n + 1}`, tenantId, transferId: id, itemId: itemId(key), itemCode: code(key), itemName: itemRow(key)[1], quantity, unitCost: cost, totalValue: round2(quantity * cost), transferredQuantity: quantity }
     })
     await seedRows(prisma.stockTransfer, [{
-      id, tenantId, transferNumber: `SMP-TRF-${department === 'kitchen' ? '001' : '002'}`, fromLocation: 'Main Store', toLocation: department === 'kitchen' ? 'Kitchen' : 'Restaurant & Bar',
+      id, tenantId, transferNumber: `TRF-${department === 'kitchen' ? '0901' : '0902'}`, fromLocation: 'Main Store', toLocation: department === 'kitchen' ? 'Kitchen' : 'Restaurant & Bar',
       transferDate: dayOffset(ctx, -5), actualDeliveryDate: dayOffset(ctx, -5), status: 'delivered', priority: 'medium', totalItems: items.length, totalValue: round2(items.reduce((s, l) => s + l.totalValue, 0)),
-      createdBy: 'Sample Storekeeper', approvedBy: 'Sample Manager', approvedAt: dayOffset(ctx, -5),
+      createdBy: STOREKEEPER, approvedBy: MANAGER, approvedAt: dayOffset(ctx, -5),
     }])
     await seedRows(prisma.stockTransferItem, items)
   }
@@ -144,7 +150,7 @@ export async function loadInventory(ctx: SampleCtx) {
     const cost = itemRow(key)[5]
     return { id: `${p}issue_1_l${n + 1}`, tenantId, issueId: `${p}issue_1`, itemId: itemId(key), itemCode: code(key), itemName: itemRow(key)[1], quantity, unitCost: cost, totalValue: round2(quantity * cost), reason }
   })
-  await seedRows(prisma.goodsIssue, [{ id: `${p}issue_1`, tenantId, issueNumber: 'SMP-GI-001', department: 'housekeeping', issuedTo: 'Yaw Boateng', issueDate: dayOffset(ctx, -2), status: 'issued', totalItems: issueItems.length, totalValue: round2(issueItems.reduce((s, l) => s + l.totalValue, 0)), issuedBy: 'Sample Storekeeper' }])
+  await seedRows(prisma.goodsIssue, [{ id: `${p}issue_1`, tenantId, issueNumber: 'GI-0901', department: 'housekeeping', issuedTo: 'Yaw Boateng', issueDate: dayOffset(ctx, -2), status: 'issued', totalItems: issueItems.length, totalValue: round2(issueItems.reduce((s, l) => s + l.totalValue, 0)), issuedBy: STOREKEEPER }])
   await seedRows(prisma.goodsIssueItem, issueItems)
 
   // Last week's stock take of the main store: two items came up short, one over.
@@ -157,10 +163,10 @@ export async function loadInventory(ctx: SampleCtx) {
     return { id: `${p}count_1_l${n + 1}`, tenantId, countId: `${p}count_1`, itemId: itemId(key), itemCode: code(key), itemName: name, expectedQuantity: expected, countedQuantity: actual, variance, unitCost: cost, varianceValue: round2(variance * cost), notes: variance < 0 ? 'Short — recount requested' : variance > 0 ? 'Over — unrecorded delivery?' : null }
   })
   await seedRows(prisma.stockCount, [{
-    id: `${p}count_1`, tenantId, countNumber: 'SMP-SC-001', countType: 'cycle', location: 'Main Store', startDate: dayOffset(ctx, -1), endDate: dayOffset(ctx, -1), status: 'completed',
+    id: `${p}count_1`, tenantId, countNumber: 'SC-0901', countType: 'cycle', location: 'Main Store', startDate: dayOffset(ctx, -1), endDate: dayOffset(ctx, -1), status: 'completed',
     totalItems: countItems.length, countedItems: countItems.length, varianceItems: countItems.filter((l) => l.variance !== 0).length,
     totalValue: round2(countItems.reduce((s, l) => s + l.countedQuantity * l.unitCost, 0)), varianceValue: round2(countItems.reduce((s, l) => s + l.varianceValue, 0)),
-    createdBy: 'Sample Storekeeper', performedBy: 'Sample Storekeeper', notes: 'Monthly cycle count of fast-moving items',
+    createdBy: STOREKEEPER, performedBy: STOREKEEPER, notes: 'Monthly cycle count of fast-moving items',
   }])
   await seedRows(prisma.stockCountItem, countItems)
 }

@@ -1,5 +1,6 @@
 import { SampleCtx, prisma, seedRows, bySampleId, atTime, dayString, round2 } from './common'
 import { Entry, postEntries, posTaxLines, salesTax, cashAccountFor, hasChartOfAccounts } from './ledger'
+import { CORPORATE_NAME } from './frontOffice'
 
 // A starter menu, added only when the hotel has no menu of its own yet.
 // key, name, category, venue, route, price, cost, GL
@@ -40,6 +41,9 @@ const ORDERS: Order[] = [
   { key: 'o6', venue: 'restaurant', status: 'billed', table: 'T6', covers: 4, server: 'Efua Quaye', items: [['Banku & Tilapia', 2], ['Fufu & Light Soup', 2], ['Chocolate Cake', 2], ['Water (500ml)', 4]], at: [-1, 19, 50], paid: 'Mobile Money' },
   { key: 'o7', venue: 'bar', status: 'billed', table: 'T8', covers: 2, server: 'Kofi Adjei', items: [['Star Beer (Bottle)', 4], ['Club Beer (Bottle)', 2], ['Kelewele', 1]], at: [-1, 21, 15], paid: 'Cash' },
   { key: 'o8', venue: 'restaurant', status: 'billed', table: 'T4', covers: 2, server: 'Efua Quaye', items: [['Continental Breakfast', 2], ['Coffee', 2]], at: [0, 7, 45], paid: 'Card' },
+  { key: 'o9', venue: 'restaurant', status: 'billed', table: 'T7', covers: 3, server: 'Mavis Anane', items: [['Waakye with Stew', 2], ['Jollof Rice & Chicken', 1], ['Fresh Fruit Juice', 3]], at: [-2, 13, 10], paid: 'Mobile Money' },
+  { key: 'o10', venue: 'bar', status: 'billed', table: 'T8', covers: 4, server: 'Kofi Adjei', items: [['Club Beer (Bottle)', 6], ['Soft Drink (Can)', 2], ['Kelewele', 2]], at: [-2, 20, 30], paid: 'Cash' },
+  { key: 'o11', venue: 'restaurant', status: 'billed', table: 'T2', covers: 2, server: 'Mavis Anane', items: [['Fufu & Light Soup', 2], ['Water (500ml)', 2]], at: [-3, 13, 30], paid: 'Mobile Money' },
 ]
 
 export async function loadRestaurant(ctx: SampleCtx): Promise<string[]> {
@@ -49,7 +53,9 @@ export async function loadRestaurant(ctx: SampleCtx): Promise<string[]> {
   // ---- menu: the hotel's own, or a starter one ----
   if ((await prisma.fBMenuItem.count({ where: { tenantId } })) === 0) {
     await seedRows(prisma.fBMenuItem, MENU.map(([key, name, category, venue, route, price, cost, gl], i) => ({
-      id: `${p}menu_${key}`, tenantId, code: `SMP-${key.toUpperCase()}`, name, category, venue, route, unitPrice: price, costPrice: cost, glAccountCode: gl, isAvailable: true, prepMinutes: route === 'bar' ? 3 : 15, sortOrder: i,
+      id: `${p}menu_${key}`, tenantId, code: `MNU-${key.toUpperCase()}`, name, category, venue, route, unitPrice: price, costPrice: cost, glAccountCode: gl, isAvailable: true, prepMinutes: route === 'bar' ? 3 : 15, sortOrder: i,
+      // A bottle of Star sold comes off the bar's bottle stock (Restaurant & Bar floor).
+      ...(key === 'star' ? { inventoryItemId: `${p}item_starbtl`, unit: 'bottle' } : {}),
     })))
     notes.push('This hotel had no menu yet, so a starter menu of 16 dishes and drinks was added.')
   }
@@ -63,7 +69,7 @@ export async function loadRestaurant(ctx: SampleCtx): Promise<string[]> {
   const billed: Array<{ order: Order; id: string; number: string; when: Date; net: number; cost: number }> = []
   ORDERS.forEach((o, i) => {
     const id = `${p}fb_${o.key}`
-    const number = `SMP-FB-${String(i + 1).padStart(3, '0')}`
+    const number = `FB-${String(i + 901).padStart(4, '0')}`
     const when = typeof o.at === 'number' ? new Date(now - o.at * 60_000) : atTime(ctx, o.at[0], o.at[1], o.at[2])
     let net = 0, cost = 0
     o.items.forEach(([name, quantity], n) => {
@@ -100,18 +106,18 @@ export async function loadRestaurant(ctx: SampleCtx): Promise<string[]> {
       const cc = b.order.venue === 'bar' ? 'BAR' : 'REST'
       const method = b.order.paid!
       invoices.push({
-        id: `${p}inv_${b.order.key}`, tenantId, invoiceNumber: `SMP-INV-${b.number.slice(-3)}`, type: 'Sales', date: b.when, reference: b.number,
+        id: `${p}inv_${b.order.key}`, tenantId, invoiceNumber: `POS-${b.number.slice(-4)}`, type: 'Sales', date: b.when, reference: b.number,
         description: `${b.order.venue} sale — Table ${b.order.table} — ${b.number}`, subtotal: b.net, taxAmount: tax.total, total: gross, status: 'Paid', paidAmount: gross, paidDate: b.when,
         journalEntryId: `${p}je_fb_${b.order.key}`, sourceModule: 'restaurant', details: { customerName: 'Walk-in guest', staffName: b.order.server },
       })
       payments.push({
-        id: `${p}rcp_${b.order.key}`, tenantId, paymentNumber: `SMP-RCP-${b.number.slice(-3)}`, date: b.when, type: 'Receipt', invoiceId: `${p}inv_${b.order.key}`, reference: b.number,
+        id: `${p}rcp_${b.order.key}`, tenantId, paymentNumber: `RCP-POS-${b.number.slice(-4)}`, date: b.when, type: 'Receipt', invoiceId: `${p}inv_${b.order.key}`, reference: b.number,
         description: `Payment for ${b.order.venue} order ${b.number}`, amount: gross, paymentMethod: method, status: 'Posted', journalEntryId: `${p}je_fbpay_${b.order.key}`,
         details: { sourceModule: 'restaurant', customerName: 'Walk-in guest', staffName: b.order.server },
       })
       entries.push(
         {
-          id: `${p}je_fb_${b.order.key}`, entryNumber: `SMP-JE-FB-${b.number.slice(-3)}`, date: b.when, reference: b.number, description: `Auto-posted: F&B sale ${b.number}`, sourceModule: 'restaurant', sourceTransactionId: b.id,
+          id: `${p}je_fb_${b.order.key}`, entryNumber: `JE-FB-${b.number.slice(-4)}`, date: b.when, reference: b.number, description: `Auto-posted: F&B sale ${b.number}`, sourceModule: 'restaurant', sourceTransactionId: b.id,
           lines: [
             { account: '1210', description: `AR — ${b.number}`, debit: gross, costCenter: cc },
             { account: '4210', description: `Revenue — ${b.number}`, credit: b.net, costCenter: cc },
@@ -119,14 +125,14 @@ export async function loadRestaurant(ctx: SampleCtx): Promise<string[]> {
           ],
         },
         {
-          id: `${p}je_fbpay_${b.order.key}`, entryNumber: `SMP-JE-FBPAY-${b.number.slice(-3)}`, date: b.when, reference: b.number, description: `Auto-posted: Payment ${method} — ${b.number}`, sourceModule: 'restaurant', sourceTransactionId: `pay:${b.id}`,
+          id: `${p}je_fbpay_${b.order.key}`, entryNumber: `JE-FBPAY-${b.number.slice(-4)}`, date: b.when, reference: b.number, description: `Auto-posted: Payment ${method} — ${b.number}`, sourceModule: 'restaurant', sourceTransactionId: `pay:${b.id}`,
           lines: [
             { account: cashAccountFor(method), description: `${method} — ${b.number}`, debit: gross, costCenter: cc },
             { account: '1210', description: `Clear AR — ${b.number}`, credit: gross, costCenter: cc },
           ],
         },
         ...(b.cost > 0 ? [{
-          id: `${p}je_fbcogs_${b.order.key}`, entryNumber: `SMP-JE-COGS-${b.number.slice(-3)}`, date: b.when, reference: b.number, description: `Auto-posted: F&B COGS — ${b.number}`, sourceModule: 'restaurant', sourceTransactionId: `cogs:${b.id}`,
+          id: `${p}je_fbcogs_${b.order.key}`, entryNumber: `JE-COGS-${b.number.slice(-4)}`, date: b.when, reference: b.number, description: `Auto-posted: F&B COGS — ${b.number}`, sourceModule: 'restaurant', sourceTransactionId: `cogs:${b.id}`,
           lines: [
             { account: '5110', description: `COGS — ${b.number}`, debit: b.cost, costCenter: cc },
             { account: '1310', description: `Inventory issue — ${b.number}`, credit: b.cost, costCenter: cc },
@@ -147,7 +153,7 @@ export async function loadRestaurant(ctx: SampleCtx): Promise<string[]> {
     const totalBy = (re: RegExp) => round2(yesterday.filter((b) => re.test(b.order.paid!)).reduce((s, b) => s + b.net + salesTax(b.net).total, 0))
     const cash = totalBy(/cash/i)
     await seedRows(prisma.cashierShift, [{
-      id: `${p}till_fb`, tenantId, outlet: 'restaurant', businessDate: dayString(ctx, -1), cashierUserId: 'sample-cashier', cashierName: 'Kofi Adjei (sample)',
+      id: `${p}till_fb`, tenantId, outlet: 'restaurant', businessDate: dayString(ctx, -1), cashierUserId: 'sample-cashier', cashierName: 'Kofi Adjei',
       openingFloat: 300, openedAt: atTime(ctx, -1, 11, 0), closedAt: atTime(ctx, -1, 23, 10), expectedCash: round2(300 + cash), closingCount: round2(300 + cash - 5), variance: -5,
       totalCash: cash, totalCard: totalBy(/card/i), totalMobileMoney: totalBy(/mobile/i), totalOther: 0, status: 'closed', notes: 'GHS 5 short — noted on the handover sheet',
     }])
@@ -158,8 +164,9 @@ export async function loadRestaurant(ctx: SampleCtx): Promise<string[]> {
   const table = (min: number) => tables.find((t) => t.capacity >= min)?.id
   await seedRows(prisma.tableReservation, [
     { id: `${p}tres_1`, tenantId, customerName: 'Mr. & Mrs. Amoako', phone: '+233 24 811 0001', tableId: table(2), reservationDate: ctx.today, time: '19:30', guests: 2, status: 'confirmed', specialRequests: 'Anniversary — quiet corner please' },
-    { id: `${p}tres_2`, tenantId, customerName: 'Sample Mining Ltd team', phone: '+233 30 811 0002', tableId: table(8), reservationDate: ctx.today, time: '20:00', guests: 8, status: 'confirmed', specialRequests: 'Bill to company account' },
+    { id: `${p}tres_2`, tenantId, customerName: `${CORPORATE_NAME.replace(/ Ltd$/, '')} team`, phone: '+233 30 811 0002', tableId: table(8), reservationDate: ctx.today, time: '20:00', guests: 8, status: 'confirmed', specialRequests: 'Bill to company account' },
     { id: `${p}tres_3`, tenantId, customerName: 'Esi Badu', phone: '+233 20 811 0003', tableId: table(4), reservationDate: new Date(ctx.today.getTime() + 86_400_000), time: '13:00', guests: 4, status: 'pending' },
+    { id: `${p}tres_5`, tenantId, customerName: 'Alhaji & Hajia Bukari', phone: '+233 24 811 0005', tableId: table(4), reservationDate: ctx.today, time: '19:00', guests: 4, status: 'confirmed', specialRequests: 'Halal menu' },
     { id: `${p}tres_4`, tenantId, customerName: 'Yaw Darko', phone: '+233 27 811 0004', tableId: table(2), reservationDate: new Date(ctx.today.getTime() - 86_400_000), time: '19:00', guests: 2, status: 'completed' },
   ])
   return notes

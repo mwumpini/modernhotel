@@ -6,6 +6,7 @@ const GUARDS: Array<[string, string, string | null, string]> = [
   ['musah', 'Musah Alhassan', 'Sentinel Security Services', 'Guard'],
   ['felix', 'Felix Tetteh', null, 'Supervisor'],
   ['comfort', 'Comfort Addo', 'Sentinel Security Services', 'Guard'],
+  ['issah', 'Issah Abdul-Karim', 'Sentinel Security Services', 'Guard'],
 ]
 const CHECKPOINTS = ['Main gate', 'Car park', 'Lobby', 'Pool area', 'Kitchen back door', 'Generator house', 'Staff entrance']
 const ROUTES = ['Perimeter walk', 'Guest floors', 'Back of house']
@@ -32,25 +33,25 @@ export async function loadSecurity(ctx: SampleCtx) {
     id: location.toLowerCase().replace(/\W+/g, '-'), location, scheduledTime: atTime(ctx, day, h, m).toISOString(), actualTime: status === 'missed' ? null : atTime(ctx, day, h, m + 3).toISOString(), status, notes,
   })
   await seedRows(prisma.securityPatrolLog, [
-    { id: `${p}patrol_1`, tenantId, patrolNumber: 'SMP-PTL-001', officerId: `${p}sec_musah`, officerName: guard('musah')[1], route: 'Perimeter walk', startTime: atTime(ctx, -1, 22, 0), endTime: atTime(ctx, -1, 22, 40), status: 'completed',
+    { id: `${p}patrol_1`, tenantId, patrolNumber: 'PTL-0901', officerId: `${p}sec_musah`, officerName: guard('musah')[1], route: 'Perimeter walk', startTime: atTime(ctx, -1, 22, 0), endTime: atTime(ctx, -1, 22, 40), status: 'completed',
       checkpoints: [checkpoint('Main gate', -1, 22, 0), checkpoint('Car park', -1, 22, 10), checkpoint('Generator house', -1, 22, 20), checkpoint('Staff entrance', -1, 22, 30)] },
-    { id: `${p}patrol_2`, tenantId, patrolNumber: 'SMP-PTL-002', officerId: `${p}sec_musah`, officerName: guard('musah')[1], route: 'Back of house', startTime: atTime(ctx, 0, 2, 0), endTime: atTime(ctx, 0, 2, 35), status: 'interrupted', notes: 'Called to the lobby for a noise complaint.',
+    { id: `${p}patrol_2`, tenantId, patrolNumber: 'PTL-0902', officerId: `${p}sec_musah`, officerName: guard('musah')[1], route: 'Back of house', startTime: atTime(ctx, 0, 2, 0), endTime: atTime(ctx, 0, 2, 35), status: 'interrupted', notes: 'Called to the lobby for a noise complaint.',
       checkpoints: [checkpoint('Kitchen back door', 0, 2, 0, 'completed', 'Door locked'), checkpoint('Generator house', 0, 2, 15, 'missed'), checkpoint('Staff entrance', 0, 2, 30, 'missed')] },
-    { id: `${p}patrol_3`, tenantId, patrolNumber: 'SMP-PTL-003', officerId: `${p}sec_kwaku`, officerName: guard('kwaku')[1], route: 'Guest floors', startTime: new Date(Date.now() - 20 * 60_000), status: 'active',
+    { id: `${p}patrol_3`, tenantId, patrolNumber: 'PTL-0903', officerId: `${p}sec_kwaku`, officerName: guard('kwaku')[1], route: 'Guest floors', startTime: new Date(Date.now() - 20 * 60_000), status: 'active',
       checkpoints: [checkpoint('Lobby', 0, new Date().getUTCHours(), 0), { ...checkpoint('Pool area', 0, new Date().getUTCHours(), 20), status: 'pending', actualTime: null }] },
   ])
 
   await seedRows(prisma.securityIncident, [
-    { id: `${p}inc_1`, tenantId, incidentNumber: 'SMP-INC-001', type: 'theft', severity: 'medium', status: 'investigating', location: 'Guest room', floor: '2', room: '201', description: 'Guest reports a phone charger and power bank missing from the room after service.', reportedBy: 'Front desk', reportedAt: atTime(ctx, -1, 16, 30), assignedTo: guard('felix')[1], assignedAt: atTime(ctx, -1, 16, 45), witnesses: ['Room attendant on duty'], notes: 'Housekeeping cart log requested.' },
-    { id: `${p}inc_2`, tenantId, incidentNumber: 'SMP-INC-002', type: 'suspicious_activity', severity: 'low', status: 'resolved', location: 'Car park', description: 'Unregistered vehicle parked overnight near the generator house.', reportedBy: guard('musah')[1], reportedAt: atTime(ctx, -3, 23, 10), resolvedAt: atTime(ctx, -2, 8, 0), resolution: 'Vehicle belonged to a wedding guest; details added to the visitor log.' },
-    { id: `${p}inc_3`, tenantId, incidentNumber: 'SMP-INC-003', type: 'medical_emergency', severity: 'high', status: 'closed', location: 'Pool area', description: 'Guest slipped on the pool deck and cut their knee.', reportedBy: 'Pool attendant', reportedAt: atTime(ctx, -6, 15, 20), resolvedAt: atTime(ctx, -6, 15, 50), resolution: 'First aid given; guest declined hospital. Wet-floor signs added.', cost: 120, insuranceClaim: false },
-    { id: `${p}inc_4`, tenantId, incidentNumber: 'SMP-INC-004', type: 'fire_alarm', severity: 'critical', status: 'reported', location: 'Kitchen', description: 'Smoke detector triggered by the grill extractor — building partly evacuated for 10 minutes.', reportedBy: 'Head Chef', reportedAt: new Date(Date.now() - 45 * 60_000), policeReport: false },
+    { id: `${p}inc_1`, tenantId, incidentNumber: 'INC-0901', type: 'theft', severity: 'medium', status: 'investigating', location: 'Guest room', floor: '2', room: '201', description: 'Guest reports a phone charger and power bank missing from the room after service.', reportedBy: 'Front desk', reportedAt: atTime(ctx, -1, 16, 30), assignedTo: guard('felix')[1], assignedAt: atTime(ctx, -1, 16, 45), witnesses: ['Room attendant on duty'], notes: 'Housekeeping cart log requested.' },
+    { id: `${p}inc_2`, tenantId, incidentNumber: 'INC-0902', type: 'suspicious_activity', severity: 'low', status: 'resolved', location: 'Car park', description: 'Unregistered vehicle parked overnight near the generator house.', reportedBy: guard('musah')[1], reportedAt: atTime(ctx, -3, 23, 10), resolvedAt: atTime(ctx, -2, 8, 0), resolution: 'Vehicle belonged to a wedding guest; details added to the visitor log.' },
+    { id: `${p}inc_3`, tenantId, incidentNumber: 'INC-0903', type: 'medical_emergency', severity: 'high', status: 'closed', location: 'Pool area', description: 'Guest slipped on the pool deck and cut their knee.', reportedBy: 'Pool attendant', reportedAt: atTime(ctx, -6, 15, 20), resolvedAt: atTime(ctx, -6, 15, 50), resolution: 'First aid given; guest declined hospital. Wet-floor signs added.', cost: 120, insuranceClaim: false },
+    { id: `${p}inc_4`, tenantId, incidentNumber: 'INC-0904', type: 'fire_alarm', severity: 'critical', status: 'reported', location: 'Kitchen', description: 'Smoke detector triggered by the grill extractor — building partly evacuated for 10 minutes.', reportedBy: 'Head Chef', reportedAt: new Date(Date.now() - 45 * 60_000), policeReport: false },
   ])
 
   await seedRows(prisma.securityVisitor, [
-    { id: `${p}vis_1`, tenantId, visitorNumber: 'SMP-VIS-001', name: 'Emmanuel Asante', phone: '+233 24 610 0001', idType: 'ghana-card', idNumber: 'GHA-000000001-1', purpose: 'Meeting a guest', hostName: 'Sarah Thompson', hostRoom: '201', checkInTime: new Date(Date.now() - 50 * 60_000), expectedHours: 2, status: 'checked_in' },
-    { id: `${p}vis_2`, tenantId, visitorNumber: 'SMP-VIS-002', name: 'Rita Boakye (supplier)', phone: '+233 20 610 0002', idType: 'drivers-license', idNumber: 'DL-000002', purpose: 'Produce delivery', hostName: 'Kitchen', checkInTime: atTime(ctx, 0, 7, 20), checkOutTime: atTime(ctx, 0, 7, 55), status: 'checked_out', vehicleNumber: 'GR 1234-20' },
-    { id: `${p}vis_3`, tenantId, visitorNumber: 'SMP-VIS-003', name: 'Kojo Amankwah', idType: 'passport', idNumber: 'G0000003', purpose: 'Contractor — air conditioning repair', hostName: 'Maintenance', checkInTime: atTime(ctx, 0, 8, 30), expectedHours: 1, status: 'overdue', escortRequired: true, escortName: guard('kwaku')[1] },
+    { id: `${p}vis_1`, tenantId, visitorNumber: 'VIS-0901', name: 'Emmanuel Asante', phone: '+233 24 610 0001', idType: 'ghana-card', idNumber: 'GHA-000000001-1', purpose: 'Meeting a guest', hostName: 'Sarah Thompson', hostRoom: '201', checkInTime: new Date(Date.now() - 50 * 60_000), expectedHours: 2, status: 'checked_in' },
+    { id: `${p}vis_2`, tenantId, visitorNumber: 'VIS-0902', name: 'Rita Boakye', phone: '+233 20 610 0002', idType: 'drivers-license', idNumber: 'DL-000002', purpose: 'Produce delivery', hostName: 'Kitchen', checkInTime: atTime(ctx, 0, 7, 20), checkOutTime: atTime(ctx, 0, 7, 55), status: 'checked_out', vehicleNumber: 'GR 1234-20' },
+    { id: `${p}vis_3`, tenantId, visitorNumber: 'VIS-0903', name: 'Kojo Amankwah', idType: 'passport', idNumber: 'G0000003', purpose: 'Contractor — air conditioning repair', hostName: 'Maintenance', checkInTime: atTime(ctx, 0, 8, 30), expectedHours: 1, status: 'overdue', escortRequired: true, escortName: guard('kwaku')[1] },
   ])
 
   await seedRows(prisma.securityComplianceRequirement, [

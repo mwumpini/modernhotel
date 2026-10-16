@@ -17,6 +17,7 @@ import {
   Spinner
 } from '@heroui/react';
 import { useSettingsStore, syncSetupStatusToApi } from '../lib/settings/store';
+import { BRAND_TAGLINE } from '../components/BrandLogo';
 import { setClientTenantSubdomain } from '../lib/api/clientTenant';
 
 export default function SetupWizardPage() {
@@ -566,7 +567,7 @@ export default function SetupWizardPage() {
                 </Select>
                 <Input label="Company Legal Name" value={company.legalName} onChange={e => setCompany((v: any) => ({ ...v, legalName: e.target.value }))} />
                 <Input label="Trading Name" value={company.tradingName} onChange={e => setCompany((v: any) => ({ ...v, tradingName: e.target.value }))} />
-                <Input label="Tagline" placeholder="e.g., Excellence in Hospitality" value={company.tagline} onChange={e => setCompany((v: any) => ({ ...v, tagline: e.target.value }))} />
+                <Input label="Tagline" placeholder={BRAND_TAGLINE} value={company.tagline} onChange={e => setCompany((v: any) => ({ ...v, tagline: e.target.value }))} />
                 <div className="flex flex-col gap-2">
                   <label className="text-sm text-gray-600">Company Logo (upload)</label>
                   <input

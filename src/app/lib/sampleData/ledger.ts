@@ -74,7 +74,7 @@ export async function postEntries(ctx: SampleCtx, entries: Entry[]): Promise<str
       data: {
         id: e.id, tenantId: ctx.tenantId, entryNumber: e.entryNumber, date: e.date, reference: e.reference, description: e.description,
         totalDebit: debit, totalCredit: credit, currency: 'GHS', status, sourceModule: e.sourceModule, sourceTransactionId: e.sourceTransactionId,
-        postedBy: status === 'Posted' ? 'Sample data' : undefined, postedAt: status === 'Posted' ? e.date : undefined,
+        postedBy: status === 'Posted' ? 'System' : undefined, postedAt: status === 'Posted' ? e.date : undefined,
         lines: {
           create: e.lines.map((l, n) => ({
             id: `${e.id}-L${n + 1}`, tenantId: ctx.tenantId, accountCode: l.account, description: l.description,

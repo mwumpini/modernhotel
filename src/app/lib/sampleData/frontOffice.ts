@@ -9,40 +9,76 @@ const SAMPLE_ROOM_TYPES = [
   { key: 'suite', name: 'Executive Suite', baseRate: 850, capacity: 4, category: 'suite', description: 'Suite with a separate lounge', amenities: ['wifi', 'air_conditioning', 'tv', 'minibar', 'balcony'] },
 ]
 const SAMPLE_ROOM_NUMBERS: Array<[string, string, string]> = [
-  ['101', 'standard', '1'], ['102', 'standard', '1'], ['103', 'standard', '1'],
-  ['201', 'deluxe', '2'], ['202', 'deluxe', '2'], ['203', 'deluxe', '2'],
-  ['301', 'suite', '3'], ['302', 'suite', '3'], ['303', 'suite', '3'],
+  ['101', 'standard', '1'], ['102', 'standard', '1'], ['103', 'standard', '1'], ['104', 'standard', '1'], ['105', 'standard', '1'], ['106', 'standard', '1'],
+  ['201', 'deluxe', '2'], ['202', 'deluxe', '2'], ['203', 'deluxe', '2'], ['204', 'deluxe', '2'],
+  ['301', 'suite', '3'], ['302', 'suite', '3'],
 ]
 
-// key, name, email, phone, nationality, source
-const GUESTS: Array<[string, string, string, string, string, string]> = [
-  ['g1', 'Kwame Boateng', 'kwame.boateng@sample.hotel', '+233 24 700 0001', 'Ghanaian', 'walkin'],
-  ['g2', 'Sarah Thompson', 'sarah.thompson@sample.hotel', '+44 7700 900002', 'British', 'online'],
-  ['g3', 'Adwoa Frimpong', 'adwoa.frimpong@sample.hotel', '+233 20 700 0003', 'Ghanaian', 'corporate'],
-  ['g4', 'Michael Osei', 'michael.osei@sample.hotel', '+233 26 700 0004', 'Ghanaian', 'referral'],
-  ['g5', 'Fatima Abdullah', 'fatima.abdullah@sample.hotel', '+233 24 700 0005', 'Ghanaian', 'online'],
-  ['g6', 'Daniel Mensah', 'daniel.mensah@sample.hotel', '+233 27 700 0006', 'Ghanaian', 'online'],
-  ['g7', 'Grace Owusu-Ansah', 'grace.owusuansah@sample.hotel', '+233 24 700 0007', 'Ghanaian', 'friend'],
-  ['g8', 'Peter Nkrumah', 'peter.nkrumah@sample.hotel', '+233 50 700 0008', 'Ghanaian', 'walkin'],
+/** Who the front desk is: receptionists from the HR sample staff. */
+export const RECEPTIONIST = 'Akosua Mensah'
+export const NIGHT_AUDITOR = 'Ibrahim Sulemana'
+
+// key, name, phone, nationality, source. Guests from the north and the south, Muslim and Christian, plus a few from abroad.
+// No email addresses: nothing should ever be sent to a made-up guest.
+const GUESTS: Array<[string, string, string, string, string]> = [
+  ['g1', 'Kwame Boateng', '+233 24 700 0001', 'Ghanaian', 'walkin'],
+  ['g2', 'Abdul-Rahman Issahaku', '+233 24 700 0002', 'Ghanaian', 'online'],
+  ['g3', 'Adwoa Frimpong', '+233 20 700 0003', 'Ghanaian', 'corporate'],
+  ['g4', 'Mariama Seidu', '+233 54 700 0004', 'Ghanaian', 'referral'],
+  ['g5', 'Selorm Dzokoto', '+233 24 700 0005', 'Ghanaian', 'online'],
+  ['g6', 'Naa Adjeley Quaye', '+233 27 700 0006', 'Ghanaian', 'online'],
+  ['g7', 'Fuseini Alhassan', '+233 24 700 0007', 'Ghanaian', 'walkin'],
+  ['g8', 'Efua Nyarko', '+233 50 700 0008', 'Ghanaian', 'friend'],
+  ['g9', 'Zakaria Yakubu', '+233 24 700 0009', 'Ghanaian', 'online'],
+  ['g10', 'Akua Owusu-Ansah', '+233 20 700 0010', 'Ghanaian', 'referral'],
+  ['g11', 'Emmanuel Kpodo', '+233 24 700 0011', 'Ghanaian', 'walkin'],
+  ['g12', 'Ayishetu Mohammed', '+233 55 700 0012', 'Ghanaian', 'corporate'],
+  ['g13', 'Chinedu Okeke', '+234 803 700 0013', 'Nigerian', 'online'],
+  ['g14', 'Sarah Thompson', '+44 7700 900014', 'British', 'online'],
+  ['g15', 'Bawa Abdulai', '+233 24 700 0015', 'Ghanaian', 'walkin'],
+  ['g16', 'Dzifa Amenyo', '+233 26 700 0016', 'Ghanaian', 'online'],
+  ['g17', 'Nii Armah Tagoe', '+233 24 700 0017', 'Ghanaian', 'friend'],
+  ['g18', 'Patience Atinga', '+233 24 700 0018', 'Ghanaian', 'walkin'],
 ]
+
+export const CORPORATE_NAME = 'Tano Ridge Mining Ltd'
 
 type Stay = {
   key: string; guest: string; typeIndex: number; arrive: number; depart: number
-  status: 'checked-in' | 'confirmed' | 'checked-out'; adults: number; source: string
+  status: 'checked-in' | 'confirmed' | 'checked-out' | 'cancelled' | 'no-show'; adults: number; source: string
   guaranteed?: boolean; company?: string; requests?: string
   deposit?: { method: string; amount: number }
   extras?: Array<{ offset: number; description: string; category: string; amount: number }>
-  settle?: string // payment method used to settle a checked-out folio in full
+  settle?: string // payment method used to settle a checked-out folio
 }
+// Two weeks of trade: stays that have left, guests in the house (one due out today), arrivals today,
+// bookings ahead, one cancellation and one no-show.
 const STAYS: Stay[] = [
-  { key: 'r1', guest: 'g1', typeIndex: 0, arrive: -2, depart: 1, status: 'checked-in', adults: 2, source: 'WALK IN', deposit: { method: 'Cash', amount: 500 }, extras: [{ offset: -1, description: 'Restaurant - Dinner', category: 'f&b', amount: 190 }] },
-  { key: 'r2', guest: 'g2', typeIndex: 1, arrive: -1, depart: 3, status: 'checked-in', adults: 1, source: 'Booking.com', deposit: { method: 'Card', amount: 600 }, requests: 'Late check-out if possible' },
-  { key: 'r3', guest: 'g3', typeIndex: 2, arrive: -1, depart: 2, status: 'checked-in', adults: 2, source: 'Corporate', company: 'Sample Mining Ltd' },
-  { key: 'r4', guest: 'g4', typeIndex: 1, arrive: 0, depart: 2, status: 'confirmed', adults: 2, source: 'Direct', guaranteed: true, requests: 'High floor, quiet room' },
-  { key: 'r5', guest: 'g5', typeIndex: 0, arrive: 0, depart: 1, status: 'confirmed', adults: 1, source: 'Booking.com' },
-  { key: 'r6', guest: 'g6', typeIndex: 0, arrive: 3, depart: 5, status: 'confirmed', adults: 2, source: 'Direct' },
-  { key: 'r7', guest: 'g7', typeIndex: 1, arrive: -6, depart: -3, status: 'checked-out', adults: 2, source: 'Direct', settle: 'Mobile Money' },
-  { key: 'r8', guest: 'g8', typeIndex: 0, arrive: -4, depart: -1, status: 'checked-out', adults: 1, source: 'WALK IN', settle: 'Cash' },
+  // checked out
+  { key: 'r1', guest: 'g7', typeIndex: 0, arrive: -13, depart: -11, status: 'checked-out', adults: 1, source: 'WALK IN', settle: 'Cash' },
+  { key: 'r2', guest: 'g10', typeIndex: 1, arrive: -12, depart: -9, status: 'checked-out', adults: 2, source: 'Direct', settle: 'Mobile Money', extras: [{ offset: -11, description: 'Restaurant - Dinner', category: 'f&b', amount: 230 }] },
+  { key: 'r3', guest: 'g13', typeIndex: 2, arrive: -10, depart: -7, status: 'checked-out', adults: 1, source: 'Booking.com', settle: 'Card', extras: [{ offset: -9, description: 'Room Service - Dinner', category: 'f&b', amount: 180 }, { offset: -8, description: 'Laundry & pressing', category: 'laundry', amount: 90 }] },
+  { key: 'r4', guest: 'g11', typeIndex: 0, arrive: -9, depart: -6, status: 'checked-out', adults: 2, source: 'WALK IN', settle: 'Mobile Money' },
+  { key: 'r5', guest: 'g16', typeIndex: 0, arrive: -7, depart: -5, status: 'checked-out', adults: 1, source: 'Booking.com', settle: 'Card' },
+  { key: 'r6', guest: 'g18', typeIndex: 1, arrive: -6, depart: -3, status: 'checked-out', adults: 2, source: 'Direct', settle: 'Mobile Money', extras: [{ offset: -5, description: 'Laundry & pressing', category: 'laundry', amount: 60 }] },
+  { key: 'r7', guest: 'g17', typeIndex: 0, arrive: -4, depart: -1, status: 'checked-out', adults: 1, source: 'WALK IN', settle: 'Cash', extras: [{ offset: -2, description: 'Restaurant - Lunch', category: 'f&b', amount: 120 }] },
+  { key: 'r8', guest: 'g15', typeIndex: 1, arrive: -3, depart: -1, status: 'checked-out', adults: 1, source: 'Direct', settle: 'Mobile Money' },
+  // in the house
+  { key: 'r9', guest: 'g1', typeIndex: 0, arrive: -2, depart: 1, status: 'checked-in', adults: 2, source: 'WALK IN', deposit: { method: 'Cash', amount: 500 }, extras: [{ offset: -1, description: 'Restaurant - Dinner', category: 'f&b', amount: 190 }] },
+  { key: 'r10', guest: 'g14', typeIndex: 1, arrive: -1, depart: 3, status: 'checked-in', adults: 1, source: 'Booking.com', deposit: { method: 'Card', amount: 600 }, requests: 'Late check-out if possible' },
+  { key: 'r11', guest: 'g3', typeIndex: 2, arrive: -1, depart: 2, status: 'checked-in', adults: 2, source: 'Corporate', company: CORPORATE_NAME },
+  { key: 'r12', guest: 'g2', typeIndex: 0, arrive: -3, depart: 2, status: 'checked-in', adults: 1, source: 'Direct', deposit: { method: 'Mobile Money', amount: 800 }, requests: 'Halal meals, please' },
+  { key: 'r13', guest: 'g6', typeIndex: 1, arrive: -1, depart: 1, status: 'checked-in', adults: 2, source: 'Booking.com', deposit: { method: 'Mobile Money', amount: 700 } },
+  { key: 'r14', guest: 'g8', typeIndex: 0, arrive: -2, depart: 0, status: 'checked-in', adults: 1, source: 'Direct', deposit: { method: 'Cash', amount: 400 } },
+  // arriving today
+  { key: 'r15', guest: 'g4', typeIndex: 0, arrive: 0, depart: 2, status: 'confirmed', adults: 1, source: 'Direct', guaranteed: true, requests: 'Ground floor, close to the prayer room' },
+  { key: 'r16', guest: 'g5', typeIndex: 1, arrive: 0, depart: 3, status: 'confirmed', adults: 2, source: 'Booking.com', requests: 'High floor, quiet room' },
+  // ahead
+  { key: 'r17', guest: 'g9', typeIndex: 0, arrive: 2, depart: 5, status: 'confirmed', adults: 1, source: 'Direct' },
+  { key: 'r18', guest: 'g12', typeIndex: 2, arrive: 5, depart: 7, status: 'confirmed', adults: 1, source: 'Corporate', company: CORPORATE_NAME, guaranteed: true },
+  // cancelled, and a no-show two nights ago
+  { key: 'r19', guest: 'g17', typeIndex: 1, arrive: 4, depart: 6, status: 'cancelled', adults: 2, source: 'Direct' },
+  { key: 'r20', guest: 'g16', typeIndex: 0, arrive: -2, depart: -1, status: 'no-show', adults: 1, source: 'Booking.com' },
 ]
 
 export async function loadFrontOffice(ctx: SampleCtx): Promise<string[]> {
@@ -81,33 +117,39 @@ export async function loadFrontOffice(ctx: SampleCtx): Promise<string[]> {
       restrictions: { minStay: 1, maxStay: 30, advanceBooking: 0, cancellationPolicy: '24 hours before arrival' }, seasonalRates: [], dayOfWeekRates: [],
     }))]
     await prisma.systemSettings.update({ where: { tenantId }, data: { roomSettings: { ...rs, roomTypes, rooms, ratePlans } as any } })
-    notes.push('This hotel had no rooms configured, so a sample set of 3 room types and 9 rooms was added.')
+    notes.push('This hotel had no rooms configured, so 3 room types and 12 rooms were added.')
   }
 
-  // ---- pick rooms: three types, rooms not currently held by a real stay ----
+  // ---- pick rooms: by type, never two stays in one room on the same night ----
   const busy = new Set((await prisma.reservation.findMany({
     where: { tenantId, status: 'checked-in', NOT: { id: { startsWith: p } } }, select: { roomId: true },
   })).map((r) => r.roomId))
   const activeTypes = roomTypes.filter((t) => t.isActive !== false).slice(0, 3)
   const roomFor = new Map<string, any>()
-  const taken = new Set<string>()
-  // Only stays that are in the house or arriving today must avoid rooms a real guest holds right now;
-  // past and future stays don't clash with tonight's occupancy. Sample stays never share a room.
+  const booked = new Map<string, Array<[number, number]>>() // room number -> nights held [from, to)
+  // A guest in the house holds the room until checkout, even when due out today.
+  const span = (stay: Stay): [number, number] => [stay.arrive, stay.status === 'checked-in' ? Math.max(stay.depart, 1) : stay.depart]
+  const holdsRoom = (stay: Stay) => stay.status !== 'cancelled' && stay.status !== 'no-show'
+  // Stays in the house or arriving today must also avoid rooms a real guest holds right now.
   const pickRoom = (stay: Stay) => {
     const type = activeTypes[stay.typeIndex % Math.max(activeTypes.length, 1)]
+    const [from, to] = span(stay)
     const needsFreeNow = stay.status === 'checked-in' || stay.arrive === 0
-    const free = (r: any) => r.isActive !== false && !taken.has(r.number) && !(needsFreeNow && busy.has(r.number))
+    const free = (r: any) => r.isActive !== false
+      && !(booked.get(r.number) || []).some(([a, b]) => from < b && a < to)
+      && !(needsFreeNow && busy.has(r.number))
     const candidate = rooms.find((r) => r.typeId === type?.id && free(r)) || rooms.find(free)
-    if (candidate) taken.add(candidate.number)
+    if (candidate && holdsRoom(stay)) booked.set(candidate.number, [...(booked.get(candidate.number) || []), [from, to]])
     roomFor.set(stay.key, { type, room: candidate })
   }
-  STAYS.forEach(pickRoom)
+  // In-house stays first, so tonight's rooms are settled before the past and future are placed around them.
+  ;[...STAYS].sort((a, b) => Number(b.status === 'checked-in') - Number(a.status === 'checked-in')).forEach(pickRoom)
 
   // ---- guests ----
   const tag = tenantId.slice(-4).toUpperCase()
-  await seedRows(prisma.guest, GUESTS.map(([key, name, email, phone, nationality, source], i) => {
+  await seedRows(prisma.guest, GUESTS.map(([key, name, phone, nationality, source], i) => {
     const [first, ...rest] = name.split(' ')
-    return { id: `${p}${key}`, tenantId, serialNumber: `SMP${tag}-${String(i + 1).padStart(3, '0')}`, name, firstName: first, lastName: rest.join(' '), email, phone, nationality, source, isActive: true }
+    return { id: `${p}${key}`, tenantId, serialNumber: `G${tag}-${String(i + 101).padStart(4, '0')}`, name, firstName: first, lastName: rest.join(' '), phone, nationality, source, isActive: true }
   }))
 
   // ---- reservations and folios ----
@@ -120,16 +162,21 @@ export async function loadFrontOffice(ctx: SampleCtx): Promise<string[]> {
     const nights = stay.depart - stay.arrive
     const rateBreakdown = Array.from({ length: nights }, (_, n) => ({ date: dayString(ctx, stay.arrive + n), base: rate, total: grossOf(rate, 'HOTEL') }))
     const paidStatus = stay.settle ? 'paid' : stay.deposit ? 'partial' : 'unpaid'
+    const arrived = stay.status === 'checked-in' || stay.status === 'checked-out'
     reservationRows.push({
-      id: `${p}${stay.key}`, tenantId, guestId: `${p}${stay.guest}`, resId: `RES-SMP-${String(i + 1).padStart(3, '0')}`,
-      roomType: type?.id, ratePlanId: plan?.id, roomId: room?.number, status: stay.status, source: stay.source,
+      id: `${p}${stay.key}`, tenantId, guestId: `${p}${stay.guest}`, resId: `RES-${String(i + 901).padStart(4, '0')}`,
+      roomType: type?.id, ratePlanId: plan?.id, roomId: stay.status === 'cancelled' ? null : room?.number, status: stay.status, source: stay.source,
       checkInDate: dayOffset(ctx, stay.arrive), checkOutDate: dayOffset(ctx, stay.depart), adults: stay.adults, children: 0,
       specialRequests: stay.requests, stayReason: stay.company ? 'business' : 'leisure', isGuaranteed: !!stay.guaranteed, companyName: stay.company,
-      checkedInAt: stay.status === 'confirmed' ? null : new Date(dayOffset(ctx, stay.arrive).getTime() + 14 * 3_600_000 + 20 * 60_000),
+      checkedInAt: arrived ? new Date(dayOffset(ctx, stay.arrive).getTime() + 14 * 3_600_000 + 20 * 60_000) : null,
       checkedOutAt: stay.status === 'checked-out' ? new Date(dayOffset(ctx, stay.depart).getTime() + 10 * 3_600_000 + 40 * 60_000) : null,
-      details: { guestName: GUESTS.find((g) => g[0] === stay.guest)![1], roomTypeId: type?.id, marketCodes: [stay.source === 'WALK IN' ? 'WALK IN' : stay.source.toUpperCase()], rateBreakdown, paymentStatus: paidStatus, ...(stay.deposit ? { deposit: { amount: stay.deposit.amount, method: stay.deposit.method } } : {}) },
+      details: {
+        guestName: GUESTS.find((g) => g[0] === stay.guest)![1], roomTypeId: type?.id, marketCodes: [stay.source === 'WALK IN' ? 'WALK IN' : stay.source.toUpperCase()], rateBreakdown, paymentStatus: paidStatus,
+        ...(stay.deposit ? { deposit: { amount: stay.deposit.amount, method: stay.deposit.method } } : {}),
+        ...(stay.status === 'cancelled' ? { cancellationReason: 'Guest called to cancel — change of travel plans' } : {}),
+      },
     })
-    if (stay.status === 'confirmed') return // nothing is billed before arrival
+    if (!arrived) return // nothing is billed before arrival, or for a booking that never arrived
 
     // One room charge per night that has been through night audit (the last night of an in-house stay isn't over yet).
     const lastBilledNight = stay.status === 'checked-in' ? -1 : stay.depart - 1
@@ -142,11 +189,11 @@ export async function loadFrontOffice(ctx: SampleCtx): Promise<string[]> {
     }
     const totalCharges = round2(charges.reduce((s, c) => s + c.amount + c.tax, 0))
     const payments: Array<Record<string, any>> = []
-    if (stay.deposit) payments.push({ id: `P-${p}${stay.key}-dep`, date: `${dayString(ctx, stay.arrive)}T15:00:00.000Z`, method: stay.deposit.method, amount: stay.deposit.amount, status: 'completed', processedBy: 'Sample Front Desk' })
-    if (stay.settle) payments.push({ id: `P-${p}${stay.key}-set`, date: `${dayString(ctx, stay.depart)}T10:30:00.000Z`, method: stay.settle, amount: totalCharges, status: 'completed', processedBy: 'Sample Front Desk' })
+    if (stay.deposit) payments.push({ id: `P-${p}${stay.key}-dep`, date: `${dayString(ctx, stay.arrive)}T15:00:00.000Z`, method: stay.deposit.method, amount: stay.deposit.amount, status: 'completed', processedBy: RECEPTIONIST })
+    if (stay.settle) payments.push({ id: `P-${p}${stay.key}-set`, date: `${dayString(ctx, stay.depart)}T10:30:00.000Z`, method: stay.settle, amount: round2(totalCharges - (stay.deposit?.amount || 0)), status: 'completed', processedBy: RECEPTIONIST })
     const totalPayments = round2(payments.reduce((s, x) => s + x.amount, 0))
     folioRows.push({
-      id: `FOL-S${tag}-${String(i + 1).padStart(3, '0')}`, tenantId, reservationId: `${p}${stay.key}`, currency: 'GHS', status: stay.status === 'checked-out' ? 'closed' : 'active',
+      id: `FOL-${tag}-${String(i + 901).padStart(4, '0')}`, tenantId, reservationId: `${p}${stay.key}`, currency: 'GHS', status: stay.status === 'checked-out' ? 'closed' : 'active',
       totalCharges, totalPayments, balance: round2(totalCharges - totalPayments), charges, payments,
     })
   })
@@ -156,8 +203,9 @@ export async function loadFrontOffice(ctx: SampleCtx): Promise<string[]> {
   // ---- night audit history: the last three business days, one with a no-show ----
   await seedRows(prisma.nightAuditLog, [3, 2, 1].map((back) => ({
     id: `${p}na_${back}`, tenantId, businessDate: dayString(ctx, -back), source: back === 1 ? 'manual' : 'scheduled', status: 'completed',
-    roomChargesPosted: STAYS.filter((s) => s.status !== 'confirmed' && s.arrive <= -back && s.depart > -back).length, noShowsMarked: back === 2 ? 1 : 0,
-    runBy: back === 1 ? 'Ibrahim Mahama (sample)' : 'System', runAt: new Date(dayOffset(ctx, -back + 1).getTime() + 2 * 3_600_000),
+    roomChargesPosted: STAYS.filter((s) => (s.status === 'checked-in' || s.status === 'checked-out') && s.arrive <= -back && s.depart > -back).length,
+    noShowsMarked: STAYS.filter((s) => s.status === 'no-show' && s.arrive === -back).length,
+    runBy: back === 1 ? NIGHT_AUDITOR : 'System', runAt: new Date(dayOffset(ctx, -back + 1).getTime() + 2 * 3_600_000),
   })))
 
   // ---- yesterday's front desk till, closed and counted ----
@@ -165,7 +213,7 @@ export async function loadFrontOffice(ctx: SampleCtx): Promise<string[]> {
   const sumBy = (re: RegExp) => round2(takenYesterday.filter((x) => re.test(x.method)).reduce((s, x) => s + x.amount, 0))
   const cash = sumBy(/cash/i)
   await seedRows(prisma.cashierShift, [{
-    id: `${p}till_fo`, tenantId, outlet: 'frontoffice', businessDate: dayString(ctx, -1), cashierUserId: 'sample-cashier', cashierName: 'Akosua Mensah (sample)',
+    id: `${p}till_fo`, tenantId, outlet: 'frontoffice', businessDate: dayString(ctx, -1), cashierUserId: 'sample-cashier', cashierName: RECEPTIONIST,
     openingFloat: 500, openedAt: new Date(dayOffset(ctx, -1).getTime() + 7 * 3_600_000), closedAt: new Date(dayOffset(ctx, -1).getTime() + 15 * 3_600_000),
     expectedCash: round2(500 + cash), closingCount: round2(500 + cash), variance: 0, totalCash: cash, totalCard: sumBy(/card/i), totalMobileMoney: sumBy(/mobile/i), totalOther: 0,
     status: 'closed', transferTo: 'accounts', transferToName: 'Abena Danso', transferAmount: cash, transferredAt: new Date(dayOffset(ctx, -1).getTime() + 15 * 3_600_000 + 20 * 60_000),
@@ -176,16 +224,17 @@ export async function loadFrontOffice(ctx: SampleCtx): Promise<string[]> {
     ['airport', 'Airport pick-up', 'transport', 250, 'Hotel shuttle'], ['laundry', 'Laundry & pressing', 'laundry', 60, 'In-house laundry'],
     ['spa', 'Massage (60 min)', 'wellness', 350, 'Serenity Spa'], ['tour', 'Accra city tour', 'tours', 400, 'Gold Coast Tours'], ['wakeup', 'Wake-up call', 'concierge', 0, 'Front desk'],
   ]
-  await seedRows(prisma.guestService, SERVICES.map(([key, name, category, price, provider]) => ({ id: `${p}svc_${key}`, tenantId, name, category, price, provider, status: 'available', description: `${name} — sample service` })))
+  await seedRows(prisma.guestService, SERVICES.map(([key, name, category, price, provider]) => ({ id: `${p}svc_${key}`, tenantId, name, category, price, provider, status: 'available', description: `${name} — ${provider}` })))
   const inHouse = (key: string) => {
     const stay = STAYS.find((s) => s.key === key)!
     return { guestId: `${p}${stay.guest}`, reservationId: `${p}${key}`, clientName: GUESTS.find((g) => g[0] === stay.guest)![1], roomNumber: roomFor.get(key)?.room?.number }
   }
   await seedRows(prisma.serviceRequest, [
-    { id: `${p}sreq_1`, tenantId, serviceId: `${p}svc_airport`, ...inHouse('r2'), requestDate: dayOffset(ctx, 3), status: 'pending', priority: 'high', notes: 'Flight BA078 departs 22:40 — pick up from room at 19:00' },
-    { id: `${p}sreq_2`, tenantId, serviceId: `${p}svc_laundry`, ...inHouse('r1'), requestDate: dayOffset(ctx, 0), status: 'in_progress', priority: 'medium', notes: '3 shirts, 2 trousers — same-day' },
-    { id: `${p}sreq_3`, tenantId, serviceId: `${p}svc_spa`, ...inHouse('r3'), requestDate: dayOffset(ctx, -1), status: 'completed', priority: 'low' },
-    { id: `${p}sreq_4`, tenantId, serviceId: `${p}svc_wakeup`, ...inHouse('r2'), requestDate: dayOffset(ctx, 1), status: 'pending', priority: 'medium', notes: 'Wake-up at 05:30' },
+    { id: `${p}sreq_1`, tenantId, serviceId: `${p}svc_airport`, ...inHouse('r10'), requestDate: dayOffset(ctx, 3), status: 'pending', priority: 'high', notes: 'Flight departs 22:40 — pick up from the room at 19:00' },
+    { id: `${p}sreq_2`, tenantId, serviceId: `${p}svc_laundry`, ...inHouse('r9'), requestDate: dayOffset(ctx, 0), status: 'in_progress', priority: 'medium', notes: '3 shirts, 2 trousers — same-day' },
+    { id: `${p}sreq_3`, tenantId, serviceId: `${p}svc_spa`, ...inHouse('r11'), requestDate: dayOffset(ctx, -1), status: 'completed', priority: 'low' },
+    { id: `${p}sreq_4`, tenantId, serviceId: `${p}svc_wakeup`, ...inHouse('r12'), requestDate: dayOffset(ctx, 1), status: 'pending', priority: 'medium', notes: 'Wake-up at 04:45 for Fajr' },
+    { id: `${p}sreq_5`, tenantId, serviceId: `${p}svc_tour`, ...inHouse('r13'), requestDate: dayOffset(ctx, 0), status: 'pending', priority: 'low', notes: 'Two people — Jamestown and the Independence Arch' },
   ])
   return notes
 }

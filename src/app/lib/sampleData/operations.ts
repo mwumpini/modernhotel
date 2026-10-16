@@ -1,8 +1,9 @@
 import { SampleCtx, prisma, seedRows, bySampleId, dayOffset, atTime } from './common'
+import { CORPORATE_NAME } from './frontOffice'
 
 const HOUSEKEEPERS: Array<[string, string, string, string, number]> = [
   ['ama', 'Ama Serwaa', 'housekeeper', 'morning', 10],
-  ['esi', 'Esi Nyarko', 'housekeeper', 'morning', 10],
+  ['esi', 'Salamatu Iddrisu', 'housekeeper', 'morning', 10],
   ['yaw', 'Yaw Boateng', 'supervisor', 'morning', 0],
   ['adwoa', 'Adwoa Manu', 'inspector', 'morning', 12],
 ]
@@ -32,7 +33,8 @@ const RECIPES: Array<[string, string, string, number, string, string, Array<[str
 
 // key, first, last, points, spent, visits
 const CUSTOMERS: Array<[string, string, string, number, number, number]> = [
-  ['c1', 'Kwesi', 'Appiah', 120, 1450, 9], ['c2', 'Naa', 'Ayorkor', 45, 520, 4], ['c3', 'Samuel', 'Tetteh', 210, 2680, 14], ['c4', 'Linda', 'Ofori', 15, 190, 2],
+  ['c1', 'Kwesi', 'Ackah', 120, 1450, 9], ['c2', 'Naa', 'Ayorkor', 45, 520, 4], ['c3', 'Samuel', 'Larbi', 210, 2680, 14], ['c4', 'Linda', 'Ofori', 15, 190, 2],
+  ['c5', 'Rahinatu', 'Fuseini', 80, 960, 6], ['c6', 'Abdul-Majeed', 'Saaka', 160, 2010, 11],
 ]
 
 export async function loadOperations(ctx: SampleCtx) {
@@ -81,15 +83,17 @@ export async function loadOperations(ctx: SampleCtx) {
   await seedRows(prisma.cateringItem, CATERING.map(([key, name, description, price, category, minimumOrder]) => ({ id: `${p}cat_${key}`, tenantId, name, description, price, category, minimumOrder, available: true })))
   const booking = (n: number, title: string, organizer: string, hall: string, from: number, to: number, attendees: number, status: string, type: string, extra: Record<string, any>) => {
     const [, hallName] = HALLS.find((h) => h[0] === hall)!
-    return { id: `${p}evt_${n}`, tenantId, title, organizer, contactPerson: organizer, contactPhone: '+233 24 800 0000', contactEmail: `events${n}@sample.hotel`, hallId: `${p}hall_${hall}`, hallName, startDate: dayOffset(ctx, from), endDate: dayOffset(ctx, to), startTime: '09:00', endTime: '17:00', attendees, status, type, ...extra }
+    return { id: `${p}evt_${n}`, tenantId, title, organizer, contactPerson: organizer, contactPhone: `+233 24 800 ${String(1000 + n)}`, hallId: `${p}hall_${hall}`, hallName, startDate: dayOffset(ctx, from), endDate: dayOffset(ctx, to), startTime: '09:00', endTime: '17:00', attendees, status, type, ...extra }
   }
   await seedRows(prisma.eventBooking, [
-    booking(1, 'Sample Mining Annual Meeting', 'Sample Mining Ltd', 'board', 14, 14, 18, 'confirmed', 'corporate', { catering: true, audioVisual: true, totalCost: 800 + 18 * 140 }),
+    booking(1, `${CORPORATE_NAME.replace(/ Ltd$/, '')} Quarterly Review`, CORPORATE_NAME, 'board', 14, 14, 18, 'confirmed', 'corporate', { catering: true, audioVisual: true, totalCost: 800 + 18 * 140 }),
     booking(2, 'Owusu–Mensah Wedding Reception', 'Mrs. Owusu', 'ball', 30, 30, 150, 'confirmed', 'wedding', { catering: true, decoration: true, totalCost: 3500 + 150 * 220 }),
-    booking(3, 'Front Office Staff Seminar', 'Sample Hotel HR', 'pav', 7, 7, 40, 'pending', 'seminar', { catering: true, totalCost: 1800 + 40 * 45 }),
+    booking(3, 'Front Office Staff Seminar', 'Hotel HR', 'pav', 7, 7, 40, 'pending', 'seminar', { catering: true, totalCost: 1800 + 40 * 45 }),
     // One running today and one tomorrow, so the dashboards' "today" views have something to show.
-    booking(4, 'Sample Bank Regional Workshop', 'Sample Bank Ghana', 'board', 0, 0, 16, 'confirmed', 'corporate', { catering: true, audioVisual: true, totalCost: 800 + 16 * 140 }),
+    booking(4, 'Unity Rural Bank Regional Workshop', 'Unity Rural Bank', 'board', 0, 0, 16, 'confirmed', 'corporate', { catering: true, audioVisual: true, totalCost: 800 + 16 * 140 }),
     booking(5, 'Adjei Family Naming Ceremony', 'Mr. Adjei', 'pav', 1, 1, 60, 'pending', 'private', { catering: true, decoration: true, totalCost: 1800 + 60 * 120 }),
+    booking(6, 'Iddrisu–Seidu Walima', 'Alhaji Iddrisu', 'ball', 21, 21, 180, 'confirmed', 'wedding', { catering: true, decoration: true, totalCost: 3500 + 180 * 140 }),
+    booking(7, 'Northern Teachers Union Workshop', 'Northern Teachers Union', 'pav', -5, -4, 45, 'completed', 'seminar', { catering: true, audioVisual: true, totalCost: 2 * 1800 + 45 * 2 * 140 }),
   ])
 
   // ---- restaurant: tables, regular customers, recipes ----
@@ -98,7 +102,7 @@ export async function loadOperations(ctx: SampleCtx) {
     .filter((t) => !existingTables.has(t.number))
   await seedRows(prisma.restaurantTable, tables.map((t) => ({ id: `${p}tbl_${t.number}`, tenantId, ...t, status: 'available' })))
   await seedRows(prisma.fBCustomer, CUSTOMERS.map(([key, firstName, lastName, loyaltyPoints, totalSpent, visitCount]) => ({
-    id: `${p}${key}`, tenantId, firstName, lastName, email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}@sample.hotel`, phone: '+233 24 900 0000', loyaltyPoints, totalSpent, visitCount, lastVisit: dayOffset(ctx, -(visitCount % 6) - 1), isActive: true,
+    id: `${p}${key}`, tenantId, firstName, lastName, phone: `+233 24 900 ${String(1000 + Number(key.slice(1)))}`, loyaltyPoints, totalSpent, visitCount, lastVisit: dayOffset(ctx, -(visitCount % 6) - 1), isActive: true,
   })))
   await seedRows(prisma.recipe, RECIPES.map(([key, name, category, preparationTime, difficulty, allergens, ingredients, instructions]) => ({
     id: `${p}rcp_${key}`, tenantId, name, category, preparationTime, difficulty, allergens: allergens || null,

@@ -7,6 +7,7 @@ import {
   Percent, Phone, ReceiptText, ShieldAlert, Sparkles, Trash2, type LucideIcon,
 } from 'lucide-react';
 import { formatDocumentNumber, useSettingsStore } from '../../lib/settings/store';
+import { BRAND_TAGLINE } from '../BrandLogo';
 import { DATE_FORMATS, TIME_FORMATS, formatHotelDate, formatHotelTime } from '../../lib/settings/hotelDates';
 import { logAudit } from '../../lib/analytics/auditLogStore';
 import { trimLogo } from '../../lib/settings/trimLogo';
@@ -28,6 +29,9 @@ const LOGO_SIZES = [
 ] as const;
 
 const CLASSIFICATIONS = ['1-Star', '2-Star', '3-Star', '4-Star', '5-Star', 'Boutique', 'Aparthotel', 'Resort', 'Other'] as const;
+
+/** The old tagline placeholder. Hotels that saved it still have it as their tagline. */
+const RETIRED_TAGLINE_EXAMPLE = 'Service next to none';
 
 const TIMEZONES = [
   'Africa/Accra', 'Africa/Abidjan', 'Africa/Lagos', 'Africa/Lome', 'Africa/Nairobi', 'Africa/Johannesburg',
@@ -76,7 +80,7 @@ function readDraft(s: ReturnType<typeof useSettingsStore.getState>): Draft {
     logoSize: s.saasSettings?.customBranding?.logoSize || 'md',
     tradingName: c?.tradingName || s.hotelSettings?.hotelName || '',
     legalName: c?.legalName || '',
-    tagline: c?.tagline || '',
+    tagline: c?.tagline === RETIRED_TAGLINE_EXAMPLE ? '' : (c?.tagline || ''),
     classification: s.hotelSettings?.classification || '3-Star',
     taxId: c?.taxId || '',
     registrationNumber: c?.registrationNumber || '',
@@ -168,6 +172,14 @@ export default function HotelProfilePanel() {
 
   // Pick up changes saved elsewhere (another desk, the wizard) while nothing is being edited here.
   React.useEffect(() => { if (!dirty) setDraft(saved); }, [saved]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Drop the retired placeholder when a hotel saved it as the tagline, so the AGM Sync example can show.
+  React.useEffect(() => {
+    const s = useSettingsStore.getState();
+    const prev = s.companySettings;
+    if (prev?.tagline !== RETIRED_TAGLINE_EXAMPLE) return;
+    s.updateSetting('companySettings', { ...prev, tagline: '' });
+  }, []);
 
   React.useEffect(() => {
     if (!savedAt) return;
@@ -329,7 +341,7 @@ export default function HotelProfilePanel() {
             <div className="grid gap-3 sm:grid-cols-2">
               <Input size="sm" label="Trading name" isRequired isDisabled={!canEdit} value={draft.tradingName} onValueChange={(v) => set('tradingName', v)} isInvalid={nameMissing} errorMessage={nameMissing ? 'Needed on every document' : undefined} />
               <Input size="sm" label="Legal name" description="As registered with the Registrar-General" isDisabled={!canEdit} value={draft.legalName} onValueChange={(v) => set('legalName', v)} />
-              <Input size="sm" label="Tagline" placeholder="Service next to none" isDisabled={!canEdit} value={draft.tagline} onValueChange={(v) => set('tagline', v)} />
+              <Input size="sm" label="Tagline" placeholder={BRAND_TAGLINE} isDisabled={!canEdit} value={draft.tagline} onValueChange={(v) => set('tagline', v)} />
               <Select size="sm" label="Classification" isDisabled={!canEdit} selectedKeys={[draft.classification]} onSelectionChange={(keys) => { const k = Array.from(keys)[0]; if (k) set('classification', String(k)); }}>
                 {CLASSIFICATIONS.map((c) => <SelectItem key={c}>{c}</SelectItem>)}
               </Select>
