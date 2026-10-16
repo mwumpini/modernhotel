@@ -3,17 +3,17 @@ import { prisma } from '../database/client'
 import { salesTaxConfigsForTenant } from '../tax/serverConfigs'
 import { computeStackedTaxLines } from '../accounting/taxFromConfig'
 import { createNightAuditLog } from './nightAuditLogRepository'
-import { asLineArray, elapsedBusinessDates, isPostedRoomCharge, lineOnBusinessDate, nextCalendarDate, recomputeFolioTotals, roundCents, type FolioLineJson } from './folioLedger'
+import { asLineArray, elapsedBusinessDates, isPostedRoomCharge, lineOnBusinessDate, nextCalendarDate, roundCents, type FolioLineJson } from './folioLedger'
 import {
   appendGuestFolioCharge,
   ensureGuestFolio,
   getFrontOfficeBusinessDate,
   getPropertyCalendarDate,
-  loadFolioRounding,
+
   reconstructTenantDay,
   setFrontOfficeBusinessDate,
 } from './folioServer'
-import { syncReservationFolioToLedger } from '../accounting/folioLedgerServer'
+import { settleBookingPenalty, syncReservationFolioToLedger } from '../accounting/folioLedgerServer'
 
 // Leaf GL codes — 1100/1200 are chart headers, not postable accounts.
 const GL = {
@@ -94,20 +94,7 @@ export async function runTenantNightAudit(params: {
   const errors: string[] = []
   let roomChargesPosted = 0
   let noShowsMarked = 0
-  const folioRounding = await loadFolioRounding(params.tenantId)
-
   const tenantTaxConfigs = await salesTaxConfigsForTenant(params.tenantId, 'GH')
-
-  const tenantSettings = await prisma.systemSettings.findUnique({
-    where: { tenantId: params.tenantId },
-    select: { roomSettings: true },
-  })
-  const rs = (tenantSettings?.roomSettings as Record<string, any>) || {}
-  const noShowPolicy = {
-    enabled: !!rs.noShowPolicyEnabled,
-    chargeType: (rs.noShowChargeType as 'first_night' | 'percent_reservation' | 'flat') || 'first_night',
-    chargeValue: Number(rs.noShowChargeValue) || 0,
-  }
 
   const inHouse = await prisma.reservation.findMany({
     where: { tenantId: params.tenantId, status: 'checked-in' },
@@ -158,7 +145,6 @@ export async function runTenantNightAudit(params: {
     }
   }
 
-  const dayStart = new Date(`${businessDate}T00:00:00.000Z`)
   const dayEnd = new Date(`${businessDate}T23:59:59.999Z`)
   const noShows = await prisma.reservation.findMany({
     where: {
@@ -173,152 +159,14 @@ export async function runTenantNightAudit(params: {
       const arrival = res.checkInDate.toISOString().slice(0, 10)
       if (arrival > businessDate) continue
 
-      const resBreakdown = (res.details as { rateBreakdown?: RateDay[] } | null)?.rateBreakdown || []
-      const nightlyNet = resBreakdown[0]?.base ?? 0
-      const nightlyGross = typeof resBreakdown[0]?.total === 'number' ? resBreakdown[0].total : nightlyNet
-      const stayNetTotal = resBreakdown.reduce((s, d) => s + (d.base || 0), 0)
-      const stayGrossTotal = resBreakdown.reduce((s, d) => s + (typeof d.total === 'number' ? d.total : (d.base || 0)), 0)
-
-      let chargeAmt = 0
-      let quotedTax: number | undefined
-      if (noShowPolicy.enabled) {
-        if (noShowPolicy.chargeType === 'first_night') {
-          chargeAmt = nightlyNet
-          quotedTax = roundCents(Math.max(0, nightlyGross - nightlyNet))
-        } else if (noShowPolicy.chargeType === 'percent_reservation') {
-          const penaltyGross = Math.max(0, (noShowPolicy.chargeValue / 100) * stayGrossTotal)
-          const ratio = stayGrossTotal > 0 ? penaltyGross / stayGrossTotal : 0
-          chargeAmt = roundCents(stayNetTotal * ratio)
-          quotedTax = roundCents(Math.max(0, penaltyGross - chargeAmt))
-        } else {
-          chargeAmt = Math.max(0, noShowPolicy.chargeValue)
-        }
-      }
-
-      const chargeId = `C-NS-${res.id.slice(-8)}`
-      const { totalTax: taxAmount, lines: taxLines } =
-        chargeAmt > 0
-          ? computeStackedTaxLines(chargeAmt, tenantTaxConfigs, 'sales', quotedTax)
-          : { totalTax: 0, lines: [] as Array<{ amount: number; glAccountCode: string; name: string }> }
-      const total = chargeAmt + taxAmount
-      const cardCollected = chargeAmt > 0 && res.isGuaranteed
-
-      await prisma.$transaction(async (tx) => {
-        await tx.reservation.update({ where: { id: res.id }, data: { status: 'no-show' } })
-        const folio = await ensureGuestFolio(params.tenantId, res.id, tx as any)
-
-        if (chargeAmt > 0) {
-          const existingCharges = asLineArray(folio.charges)
-          if (!existingCharges.some((c) => c.id === chargeId)) {
-            await appendGuestFolioCharge({
-              tenantId: params.tenantId,
-              reservationId: res.id,
-              charge: {
-                id: chargeId,
-                date: `${businessDate}T12:00:00.000Z`,
-                description: 'No-Show Charge',
-                amount: chargeAmt,
-                tax: taxAmount,
-                category: 'room',
-              },
-              db: tx as any,
-            })
-            const fresh = await ensureGuestFolio(params.tenantId, res.id, tx as any)
-            const payments = asLineArray(fresh.payments)
-            const payId = `P-NS-${res.id.slice(-8)}`
-            if (cardCollected && !payments.some((p) => p.id === payId)) {
-              payments.push({
-                id: payId,
-                date: `${businessDate}T12:00:00.000Z`,
-                method: 'Card',
-                amount: total,
-                status: 'completed',
-                notes: 'No-show penalty — card guarantee',
-              })
-            }
-            const totals = recomputeFolioTotals(asLineArray(fresh.charges), payments, folioRounding)
-            await tx.guestFolio.update({
-              where: { id: fresh.id },
-              data: { payments: payments as any, ...totals, status: 'closed' },
-            })
-
-            const existingJe = await tx.journalEntry.findFirst({ where: { tenantId: params.tenantId, sourceTransactionId: chargeId } })
-            if (!existingJe) {
-              await tx.journalEntry.create({
-                data: {
-                  tenantId: params.tenantId,
-                  entryNumber: `JE-${new Date().getFullYear()}-NS${Date.now().toString().slice(-5)}`,
-                  date: dayStart,
-                  description: `No-show penalty — ${res.resId || res.id}`,
-                  totalDebit: total,
-                  totalCredit: total,
-                  currency: 'GHS',
-                  status: 'Posted',
-                  postedBy: params.runBy || 'night-audit',
-                  postedAt: new Date(),
-                  sourceModule: 'night-audit',
-                  sourceTransactionId: chargeId,
-                  lines: {
-                    create: [
-                      { tenantId: params.tenantId, accountCode: GL.AR, description: `AR — No-show ${res.resId || res.id}`, debit: total, credit: 0, currency: 'GHS' },
-                      { tenantId: params.tenantId, accountCode: GL.ROOM_REVENUE, description: 'No-show penalty revenue', debit: 0, credit: chargeAmt, currency: 'GHS' },
-                      ...taxLines
-                        .filter((tl) => tl.amount > 0)
-                        .map((tl) => ({
-                          tenantId: params.tenantId,
-                          accountCode: tl.glAccountCode,
-                          description: `${tl.name} — No-show`,
-                          debit: 0,
-                          credit: tl.amount,
-                          currency: 'GHS',
-                        })),
-                    ],
-                  },
-                } as any,
-              })
-            }
-
-            if (cardCollected) {
-              const payChargeId = `${chargeId}-pay`
-              const existingPayJe = await tx.journalEntry.findFirst({ where: { tenantId: params.tenantId, sourceTransactionId: payChargeId } })
-              if (!existingPayJe) {
-                await tx.journalEntry.create({
-                  data: {
-                    tenantId: params.tenantId,
-                    entryNumber: `JE-${new Date().getFullYear()}-NSR${Date.now().toString().slice(-5)}`,
-                    date: dayStart,
-                    description: `No-show card charge — ${res.resId || res.id}`,
-                    totalDebit: total,
-                    totalCredit: total,
-                    currency: 'GHS',
-                    status: 'Posted',
-                    postedBy: params.runBy || 'night-audit',
-                    postedAt: new Date(),
-                    sourceModule: 'night-audit',
-                    sourceTransactionId: payChargeId,
-                    lines: {
-                      create: [
-                        { tenantId: params.tenantId, accountCode: GL.BANK, description: 'Card — no-show guarantee', debit: total, credit: 0, currency: 'GHS' },
-                        { tenantId: params.tenantId, accountCode: GL.AR, description: `Clear AR — No-show ${res.resId || res.id}`, debit: 0, credit: total, currency: 'GHS' },
-                      ],
-                    },
-                  } as any,
-                })
-              }
-            }
-          }
-          await tx.guestFolio.update({
-            where: { id: folio.id },
-            data: { status: 'closed' },
-          })
-        } else {
-          await tx.guestFolio.update({
-            where: { id: folio.id },
-            data: { status: 'closed' },
-          })
-        }
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
-
+      await prisma.reservation.update({ where: { id: res.id }, data: { status: 'no-show' } })
+      await ensureGuestFolio(params.tenantId, res.id)
+      // The business's own rule (Settings → Operational Policies → Booking changes): the fee
+      // comes out of the deposit first, the rest of the deposit is a refund due, and a larger
+      // fee is billed or collected on the guarantee card. One settlement, shared with manual no-shows.
+      await settleBookingPenalty(params.tenantId, res.id, 'no-show', { postedBy: params.runBy || 'night-audit', businessDate })
+      const folio = await ensureGuestFolio(params.tenantId, res.id)
+      await prisma.guestFolio.update({ where: { id: folio.id }, data: { status: 'closed' } })
       noShowsMarked += 1
     } catch (nsErr) {
       errors.push(`No-show ${res.id}: ${nsErr}`)

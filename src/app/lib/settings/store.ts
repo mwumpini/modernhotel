@@ -1220,7 +1220,7 @@ export interface RoomManagementSettings {
 
   // No-Show Policy
   noShowPolicyEnabled?: boolean;
-  noShowChargeType?: 'first_night' | 'percent_reservation' | 'flat';
+  noShowChargeType?: 'first_night' | 'percent_reservation' | 'flat' | 'keep_deposit';
   noShowChargeValue?: number;
   noShowCutoffHour?: number; // hour after scheduled arrival to mark no-show
 
@@ -1232,8 +1232,15 @@ export interface RoomManagementSettings {
   // Cancellation Policy
   cancellationPolicyEnabled?: boolean;
   freeCancellationHours?: number; // hours before arrival
-  lateCancellationFeeType?: 'first_night' | 'percent_reservation' | 'flat';
+  lateCancellationFeeType?: 'first_night' | 'percent_reservation' | 'flat' | 'keep_deposit';
   lateCancellationFeeValue?: number;
+  /** Charge VAT/NHIL/GETFund/Tourism on cancellation and no-show fees (default true). */
+  bookingFeesTaxable?: boolean;
+  /** Take cancellation/no-show fees only from the deposit; never bill more (default false). */
+  bookingFeesDepositOnly?: boolean;
+
+  /** Doubtful-debts allowance: % of open receivables by days past due (IFRS 9). */
+  badDebtBands?: Array<{ upToDays: number | null; percent: number }>;
 
   // Deposit/Guarantee Policy
   depositPolicyEnabled?: boolean;
@@ -4400,6 +4407,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     freeCancellationHours: 24,
     lateCancellationFeeType: 'first_night',
     lateCancellationFeeValue: 0,
+    bookingFeesTaxable: true,
+    bookingFeesDepositOnly: false,
+    badDebtBands: [
+      { upToDays: 30, percent: 1 },
+      { upToDays: 60, percent: 5 },
+      { upToDays: 90, percent: 15 },
+      { upToDays: 180, percent: 40 },
+      { upToDays: null, percent: 100 },
+    ],
     depositPolicyEnabled: false,
     depositType: 'percent',
     depositValue: 0,

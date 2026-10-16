@@ -10,5 +10,7 @@ export function isLateCheckoutNow(policy: LateCheckoutPolicy | undefined, now = 
   const hour = now.getHours();
   const standardHour = Number(policy.standardCheckOutHour ?? 11);
   const grace = Number(policy.lateCheckoutGraceMinutes ?? 0);
-  return hour > standardHour || (hour === standardHour && now.getMinutes() > grace);
+  // Minutes past the standard checkout time, so a grace longer than an hour still works.
+  const minutesPast = (hour - standardHour) * 60 + now.getMinutes();
+  return minutesPast > grace;
 }

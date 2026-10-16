@@ -22,11 +22,14 @@ export const GL_ACCOUNTS = {
   // 2205 is the actual postable leaf for supplier invoices/payments.
   ACCOUNTS_PAYABLE: '2205',
   DEFERRED_REVENUE: '2400',
+  /** Stock received but the supplier's bill not yet entered (cleared by the bill). */
+  GOODS_RECEIVED_NOT_INVOICED: '2350',
   /** Money received before arrival: a liability until the guest checks in (IFRS 15 contract liability). */
   GUEST_DEPOSITS: '2450',
 
   // Revenue
   ROOM_REVENUE: '4100',
+  BOOKING_FEES: '4150',
   FB_REVENUE: '4200',
   FB_REVENUE_RESTAURANT: '4210',
   FB_REVENUE_BAR: '4220',

@@ -24,6 +24,10 @@ const at = (hour: number, minute = 0) => new Date(2026, 8, 26, hour, minute, 0)
   assert(isLateCheckoutNow(policy, at(11, 20)) === false, 'inside grace is not late')
   assert(isLateCheckoutNow(policy, at(11, 31)) === true, 'past grace is late')
   assert(isLateCheckoutNow({ ...policy, lateCheckoutFeeEnabled: false }, at(15)) === false, 'fee off never charges')
+  const longGrace = { lateCheckoutFeeEnabled: true, standardCheckOutHour: 11, lateCheckoutGraceMinutes: 90 }
+  assert(isLateCheckoutNow(longGrace, at(12, 15)) === false, 'a 90-minute grace covers 12:15')
+  assert(isLateCheckoutNow(longGrace, at(12, 31)) === true, 'past a 90-minute grace is late')
+  assert(isLateCheckoutNow(longGrace, at(9)) === false, 'before checkout time is never late')
 }
 
 // Early checkout drops unused nights. Before the cutoff, today is unused too.

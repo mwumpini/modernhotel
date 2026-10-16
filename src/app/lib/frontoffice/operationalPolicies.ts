@@ -56,6 +56,9 @@ const POLICY_KEYS = [
   'freeCancellationHours',
   'lateCancellationFeeType',
   'lateCancellationFeeValue',
+  'bookingFeesTaxable',
+  'bookingFeesDepositOnly',
+  'badDebtBands',
   'depositPolicyEnabled',
   'depositType',
   'depositValue',
@@ -67,8 +70,8 @@ const ENUMS: Record<string, readonly string[]> = {
   payLaterPolicy: ['both', 'corporate', 'individual'],
   lateCheckoutFeeType: ['flat', 'percent_of_nightly'],
   earlyCheckoutRefundType: ['none', 'nightly_prorate', 'percent_penalty'],
-  noShowChargeType: ['first_night', 'percent_reservation', 'flat'],
-  lateCancellationFeeType: ['first_night', 'percent_reservation', 'flat'],
+  noShowChargeType: ['first_night', 'percent_reservation', 'flat', 'keep_deposit'],
+  lateCancellationFeeType: ['first_night', 'percent_reservation', 'flat', 'keep_deposit'],
   depositType: ['percent', 'flat'],
 };
 
@@ -89,6 +92,18 @@ export function pickOperationalPolicy(source: Record<string, unknown> | null | u
     const allowed = ENUMS[key];
     if (allowed) {
       if (typeof value === 'string' && allowed.includes(value)) out[key] = value;
+      continue;
+    }
+    if (key === 'badDebtBands') {
+      // Age bands for the doubtful-debts allowance: up to 8 rows of { upToDays | null, percent 0–100 }.
+      if (Array.isArray(value)) {
+        out[key] = value.slice(0, 8)
+          .filter((b) => b && typeof b === 'object')
+          .map((b: any) => ({
+            upToDays: b.upToDays == null || !Number.isFinite(Number(b.upToDays)) ? null : Math.max(0, Math.round(Number(b.upToDays))),
+            percent: Math.max(0, Math.min(100, Number(b.percent) || 0)),
+          }));
+      }
       continue;
     }
     if (key === 'earlyCheckoutNote') {
@@ -162,39 +177,58 @@ function isRoomCharge(charge: PolicyCharge): boolean {
   return description.includes('room');
 }
 
+/** A night of the booking as quoted (net rate, and gross incl. taxes when known). */
+export type BookedNight = { date: string; base: number; total?: number };
+
 /**
- * Unused room nights come off the folio when early checkout is on.
- * Before the cutoff hour, today's room charge is unused too.
- * Advanced "no refund" keeps every night. A penalty percent is charged on the nights removed.
+ * Early checkout, by the business's rule. A night is unused if it is after today, or today
+ * when the guest leaves before the cutoff hour. Unused nights are read from the booking itself
+ * (nights are only added to the folio as the night audit posts them, so future nights are
+ * usually not on the folio yet):
+ * - Prorate (default): unused nights already on the folio come off; nothing is added.
+ * - No refund: the guest pays the whole booking — unused nights not yet on the folio are added.
+ * - % penalty: unused nights come off and X% of their value is charged.
+ * Without `bookedNights` it falls back to the room charges already on the folio.
  */
 export function planEarlyCheckout<T extends PolicyCharge>(
   charges: T[],
   policy: OperationalPolicy | undefined,
   now = new Date(),
-): { keep: T[]; remove: T[]; penalty: number } {
-  if (!policy?.earlyCheckoutPolicyEnabled) return { keep: charges, remove: [], penalty: 0 };
+  bookedNights?: BookedNight[],
+): { keep: T[]; remove: T[]; penalty: number; add: Array<{ date: string; amount: number; tax?: number }> } {
+  if (!policy?.earlyCheckoutPolicyEnabled) return { keep: charges, remove: [], penalty: 0, add: [] };
   const mode: EarlyCheckoutMode = policy.earlyCheckoutAdvancedEnabled
     ? (policy.earlyCheckoutRefundType || 'nightly_prorate')
     : 'nightly_prorate';
-  if (mode === 'none') return { keep: charges, remove: [], penalty: 0 };
 
   const today = localDay(now);
   const cutoff = Number(policy.earlyCheckoutCutoffHour ?? 11);
   const beforeCutoff = now.getHours() < cutoff;
-  const unused = (charge: T) => {
-    if (!isRoomCharge(charge)) return false;
-    const date = (charge.date || '').slice(0, 10);
-    if (!date) return false;
-    if (date > today) return true;
-    return date === today && beforeCutoff;
-  };
+  const unusedDate = (date: string) => !!date && (date > today || (date === today && beforeCutoff));
+  const unused = (charge: T) => isRoomCharge(charge) && unusedDate((charge.date || '').slice(0, 10));
+  const unusedBooked = (bookedNights || []).filter((n) => unusedDate((n.date || '').slice(0, 10)));
+
+  if (mode === 'none') {
+    // No refund: every booked night is paid. Add the ones the night audit has not posted.
+    const onFolio = new Set(charges.filter(isRoomCharge).map((c) => (c.date || '').slice(0, 10)));
+    const add = unusedBooked
+      .filter((n) => !onFolio.has(n.date.slice(0, 10)) && n.base > 0)
+      .map((n) => ({
+        date: n.date.slice(0, 10),
+        amount: roundMoney(n.base),
+        ...(typeof n.total === 'number' ? { tax: roundMoney(Math.max(0, n.total - n.base)) } : {}),
+      }));
+    return { keep: charges, remove: [], penalty: 0, add };
+  }
+
   const remove = charges.filter(unused);
   const keep = charges.filter((charge) => !unused(charge));
   const removedNet = remove.reduce((sum, charge) => sum + (Number(charge.amount) || 0), 0);
+  const unusedNet = bookedNights ? unusedBooked.reduce((sum, n) => sum + (Number(n.base) || 0), 0) : removedNet;
   const penalty = mode === 'percent_penalty'
-    ? roundMoney(Math.max(0, ((Number(policy.earlyCheckoutPenaltyPercent) || 0) / 100) * removedNet))
+    ? roundMoney(Math.max(0, ((Number(policy.earlyCheckoutPenaltyPercent) || 0) / 100) * unusedNet))
     : 0;
-  return { keep, remove, penalty };
+  return { keep, remove, penalty, add: [] };
 }
 
 /** Cutoff is an hour on the arrival calendar day. Once that day has ended, the cutoff has passed. */

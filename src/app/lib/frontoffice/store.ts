@@ -35,7 +35,6 @@ import { nextCalendarDate, previousCalendarDate, roundCents, stayNightDates } fr
 import { isLateCheckoutNow } from './lateCheckout';
 import { depositBlocksConfirm, planEarlyCheckout, requiredDeposit } from './operationalPolicies';
 import { type NightAuditResult } from './nightAudit';
-import { postNoShowPenaltyToLedger } from '../accounting/simpleFlow';
 import { DEMO_BILLING_PERSONS, DEMO_RESERVATION_IDS as demoReservationIds, isDemoFixturesEnabled } from '../demo';
 import { notifyError } from '../notifications/notify';
 import { genId } from './helpers/ids';
@@ -1055,57 +1054,19 @@ class FrontOfficeStore {
 
   updateReservation(res: Reservation) { this.reservations = this.reservations.map(r => r.id === res.id ? { ...res, updatedAt: new Date().toISOString() } : r); this.notify(); trackEvent('FO.Reservation.Updated', { id: res.id }); this.persistReservationPatch(res.id, res); }
   cancelReservation(id: string) {
-    const settingsState = (() => { try { return useSettingsStore.getState(); } catch { return undefined as any; } })();
-    const policy = settingsState?.roomManagement;
     this.reservations = this.reservations.map(r => r.id === id ? { ...r, status: 'cancelled', updatedAt: new Date().toISOString() } : r);
     this.notify();
     trackEvent('FO.Reservation.Cancelled', { id });
+    // The server applies the business's cancellation rule (free window, late fee, taken from the
+    // deposit first, the rest a refund due) and adds the fee to the folio and the books.
     this.persistReservationPatch(id, { status: 'cancelled' });
-    try {
-      if (policy?.cancellationPolicyEnabled) {
-        const res = this.reservations.find(r => r.id === id);
-        if (!res) return;
-        // Compute hours before arrival
-        const arrival = new Date(res.arrival);
-        const now = new Date();
-        const diffHrs = (arrival.getTime() - now.getTime()) / 36e5;
-        if (diffHrs < (policy.freeCancellationHours ?? 0)) {
-          // Late cancellation → post penalty according to fee type
-          const folio = this.getOrCreateFolio(id);
-          const breakdown = res.rateBreakdown || [];
-          const nightlyNet = breakdown[0]?.base ?? 0;
-          const nightlyGross = breakdown[0]?.total ?? nightlyNet;
-          const stayNet = breakdown.reduce((s, d) => s + (d.base || 0), 0);
-          const stayGross = breakdown.reduce((s, d) => s + (d.total || 0), 0);
-          let penalty = 0;
-          let quotedTax: number | undefined;
-          switch (policy.lateCancellationFeeType) {
-            case 'first_night':
-              penalty = nightlyNet;
-              quotedTax = res.taxExempt ? 0 : roundCents(Math.max(0, nightlyGross - nightlyNet));
-              break;
-            case 'percent_reservation': {
-              const penaltyGross = Math.max(0, ((policy.lateCancellationFeeValue || 0) / 100) * stayGross);
-              const ratio = stayGross > 0 ? penaltyGross / stayGross : 0;
-              penalty = roundCents(stayNet * ratio);
-              quotedTax = res.taxExempt ? 0 : roundCents(Math.max(0, penaltyGross - penalty));
-              break;
-            }
-            case 'flat': penalty = Math.max(0, policy.lateCancellationFeeValue || 0); break;
-            default: penalty = 0;
-          }
-          if (penalty > 0) {
-            this.addFolioCharge(folio.id, {
-              id: genId('C'),
-              description: 'Cancellation Penalty',
-              amount: penalty,
-              ...(quotedTax != null ? { tax: quotedTax } : {}),
-              category: 'room',
-            });
-          }
-        }
-      }
-    } catch {}
+    this.refreshAfterSettlement();
+  }
+
+  /** After a cancel or no-show, pull the folio the server settled (fee line, refund due). */
+  private refreshAfterSettlement() {
+    // After the status save has reached the server (the refresh itself waits for pending saves).
+    if (typeof window !== 'undefined') window.setTimeout(() => { void this.pullFromApi(true); }, 1500);
   }
 
   deleteReservation(id: string) {
@@ -1310,7 +1271,10 @@ class FrontOfficeStore {
     if (!policy?.earlyCheckoutPolicyEnabled || !res) return;
 
     const folio = this.getOrCreateFolio(reservationId);
-    const plan = planEarlyCheckout(folio.charges || [], policy);
+    // Unused nights come from the booking itself: the night audit only posts nights as they pass.
+    const bookedNights = ((isValidRateBreakdown(res.rateBreakdown) ? res.rateBreakdown : this.calculateRateBreakdownForReservation(res)) || [])
+      .map((n: any) => ({ date: String(n.date || '').slice(0, 10), base: Number(n.base) || 0, total: typeof n.total === 'number' ? n.total : undefined }));
+    const plan = planEarlyCheckout(folio.charges || [], policy, new Date(), bookedNights);
     if (plan.remove.length > 0) {
       folio.charges = plan.keep;
       this.updateFolioBalances(folio);
@@ -1318,12 +1282,26 @@ class FrontOfficeStore {
       const note = policy.earlyCheckoutNote ? ` ${policy.earlyCheckoutNote}` : '';
       try { logAudit({ area: 'frontdesk', action: 'update', entity: 'Folio', entityId: reservationId, details: `Removed ${plan.remove.length} unused room charge(s) due to early checkout.${note}`, severity: 'medium' }); } catch {}
     }
+    // No refund: the nights not stayed are still charged. They are revenue today, when the
+    // guest leaves and the hotel no longer owes the room, so they are dated today.
+    const today = new Date().toISOString();
+    for (const night of plan.add) {
+      this.addFolioCharge(folio.id, {
+        id: genId('C'),
+        description: `Room Charge — ${night.date} (early checkout, no refund)`,
+        amount: night.amount,
+        ...(typeof night.tax === 'number' ? { tax: night.tax } : {}),
+        category: 'room',
+        date: today,
+      });
+    }
     if (plan.penalty > 0) {
       this.addFolioCharge(folio.id, {
         id: genId('C'),
         description: 'Early Checkout Penalty',
         amount: plan.penalty,
         category: 'room',
+        date: today,
       });
     }
   }
@@ -2030,93 +2008,15 @@ class FrontOfficeStore {
   markNoShow(reservationId: string) {
     const res = this.reservations.find(r => r.id === reservationId);
     if (!res || res.status === 'no-show') return;
-    const settingsState = (() => { try { return useSettingsStore.getState(); } catch { return undefined as any; } })();
-    const rm = settingsState?.roomManagement;
-
     this.reservations = this.reservations.map(r => r.id === reservationId ? { ...r, status: 'no-show', updatedAt: new Date().toISOString() } : r);
     this.notify();
     trackEvent('FO.Reservation.NoShow' as any, { reservationId });
+    // The server applies the business's no-show rule (Settings → Operational Policies): the fee
+    // comes out of the deposit first, the rest is a refund due, and it lands on the folio and in
+    // the books in one place. The refreshed folio then shows the charge.
     this.persistReservationPatch(reservationId, { status: 'no-show' });
-
-    try {
-      if (!rm?.noShowPolicyEnabled) {
-        this.closeFolio(reservationId, { postInvoice: false });
-        return;
-      }
-
-      const breakdown = res.rateBreakdown?.length
-        ? res.rateBreakdown
-        : this.calculateRateBreakdown(res.roomTypeId, res.arrival, res.departure, undefined, undefined, res.taxExempt);
-      const nightlyNet = breakdown[0]?.base ?? 0;
-      const nightlyGross = breakdown[0]?.total ?? nightlyNet;
-      const stayNet = breakdown.reduce((s, d) => s + (d.base || 0), 0);
-      const stayGross = breakdown.reduce((s, d) => s + (d.total || 0), 0);
-      let charge = 0;
-      let quotedTax: number | undefined;
-      switch (rm.noShowChargeType) {
-        case 'first_night':
-          charge = nightlyNet;
-          quotedTax = res.taxExempt ? 0 : roundCents(Math.max(0, nightlyGross - nightlyNet));
-          break;
-        case 'percent_reservation': {
-          const penaltyGross = Math.max(0, ((rm.noShowChargeValue || 0) / 100) * stayGross);
-          const ratio = stayGross > 0 ? penaltyGross / stayGross : 0;
-          charge = roundCents(stayNet * ratio);
-          quotedTax = res.taxExempt ? 0 : roundCents(Math.max(0, penaltyGross - charge));
-          break;
-        }
-        case 'flat': charge = Math.max(0, rm.noShowChargeValue || 0); break;
-        default: charge = 0;
-      }
-
-      if (charge <= 0) {
-        this.closeFolio(reservationId, { postInvoice: false });
-        return;
-      }
-
-      const folio = this.getOrCreateFolio(reservationId);
-      const chargeId = genId('C-NS');
-      this.addFolioCharge(folio.id, {
-        id: chargeId,
-        description: 'No-Show Charge',
-        amount: charge,
-        ...(quotedTax != null ? { tax: quotedTax } : {}),
-        category: 'room',
-        date: this.businessDate,
-      });
-      this.updateFolioBalances(this.getOrCreateFolio(reservationId));
-
-      const updated = this.getOrCreateFolio(reservationId);
-      const nsLine = updated.charges.find(c => c.id === chargeId);
-      const taxAmount = nsLine?.tax || 0;
-      const total = charge + taxAmount;
-
-      const cardCollected = res.isGuaranteed
-        ? { amount: total, date: new Date().toISOString() }
-        : undefined;
-
-      if (res.isGuaranteed) {
-        this.addPayment(reservationId, 'Card', total, {
-          notes: 'No-show penalty — card guarantee',
-          processedBy: 'Night Audit',
-          ref: `NS-${res.resId || reservationId}`,
-        });
-      }
-
-      postNoShowPenaltyToLedger({
-        reservationId,
-        reference: String(res.resId || reservationId),
-        guestLabel: res.guestName || 'Guest',
-        subtotal: charge,
-        taxAmount,
-        total,
-        cardCollected,
-      });
-
-      this.closeFolio(reservationId, { postInvoice: false });
-    } catch (e) {
-      console.warn('FO: markNoShow GL failed', e);
-    }
+    this.closeFolio(reservationId, { postInvoice: false });
+    this.refreshAfterSettlement();
   }
 
   // Generate an accounting invoice from a reservation folio and mark reservation

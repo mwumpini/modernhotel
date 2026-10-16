@@ -1920,8 +1920,10 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
             {
               id: `JL-${entryId}-cr`,
               journalEntryId: entryId,
-              accountCode: GL_ACCOUNTS.ACCOUNTS_PAYABLE,
-              description: `Payable to ${grn.supplierName}`,
+              // Owed for goods received, until the supplier's bill is entered in Accounts Payable
+              // (the bill then clears this instead of recording the debt a second time).
+              accountCode: GL_ACCOUNTS.GOODS_RECEIVED_NOT_INVOICED,
+              description: `Goods received, not yet invoiced — ${grn.supplierName}`,
               debit: 0,
               credit: amount,
               currency: 'GHS',

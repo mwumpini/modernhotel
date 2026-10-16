@@ -25,7 +25,7 @@
     "vercel-build": "prisma generate --schema=prisma/schema.production.prisma && prisma db push --schema=prisma/schema.production.prisma && (tsx prisma/seed.ts || echo 'Seed step failed or already applied — continuing build') && next build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:regression": "tsx scripts/test-fo-night-audit.ts && tsx scripts/test-accounting-process.ts && tsx scripts/test-bank-recon-calculations.ts",
+    "test:regression": "tsx scripts/test-fo-night-audit.ts && tsx scripts/test-accounting-process.ts && tsx scripts/test-bank-recon-calculations.ts && tsx scripts/test-operational-policies.ts",
     "test:e2e": "playwright test"
   },
   "dependencies": {

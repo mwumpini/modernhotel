@@ -1,7 +1,8 @@
 'use client';
 
 import React from 'react';
-import { Switch } from '@heroui/react';
+import { DEFAULT_BAD_DEBT_BANDS, normaliseBands, type BadDebtBand } from '@/app/lib/accounting/badDebt';
+import { Button, Switch } from '@heroui/react';
 import { BookOpen, Building2, CalendarClock, CalendarX2, Clock, Moon, Smartphone, type LucideIcon } from 'lucide-react';
 import { useSettingsStore } from '../../lib/settings/store';
 import { normalizeGuestPaymentService } from '../../lib/payments/guestCollection';
@@ -15,6 +16,7 @@ const SECTIONS: Array<{ id: string; label: string; icon: LucideIcon }> = [
   { id: 'policy-posting', label: 'Posting dates', icon: CalendarClock },
   { id: 'policy-checkin', label: 'Check-in & checkout', icon: Clock },
   { id: 'policy-company', label: 'Company accounts', icon: Building2 },
+  { id: 'policy-doubtful', label: 'Doubtful debts', icon: BookOpen },
   { id: 'policy-booking', label: 'Booking changes', icon: CalendarX2 },
   { id: 'policy-audit', label: 'Night audit & billing', icon: Moon },
   { id: 'policy-payments', label: 'Payments', icon: Smartphone },
@@ -90,7 +92,17 @@ function PolicyRow({ label, hint, children }: { label: string; hint?: string; ch
   );
 }
 
+/** What the value box means for each fee type. */
+function valueLabel(type?: string) {
+  if (type === 'percent_reservation') return 'Percent of the stay (%)';
+  if (type === 'flat') return 'Amount (before tax)';
+  return 'Value (not used for this type)';
+}
+
 export default function OperationalPoliciesPanel() {
+  const badDebtRows = normaliseBands(useSettingsStore((st) => st.roomManagement.badDebtBands));
+  const saveBadDebtRows = (rows: BadDebtBand[]) => useSettingsStore.getState().updateNestedSetting('roomManagement.badDebtBands', normaliseBands(rows));
+  const setBadDebtRow = (i: number, patch: Partial<BadDebtBand>) => saveBadDebtRows(badDebtRows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const settingsStore = useSettingsStore();
   const roleId = settingsStore.sessionRoleId ?? settingsStore.currentUser?.roleId;
   const canAllowBackdating = roleId === 'admin' || roleId === 'manager';
@@ -159,7 +171,7 @@ export default function OperationalPoliciesPanel() {
     </PolicyCard>
 
     <PolicyCard title="Early checkout" wide on={!!settingsStore.roomManagement.earlyCheckoutPolicyEnabled}>
-      <PolicyRow label="Remove unused nights" hint="When on, unused nights come off the folio if the guest leaves before the scheduled departure. No extra charge is added.">
+      <PolicyRow label="Early checkout rule" hint="When on, a guest who leaves before the booked departure is billed by the rule below. Off: the bill is left as it is. Without Advanced, the guest pays only the nights stayed.">
         <Switch
           isSelected={!!settingsStore.roomManagement.earlyCheckoutPolicyEnabled}
           onValueChange={(v) => settingsStore.updateNestedSetting('roomManagement.earlyCheckoutPolicyEnabled', v)}
@@ -181,13 +193,13 @@ export default function OperationalPoliciesPanel() {
             <div>
               <label className={policyLabel}>Refund or penalty</label>
               <select className={policyInput} value={settingsStore.roomManagement.earlyCheckoutRefundType || 'nightly_prorate'} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.earlyCheckoutRefundType', e.target.value)}>
-                <option value="nightly_prorate">Prorate unused nights</option>
-                <option value="none">No refund (charge remaining)</option>
-                <option value="percent_penalty">% penalty on remaining</option>
+                <option value="nightly_prorate">Pay only the nights stayed</option>
+                <option value="none">No refund: charge the whole booking</option>
+                <option value="percent_penalty">Nights stayed + % of the unused nights</option>
               </select>
             </div>
             <div>
-              <label className={policyLabel}>Penalty %</label>
+              <label className={policyLabel}>Penalty % (of the unused nights)</label>
               <input type="number" className={policyInput} value={(settingsStore.roomManagement.earlyCheckoutPenaltyPercent ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.earlyCheckoutPenaltyPercent', Math.max(0, Number(e.target.value||'0')))} />
             </div>
             <div>
@@ -232,6 +244,41 @@ export default function OperationalPoliciesPanel() {
     </PolicyCard>
   </PolicyGroup>
 
+  <PolicyGroup id="policy-doubtful" title="Doubtful debts" description="How much of what customers owe is set aside as unlikely to be paid (IFRS 9). Used by Accounts Receivable → Doubtful debts.">
+    <PolicyCard title="Allowance by age" wide>
+      <p className="text-xs text-gray-500">Each open invoice falls in a band by days past its due date. Invoices not yet due count in the first band. The last band covers everything older.</p>
+      <div className="space-y-2 pt-1">
+        {badDebtRows.map((row, i) => (
+          <div key={i} className="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
+            <div>
+              <label className={policyLabel}>{i === badDebtRows.length - 1 ? 'Older than the bands above' : 'Up to days past due'}</label>
+              {i === badDebtRows.length - 1 ? (
+                <div className={`${policyInput} bg-gray-50 text-gray-500`}>Everything older</div>
+              ) : (
+                <input type="number" className={policyInput} value={row.upToDays ?? 0} onChange={(e) => setBadDebtRow(i, { upToDays: Math.max(0, Number(e.target.value || 0)) })} />
+              )}
+            </div>
+            <div>
+              <label className={policyLabel}>Allowance %</label>
+              <input type="number" className={policyInput} value={row.percent} onChange={(e) => setBadDebtRow(i, { percent: Math.max(0, Math.min(100, Number(e.target.value || 0))) })} />
+            </div>
+            {i < badDebtRows.length - 1 && badDebtRows.length > 2 ? (
+              <Button size="sm" variant="light" color="danger" onPress={() => saveBadDebtRows(badDebtRows.filter((_, j) => j !== i))}>Remove</Button>
+            ) : <span className="w-[68px]" />}
+          </div>
+        ))}
+        <div className="flex gap-2">
+          <Button size="sm" variant="flat" isDisabled={badDebtRows.length >= 8} onPress={() => {
+            const bounded = badDebtRows.slice(0, -1);
+            const lastDays = bounded.length ? Number(bounded[bounded.length - 1].upToDays || 0) : 0;
+            saveBadDebtRows([...bounded, { upToDays: lastDays + 30, percent: 0 }, badDebtRows[badDebtRows.length - 1]]);
+          }}>+ Add band</Button>
+          <Button size="sm" variant="light" onPress={() => saveBadDebtRows(DEFAULT_BAD_DEBT_BANDS)}>Use the defaults</Button>
+        </div>
+      </div>
+    </PolicyCard>
+  </PolicyGroup>
+
   <PolicyGroup id="policy-booking" title="Booking changes" description="What the hotel charges when a guest does not arrive, cancels late, or must put down a deposit.">
     <PolicyCard title="No-show" on={!!settingsStore.roomManagement.noShowPolicyEnabled}>
       <PolicyRow label="No-show charge" hint="Applied when the guest has not arrived by the cutoff.">
@@ -246,10 +293,11 @@ export default function OperationalPoliciesPanel() {
             <option value="first_night">First night</option>
             <option value="percent_reservation">% of reservation</option>
             <option value="flat">Flat amount</option>
+            <option value="keep_deposit">Keep the whole deposit</option>
           </select>
         </div>
         <div>
-          <label className={policyLabel}>Charge value</label>
+          <label className={policyLabel}>{valueLabel(settingsStore.roomManagement.noShowChargeType)}</label>
           <input type="number" className={policyInput} value={(settingsStore.roomManagement.noShowChargeValue ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.noShowChargeValue', Math.max(0, Number(e.target.value||'0')))} />
         </div>
         <div>
@@ -276,13 +324,31 @@ export default function OperationalPoliciesPanel() {
             <option value="first_night">First night</option>
             <option value="percent_reservation">% of reservation</option>
             <option value="flat">Flat amount</option>
+            <option value="keep_deposit">Keep the whole deposit</option>
           </select>
         </div>
         <div>
-          <label className={policyLabel}>Late fee value</label>
+          <label className={policyLabel}>{valueLabel(settingsStore.roomManagement.lateCancellationFeeType)}</label>
           <input type="number" className={policyInput} value={(settingsStore.roomManagement.lateCancellationFeeValue ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.lateCancellationFeeValue', Math.max(0, Number(e.target.value||'0')))} />
         </div>
       </RuleFields>
+    </PolicyCard>
+
+    <PolicyCard title="Fees and deposits" wide>
+      <p className="text-xs text-gray-500">
+        A no-show or late cancellation fee is taken from the guest's deposit first. Whatever is left of the deposit
+        shows as a refund due on the booking until staff pay it back; nothing is refunded automatically.
+      </p>
+      <PolicyRow label="Taxes on these fees" hint="VAT, NHIL, GETFund and Tourism Levy on no-show and cancellation fees.">
+        <Switch isSelected={settingsStore.roomManagement.bookingFeesTaxable !== false} onValueChange={(v)=> settingsStore.updateNestedSetting('roomManagement.bookingFeesTaxable', v)}>
+          {settingsStore.roomManagement.bookingFeesTaxable !== false ? 'Charged' : 'Not charged'}
+        </Switch>
+      </PolicyRow>
+      <PolicyRow label="Fee bigger than the deposit" hint="Bill the guest for the rest (a guaranteed card is charged for a no-show), or only ever keep what was paid.">
+        <Switch isSelected={!!settingsStore.roomManagement.bookingFeesDepositOnly} onValueChange={(v)=> settingsStore.updateNestedSetting('roomManagement.bookingFeesDepositOnly', v)}>
+          {settingsStore.roomManagement.bookingFeesDepositOnly ? 'Only keep the deposit' : 'Bill the rest'}
+        </Switch>
+      </PolicyRow>
     </PolicyCard>
 
     <PolicyCard title="Deposit" wide on={!!settingsStore.roomManagement.depositPolicyEnabled}>

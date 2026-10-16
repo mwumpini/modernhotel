@@ -78,6 +78,26 @@ function TopicCard({
         </ol>
       )}
 
+      {topic.rules && topic.rules.length > 0 && (
+        <dl className="mt-3 divide-y divide-slate-100 rounded-md border border-slate-200 text-sm">
+          {topic.rules.map((r) => (
+            <div key={r.name} className="grid gap-1 px-3 py-2 sm:grid-cols-[minmax(0,14rem)_1fr]">
+              <dt className="font-medium text-slate-900">{r.name}</dt>
+              <dd className="text-slate-700">{r.meaning}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      {topic.examples && topic.examples.length > 0 && topic.examples.map((ex) => (
+        <div key={ex.title} className="mt-3 rounded-md border border-emerald-200 bg-emerald-50/60 px-3 py-2 text-sm text-emerald-950 dark:border-emerald-300/40 dark:bg-[color-mix(in_srgb,#10b981_14%,var(--card-background))] dark:text-emerald-100">
+          <p className="font-medium">Example: {ex.title}</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5">
+            {ex.lines.map((line, i) => <li key={i}>{line}</li>)}
+          </ul>
+        </div>
+      ))}
+
       {topic.notHere && (
         <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-300/40 dark:bg-[color-mix(in_srgb,#f59e0b_18%,var(--card-background))] dark:text-amber-100">
           <span className="font-medium">Not here: </span>
@@ -116,7 +136,7 @@ export default function HelpPage() {
     if (!normalized) return helpTopics;
     const terms = normalized.split(/\s+/).filter((term) => term.length > 1);
     return helpTopics.filter((t) => {
-      const blob = `${t.title} ${t.description} ${t.keywords.join(' ')} ${t.notHere ?? ''} ${(t.steps ?? []).join(' ')}`.toLowerCase();
+      const blob = `${t.title} ${t.description} ${t.keywords.join(' ')} ${t.notHere ?? ''} ${(t.steps ?? []).join(' ')} ${(t.rules ?? []).map((r) => `${r.name} ${r.meaning}`).join(' ')} ${(t.examples ?? []).map((e) => `${e.title} ${e.lines.join(' ')}`).join(' ')}`.toLowerCase();
       return terms.every((term) => blob.includes(term));
     });
   }, [normalized]);
@@ -156,11 +176,14 @@ export default function HelpPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button color="primary" variant="flat" onPress={() => router.push('/help/manual')}>
+            <Button color="primary" variant="solid" onPress={() => router.push('/help/manual')}>
               Open manual
             </Button>
-            <Button color="primary" variant="solid" onPress={() => window.open('/help/manual?print=1', '_blank', 'noopener')}>
-              Download manual
+            <Button color="secondary" variant="solid" onPress={() => router.push('/help/operations')}>
+              Open operations manual
+            </Button>
+            <Button color="success" variant="solid" onPress={() => router.push('/help/process-flows')}>
+              Open process flows
             </Button>
           </div>
         </div>

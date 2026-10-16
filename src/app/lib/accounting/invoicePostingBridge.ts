@@ -4,6 +4,7 @@
  */
 
 import type { BusinessPartner, Invoice, JournalEntry, JournalEntryLine, Payment } from './models';
+import { GL_GRNI, deliveriesForBill, grniByDelivery, planGrniClearing } from './grni';
 import {
   invoiceNeedsGlPost,
   MANUAL_AR_AP_SOURCE,
@@ -181,7 +182,7 @@ export function buildSalesInvoiceJournalEntry(
 export function buildPurchaseInvoiceJournalEntry(
   invoice: Invoice,
   partner: BusinessPartner | undefined,
-  opts: { journalSeq: number; postedBy?: string },
+  opts: { journalSeq: number; postedBy?: string; grni?: { clear: Array<{ grnNumber: string; amount: number }>; cleared: number; extra: number } },
 ): PostResult {
   const subtotal = +(invoice.subtotal || 0).toFixed(2);
   const tax = +(invoice.taxAmount || 0).toFixed(2);
@@ -194,7 +195,35 @@ export function buildPurchaseInvoiceJournalEntry(
 
   const lines: JournalEntryLine[] = [];
   const expenseLines = (invoice.lines || []).filter((l) => l.amount > 0);
-  if (expenseLines.length) {
+  if (opts.grni && opts.grni.cleared > 0) {
+    // Stock already received: the bill clears what the delivery left in GRNI instead of
+    // recording the debt a second time. A dearer bill adds the difference to the stock value.
+    for (const c of opts.grni.clear) {
+      lines.push({
+        id: jl(),
+        journalEntryId: entryId,
+        accountCode: GL_GRNI,
+        description: `Goods received ${c.grnNumber} — billed`,
+        debit: c.amount,
+        credit: 0,
+        currency: invoice.currency || 'GHS',
+        reference: `GRN:${c.grnNumber}`,
+      });
+    }
+    if (opts.grni.extra > 0) {
+      const first = expenseLines[0]?.glAccountCode || '';
+      lines.push({
+        id: jl(),
+        journalEntryId: entryId,
+        accountCode: first.startsWith('13') ? first : GL_ACCOUNTS.FB_INVENTORY,
+        description: `Price difference on goods received — ${invoice.invoiceNumber}`,
+        debit: opts.grni.extra,
+        credit: 0,
+        currency: invoice.currency || 'GHS',
+        reference: invoice.invoiceNumber,
+      });
+    }
+  } else if (expenseLines.length) {
     for (const line of expenseLines) {
       lines.push({
         id: jl(),
@@ -621,9 +650,13 @@ export function syncInvoiceToLedger(
     return periodCheck;
   }
 
-  const result = buildInvoiceJournalEntry(invoice, partner, {
-    journalSeq: store.journalEntries.length,
-  });
+  // A supplier bill for stock already received clears GRNI (matched by its GRN or PO number).
+  const grni = invoice.type === 'Purchase'
+    ? planGrniClearing(+(invoice.subtotal || 0).toFixed(2), deliveriesForBill(invoice, grniByDelivery(store.journalEntries)))
+    : undefined;
+  const result = invoice.type === 'Purchase'
+    ? buildPurchaseInvoiceJournalEntry(invoice, partner, { journalSeq: store.journalEntries.length, ...(grni && grni.cleared > 0 ? { grni } : {}) })
+    : buildInvoiceJournalEntry(invoice, partner, { journalSeq: store.journalEntries.length });
   if (!result.ok) {
     logAccountingProcessWarn('AccountingInvoicePost', 'Invoice GL post failed', {
       invoiceId: invoice.id,

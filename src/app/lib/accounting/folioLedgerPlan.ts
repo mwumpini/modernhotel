@@ -125,6 +125,12 @@ function storedTaxSplit(line: FolioLineJson | null, dTax: number): Array<{ accou
   return parts.map((t) => ({ ...t, amount: roundCents(t.amount * sign) }))
 }
 
+/** Lines the cancellation/no-show settlement (or the old night-audit no-show) already posted. */
+export function isSettledLine(line: FolioLineJson): boolean {
+  const id = String(line?.id || '')
+  return id.startsWith('PEN-') || id.startsWith('C-NS-') || id.startsWith('P-NS-')
+}
+
 function nextKey(base: string, used: Set<string>): string {
   if (!used.has(base)) return base
   let n = 2
@@ -151,8 +157,13 @@ export function planFolioPostings(params: {
    * through Accounts Receivable.
    */
   afterCheckout?: boolean
+  /** Cancelled or no-show booking: only deposits and refunds move; the fee is settled separately. */
+  paymentsOnly?: boolean
 }): PlannedEntry[] {
-  const { reservationId, label, inHouse, charges, payments, state, taxConfigs, now, afterCheckout } = params
+  const { reservationId, label, inHouse, state, taxConfigs, now, afterCheckout, paymentsOnly } = params
+  // Fee lines written by the cancellation/no-show settlement are already in the books.
+  const charges = params.charges.filter((l) => !isSettledLine(l))
+  const payments = params.payments.filter((l) => !isSettledLine(l))
   const entries: PlannedEntry[] = []
   const used = new Set(state.usedKeys)
   const ledger = afterCheckout ? GL_ACCOUNTS.ACCOUNTS_RECEIVABLE : inHouse ? GL_ACCOUNTS.GUEST_LEDGER : GL_ACCOUNTS.GUEST_DEPOSITS
@@ -180,7 +191,7 @@ export function planFolioPostings(params: {
     })
   }
 
-  for (const c of afterCheckout ? [] : charges) {
+  for (const c of afterCheckout || paymentsOnly ? [] : charges) {
     if (!c?.id) continue
     const lineKey = `C:${c.id}`
     seenCharges.add(lineKey)
@@ -196,7 +207,7 @@ export function planFolioPostings(params: {
     chargeEntry(lineKey, c, dNet, dTax, revenueAccountForLine(c, charges), isNew ? String(c.date || now) : now, why, taxSource)
   }
   // A charge that has left this folio (moved to another room, deleted) comes off the books here.
-  for (const [lineKey, posted] of afterCheckout ? [] : state.posted) {
+  for (const [lineKey, posted] of afterCheckout || paymentsOnly ? [] : state.posted) {
     if (!lineKey.startsWith('C:') || seenCharges.has(lineKey)) continue
     if (Math.abs(posted.gross) < 0.005) continue
     // Reverse exactly the tax that was posted for this line.

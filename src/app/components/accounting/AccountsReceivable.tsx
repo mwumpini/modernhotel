@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useMemo, useState, useCallback, useEffect, Suspense, lazy } from 'react';
+import DoubtfulDebtsPanel from './DoubtfulDebtsPanel';
 import HeadingInfo from '../HeadingInfo';
 import { confirmDelete, confirmUnvoid, confirmVoid } from '../DangerConfirm';
 import {
@@ -3094,6 +3095,11 @@ export default function AccountsReceivable() {
                         </Tab>
 
 						{/* WHT Certificates Tab */}
+						<Tab key="doubtful" title="Doubtful debts">
+							<div className={deskBookTabPanelClassName}>
+								<DoubtfulDebtsPanel />
+							</div>
+						</Tab>
 						<Tab key="wht" title={dateFrom || dateTo ? `Tax certificates (${filteredWHTCerts.length})` : 'Tax certificates'}>
 							<div className={deskBookTabPanelClassName}>
 								<div className="flex flex-nowrap items-center gap-2 overflow-x-auto mb-3">

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { syncReservationFolioToLedger } from '@/app/lib/accounting/folioLedgerServer'
+import { settleBookingPenalty, syncReservationFolioToLedger } from '@/app/lib/accounting/folioLedgerServer'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { updateReservationRow, deleteReservationRow, isRoomAvailable, GuestNotInHotelError } from '@/app/lib/frontoffice/repository'
@@ -77,7 +77,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       await syncReservationFolioToLedger(ctx.tenantId, id, { postedBy: sessionUserId ?? undefined })
         .catch((e) => console.error('[reservations/:id][PATCH] ledger sync failed', e))
     }
-    return NextResponse.json({ reservation })
+    // Cancelled or no-show: the business's own fee rule, taken from the deposit first. Runs once.
+    let settlement = null
+    if (reservation.status === 'cancelled' || reservation.status === 'no-show') {
+      settlement = await settleBookingPenalty(ctx.tenantId, id, reservation.status === 'cancelled' ? 'cancel' : 'no-show', { postedBy: sessionUserId ?? undefined })
+        .catch((e) => { console.error('[reservations/:id][PATCH] booking fee settlement failed', e); return null })
+    }
+    return NextResponse.json({ reservation, ...(settlement ? { settlement } : {}) })
   } catch (error) {
     console.error('[reservations/:id][PATCH] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

@@ -27,6 +27,7 @@ export type HelpTopicCategory =
   | 'accounting'
   | 'compliance'
   | 'settings'
+  | 'operations'
   | 'reference';
 
 export type HelpTopic = {
@@ -42,6 +43,12 @@ export type HelpTopic = {
   imageAlt?: string;
   /** Boundary note — what this screen does *not* control */
   notHere?: string;
+  /** Operations manual: each setting and what it does, in plain words. */
+  rules?: Array<{ name: string; meaning: string }>;
+  /** Operations manual: worked examples, each a short list of lines. */
+  examples?: Array<{ title: string; lines: string[] }>;
+  /** Process flows: one row per step — who acts, where in the app, what they do, what the system does. */
+  flow?: Array<{ who: string; where: string; action: string; result: string }>;
   section?: HelpNavSection;
   href?: string;
   settingsTab?: 'users' | 'rooms' | 'policies' | 'tills' | 'numbering' | 'templates' | 'locations' | 'security' | 'approvals' | 'modules' | 'sample-data' | 'audit' | 'profile';
