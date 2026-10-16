@@ -176,7 +176,7 @@ export const helpTopics: HelpTopic[] = [
     keywords: ['where', 'configure', 'setup', 'settings', 'compliance', 'map', 'boundaries'],
     category: 'settings',
     steps: [
-      'First visit: the setup wizard asks once for the company, country, and currency. Afterwards, change company details in Settings → Company Profile.',
+      'First visit: the setup wizard asks once for the company, country, and currency. Afterwards, change company details in Settings → Company Profile. The books stay in that currency. Other currencies are added under Settings → Operational Policies → Currencies, switched on while you are taking them, then switched off to return to cedis.',
       'Ongoing: use Settings for users, rooms & rate plans, numbering, and security.',
       'Tax rates and filing: use Compliance → Tax rules, Payroll tax, or Reports & Filing.',
     ],

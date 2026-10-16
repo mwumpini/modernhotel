@@ -986,6 +986,10 @@ export interface SystemSettings {
     guestCollection?: {
       service: 'none' | 'hubtel' | 'paystack';
     };
+    /** Currencies the hotel can take. The books stay in cedis. */
+    currencies?: import('./currencies').HotelCurrency[];
+    /** The currency the desk is taking. GHS when none is switched on. */
+    activeCurrencyCode?: string;
   };
   
   // Communication Settings
@@ -2456,6 +2460,8 @@ const defaultSettings: SystemSettings = {
     overtimeApprovalThreshold: 8,
     requireApprovalForPayroll: true,
     guestCollection: { service: 'none' },
+    currencies: [{ code: 'GHS', majorName: 'Ghana Cedis', minorName: 'Pesewas', rate: 1 }],
+    activeCurrencyCode: 'GHS',
   },
   
   // Communication Settings

@@ -3,11 +3,12 @@
 import React from 'react';
 import { DEFAULT_BAD_DEBT_BANDS, normaliseBands, type BadDebtBand } from '@/app/lib/accounting/badDebt';
 import { Button, Switch } from '@heroui/react';
-import { BookOpen, Building2, CalendarClock, CalendarX2, Clock, Moon, Smartphone, type LucideIcon } from 'lucide-react';
+import { BookOpen, Building2, CalendarClock, CalendarX2, Clock, Coins, Moon, Smartphone, type LucideIcon } from 'lucide-react';
 import { useSettingsStore } from '../../lib/settings/store';
 import { normalizeGuestPaymentService } from '../../lib/payments/guestCollection';
 import { hourStamp } from '../../lib/frontoffice/operationalPolicies';
 import CompanyYearPanel from './CompanyYearPanel';
+import CurrenciesPolicy from './CurrenciesPolicy';
 
 const policyInput = 'mt-1 w-full h-10 rounded-lg border border-default-300 bg-transparent px-3 text-sm transition-colors focus:border-ghana-green focus:outline-none focus:ring-2 focus:ring-ghana-green/20';
 const policyLabel = 'text-xs font-medium text-gray-500';
@@ -19,6 +20,7 @@ const SECTIONS: Array<{ id: string; label: string; icon: LucideIcon }> = [
   { id: 'policy-doubtful', label: 'Doubtful debts', icon: BookOpen },
   { id: 'policy-booking', label: 'Booking changes', icon: CalendarX2 },
   { id: 'policy-audit', label: 'Night audit & billing', icon: Moon },
+  { id: 'policy-currencies', label: 'Currencies', icon: Coins },
   { id: 'policy-payments', label: 'Payments', icon: Smartphone },
   { id: 'policy-year', label: 'Accounting year', icon: BookOpen },
 ];
@@ -452,6 +454,10 @@ export default function OperationalPoliciesPanel() {
         Line rounding applies to taxes and line items on invoices, folios, and POS. Rounding the amount due nudges the total to a cash figure, and the difference posts as a Rounding Adjustment (GL 4900) at checkout. The same values are used in Setup.
       </p>
     </PolicyCard>
+  </PolicyGroup>
+
+  <PolicyGroup id="policy-currencies" title="Currencies" description="Add a currency and switch it on while you are taking it. Switch it off to take cedis again. A bank account and a cash account are opened for each currency you add.">
+    <CurrenciesPolicy />
   </PolicyGroup>
 
   <PolicyGroup id="policy-payments" title="Phone and card payments" description="Cash and mobile money stay on the desk. A payments service can be connected later so the guest approves on their phone and the amount posts to the folio.">

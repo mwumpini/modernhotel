@@ -16,11 +16,19 @@ export interface DashboardSectionDef {
   label: string;
 }
 
+/** Activity and notice cards stay off until someone turns them on in Customize. */
+const DEFAULT_HIDDEN_IDS = ['recentActivities', 'notices'];
+
+function defaultHiddenIds(sections: DashboardSectionDef[]) {
+  const ids = new Set(sections.map((s) => s.id));
+  return DEFAULT_HIDDEN_IDS.filter((id) => ids.has(id));
+}
+
 export function useDashboardVisibility(storageKey: string, sections: DashboardSectionDef[]) {
-  // Start with nothing hidden so the first client render matches the server
-  // (which has no localStorage) — read the real saved set after mount,
-  // same pattern used elsewhere in this app to avoid hydration mismatches.
-  const [hidden, setHidden] = React.useState<Set<string>>(() => new Set());
+  // Activity and notice cards start hidden on the server and the first client
+  // paint, so they don't flash on. A saved choice (shown or hidden) is applied
+  // after mount.
+  const [hidden, setHidden] = React.useState<Set<string>>(() => new Set(defaultHiddenIds(sections)));
   const [loaded, setLoaded] = React.useState(false);
 
   React.useEffect(() => {
@@ -28,7 +36,22 @@ export function useDashboardVisibility(storageKey: string, sections: DashboardSe
       const raw = window.localStorage.getItem(storageKey);
       const ids: string[] = raw ? JSON.parse(raw) : [];
       const valid = new Set(sections.map((s) => s.id));
-      setHidden(new Set(ids.filter((id) => valid.has(id))));
+      // Keep ids this screen doesn't know about. A desk tab shares the same
+      // saved list and must not wipe the activity cards off it.
+      const next = new Set(ids.filter((id) => typeof id === 'string'));
+      let changed = !raw;
+      // Apply the default once per card. After that, checking it in Customize
+      // keeps it visible, and hiding it again sticks.
+      for (const id of defaultHiddenIds(sections)) {
+        const flag = `${storageKey}.defaultHidden.${id}`;
+        if (!window.localStorage.getItem(flag)) {
+          next.add(id);
+          window.localStorage.setItem(flag, '1');
+          changed = true;
+        }
+      }
+      if (changed) window.localStorage.setItem(storageKey, JSON.stringify(Array.from(next)));
+      setHidden(new Set(Array.from(next).filter((id) => valid.has(id))));
     } catch {
       // ignore malformed storage
     } finally {

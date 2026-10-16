@@ -394,7 +394,7 @@ export default function HotelProfilePanel() {
               </Select>
             </div>
             <p className="mt-2 text-xs text-gray-500">
-              Right now at the hotel: <strong className="text-gray-700">{formatHotelDate(now, draft.dateFormat)} · {formatHotelTime(now, draft.timeFormat)}</strong>. Currency stays {currency}: it is fixed once the books are open.
+              Right now at the hotel: <strong className="text-gray-700">{formatHotelDate(now, draft.dateFormat)} · {formatHotelTime(now, draft.timeFormat)}</strong>. The books stay in {currency}. Other currencies are switched on under Operational Policies.
             </p>
           </Section>
         </div>

@@ -51,6 +51,12 @@ export function bandLabel(bands: BadDebtBand[], i: number): string {
   return `${prev + 1}–${up} days`;
 }
 
+/** Which band a debt falls in. Debts not yet due count in the first band. */
+export function bandIndexForDays(daysPastDue: number, bands: BadDebtBand[]): number {
+  const idx = bands.findIndex((b) => b.upToDays == null || daysPastDue <= b.upToDays);
+  return idx < 0 ? bands.length - 1 : idx;
+}
+
 /** The allowance each band needs today. Debts not yet due count in the first band. */
 export function computeRequiredAllowance(receivables: OpenReceivable[], bandsIn: BadDebtBand[] | undefined, asOf: Date = new Date()) {
   const bands = normaliseBands(bandsIn);
@@ -60,8 +66,7 @@ export function computeRequiredAllowance(receivables: OpenReceivable[], bandsIn:
     if (open <= 0.004) continue;
     const due = new Date((rcv.dueDate || rcv.date || asOf) as string);
     const daysPastDue = Math.max(0, Math.floor((asOf.getTime() - due.getTime()) / 86400000));
-    const idx = bands.findIndex((b) => b.upToDays == null || daysPastDue <= b.upToDays);
-    const line = lines[idx < 0 ? lines.length - 1 : idx];
+    const line = lines[bandIndexForDays(daysPastDue, bands)];
     line.balance = r2(line.balance + open);
     line.count += 1;
   }

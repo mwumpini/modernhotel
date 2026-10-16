@@ -40,6 +40,7 @@ import {
 	type StoredReceiptPayment,
 } from '@/app/lib/accounting/receiptPrint';
 import { useSettingsStore } from '@/app/lib/settings/store';
+import { currencyForStored, workingCurrency } from '@/app/lib/settings/currencies';
 import { buildOrgProfile } from '@/app/lib/print/buildOrgProfile';
 import {
 	invoiceSyncStatus,
@@ -69,6 +70,37 @@ import { isInPeriod } from '@/app/lib/dashboard/useDashboardPeriod';
 // Shared by the New Invoice form's "new customer" payment-terms select and the due-date
 // auto-calc below it — keeps both in sync with the one mapping instead of two copies.
 const PAYMENT_TERMS_DAYS: Record<string, number> = { immediate: 0, net30: 30, net60: 60, net90: 90 };
+
+/** Cash on this receipt, in cedis. A foreign amount uses the rate saved on that currency. */
+function booksFromTender(raw: number | string, currency: { code: string; rate: number }) {
+	const code = currency.code || 'GHS';
+	const rate = code === 'GHS' ? 1 : Number(currency.rate || 0);
+	const foreign = roundMoney2(Number(raw || 0));
+	const books = code === 'GHS' ? foreign : rate > 0 ? roundMoney2(foreign * rate) : 0;
+	return { code, rate, foreign, books };
+}
+
+function foreignFillForBalance(currency: { code: string; rate: number }, balanceDue: number) {
+	if (currency.code === 'GHS' || !(currency.rate > 0)) return roundMoney2(balanceDue);
+	return roundMoney2(balanceDue / currency.rate);
+}
+
+function tenderFromPayment(payment: { amount?: number; currency?: string; exchangeRate?: number }) {
+	const code = String(payment?.currency || 'GHS').toUpperCase();
+	const rate = Number(payment?.exchangeRate || 0);
+	const foreign = code !== 'GHS' && rate > 0 ? roundMoney2(Number(payment?.amount || 0) / rate) : null;
+	return { code, rate, foreign };
+}
+
+function fxTenderNote(code: string, foreign: number, rate: number) {
+	if (code === 'GHS' || !(rate > 0) || foreign <= 0) return '';
+	return `Received ${code} ${foreign.toFixed(2)} @ ${rate}`;
+}
+
+function mergeFxNote(text: string, note: string) {
+	const stripped = String(text || '').replace(/\s*—?\s*Received [A-Z]{3} [\d,]+\.\d{2} @ [\d.]+/g, '').trim();
+	return [stripped, note].filter(Boolean).join(' — ');
+}
 
 type SalesSortKey =
 	| 'invoice' | 'billing' | 'source' | 'customer' | 'date' | 'dueDate' | 'staff'
@@ -562,6 +594,22 @@ export default function AccountsReceivable() {
 	const receiptNeedsBankAccount = ['Bank Transfer', 'Bank', 'Card', 'Mobile Money', 'Cheque', 'Check'].includes(
 		receiptForm.paymentMethod || '',
 	);
+	const working = workingCurrency(settings.financialSettings);
+	const editingStoredReceipt = editingReceiptId
+		? payments.find((p) => p.id === editingReceiptId)
+		: undefined;
+	const receiptCurrency = editingStoredReceipt
+		? currencyForStored(editingStoredReceipt, settings.financialSettings)
+		: working;
+	const tenderRaw =
+		receiptForm.paymentKind === 'wht_settlement' || receiptForm.paymentKind === 'wht_only'
+			? receiptForm.cashAmount
+			: receiptForm.amount;
+	const receiptMoney = booksFromTender(tenderRaw, receiptCurrency);
+	const receiptBankChoices = activeBankAccounts.filter((a) => {
+		const code = String(a.currency || 'GHS').toUpperCase();
+		return receiptCurrency.code === 'GHS' ? code === 'GHS' : code === receiptCurrency.code;
+	});
 
 	const selectedPrintTarget = useMemo(
 		() =>
@@ -1450,6 +1498,13 @@ export default function AccountsReceivable() {
 		paymentKind: 'standard' | 'wht_settlement' | 'wht_only' = 'standard',
 	) => {
 		setEditingReceiptId(null);
+		const take = workingCurrency(settings.financialSettings);
+		const accountFor = (method: string) => {
+			if (take.code === 'GHS') {
+				return activeBankAccounts.find((a) => String(a.currency || 'GHS').toUpperCase() === 'GHS')?.id || activeBankAccounts[0]?.id || '';
+			}
+			return method === 'Cash' ? take.cashAccountId || '' : take.bankAccountId || '';
+		};
 		if (folioReservationId) {
 			const folioTarget = buildFolioReceiptTargets(foFolios, foReservations).find(
 				(t) => t.id === folioReservationId,
@@ -1462,9 +1517,9 @@ export default function AccountsReceivable() {
 				invoiceId: '',
 				invoiceNumber: '',
 				date: new Date().toISOString().slice(0, 10),
-				amount: folioTarget?.balance ?? '',
+				amount: folioTarget ? foreignFillForBalance(take, folioTarget.balance) : '',
 				paymentMethod: 'Bank',
-				bankAccountId: activeBankAccounts[0]?.id || '',
+				bankAccountId: accountFor('Bank'),
 				checkNumber: '',
 				reference: res
 					? `In-house payment — ${res.guestName}${res.roomId ? ` Rm ${res.roomId}` : ''}`
@@ -1487,9 +1542,9 @@ export default function AccountsReceivable() {
 				paymentKind !== 'standard' && settlement && settlement.whtTotalRemaining > 0.009
 					? paymentKind
 					: 'standard';
-			const defaultAmount = invoice && settlement ? settlement.balanceDue : '';
+			const defaultAmount = invoice && settlement ? foreignFillForBalance(take, settlement.balanceDue) : '';
 			const cashAmount =
-				kind === 'wht_only' ? 0 : kind === 'wht_settlement' ? settlement!.cashRemaining : '';
+				kind === 'wht_only' ? 0 : kind === 'wht_settlement' ? foreignFillForBalance(take, settlement!.cashRemaining) : '';
 			const whtAmount = kind !== 'standard' ? settlement!.whtRemaining : '';
 			const whtVatAmount = kind !== 'standard' ? settlement!.whtVatRemaining : '';
 			setReceiptForm({
@@ -1501,7 +1556,7 @@ export default function AccountsReceivable() {
 				date: new Date().toISOString().slice(0, 10),
 				amount: kind === 'standard' ? (defaultAmount === '' ? '' : defaultAmount) : cashAmount,
 				paymentMethod: 'Bank',
-				bankAccountId: activeBankAccounts[0]?.id || '',
+				bankAccountId: accountFor('Bank'),
 				checkNumber: '',
 				reference: invoice?.invoiceNumber ? `Payment for ${invoice.invoiceNumber}` : '',
 				notes: '',
@@ -1532,6 +1587,9 @@ export default function AccountsReceivable() {
 			? salesInvoices.find((i: any) => i.id === receipt.invoiceId)
 			: null;
 		setEditingReceiptId(receipt.id);
+		const tenderCode = String(receipt.currency || 'GHS').toUpperCase();
+		const tenderRate = Number(receipt.exchangeRate || 0);
+		const tenderAmount = tenderCode !== 'GHS' && tenderRate > 0 ? roundMoney2(receipt.amount / tenderRate) : receipt.amount;
 		setReceiptForm({
 			targetKey:
 				receipt.receiptTargetKey ||
@@ -1545,7 +1603,9 @@ export default function AccountsReceivable() {
 			invoiceId: receipt.invoiceId || '',
 			invoiceNumber: linkedInv?.invoiceNumber || '',
 			date: (receipt.date || new Date().toISOString()).slice(0, 10),
-			amount: receipt.amount,
+			amount: tenderAmount,
+			currency: tenderCode,
+			exchangeRate: tenderCode === 'GHS' ? 1 : tenderRate || 1,
 			paymentMethod: mapStoreMethodToUi(receipt.paymentMethod),
 			bankAccountId: receipt.bankAccountId || activeBankAccounts[0]?.id || '',
 			checkNumber: receipt.checkNumber || '',
@@ -1570,12 +1630,12 @@ export default function AccountsReceivable() {
 			setReceiptForm((f: any) => ({
 				...f,
 				paymentKind: kind,
-				cashAmount: settlement.cashRemaining,
 				whtAmount: settlement.whtRemaining,
 				whtVatAmount: settlement.whtVatRemaining,
 				whtHasTax: true,
 				whtHasVat: true,
-				amount: settlement.cashRemaining,
+				amount: foreignFillForBalance(receiptCurrency, settlement.cashRemaining),
+				cashAmount: foreignFillForBalance(receiptCurrency, settlement.cashRemaining),
 			}));
 		} else if (kind === 'wht_only' && settlement) {
 			setReceiptForm((f: any) => ({
@@ -1595,7 +1655,7 @@ export default function AccountsReceivable() {
 				cashAmount: '',
 				whtAmount: '',
 				whtVatAmount: '',
-				amount: settlement ? settlement.balanceDue : f.amount,
+				amount: settlement ? foreignFillForBalance(receiptCurrency, settlement.balanceDue) : f.amount,
 			}));
 		}
 	};
@@ -1713,7 +1773,7 @@ export default function AccountsReceivable() {
 				invoiceNumber: inv.invoiceNumber,
 				businessPartnerId: inv.businessPartnerId,
 				customerName: (inv as { customerName?: string }).customerName || inv.businessPartnerId,
-				amount: settlement.balanceDue,
+				amount: foreignFillForBalance(receiptCurrency, settlement.balanceDue),
 				paymentKind: 'standard',
 				cashAmount: '',
 				whtAmount: '',
@@ -1732,7 +1792,7 @@ export default function AccountsReceivable() {
 			invoiceNumber: '',
 			businessPartnerId: target.businessPartnerId || '',
 			customerName: target.customerName,
-			amount: target.balance,
+			amount: foreignFillForBalance(receiptCurrency, target.balance),
 			paymentKind: 'standard',
 			cashAmount: '',
 			whtAmount: '',
@@ -1746,11 +1806,16 @@ export default function AccountsReceivable() {
 
 	const fillReceiptFullBalance = () => {
 		if (!selectedReceiptTarget && !selectedReceiptInvoice) return;
-		setReceiptForm((f: any) => ({ ...f, amount: receiptBalanceDue }));
+		setReceiptForm((f: any) => ({ ...f, amount: foreignFillForBalance(receiptCurrency, receiptBalanceDue) }));
 	};
 
 	const saveReceipt = () => {
-		const amount = roundMoney2(Number(receiptForm.amount || 0));
+		const money = receiptMoney;
+		const amount = money.books;
+		if (money.code !== 'GHS' && !(money.rate > 0)) {
+			setFormError(`Set how many cedis 1 ${money.code} is worth under Operational Policies → Currencies.`);
+			return;
+		}
 		const targetParsed = receiptForm.targetKey
 			? parseReceiptTargetKey(receiptForm.targetKey)
 			: null;
@@ -1763,10 +1828,11 @@ export default function AccountsReceivable() {
 			return;
 		}
 
-		const descParts = [
-			receiptForm.reference?.trim(),
-			receiptForm.notes?.trim(),
-		].filter(Boolean);
+		const description = mergeFxNote(
+			[receiptForm.reference?.trim(), receiptForm.notes?.trim()].filter(Boolean).join(' — '),
+			fxTenderNote(money.code, money.foreign, money.rate),
+		);
+		const descParts = description ? [description] : [];
 
 		const isWhtReceipt =
 			!editingReceipt &&
@@ -1775,7 +1841,7 @@ export default function AccountsReceivable() {
 			selectedReceiptInvoice?.id;
 
 		if (isWhtReceipt) {
-			const cash = roundMoney2(Number(receiptForm.cashAmount || 0));
+			const cash = amount;
 			const wht = roundMoney2(Number(receiptForm.whtAmount || 0));
 			const whtVat = roundMoney2(Number(receiptForm.whtVatAmount || 0));
 			if (cash <= 0 && wht <= 0 && whtVat <= 0) {
@@ -1833,8 +1899,17 @@ export default function AccountsReceivable() {
 			// recordWHTPayment doesn't take attachments (it's a store-level settlement helper
 			// shared with the WHT-only flow) — attach proof-of-payment as a follow-up update
 			// instead of widening that function's params for a UI-only field.
-			if (receiptForm.attachments?.length > 0) {
-				updatePayment(result.receiptId, { attachments: receiptForm.attachments });
+			if (result.receiptId && (receiptForm.attachments?.length > 0 || money.code !== 'GHS')) {
+				updatePayment(result.receiptId, {
+					...(receiptForm.attachments?.length > 0 ? { attachments: receiptForm.attachments } : {}),
+					...(money.code !== 'GHS'
+						? {
+								currency: money.code,
+								exchangeRate: money.rate,
+								description: description || undefined,
+							}
+						: {}),
+				});
 			}
 			setIsNewReceiptOpen(false);
 			if (receiptForm.printAfterSave && result.receiptId) {
@@ -1902,6 +1977,8 @@ export default function AccountsReceivable() {
 
 			updatePayment(editingReceipt.id, {
 				amount,
+				currency: money.code,
+				exchangeRate: money.rate,
 				date: new Date(receiptForm.date).toISOString(),
 				paymentMethod: mapUiPaymentMethodToStore(receiptForm.paymentMethod || 'Cash'),
 				bankAccountId: receiptForm.bankAccountId || undefined,
@@ -1958,7 +2035,8 @@ export default function AccountsReceivable() {
 					receiptForm.customerName?.trim() || selectedReceiptTarget?.customerName || 'Guest',
 				description: descParts.join(' — ') || 'In-house folio payment',
 				amount,
-				currency: 'GHS',
+				currency: money.code,
+				exchangeRate: money.rate,
 				paymentMethod: mapUiPaymentMethodToStore(receiptForm.paymentMethod || 'Cash'),
 				bankAccountId: receiptForm.bankAccountId || undefined,
 				checkNumber: receiptForm.checkNumber?.trim() || undefined,
@@ -1996,7 +2074,8 @@ export default function AccountsReceivable() {
 				(receiptForm.invoiceId ? `invoice:${receiptForm.invoiceId}` : undefined),
 			description: descParts.join(' — ') || 'Customer receipt',
 			amount,
-			currency: 'GHS',
+			currency: money.code,
+			exchangeRate: money.rate,
 			paymentMethod: mapUiPaymentMethodToStore(receiptForm.paymentMethod || 'Cash'),
 			bankAccountId: receiptForm.bankAccountId || undefined,
 			checkNumber: receiptForm.checkNumber?.trim() || undefined,
@@ -3951,8 +4030,14 @@ export default function AccountsReceivable() {
 									<div className="text-right text-xs text-gray-600 leading-snug">
 										<div className="text-[11px] uppercase tracking-wide text-gray-400">Receiving</div>
 										<div className="tabular-nums font-semibold text-gray-900 text-sm">
-											{formatAccountingCurrency(Number(receiptForm.amount || 0))}
+											{formatAccountingCurrency(receiptMoney.books)}
 										</div>
+										{receiptMoney.code !== 'GHS' && receiptMoney.foreign > 0 && (
+											<div className="text-[11px] text-gray-500 mt-0.5">
+												{receiptMoney.code} {receiptMoney.foreign.toFixed(2)}
+												{receiptMoney.rate > 0 ? ` @ ${receiptMoney.rate}` : ''}
+											</div>
+										)}
 										{(Number(receiptForm.whtAmount || 0) > 0 || Number(receiptForm.whtVatAmount || 0) > 0) && (
 											<div className="text-[11px] text-amber-700 mt-0.5">
 												+ {formatAccountingCurrency(Number(receiptForm.whtAmount || 0) + Number(receiptForm.whtVatAmount || 0))} withheld
@@ -4105,11 +4190,15 @@ export default function AccountsReceivable() {
 										placeholder="0.00"
 										value={receiptForm.amount?.toString() ?? ''}
 										onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, amount: v }))}
-										startContent="₵"
+										startContent={receiptMoney.code === 'GHS' ? '₵' : receiptMoney.code}
 										description={
-											selectedReceiptTarget
-												? `Balance due ${formatAccountingCurrency(receiptBalanceDue)}`
-												: 'Enter amount received'
+											receiptMoney.code !== 'GHS'
+												? receiptMoney.rate > 0
+													? `Books ${formatAccountingCurrency(receiptMoney.books)}`
+													: `Enter the ${receiptMoney.code} amount, then the cedi rate`
+												: selectedReceiptTarget
+													? `Balance due ${formatAccountingCurrency(receiptBalanceDue)}`
+													: 'Enter amount received'
 										}
 										endContent={
 											selectedReceiptTarget ? (
@@ -4136,7 +4225,7 @@ export default function AccountsReceivable() {
 												onValueChange={(v) =>
 													setReceiptForm((f: any) => ({ ...f, cashAmount: v, amount: v }))
 												}
-												startContent="₵"
+												startContent={receiptMoney.code === 'GHS' ? '₵' : receiptMoney.code}
 												isReadOnly={receiptForm.paymentKind === 'wht_only'}
 												description={
 													receiptForm.paymentKind === 'wht_only'
@@ -4218,12 +4307,19 @@ export default function AccountsReceivable() {
 										size="sm"
 										label="Method"
 										selectedKeys={[receiptForm.paymentMethod || 'Bank']}
-										onSelectionChange={(s: any) =>
+										onSelectionChange={(s: any) => {
+											const method = Array.from(s)[0] as string;
 											setReceiptForm((f: any) => ({
 												...f,
-												paymentMethod: Array.from(s)[0] as string,
-											}))
-										}
+												paymentMethod: method,
+												bankAccountId:
+													receiptCurrency.code === 'GHS'
+														? f.bankAccountId
+														: method === 'Cash'
+															? receiptCurrency.cashAccountId || ''
+															: receiptCurrency.bankAccountId || '',
+											}));
+										}}
 										isDisabled={
 											receiptForm.paymentKind === 'wht_only' && !Number(receiptForm.cashAmount)
 										}
@@ -4246,7 +4342,7 @@ export default function AccountsReceivable() {
 												}))
 											}
 										>
-											{activeBankAccounts.map((acc) => (
+											{receiptBankChoices.map((acc) => (
 												<SelectItem key={acc.id}>{acc.accountName}</SelectItem>
 											))}
 										</Select>
@@ -4317,8 +4413,14 @@ export default function AccountsReceivable() {
 											</div>
 											<div className="flex justify-between text-gray-600">
 												<span>Cash</span>
-												<span className="tabular-nums">−{formatAccountingCurrency(Number(receiptForm.amount || 0))}</span>
+												<span className="tabular-nums">−{formatAccountingCurrency(receiptMoney.books)}</span>
 											</div>
+											{receiptMoney.code !== 'GHS' && receiptMoney.foreign > 0 && (
+												<div className="flex justify-between text-[11px] text-gray-400">
+													<span>Tendered</span>
+													<span className="tabular-nums">{receiptMoney.code} {receiptMoney.foreign.toFixed(2)}</span>
+												</div>
+											)}
 											{Number(receiptForm.whtAmount || 0) > 0 && (
 												<div className="flex justify-between text-amber-700">
 													<span>WHT</span>
@@ -4336,7 +4438,7 @@ export default function AccountsReceivable() {
 												<span>New balance</span>
 												<span className="tabular-nums">
 													{formatAccountingCurrency(Math.max(0, receiptBalanceDue - roundMoney2(
-														Number(receiptForm.amount || 0) +
+														receiptMoney.books +
 														Number(receiptForm.whtAmount || 0) +
 														Number(receiptForm.whtVatAmount || 0)
 													)))}
@@ -4347,7 +4449,7 @@ export default function AccountsReceivable() {
 										<>
 											<div className="flex justify-between text-gray-600">
 												<span>Cash</span>
-												<span className="tabular-nums">{formatAccountingCurrency(Number(receiptForm.amount || 0))}</span>
+												<span className="tabular-nums">{formatAccountingCurrency(receiptMoney.books)}</span>
 											</div>
 											<p className="text-[11px] text-gray-400 leading-snug pt-1">
 												Link a folio or invoice to see the balance.
@@ -4801,7 +4903,14 @@ export default function AccountsReceivable() {
 											{selectedReceipt.status === 'Void' && (
 												<p className="text-xs text-slate-500 mt-0.5">Voided {formatAccountingCurrency(Number(selectedReceipt.amount || 0))} · counts as {formatAccountingCurrency(0)}</p>
 											)}
-											<p className="text-xs text-gray-500 mt-0.5">{selectedReceipt.currency || 'GHS'} • {selectedReceipt.paymentMethod || 'Cash'}</p>
+											<p className="text-xs text-gray-500 mt-0.5">
+												{(() => {
+													const tender = tenderFromPayment(selectedReceipt);
+													return tender.foreign != null
+														? `Received ${tender.code} ${tender.foreign.toFixed(2)} @ ${tender.rate} · ${selectedReceipt.paymentMethod || 'Cash'}`
+														: `${tender.code} • ${selectedReceipt.paymentMethod || 'Cash'}`;
+												})()}
+											</p>
 										</div>
 
 										{/* Receipt Details Grid */}
@@ -4855,7 +4964,14 @@ export default function AccountsReceivable() {
 															</tr>
 															<tr className="border-b border-gray-200">
 																<td className="py-1 text-gray-600">Currency</td>
-																<td className="py-1 text-right">{selectedReceipt.currency || 'GHS'}</td>
+																<td className="py-1 text-right">
+																	{(() => {
+																		const tender = tenderFromPayment(selectedReceipt);
+																		return tender.foreign != null
+																			? `${tender.code} ${tender.foreign.toFixed(2)} @ ${tender.rate}`
+																			: tender.code;
+																	})()}
+																</td>
 															</tr>
 															<tr className="font-semibold">
 																<td className="py-1 text-gray-800">Amount</td>

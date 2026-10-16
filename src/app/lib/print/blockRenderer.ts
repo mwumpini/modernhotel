@@ -2,10 +2,16 @@ import type { PrintData, PrintLineItem } from './templates';
 import { money } from './templates';
 import type { BlockConfig, BlockTemplate, BlockType, TemplateStyle } from './blocks';
 import { amountInWords } from './amountInWords';
+import { homeCurrencyNames } from '../settings/currencies';
 import { computeTotalsBreakdown } from './taxBreakdown';
 import { renderRetailSlipDocument } from './retailSlip';
 import { renderNodaBillDocument } from './nodaBill';
 import { formatHotelDate } from '../settings/hotelDates';
+
+function spoken(amount: number): string {
+  const { majorName, minorName } = homeCurrencyNames();
+  return amountInWords(amount, majorName, minorName);
+}
 
 const ROMAN_LOWER = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x', 'xi', 'xii', 'xiii', 'xiv', 'xv'];
 function roman(n: number): string {
@@ -412,7 +418,7 @@ function renderPayslipSummary(block: BlockConfig, data: PrintData, currency: str
   const totalDeductions = (data.deductionsItems || []).reduce((s, it) => s + (it.amount || 0), 0);
   const netPay = totalEarnings - totalDeductions;
   const wordsHtml = block.showAmountInWords
-    ? `<div style="margin-top:8px; font-style:italic;">${amountInWords(netPay)}</div>` : '';
+    ? `<div style="margin-top:8px; font-style:italic;">${spoken(netPay)}</div>` : '';
   return `${boxedGridTable([
     { label: 'Total Earnings', value: money(totalEarnings, currency), bold: false },
     { label: 'Total Deductions', value: money(totalDeductions, currency), bold: false },
@@ -505,7 +511,7 @@ function renderTotalsSummary(block: BlockConfig, data: PrintData, currency: stri
     const totalDebit = data.debitCreditLines.reduce((s, l) => s + (l.debit || 0), 0);
     const totalCredit = data.debitCreditLines.reduce((s, l) => s + (l.credit || 0), 0);
     const wordsHtml = block.showAmountInWords
-      ? `<div style="margin-top:8px; font-style:italic;">${amountInWords(totalDebit)}</div>` : '';
+      ? `<div style="margin-top:8px; font-style:italic;">${spoken(totalDebit)}</div>` : '';
     return `${boxedGridTable([
       { label: 'Total Debit', value: money(totalDebit, currency), bold: true },
       { label: 'Total Credit', value: money(totalCredit, currency), bold: true },
@@ -520,7 +526,7 @@ function renderTotalsSummary(block: BlockConfig, data: PrintData, currency: stri
     ...taxLines,
   ];
   const wordsHtml = block.showAmountInWords
-    ? `<div style="margin-top:8px; font-style:italic;">${amountInWords(grand)}</div>` : '';
+    ? `<div style="margin-top:8px; font-style:italic;">${spoken(grand)}</div>` : '';
 
   // 3 lines only — subtotal, every tax collapsed into one combined line, grand
   // total — instead of breaking each tax out separately. Matches how some
@@ -704,7 +710,7 @@ function renderTotalsBalance(block: BlockConfig, data: PrintData, currency: stri
 function renderTotalsGrandTotal(block: BlockConfig, data: PrintData, currency: string): string {
   const { grand } = computeTotalsBreakdown(data);
   const wordsHtml = block.showAmountInWords
-    ? `<div style="margin-top:8px; font-style:italic;${block.align === 'center' ? ' text-align:center;' : ''}">${amountInWords(grand)}</div>` : '';
+    ? `<div style="margin-top:8px; font-style:italic;${block.align === 'center' ? ' text-align:center;' : ''}">${spoken(grand)}</div>` : '';
   if (block.totalsDisplay === 'grid') {
     return `${gridTotals([[block.heading || 'Grand Total', money(grand, currency)]], 'all', 'all')}${wordsHtml}`;
   }
@@ -844,7 +850,7 @@ function billGridParts(block: BlockConfig, data: PrintData, currency: string): {
   }
   if (block.type === 'totals-grandtotal') {
     const words = block.showAmountInWords
-      ? `<div style="margin-top:8px; font-style:italic;${block.align === 'center' ? ' text-align:center;' : ''}">${amountInWords(breakdown.grand)}</div>`
+      ? `<div style="margin-top:8px; font-style:italic;${block.align === 'center' ? ' text-align:center;' : ''}">${spoken(breakdown.grand)}</div>`
       : '';
     return { rows: [{ label: block.heading || 'Grand Total', value: money(breakdown.grand, currency), bold: true }], words };
   }

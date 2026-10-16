@@ -1852,7 +1852,7 @@ export default function AccountsPayablePage() {
               subtotal: +(Number(form.subtotal ?? subtotalFromLines)).toFixed(2),
               taxAmount: +(Number(form.taxAmount ?? taxFromLines)).toFixed(2),
               total: +((Number(form.subtotal ?? subtotalFromLines)) + (Number(form.taxAmount ?? taxFromLines))).toFixed(2),
-              currency: form.currency || 'GHS',
+              currency: 'GHS',
               status: editing?.status || 'Posted',
               paidAmount: editing?.paidAmount || 0,
               createdAt: editing?.createdAt || new Date().toISOString(),
@@ -2797,14 +2797,6 @@ export default function AccountsPayablePage() {
                 {showAdvancedInvoice && (
                   <div className="space-y-3 rounded-lg border border-dashed border-gray-200 p-3">
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      <Input size="sm" label="Currency" value={form.currency || 'GHS'} onChange={(e) => setForm({ ...form, currency: e.target.value })} />
-                      <Input
-                        size="sm"
-                        type="number"
-                        label="Exchange rate"
-                        value={String(form.exchangeRate ?? 1)}
-                        onChange={(e) => setForm({ ...form, exchangeRate: parseFloat(e.target.value) || 1 })}
-                      />
                       <Input
                         size="sm"
                         type="number"

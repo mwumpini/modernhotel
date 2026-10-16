@@ -1,5 +1,6 @@
 import type { PrintData, PrintLineItem, PrintTaxes } from './templates';
 import { amountInWords } from './amountInWords';
+import { homeCurrencyNames } from '../settings/currencies';
 import { computeTotalsBreakdown } from './taxBreakdown';
 import { displayTaxesFromAmounts, formatRate } from '../tax/displayLines';
 
@@ -271,11 +272,15 @@ function gh(amount: number): string {
 
 /** "Two Hundred Fifty Ghana Cedis" — the words, then the currency, with no "Only". */
 function nodaWords(amount: number): string {
-  const spoken = amountInWords(Math.abs(amount)).replace(/ Only$/, '');
-  const body = spoken.replace(/^Ghana Cedis\s+/, '');
-  const split = body.match(/^(.*?) and (\w[\w\s-]* Pesewas)$/);
-  if (split && split[1]) return `${split[1]} Ghana Cedis and ${split[2]}`;
-  return `${body} Ghana Cedis`;
+  const { majorName, minorName } = homeCurrencyNames();
+  const spoken = amountInWords(Math.abs(amount), majorName, minorName).replace(/ Only$/, '');
+  const prefix = `${majorName} `;
+  const body = spoken.startsWith(prefix) ? spoken.slice(prefix.length) : spoken;
+  const andAt = body.lastIndexOf(' and ');
+  if (andAt > 0 && body.endsWith(minorName)) {
+    return `${body.slice(0, andAt)} ${majorName} and ${body.slice(andAt + 5)}`;
+  }
+  return `${body} ${majorName}`;
 }
 
 function hotelNameLines(name: string): { main: string; suffix: string } {

@@ -422,8 +422,8 @@ export default function EmployeeRecordsPanel() {
     if (!form.lastName || form.lastName.trim() === '') {
       missingFields.push('Last Name');
     }
-    if (!form.email || form.email.trim() === '') {
-      missingFields.push('Email');
+    if (!form.phone || form.phone.trim() === '') {
+      missingFields.push('Phone');
     }
     if (!form.departmentId) {
       missingFields.push('Department');
@@ -440,7 +440,7 @@ export default function EmployeeRecordsPanel() {
       console.log('[HR][Records] validation failed', { form, missingFields });
       alert(errorMessage);
       // Navigate to step 1 if missing basic info fields
-      if (missingFields.some(f => ['Staff No.', 'First Name', 'Last Name', 'Email'].includes(f))) {
+      if (missingFields.some(f => ['Staff No.', 'First Name', 'Last Name', 'Phone'].includes(f))) {
         setStep(1);
       }
       // Navigate to step 2 if missing employment fields
@@ -450,9 +450,10 @@ export default function EmployeeRecordsPanel() {
       return;
     }
     
-    // Email format validation
+    // Email is optional. A blank value is fine; anything typed still has to be a real address.
+    const email = form.email.trim();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (form.email && !emailRegex.test(form.email.trim())) {
+    if (email && !emailRegex.test(email)) {
       alert('Please enter a valid email address');
       setStep(1);
       return;
@@ -476,7 +477,7 @@ export default function EmployeeRecordsPanel() {
       updateEmployee(editingId, {
         firstName: form.firstName,
         lastName: form.lastName,
-        email: form.email,
+        email,
         phone: form.phone,
         gender: form.gender || undefined,
         nationality: form.nationality || undefined,
@@ -581,7 +582,7 @@ export default function EmployeeRecordsPanel() {
         employeeNumber,
         firstName: form.firstName,
         lastName: form.lastName,
-        email: form.email,
+        email,
         phone: form.phone,
         gender: form.gender || undefined,
         nationality: form.nationality || undefined,
@@ -1169,8 +1170,8 @@ export default function EmployeeRecordsPanel() {
                       <Input isRequired label="Staff No." value={form.employeeNumber} onChange={(e) => setForm({ ...form, employeeNumber: e.target.value })} variant="bordered" />
                       <Input isRequired label="First Name" value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} variant="bordered" />
                       <Input isRequired label="Last Name" value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} variant="bordered" />
-                      <Input isRequired label="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} variant="bordered" />
-                      <Input label="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} variant="bordered" />
+                      <Input label="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} variant="bordered" />
+                      <Input isRequired label="Phone" type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} variant="bordered" />
                       <Input label="Date of Birth" type="date" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} variant="bordered" />
                       <Select disallowEmptySelection label="Gender" selectedKeys={[form.gender || 'unspecified']} onSelectionChange={(k) => setForm({ ...form, gender: (Array.from(k)[0] as string) === 'unspecified' ? '' : (Array.from(k)[0] as string) })} variant="bordered">
                         <SelectItem key="unspecified">Unspecified</SelectItem>
@@ -1409,7 +1410,7 @@ export default function EmployeeRecordsPanel() {
                           <Input label="Tier 3 ID number" description="Optional. Provident fund account." value={form.tier3Number} onChange={(e) => setForm({ ...form, tier3Number: e.target.value })} variant="bordered" />
                         </>
                       ) : (
-                        <Button variant="bordered" className="h-14 self-end" onPress={() => setPensionIdsOpen(true)}>+ Pension ID</Button>
+                        <Button variant="bordered" className="h-14 w-full self-start" onPress={() => setPensionIdsOpen(true)}>+ Pension ID</Button>
                       )}
                       <Input label="Passport" value={form.governmentIds.passport} onChange={(e) => setForm({ ...form, governmentIds: { ...form.governmentIds, passport: e.target.value } })} variant="bordered" />
                       {form.nationality && form.nationality !== 'Ghana' && (

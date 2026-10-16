@@ -1,26 +1,51 @@
 'use client';
 
 import React from 'react';
-import { Button, Card, CardBody, Chip, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from '@heroui/react';
+import { Button, Chip, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Pagination, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from '@heroui/react';
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { useSettingsStore } from '@/app/lib/settings/store';
 import { filterFinanceArInvoices, invoiceOpenBalance } from '@/app/lib/accounting/arSubledger';
 import {
   GL_DOUBTFUL_DEBTS,
+  bandIndexForDays,
+  bandLabel,
   computeRequiredAllowance,
+  normaliseBands,
   planAllowanceAdjustment,
   planRecovery,
   planWriteOff,
   type LedgerLine,
 } from '@/app/lib/accounting/badDebt';
 import { PAYMENT_GL_MAP } from '@/app/lib/accounting/glAccounts';
+import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { formatMoney } from '@/app/lib/format/currency';
 import { notifyError, notifySuccess } from '@/app/lib/notifications/notify';
 import type { Invoice, JournalEntry } from '@/app/lib/accounting/models';
+import { SortLabel, deskResizableTableClassNames, useResizableColumns } from '../frontoffice/columnResize';
+import { useDeskPagination } from '../dashboard/deskTableUi';
 
 const SOURCE = 'doubtful_debts';
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const daysPastDue = (inv: Invoice) => Math.max(0, Math.floor((Date.now() - new Date(inv.dueDate || inv.date).getTime()) / 86400000));
+const amt = (n: number) => (Math.abs(n) < 0.005 ? '-' : formatAccountingCurrency(n));
+const bandTone = (i: number) => ['', 'text-yellow-600', 'text-orange-600', 'text-red-500', 'text-red-700 font-medium'][Math.min(i, 4)];
+
+/** Split a band's allowance across customers in proportion to what they owe, so the column adds up. */
+function shareAllowance(opens: number[], allowance: number): number[] {
+  if (opens.length === 0) return [];
+  const total = opens.reduce((s, n) => s + n, 0);
+  if (total <= 0.004 || allowance <= 0.004) return opens.map(() => 0);
+  const shares = opens.map(() => 0);
+  let used = 0;
+  opens.forEach((open, i) => {
+    if (i === opens.length - 1) shares[i] = r2(allowance - used);
+    else {
+      shares[i] = r2(allowance * (open / total));
+      used = r2(used + shares[i]);
+    }
+  });
+  return shares;
+}
 
 /**
  * Accounts Receivable → Doubtful debts (IFRS 9 simplified approach). The percentages per age band
@@ -121,95 +146,207 @@ export default function DoubtfulDebtsPanel() {
 
   const overdue = open.filter((i) => daysPastDue(i) > 0).sort((a, b) => daysPastDue(b) - daysPastDue(a));
   const writtenOffInvoices = invoices.filter((i) => writtenOff.has(i.id));
+  const normalised = React.useMemo(() => normaliseBands(bands), [bands]);
+  const bandCols = React.useMemo(
+    () => normalised.map((_, i) => ({ key: `b${i}`, label: bandLabel(normalised, i) })),
+    [normalised],
+  );
+  const customers = React.useMemo(() => {
+    const buckets = new Map<string, { customerName: string; count: number; open: number; bandOpen: number[] }>();
+    for (const inv of open) {
+      const customerName = String((inv as { customerName?: string }).customerName || '').trim() || '—';
+      const bal = invoiceOpenBalance(inv);
+      const idx = bandIndexForDays(daysPastDue(inv), normalised);
+      let row = buckets.get(customerName);
+      if (!row) {
+        row = { customerName, count: 0, open: 0, bandOpen: normalised.map(() => 0) };
+        buckets.set(customerName, row);
+      }
+      row.count += 1;
+      row.open = r2(row.open + bal);
+      row.bandOpen[idx] = r2((row.bandOpen[idx] || 0) + bal);
+    }
+    const shares = new Map<string, number[]>();
+    for (const row of buckets.values()) shares.set(row.customerName, normalised.map(() => 0));
+    normalised.forEach((_, i) => {
+      const parts = [...buckets.values()].filter((row) => row.bandOpen[i] > 0.004);
+      const split = shareAllowance(parts.map((row) => row.bandOpen[i]), lines[i]?.allowance || 0);
+      parts.forEach((row, j) => {
+        const arr = shares.get(row.customerName);
+        if (arr) arr[i] = split[j] || 0;
+      });
+    });
+    return [...buckets.values()].map((row) => {
+      const bandAllowance = shares.get(row.customerName) || normalised.map(() => 0);
+      return {
+        key: row.customerName,
+        customerName: row.customerName,
+        count: row.count,
+        open: row.open,
+        allowance: r2(bandAllowance.reduce((sum, n) => sum + n, 0)),
+        bands: bandAllowance,
+      };
+    });
+  }, [open, normalised, lines]);
+
+  const [sortKey, setSortKey] = React.useState('allowance');
+  const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('desc');
+  const sortedCustomers = React.useMemo(() => {
+    const value = (row: (typeof customers)[number]): string | number => {
+      if (sortKey === 'customer') return row.customerName.toLowerCase();
+      if (sortKey === 'open') return row.open;
+      if (sortKey === 'allowance') return row.allowance;
+      const band = bandCols.findIndex((col) => col.key === sortKey);
+      return band >= 0 ? row.bands[band] || 0 : 0;
+    };
+    return [...customers].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      if (av < bv) return sortDir === 'asc' ? -1 : 1;
+      if (av > bv) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [customers, sortKey, sortDir, bandCols]);
+  const customerPaging = useDeskPagination(sortedCustomers, [sortKey, sortDir, customers.length]);
+  const onSort = (key: string) => {
+    if (sortKey === key) setSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDir(key === 'customer' ? 'asc' : 'desc');
+    }
+  };
+  const colDefaults = React.useMemo(() => {
+    const widths: Record<string, number> = { customer: 180, open: 110, allowance: 120 };
+    bandCols.forEach((col) => { widths[col.key] = 120; });
+    return widths;
+  }, [bandCols]);
+  const allowCols = useResizableColumns(colDefaults);
+  const overdueCols = useResizableColumns({ invoice: 120, customer: 180, days: 120, open: 110, action: 110 });
+  const writtenCols = useResizableColumns({ invoice: 120, customer: 180, written: 120, recovered: 120, action: 140 });
+  const [view, setView] = React.useState<'allowance' | 'overdue' | 'written'>('allowance');
+  React.useEffect(() => {
+    if (view === 'written' && writtenOffInvoices.length === 0) setView('allowance');
+  }, [view, writtenOffInvoices.length]);
+  const viewButton = (key: 'allowance' | 'overdue' | 'written', label: string) => (
+    <button
+      type="button"
+      onClick={() => setView(key)}
+      className={`px-3 py-1 text-sm rounded-md transition-colors ${view === key ? 'bg-primary text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+    >
+      {label}
+    </button>
+  );
+  const column = (key: string, label: string, align: 'left' | 'right' = 'left') => (
+    <TableColumn key={key} className="relative" style={allowCols.style(key)}>
+      <SortLabel active={sortKey === key} dir={sortDir} align={align} onPress={() => onSort(key)}>{label}</SortLabel>
+      {allowCols.sizer(key, label)}
+    </TableColumn>
+  );
 
   return (
-    <div className="space-y-3">
-      <Card className="shadow-none border">
-        <CardBody className="space-y-3">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold text-gray-800">Allowance for doubtful debts</h3>
-              <p className="text-xs text-gray-500">The share of what customers owe that may not be paid, by age (IFRS 9). Percentages are set in Settings → Operational Policies → Doubtful debts.</p>
-            </div>
-            <Button size="sm" color="primary" isDisabled={adjustment.lines.length === 0} onPress={updateAllowance}>
-              {adjustment.lines.length === 0 ? 'Allowance is up to date' : `${adjustment.change > 0 ? 'Increase' : 'Reduce'} allowance by ${formatMoney(Math.abs(adjustment.change))}`}
-            </Button>
-          </div>
-          <Table aria-label="Allowance by age" removeWrapper isCompact>
-            <TableHeader>
-              <TableColumn>Days past due</TableColumn>
-              <TableColumn className="text-right">Invoices</TableColumn>
-              <TableColumn className="text-right">Open balance</TableColumn>
-              <TableColumn className="text-right">Allowance %</TableColumn>
-              <TableColumn className="text-right">Allowance</TableColumn>
-            </TableHeader>
-            <TableBody>
-              {[
-                ...lines.map((l) => (
-                  <TableRow key={l.label}>
-                    <TableCell>{l.label}</TableCell>
-                    <TableCell className="text-right tabular-nums">{l.count}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatMoney(l.balance)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{l.percent}%</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatMoney(l.allowance)}</TableCell>
-                  </TableRow>
-                )),
-                <TableRow key="total" className="font-semibold">
-                  <TableCell>Total</TableCell>
-                  <TableCell className="text-right tabular-nums">{open.length}</TableCell>
-                  <TableCell className="text-right tabular-nums">{formatMoney(totalOpen)}</TableCell>
-                  <TableCell> </TableCell>
-                  <TableCell className="text-right tabular-nums">{formatMoney(required)}</TableCell>
-                </TableRow>,
-              ]}
-            </TableBody>
-          </Table>
-          <div className="flex flex-wrap gap-4 text-sm">
-            <span>Required: <strong className="tabular-nums">{formatMoney(required)}</strong></span>
-            <span>Booked (account {GL_DOUBTFUL_DEBTS}): <strong className="tabular-nums">{formatMoney(booked)}</strong></span>
-            <span>Difference: <strong className={`tabular-nums ${adjustment.lines.length ? 'text-amber-700' : 'text-emerald-700'}`}>{formatMoney(adjustment.change)}</strong></span>
-          </div>
-        </CardBody>
-      </Card>
-
-      <Card className="shadow-none border">
-        <CardBody className="space-y-2">
-          <h3 className="text-sm font-semibold text-gray-800">Overdue invoices</h3>
-          <p className="text-xs text-gray-500">Write off only a debt that will not be paid. It comes out of the allowance first; anything beyond it is a bad-debt expense.</p>
-          <Table aria-label="Overdue invoices" removeWrapper isCompact>
-            <TableHeader>
-              <TableColumn>Invoice</TableColumn>
-              <TableColumn>Customer</TableColumn>
-              <TableColumn className="text-right">Days past due</TableColumn>
-              <TableColumn className="text-right">Open</TableColumn>
-              <TableColumn> </TableColumn>
-            </TableHeader>
-            <TableBody emptyContent="Nothing is overdue.">
-              {overdue.map((inv) => (
-                <TableRow key={inv.id}>
-                  <TableCell>{inv.invoiceNumber}</TableCell>
-                  <TableCell>{(inv as { customerName?: string }).customerName || '—'}</TableCell>
-                  <TableCell className="text-right tabular-nums">{daysPastDue(inv)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{formatMoney(invoiceOpenBalance(inv))}</TableCell>
-                  <TableCell><Button size="sm" variant="flat" color="danger" onPress={() => { setWriteOff(inv); setReason(''); }}>Write off</Button></TableCell>
+    <div>
+      <div className="flex flex-nowrap items-center gap-3 overflow-x-auto mb-2">
+        <div className="flex rounded-lg border border-gray-200 p-0.5 shrink-0 mr-auto">
+          {viewButton('allowance', 'Allowance by age')}
+          {viewButton('overdue', overdue.length ? `Overdue invoices (${overdue.length})` : 'Overdue invoices')}
+          {writtenOffInvoices.length > 0 && viewButton('written', `Written off (${writtenOffInvoices.length})`)}
+        </div>
+        {view === 'allowance' && (
+          <>
+            <span className="text-sm shrink-0 text-gray-600">Booked <strong className="tabular-nums text-gray-900">{formatAccountingCurrency(booked)}</strong></span>
+            <span className={`text-sm shrink-0 ${adjustment.lines.length ? 'text-amber-700' : 'text-gray-600'}`}>
+              Difference <strong className="tabular-nums">{formatAccountingCurrency(adjustment.change)}</strong>
+            </span>
+            {adjustment.lines.length > 0 && (
+              <Button size="sm" color="primary" className="shrink-0" onPress={updateAllowance}>Post</Button>
+            )}
+          </>
+        )}
+      </div>
+      {view === 'allowance' && <div ref={allowCols.frameRef} style={allowCols.frameStyle}>
+        <Table removeWrapper classNames={deskResizableTableClassNames()} aria-label="Allowance by customer and age">
+          <TableHeader>
+            {[
+              column('customer', 'Customer'),
+              column('open', 'Open', 'right'),
+              column('allowance', 'Allowance', 'right'),
+              ...bandCols.map((col) => column(col.key, col.label, 'right')),
+            ]}
+          </TableHeader>
+          <TableBody emptyContent="No open invoices.">
+            {[
+              ...customerPaging.paged.map((row) => (
+                <TableRow key={row.key}>
+                  {[
+                    <TableCell key="customer">
+                      <div className="font-medium">{row.customerName}</div>
+                      <div className="text-xs text-gray-500">{row.count} {row.count === 1 ? 'invoice' : 'invoices'}</div>
+                    </TableCell>,
+                    <TableCell key="open" className="tabular-nums text-right">{amt(row.open)}</TableCell>,
+                    <TableCell key="allowance" className="tabular-nums text-right font-bold">{amt(row.allowance)}</TableCell>,
+                    ...row.bands.map((value, i) => (
+                      <TableCell key={bandCols[i].key} className={`tabular-nums text-right ${value > 0.004 ? bandTone(i) : ''}`}>{amt(value)}</TableCell>
+                    )),
+                  ]}
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardBody>
-      </Card>
+              )),
+              ...(customers.length > 0 ? [
+                <TableRow key="total" className="font-semibold">
+                  {[
+                    <TableCell key="customer">
+                      <div>Total</div>
+                      <div className="text-xs font-normal text-gray-500">{open.length} {open.length === 1 ? 'invoice' : 'invoices'}</div>
+                    </TableCell>,
+                    <TableCell key="open" className="tabular-nums text-right">{amt(totalOpen)}</TableCell>,
+                    <TableCell key="allowance" className="tabular-nums text-right">{amt(required)}</TableCell>,
+                    ...lines.map((line, i) => (
+                      <TableCell key={bandCols[i]?.key || i} className={`tabular-nums text-right ${line.allowance > 0.004 ? bandTone(i) : ''}`}>{amt(line.allowance)}</TableCell>
+                    )),
+                  ]}
+                </TableRow>,
+              ] : []),
+            ]}
+          </TableBody>
+        </Table>
+      </div>}
+      {view === 'allowance' && customerPaging.pages > 1 && (
+        <div className="mt-3 flex justify-end">
+          <Pagination page={customerPaging.page} total={customerPaging.pages} onChange={customerPaging.setPage} showControls size="sm" />
+        </div>
+      )}
 
-      {writtenOffInvoices.length > 0 && (
-        <Card className="shadow-none border">
-          <CardBody className="space-y-2">
-            <h3 className="text-sm font-semibold text-gray-800">Written off</h3>
-            <Table aria-label="Written-off invoices" removeWrapper isCompact>
+      {view === 'overdue' && <div ref={overdueCols.frameRef} style={overdueCols.frameStyle}>
+        <Table removeWrapper classNames={deskResizableTableClassNames()} aria-label="Overdue invoices">
+          <TableHeader>
+            <TableColumn className="relative" style={overdueCols.style('invoice')}>Invoice{overdueCols.sizer('invoice', 'Invoice')}</TableColumn>
+            <TableColumn className="relative" style={overdueCols.style('customer')}>Customer{overdueCols.sizer('customer', 'Customer')}</TableColumn>
+            <TableColumn className="relative text-right" style={overdueCols.style('days')}>Days past due{overdueCols.sizer('days', 'Days past due')}</TableColumn>
+            <TableColumn className="relative text-right" style={overdueCols.style('open')}>Open{overdueCols.sizer('open', 'Open')}</TableColumn>
+            <TableColumn className="relative" style={overdueCols.style('action')}>{overdueCols.sizer('action', 'Action')}</TableColumn>
+          </TableHeader>
+          <TableBody emptyContent="Nothing is overdue.">
+            {overdue.map((inv) => (
+              <TableRow key={inv.id}>
+                <TableCell className="font-mono text-sm">{inv.invoiceNumber}</TableCell>
+                <TableCell>{(inv as { customerName?: string }).customerName || '—'}</TableCell>
+                <TableCell className="text-right tabular-nums">{daysPastDue(inv)}</TableCell>
+                <TableCell className="text-right tabular-nums font-medium">{amt(invoiceOpenBalance(inv))}</TableCell>
+                <TableCell><Button size="sm" variant="flat" color="danger" onPress={() => { setWriteOff(inv); setReason(''); }}>Write off</Button></TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>}
+
+      {view === 'written' && writtenOffInvoices.length > 0 && (
+          <div ref={writtenCols.frameRef} style={writtenCols.frameStyle}>
+            <Table removeWrapper classNames={deskResizableTableClassNames()} aria-label="Written-off invoices">
               <TableHeader>
-                <TableColumn>Invoice</TableColumn>
-                <TableColumn>Customer</TableColumn>
-                <TableColumn className="text-right">Written off</TableColumn>
-                <TableColumn className="text-right">Recovered</TableColumn>
-                <TableColumn> </TableColumn>
+                <TableColumn className="relative" style={writtenCols.style('invoice')}>Invoice{writtenCols.sizer('invoice', 'Invoice')}</TableColumn>
+                <TableColumn className="relative" style={writtenCols.style('customer')}>Customer{writtenCols.sizer('customer', 'Customer')}</TableColumn>
+                <TableColumn className="relative text-right" style={writtenCols.style('written')}>Written off{writtenCols.sizer('written', 'Written off')}</TableColumn>
+                <TableColumn className="relative text-right" style={writtenCols.style('recovered')}>Recovered{writtenCols.sizer('recovered', 'Recovered')}</TableColumn>
+                <TableColumn className="relative" style={writtenCols.style('action')}>{writtenCols.sizer('action', 'Action')}</TableColumn>
               </TableHeader>
               <TableBody>
                 {writtenOffInvoices.map((inv) => {
@@ -217,10 +354,10 @@ export default function DoubtfulDebtsPanel() {
                   const back = recovered.get(inv.id) || 0;
                   return (
                     <TableRow key={inv.id}>
-                      <TableCell>{inv.invoiceNumber}</TableCell>
+                      <TableCell className="font-mono text-sm">{inv.invoiceNumber}</TableCell>
                       <TableCell>{(inv as { customerName?: string }).customerName || '—'}</TableCell>
-                      <TableCell className="text-right tabular-nums">{formatMoney(off)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{back > 0 ? formatMoney(back) : '—'}</TableCell>
+                      <TableCell className="text-right tabular-nums">{amt(off)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{back > 0 ? amt(back) : '—'}</TableCell>
                       <TableCell>
                         {back < off - 0.004 ? (
                           <Button size="sm" variant="flat" onPress={() => { setRecovery({ invoice: inv, max: r2(off - back) }); setRecAmount(String(r2(off - back))); }}>Record recovery</Button>
@@ -231,8 +368,7 @@ export default function DoubtfulDebtsPanel() {
                 })}
               </TableBody>
             </Table>
-          </CardBody>
-        </Card>
+          </div>
       )}
 
       <Modal isOpen={!!writeOff} onOpenChange={(o) => { if (!o) setWriteOff(null); }}>

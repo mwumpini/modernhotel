@@ -255,6 +255,34 @@ export const operationsTopics: HelpTopic[] = [
     ],
   },
 
+  {
+    id: 'ops-currencies',
+    title: 'Currencies',
+    category: 'operations',
+    keywords: ['currency', 'exchange rate', 'USD', 'dollar', 'euro', 'amount in words', 'pesewa', 'cent'],
+    description: `${POLICIES} → Currencies. The books stay in Ghana cedis. Add another currency, switch it on while the hotel is taking it, then switch it off to take cedis again.`,
+    rules: [
+      { name: 'Home currency', meaning: 'GHS. Write the main unit and the small unit yourself (for example Ghana Cedis and Pesewas). Those words are used in the amount in words on cedis documents. This currency cannot be switched off.' },
+      { name: 'Code', meaning: 'What you type, such as USD or EUR. There is no list to pick from.' },
+      { name: 'Main unit and small unit', meaning: 'The two names amount in words uses for that currency, such as US dollar and cents.' },
+      { name: 'Cedis per 1', meaning: 'How many cedis one unit of that currency is worth. Used when a receipt in that currency is posted, so the books stay in cedis. It is not asked for on the receipt.' },
+      { name: 'Add a currency', meaning: 'Opens a bank account and a cash account for that currency. Bank receipts use the bank account. Cash receipts use the cash account.' },
+      { name: 'Use this', meaning: 'The desk takes that currency. New customer receipts are entered in it and posted to its bank or cash account. Only one extra currency is on at a time.' },
+      { name: 'Back to cedis', meaning: 'Switches that currency off. New receipts are in cedis again. Receipts already recorded stay as they were.' },
+    ],
+    examples: [
+      {
+        title: 'USD at 15.50 cedis, then back to cedis',
+        lines: [
+          'Add USD, main unit US dollar, small unit cents, cedis per 1 = 15.50. The system opens USD bank and USD cash.',
+          'Press Use this. A guest pays 100 dollars by bank transfer. The receipt is 100 USD. The USD bank rises by 100. The books record ₵1,550.',
+          'Press Back to cedis. The next receipt is in cedis, into the cedi bank or cash account.',
+        ],
+      },
+    ],
+    notHere: 'The home currency of the books is chosen once in setup. A purchase bill is entered in cedis. Customer receipts follow the currency switched on here.',
+  },
+
   // ---------------- Dates and the year ----------------
   {
     id: 'ops-posting-dates',
@@ -601,7 +629,7 @@ export const operationsModules = [
   { id: 'ops-frontdesk', title: 'Front Office Operations', intro: 'Check-in and checkout times, late and early checkout, the night audit, room pricing, deposits, no-shows and cancellations, company accounts, and the tills.', topicIds: ['ops-times', 'ops-late-checkout', 'ops-early-checkout', 'ops-room-charges', 'ops-room-pricing', 'ops-deposit', 'ops-no-show', 'ops-cancellation', 'ops-fees-deposits', 'ops-company', 'ops-tills', 'ops-petty-cash'] },
   { id: 'ops-inventory', title: 'Inventory & Stores', intro: 'How stock bought from suppliers reaches the books.', topicIds: ['ops-grni'] },
   { id: 'ops-hr', title: 'HR & Payroll', intro: 'PAYE bands and special rates, pensions, and what decides each deduction.', topicIds: ['ops-paye', 'ops-pensions', 'ops-payroll-rules'] },
-  { id: 'ops-accounting', title: 'Accounting & Finance', intro: 'How a stay reaches the books, doubtful debts, and the accounting year.', topicIds: ['ops-stay-books', 'ops-doubtful-debts', 'ops-year-payments'] },
+  { id: 'ops-accounting', title: 'Accounting & Finance', intro: 'How a stay reaches the books, doubtful debts, currencies, and the accounting year.', topicIds: ['ops-stay-books', 'ops-doubtful-debts', 'ops-currencies', 'ops-year-payments'] },
   { id: 'ops-compliance', title: 'Compliance & Reports', intro: 'How tax rules are built, the Ghana guest-bill taxes, and withholding tax.', topicIds: ['ops-tax-rules', 'ops-ghana-taxes', 'ops-withholding'] },
   { id: 'ops-settings', title: 'System Settings', intro: 'Document numbers, posting dates, approval limits, users and roles, and the company profile.', topicIds: ['ops-numbering', 'ops-posting-dates', 'ops-approvals', 'ops-users-modules', 'ops-company-profile'] },
 ];

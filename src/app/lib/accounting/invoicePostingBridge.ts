@@ -353,7 +353,7 @@ export function buildReceiptJournalEntry(
     description: payment.description || `Receipt ${payment.paymentNumber}`,
     debit: amount,
     credit: 0,
-    currency: payment.currency || 'GHS',
+    currency: 'GHS',
     reference: payment.paymentNumber,
     costCenter: payment.revenueCenterCode,
   };
@@ -364,7 +364,7 @@ export function buildReceiptJournalEntry(
     description: payment.description || `Receipt ${payment.paymentNumber}`,
     debit: 0,
     credit: amount,
-    currency: payment.currency || 'GHS',
+    currency: 'GHS',
     reference: payment.paymentNumber,
     costCenter: payment.revenueCenterCode,
   };
@@ -377,7 +377,7 @@ export function buildReceiptJournalEntry(
     description: `Customer receipt ${payment.paymentNumber}`,
     totalDebit: amount,
     totalCredit: amount,
-    currency: payment.currency || 'GHS',
+    currency: 'GHS',
     status: 'Posted',
     postedBy: opts.postedBy || 'system',
     postedAt: ts,

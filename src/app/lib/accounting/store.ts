@@ -385,6 +385,16 @@ interface AccountingState {
   refreshLedgerFromServer: (options?: { journal?: boolean }) => Promise<void>;
 }
 
+/** Receipts store the cedi amount. A foreign bank or cash account is updated in that currency. */
+function bankRegisterAmount(payment: Payment, bank: BankAccount): number {
+  const code = String(payment.currency || 'GHS').toUpperCase();
+  const rate = Number(payment.exchangeRate || 0);
+  if (payment.type === 'Receipt' && code !== 'GHS' && String(bank.currency || '').toUpperCase() === code && rate > 0) {
+    return +((payment.amount || 0) / rate).toFixed(2);
+  }
+  return payment.amount;
+}
+
 export const useAccountingStore = create<AccountingState>((set, get) => ({
   // Initial State
   chartOfAccounts: [],
@@ -1724,7 +1734,8 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       if (result.ok && !('skipped' in result) && payment.type === 'Receipt' && payment.bankAccountId) {
         const bank = get().bankAccounts.find(b => b.id === payment.bankAccountId);
         if (bank && !get().bankTransactions.some((t) => t.journalEntryId === result.entry.id && t.bankAccountId === bank.id)) {
-          const newBalance = +(bank.currentBalance + payment.amount).toFixed(2);
+          const registerAmount = bankRegisterAmount(payment, bank);
+          const newBalance = +(bank.currentBalance + registerAmount).toFixed(2);
           get().updateBankAccount(bank.id, { currentBalance: newBalance, updatedAt: new Date().toISOString() });
           get().addBankTransaction({
             id: `BT-${result.entry.id}`,
@@ -1732,7 +1743,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
             transactionDate: payment.date,
             reference: payment.reference || payment.paymentNumber,
             description: payment.description || `Receipt ${payment.paymentNumber}`,
-            amount: payment.amount,
+            amount: registerAmount,
             type: 'Deposit',
             currency: bank.currency,
             balance: newBalance,
