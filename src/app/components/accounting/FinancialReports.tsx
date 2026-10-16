@@ -93,6 +93,23 @@ const formatDrCr = (debit: number, credit: number) => {
   return parts.join(' · ') || '—';
 };
 
+/** Cash flow and changes in equity. Not chart codes, so Expand has to open them too. */
+const STATEMENT_SECTION_KEYS = ['cf-cash', 'cf-operating', 'cf-investing', 'cf-financing', 'socie-profit', 'socie-other'];
+
+function SectionToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onToggle(); }}
+      className="w-4 h-4 flex items-center justify-center text-gray-400 hover:text-gray-600 text-xs"
+      aria-expanded={open}
+      aria-label={open ? 'Collapse' : 'Expand'}
+    >
+      {open ? '▼' : '▶'}
+    </button>
+  );
+}
+
 /** Amount posted on this account itself, excluding what its children already show. */
 const directPosting = (node: AccountNode) => {
   let childDebit = 0;
@@ -359,7 +376,7 @@ export default function FinancialReportsPage() {
   // (top-level category totals only) — the two controls drive the same
   // underlying expandedSections state, so each stays in sync with the other.
   const expandAll = () => {
-    setExpandedSections(new Set(['all', ...rollupCoa.map((a) => a.code)]));
+    setExpandedSections(new Set(['all', ...rollupCoa.map((a) => a.code), ...STATEMENT_SECTION_KEYS]));
     setReportFormat('detailed');
   };
   const collapseAll = () => {
@@ -372,6 +389,7 @@ export default function FinancialReportsPage() {
       const next = new Set(prev);
       if (next.has('all')) {
         for (const account of rollupCoa) next.add(account.code);
+        for (const key of STATEMENT_SECTION_KEYS) next.add(key);
         next.delete('all');
         next.delete(sectionKey);
         return next;
@@ -459,6 +477,7 @@ export default function FinancialReportsPage() {
   const assetAccounts = useMemo(() => orderAssetsForStatement(getAccountsByType(accountTreeCumulative, 'Asset')), [accountTreeCumulative, getAccountsByType]);
   const liabilityAccounts = useMemo(() => orderLiabilitiesForStatement(getAccountsByType(accountTreeCumulative, 'Liability')), [accountTreeCumulative, getAccountsByType]);
   const equityAccounts = useMemo(() => getAccountsByType(accountTreeCumulative, 'Equity'), [accountTreeCumulative, getAccountsByType]);
+  const equityPeriodAccounts = useMemo(() => getAccountsByType(accountTreePeriod, 'Equity'), [accountTreePeriod, getAccountsByType]);
   const revenueAccounts = useMemo(() => getAccountsByType(accountTreePeriod, 'Revenue'), [accountTreePeriod, getAccountsByType]);
   const expenseAccounts = useMemo(() => getAccountsByType(accountTreePeriod, 'Expense'), [accountTreePeriod, getAccountsByType]);
 
@@ -624,6 +643,117 @@ export default function FinancialReportsPage() {
     () => buildStatementOfChangesInEquity(journalEntries, rollupCoa, startDate, endDate, totals.netIncome),
     [journalEntries, rollupCoa, startDate, endDate, totals.netIncome]
   );
+
+  // Same Summary / Detailed rules as the trial balance. Profit opens into the
+  // period's revenue and expenses. Other movements open into the equity accounts.
+  const socieLines = useMemo(() => {
+    type Line = {
+      key: string;
+      code: string;
+      label: string;
+      level: number;
+      share: number | null;
+      retained: number | null;
+      total: number | null;
+      toggleKey: string | null;
+      open: boolean;
+      totalRow: boolean;
+    };
+    const lines: Line[] = [];
+    const walk = (nodes: AccountNode[], level: number, shareTree: boolean, signed: (node: AccountNode) => number) => {
+      nodes.forEach((node) => {
+        const hasChildren = node.children.length > 0;
+        const amount = signed(node);
+        if (!showZeroBalances && Math.abs(amount) < 0.01 && !hasChildren) return;
+        const open = hasChildren && isSectionExpanded(node.code);
+        const onShare = shareTree || node.code === '3100';
+        lines.push({
+          key: `acct-${node.code}`,
+          code: node.code,
+          label: node.name,
+          level,
+          share: open ? null : (onShare ? amount : null),
+          retained: open ? null : (onShare ? null : amount),
+          total: open ? null : amount,
+          toggleKey: hasChildren ? node.code : null,
+          open,
+          totalRow: false,
+        });
+        if (!open) return;
+        const direct = directPosting(node);
+        if (Math.abs(direct.balance) > 0.01) {
+          const directAmount = signed({ ...node, balance: direct.balance });
+          lines.push({
+            key: `acct-${node.code}-direct`,
+            code: node.code,
+            label: 'Posted directly to this account',
+            level: level + 1,
+            share: onShare ? directAmount : null,
+            retained: onShare ? null : directAmount,
+            total: directAmount,
+            toggleKey: null,
+            open: false,
+            totalRow: false,
+          });
+        }
+        walk(node.children, level + 1, onShare, signed);
+      });
+    };
+
+    for (const row of socie.rows) {
+      if (row.key !== 'profit' && row.key !== 'other') {
+        lines.push({
+          key: row.key,
+          code: '',
+          label: row.label,
+          level: 0,
+          share: row.shareCapital,
+          retained: row.retainedAndOther,
+          total: row.total,
+          toggleKey: null,
+          open: false,
+          totalRow: true,
+        });
+        continue;
+      }
+      if (!showZeroBalances && Math.abs(row.total) < 0.01) continue;
+      const toggleKey = row.key === 'profit' ? 'socie-profit' : 'socie-other';
+      const open = isSectionExpanded(toggleKey);
+      lines.push({
+        key: row.key,
+        code: '',
+        label: row.label,
+        level: 0,
+        share: open ? null : row.shareCapital,
+        retained: open ? null : row.retainedAndOther,
+        total: open ? null : row.total,
+        toggleKey,
+        open,
+        totalRow: false,
+      });
+      if (!open) continue;
+      if (row.key === 'profit') {
+        const signed = (node: AccountNode) => (node.type === 'Expense' ? -node.balance : node.balance);
+        walk(revenueAccounts, 1, false, signed);
+        walk(expenseAccounts, 1, false, signed);
+      } else {
+        walk(equityPeriodAccounts, 1, false, (node) => node.balance);
+      }
+      lines.push({
+        key: `${row.key}-total`,
+        code: '',
+        label: row.key === 'profit' ? 'Profit / (loss) for the period' : 'Other movements',
+        level: 0,
+        share: row.shareCapital,
+        retained: row.retainedAndOther,
+        total: row.total,
+        toggleKey: null,
+        open: false,
+        totalRow: true,
+      });
+    }
+    return lines;
+  }, [socie.rows, showZeroBalances, isSectionExpanded, revenueAccounts, expenseAccounts, equityPeriodAccounts]);
 
   const postedClose = useMemo(
     () => findPostedPeriodClose(journalEntries, actionEndIso),
@@ -1003,9 +1133,11 @@ export default function FinancialReportsPage() {
   const exportCashFlowCSV = useCallback(() => {
     const cf = cashFlow;
     const activityLines = (activity: 'operating' | 'investing' | 'financing', title: string) =>
-      cf.lines
-        .filter((line) => line.activity === activity)
-        .map((line) => ({ line: `${title}: ${line.accountCode ? `${line.accountCode} ` : ''}${line.accountName}`, amount: line.amount }));
+      isSectionExpanded(`cf-${activity}`)
+        ? cf.lines
+            .filter((line) => line.activity === activity)
+            .map((line) => ({ line: `${title}: ${line.accountCode ? `${line.accountCode} ` : ''}${line.accountName}`, amount: line.amount }))
+        : [];
     const rows = [
       { line: 'Opening cash and cash equivalents', amount: cf.openingCash },
       ...activityLines('operating', 'Operating'),
@@ -1022,14 +1154,16 @@ export default function FinancialReportsPage() {
       { key: 'line', label: 'Line' },
       { key: 'amount', label: 'Amount' },
     ]);
-  }, [cashFlow]);
+  }, [cashFlow, isSectionExpanded]);
 
   const printCashFlow = useCallback(() => {
     const cf = cashFlow;
     const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const sectionRows = (activity: 'operating' | 'investing' | 'financing', title: string, total: number) => {
-      const lines = cf.lines.filter((line) => line.activity === activity);
-      const body = lines.length
+      const lines = isSectionExpanded(`cf-${activity}`) ? cf.lines.filter((line) => line.activity === activity) : [];
+      const body = !isSectionExpanded(`cf-${activity}`)
+        ? ''
+        : lines.length
         ? lines.map((line) => `<tr><td style="padding-left:16px">${esc(line.accountCode ? `${line.accountCode} ` : '')}${esc(line.accountName)}</td><td class="text-right font-mono">${formatCurrencyWithSign(line.amount)}</td></tr>`).join('')
         : '<tr><td style="padding-left:16px;color:#666">No cash movement in this period.</td><td></td></tr>';
       return `<tr class="subtotal-row"><td colspan="2"><strong>${title}</strong></td></tr>${body}<tr><td class="font-bold" style="padding-left:16px">Net cash from ${title.toLowerCase()}</td><td class="text-right font-mono font-bold">${formatCurrencyWithSign(total)}</td></tr>`;
@@ -1039,7 +1173,7 @@ export default function FinancialReportsPage() {
         <div class="section-title">Cash and cash equivalents — movement (from general ledger)</div>
         <p style="font-size:10px;color:#555;margin-bottom:10px">Each cash journal is split by the other side of the entry. Fixed assets are investing. Equity and long-term borrowings are financing. Revenue, expenses and working capital are operating.</p>
         <table><tbody>
-          <tr><td>Opening cash and cash equivalents</td><td class="text-right font-mono">${formatCurrency(cf.openingCash)}</td></tr>
+          ${isSectionExpanded('cf-cash') ? `<tr><td>Opening cash and cash equivalents</td><td class="text-right font-mono">${formatCurrency(cf.openingCash)}</td></tr>` : `<tr><td>Cash and cash equivalents — net change</td><td class="text-right font-mono">${formatCurrencyWithSign(cf.netChange)}</td></tr>`}
           ${sectionRows('operating', 'Operating activities', cf.operating)}
           ${sectionRows('investing', 'Investing activities', cf.investing)}
           ${sectionRows('financing', 'Financing activities', cf.financing)}
@@ -1050,15 +1184,15 @@ export default function FinancialReportsPage() {
       </div>
     `;
     openPrintPreview(generateReportHTML('STATEMENT OF CASH FLOWS', periodLabel, content));
-  }, [cashFlow, periodLabel]);
+  }, [cashFlow, periodLabel, isSectionExpanded]);
 
   const exportSocieCSV = useCallback(() => {
     downloadCSV(
-      socie.rows.map((r) => ({
-        description: r.label,
-        shareCapital: r.shareCapital,
-        retainedAndOther: r.retainedAndOther,
-        totalEquity: r.total,
+      socieLines.map((r) => ({
+        description: `${'  '.repeat(r.level)}${r.code ? `${r.code} ` : ''}${r.label}`,
+        shareCapital: r.share ?? '',
+        retainedAndOther: r.retained ?? '',
+        totalEquity: r.total ?? '',
       })),
       'statement_of_changes_in_equity',
       [
@@ -1068,17 +1202,15 @@ export default function FinancialReportsPage() {
         { key: 'totalEquity', label: 'Total equity' },
       ]
     );
-  }, [socie.rows]);
+  }, [socieLines]);
 
   const printSocie = useCallback(() => {
     const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    const body = socie.rows
+    const money = (n: number | null, signed: boolean) => (n == null ? '' : signed ? formatCurrencyWithSign(n) : formatCurrency(n));
+    const body = socieLines
       .map(
-        // Opening and closing balances are both totals (a point-in-time equity figure), not
-        // movement lines — match the on-screen table, which styles both the same way rather
-        // than only the closing row.
         (r) =>
-          `<tr class="${r.key === 'open' || r.key === 'close' ? 'total-row' : ''}"><td>${esc(r.label)}</td><td class="text-right font-mono">${formatCurrency(r.shareCapital)}</td><td class="text-right font-mono">${formatCurrencyWithSign(r.retainedAndOther)}</td><td class="text-right font-mono">${formatCurrencyWithSign(r.total)}</td></tr>`
+          `<tr class="${r.totalRow ? 'total-row' : ''}"><td style="padding-left:${r.level * 16}px">${esc(r.code ? `${r.code} ` : '')}${esc(r.label)}</td><td class="text-right font-mono">${money(r.share, false)}</td><td class="text-right font-mono">${money(r.retained, true)}</td><td class="text-right font-mono">${money(r.total, true)}</td></tr>`
       )
       .join('');
     const content = `
@@ -1090,7 +1222,7 @@ export default function FinancialReportsPage() {
         </table>
       </div>`;
     openPrintPreview(generateReportHTML('STATEMENT OF CHANGES IN EQUITY', periodLabel, content));
-  }, [socie, periodLabel]);
+  }, [socieLines, periodLabel]);
 
   const postYearClose = async () => {
     setCloseMessage(null);
@@ -1908,6 +2040,8 @@ export default function FinancialReportsPage() {
                   </ModalContent>
                 </Modal>
 
+                <ReportOptions />
+
                 <Card className="shadow-none border overflow-hidden">
                   <CardBody className="p-0">
                     <div className="overflow-x-auto">
@@ -1925,22 +2059,30 @@ export default function FinancialReportsPage() {
                         </TableColumn>
                       </TableHeader>
                       <TableBody>
-                        {socie.rows.map((r) => (
-                          <TableRow
-                            key={r.key}
-                            // Opening and closing balances are both totals (a point-in-time
-                            // equity figure), not movement lines — only 'close' got the bold/
-                            // tint treatment before, so 'open' looked identical to the plain
-                            // 'profit'/'other' movement rows between them. Same tonal top-level
-                            // treatment as the account trees elsewhere in this module.
-                            className={r.key === 'open' || r.key === 'close' ? 'bg-slate-100 font-bold text-gray-900' : ''}
-                          >
-                            <TableCell className="text-sm max-w-md">{r.label}</TableCell>
-                            <TableCell className="text-right font-mono text-sm">{formatCurrency(r.shareCapital)}</TableCell>
-                            <TableCell className="text-right font-mono text-sm">{formatCurrencyWithSign(r.retainedAndOther)}</TableCell>
-                            <TableCell className="text-right font-mono text-sm">{formatCurrencyWithSign(r.total)}</TableCell>
-                          </TableRow>
-                        ))}
+                        {socieLines.map((r) => {
+                          const pad = r.level === 0 ? '' : r.level === 1 ? 'pl-6' : 'pl-12';
+                          return (
+                            <TableRow
+                              key={r.key}
+                              className={r.totalRow ? 'bg-slate-100 font-bold text-gray-900' : r.level === 0 ? 'bg-slate-50' : ''}
+                            >
+                              <TableCell className={`text-sm max-w-md ${pad}`}>
+                                <div className="flex items-center gap-2">
+                                  {r.toggleKey ? (
+                                    <SectionToggle open={r.open} onToggle={() => toggleSection(r.toggleKey!)} />
+                                  ) : r.level > 0 ? (
+                                    <span className="w-4" />
+                                  ) : null}
+                                  {r.code ? <span className="font-mono text-xs text-gray-400">{r.code}</span> : null}
+                                  <span>{r.label}</span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-sm">{r.share == null ? '' : formatCurrency(r.share)}</TableCell>
+                              <TableCell className="text-right font-mono text-sm">{r.retained == null ? '' : formatCurrencyWithSign(r.retained)}</TableCell>
+                              <TableCell className="text-right font-mono text-sm">{r.total == null ? '' : formatCurrencyWithSign(r.total)}</TableCell>
+                            </TableRow>
+                          );
+                        })}
                       </TableBody>
                     </Table>
                     </div>
@@ -1972,11 +2114,21 @@ export default function FinancialReportsPage() {
                   </Dropdown>
                 </div>
 
+                <ReportOptions />
+
                 <div className="space-y-4">
+                  {(showZeroBalances || Math.abs(cashFlow.openingCash) >= 0.01 || Math.abs(cashFlow.closingCash) >= 0.01 || Math.abs(cashFlow.netChange) >= 0.01) && (
                   <Card className="shadow-none border overflow-hidden">
                     <CardHeader className="bg-slate-100 py-2 border-b">
-                      <h4 className="font-semibold text-gray-700 text-sm">Cash and cash equivalents</h4>
+                      <div className="flex items-center gap-2 w-full">
+                        <SectionToggle open={isSectionExpanded('cf-cash')} onToggle={() => toggleSection('cf-cash')} />
+                        <h4 className="font-semibold text-gray-700 text-sm flex-1">Cash and cash equivalents</h4>
+                        {!isSectionExpanded('cf-cash') && (
+                          <span className="font-mono text-sm">{formatCurrencyWithSign(cashFlow.netChange)}</span>
+                        )}
+                      </div>
                     </CardHeader>
+                    {isSectionExpanded('cf-cash') && (
                     <CardBody className="text-sm space-y-2">
                       <div className="flex justify-between">
                         <span className="text-gray-600">Opening (start of period)</span>
@@ -1992,23 +2144,32 @@ export default function FinancialReportsPage() {
                         <span className="font-mono">{formatCurrencyWithSign(cashFlow.netChange)}</span>
                       </div>
                     </CardBody>
+                    )}
                   </Card>
+                  )}
                   {([
                     ['operating', 'Operating activities', cashFlow.operating],
                     ['investing', 'Investing activities', cashFlow.investing],
                     ['financing', 'Financing activities', cashFlow.financing],
                   ] as const).map(([activity, title, total]) => {
                     const lines = cashFlow.lines.filter((line) => line.activity === activity);
+                    if (!showZeroBalances && lines.length === 0 && Math.abs(total) < 0.01) return null;
+                    const open = isSectionExpanded(`cf-${activity}`);
                     return (
                       <Card key={activity} className="shadow-none border overflow-hidden">
                         <CardHeader className="bg-slate-100 py-2 border-b">
-                          <h4 className="font-semibold text-gray-700 text-sm">{title}</h4>
+                          <div className="flex items-center gap-2 w-full">
+                            <SectionToggle open={open} onToggle={() => toggleSection(`cf-${activity}`)} />
+                            <h4 className="font-semibold text-gray-700 text-sm flex-1">{title}</h4>
+                            {!open && <span className="font-mono text-sm">{formatCurrencyWithSign(total)}</span>}
+                          </div>
                         </CardHeader>
+                        {open && (
                         <CardBody className="text-sm space-y-1.5">
                           {lines.length === 0 ? (
                             <p className="text-xs text-gray-500">No cash movement in this period.</p>
                           ) : lines.map((line) => (
-                            <div key={`${activity}-${line.accountCode || line.accountName}`} className="flex justify-between gap-3">
+                            <div key={`${activity}-${line.accountCode || line.accountName}`} className="flex justify-between gap-3 pl-6">
                               <span className="text-gray-600">
                                 {line.accountCode ? <span className="font-mono text-xs text-gray-400 mr-2">{line.accountCode}</span> : null}
                                 {line.accountName}
@@ -2022,6 +2183,7 @@ export default function FinancialReportsPage() {
                             <span className="font-mono">{formatCurrencyWithSign(total)}</span>
                           </div>
                         </CardBody>
+                        )}
                       </Card>
                     );
                   })}

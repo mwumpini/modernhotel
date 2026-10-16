@@ -4,7 +4,7 @@ import { prisma } from '@/app/lib/database/client';
  * The single source of truth for what each default role grants — copied
  * verbatim from `defaultRoles` in settings/store.ts (the client-side seed)
  * so the server and the Settings UI never drift apart. Any role a tenant
- * creates/edits beyond these four lives only in the `roles` table from then on.
+ * creates/edits beyond these defaults lives only in the `roles` table from then on.
  */
 export const DEFAULT_ROLES: { code: string; name: string; description: string; permissions: string[] }[] = [
   {
@@ -50,6 +50,25 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
     name: 'Night Manager',
     description: 'Night audit and end-of-day front office operations',
     permissions: ['dashboard.view', 'frontdesk.*', 'housekeeping.view', 'restaurant.*', 'kitchen.*', 'reports.view', 'settings.view'],
+  },
+  {
+    code: 'tester',
+    name: 'Tester',
+    description: 'Every desk. Not an administrator: cannot manage users, roles, or system setup.',
+    permissions: [
+      'dashboard.*',
+      'frontdesk.*',
+      'events-conferences.*',
+      'housekeeping.*',
+      'restaurant.*',
+      'kitchen.*',
+      'inventory.*',
+      'security.*',
+      'hr.*',
+      'accounting.*',
+      'compliance.*',
+      'settings.view',
+    ],
   },
 ];
 

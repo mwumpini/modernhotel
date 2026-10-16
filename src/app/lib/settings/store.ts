@@ -1854,6 +1854,28 @@ const defaultRoles: UserRole[] = [
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
+  {
+    id: 'tester',
+    name: 'Tester',
+    description: 'Every desk. Not an administrator: cannot manage users, roles, or system setup.',
+    permissions: [
+      'dashboard.*',
+      'frontdesk.*',
+      'events-conferences.*',
+      'housekeeping.*',
+      'restaurant.*',
+      'kitchen.*',
+      'inventory.*',
+      'security.*',
+      'hr.*',
+      'accounting.*',
+      'compliance.*',
+      'settings.view',
+    ],
+    isActive: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
 ];
 
 function simpleSeries(prefix: string): NumberingPattern {

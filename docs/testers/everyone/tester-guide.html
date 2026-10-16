@@ -39,15 +39,15 @@ table{width:100%;border-collapse:collapse;font-size:15px}td{border-top:1px solid
 </style></head><body><div class="wrap">
 <header>
   <h1>AGM Sync: test the whole hotel</h1>
-  <p>One of everything, through every desk: a guest, an event, stock, restaurant sales, housekeeping, the books and payroll. Everyone does the same steps with the same amounts, under their own name.</p>
-  <span class="pill">⏱ about 2.5 to 3 hours</span><span class="pill">🏨 every desk, in the order the work happens</span><span class="pill">🧾 31 short tasks</span>
+  <p>One of everything, through every desk: a guest, an event, stock, restaurant sales, housekeeping, payroll, then the books last. Everyone does the same steps with the same amounts, under their own name.</p>
+  <span class="pill">⏱ about 2.5 to 3 hours</span><span class="pill">🏨 every desk, in the order the work happens</span><span class="pill">🧾 32 short tasks</span>
   <div class="me"><label for="tname">Your first name:</label><input id="tname" placeholder="e.g. Gina" autocomplete="given-name"></div>
 </header>
 
 <div class="bar"><span><strong id="done">0</strong> / <strong id="total">0</strong> checked · <strong id="fails">0</strong> problems</span><button type="button" id="copy">Copy my results</button><button type="button" onclick="window.print()">Print</button></div>
 
 <h2>1. Sign in</h2>
-<div class="card"><ol><li>Open <strong>www.agmsync.com</strong> on a laptop (Chrome or Edge).</li><li>Organization ID: <strong>demo</strong></li><li>Email and password: <strong>the ones you were sent</strong>. Do not share them.</li><li>If the page looks old after an update, press <strong>Ctrl + F5</strong>.</li></ol></div>
+<div class="card"><ol><li>Open <strong>www.agmsync.com</strong> on a laptop (Chrome or Edge).</li><li>Organization ID: <strong>demo</strong></li><li>Email and password: <strong>the ones you were sent</strong>. Do not share them.</li><li>If the page looks old after an update, press <strong>Ctrl + F5</strong>.</li><li>Before the tasks: at the <strong>bottom of the left menu</strong>, click <strong>your name</strong>. Under <strong>Theme &amp; Display</strong>, leave <strong>Theme</strong> selected and choose <strong>Light</strong> or <strong>Dark</strong>. The whole hotel should switch. Leave Background and Font as they are.</li></ol></div>
 
 <h2>2. A few rules</h2>
 <div class="card"><ul>
@@ -56,7 +56,7 @@ table{width:100%;border-collapse:collapse;font-size:15px}td{border-top:1px solid
 <li>Use <strong>the same amounts</strong> as this guide. Everyone should then see the same results; a different result is a problem worth reporting.</li>
 <li><strong>Everything is already set up</strong>: taxes, rooms, rates, departments. You only do the day-to-day work.</li>
 <li>Use <strong>any room that shows available</strong>. If another tester takes it first, pick another.</li>
-<li>Do <strong>not</strong> run <strong>Night Audit</strong>, close a period or year, approve a payroll month, or change <strong>System Settings</strong>. They affect everyone. Task A7 is the one exception: switch dollars on, take your receipt, then switch back to cedis before you leave.</li>
+<li>Do <strong>not</strong> run <strong>Night Audit</strong>, close a period or year, approve a payroll month, or change <strong>System Settings</strong>. They affect everyone. Task A6 is the one exception: switch dollars on, take your receipt, then switch back to cedis before you leave.</li>
 <li>If something waits for approval, note it and carry on.</li>
 <li>Press ✅ or ❌ under each task. For ❌, write what happened. This browser remembers your ticks.</li>
 <li>At the end, press <strong>Copy my results</strong> and paste them into WhatsApp.</li>
@@ -103,23 +103,23 @@ table{width:100%;border-collapse:collapse;font-size:15px}td{border-top:1px solid
 </section>
 
 <h2>📦 Inventory & Stores</h2>
-<p class="intro">Buy stock, receive it and send it to the kitchen and the bar.</p>
+<p class="intro">Buy stock, receive it, and send it to the kitchen, the bar, and housekeeping.</p>
 <section class="task" data-step="S1">
   <div class="task-head"><span class="num">S1</span><h3>Supplier and items</h3></div>
-  <ol><li><strong>Inventory &amp; Stores → Stock → 🏢 Suppliers</strong>: add <strong><span class="nm">[your name]</span> Supplies Ltd</strong>.</li><li><strong>📦 Items</strong>: add <strong><span class="nm">[your name]</span> Rice</strong> (kg, cost ₵20, food) and <strong><span class="nm">[your name]</span> Soda</strong> (bottle, cost ₵5, drink).</li></ol>
-  <div class="check"><strong>Check:</strong> Both items show with 0 in stock.</div>
+  <ol><li><strong>Inventory &amp; Stores → Stock → 🏢 Suppliers</strong>: add <strong><span class="nm">[your name]</span> Supplies Ltd</strong>.</li><li><strong>📦 Items</strong>: add <strong><span class="nm">[your name]</span> Rice</strong> (kg, cost ₵20, food), <strong><span class="nm">[your name]</span> Soda</strong> (bottle, cost ₵5, drink), and <strong><span class="nm">[your name]</span> Soap</strong> (bar, cost ₵2, cleaning).</li></ol>
+  <div class="check"><strong>Check:</strong> All three items show with 0 in stock.</div>
   <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
 </section>
 <section class="task" data-step="S2">
   <div class="task-head"><span class="num">S2</span><h3>Order</h3></div>
-  <ol><li><strong>📋 Purchase Orders → Create PO</strong>: <span class="nm">[your name]</span> Supplies Ltd, <strong>10 kg</strong> <span class="nm">[your name]</span> Rice at ₵20 and <strong>24</strong> <span class="nm">[your name]</span> Soda at ₵5. Write down the <strong>PO number</strong>.</li></ol>
-  <div class="check"><strong>Check:</strong> The PO totals <strong>₵320.00</strong> before tax.</div>
+  <ol><li><strong>📋 Purchase Orders → Create PO</strong>: <span class="nm">[your name]</span> Supplies Ltd, <strong>10 kg</strong> <span class="nm">[your name]</span> Rice at ₵20, <strong>24</strong> <span class="nm">[your name]</span> Soda at ₵5, and <strong>10</strong> <span class="nm">[your name]</span> Soap at ₵2. Write down the <strong>PO number</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> The PO totals <strong>₵340.00</strong> before tax.</div>
   <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
 </section>
 <section class="task" data-step="S3">
   <div class="task-head"><span class="num">S3</span><h3>Receive</h3></div>
   <ol><li><strong>Purchase Orders → 📥 Goods Receipt</strong>: receive everything into the <strong>main store</strong>. Write down the <strong>GRN number</strong>.</li></ol>
-  <div class="check"><strong>Check:</strong> Main store: Rice <strong>10</strong>, Soda <strong>24</strong>.</div>
+  <div class="check"><strong>Check:</strong> Main store: Rice <strong>10</strong>, Soda <strong>24</strong>, Soap <strong>10</strong>.</div>
   <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
 </section>
 <section class="task" data-step="S4">
@@ -132,6 +132,12 @@ table{width:100%;border-collapse:collapse;font-size:15px}td{border-top:1px solid
   <div class="task-head"><span class="num">S5</span><h3>Rice to the kitchen</h3></div>
   <ol><li><strong>Kitchen → Supplies</strong>: request <strong>5 kg</strong> <span class="nm">[your name]</span> Rice.</li><li><strong>Inventory &amp; Stores → Stock → 📝 Requisitions</strong>: approve it, then issue it on <strong>📤 Issues</strong>.</li></ol>
   <div class="check"><strong>Check:</strong> Main store Rice <strong>5</strong>, Kitchen Rice <strong>5</strong>.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="S6">
+  <div class="task-head"><span class="num">S6</span><h3>Soap to housekeeping</h3></div>
+  <ol><li><strong>🔄 Transfers</strong>: move <strong>2</strong> <span class="nm">[your name]</span> Soap from the main store to <strong>Housekeeping</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> Main store Soap <strong>8</strong>, Housekeeping Soap <strong>2</strong>.</div>
   <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
 </section>
 
@@ -189,66 +195,19 @@ table{width:100%;border-collapse:collapse;font-size:15px}td{border-top:1px solid
   <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
 </section>
 <section class="task" data-step="F6">
-  <div class="task-head"><span class="num">F6</span><h3>Clean the room</h3></div>
-  <ol><li><strong>Housekeeping &amp; Maintenance → Floor</strong>: mark your room cleaned and inspected.</li></ol>
-  <div class="check"><strong>Check:</strong> The room shows vacant and clean again.</div>
+  <div class="task-head"><span class="num">F6</span><h3>Clean the room, and the soap comes off stock</h3></div>
+  <ol>
+    <li><strong>Housekeeping &amp; Maintenance → Floor</strong>: find your room. Write down the room type shown next to the number.</li>
+    <li><strong>Supplies → 🧴 Room kits</strong>. Choose that room type. Under <strong>Turnover</strong> (after a guest checks out), press <strong>Add item</strong>, pick <span class="nm">[your name]</span> Soap, quantity <strong>1</strong>. Leave any lines already there. <strong>Save kits</strong>.</li>
+    <li>Back on <strong>Floor</strong>, on your room press <strong>Done</strong>. It should say <span class="nm">[your name]</span> Soap × 1 will come off stock. Press <strong>Finish</strong>, then <strong>Inspect</strong>.</li>
+  </ol>
+  <div class="check"><strong>Check:</strong> The screen says Kits saved. After Finish, the room is clean, then inspected. Housekeeping Soap is <strong>1</strong> (it was 2). Main store Soap stays <strong>8</strong>. The kit is shared for that room type: do not remove other people's lines. If Finish also takes their soap, write that down.</div>
   <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
 </section>
 <section class="task" data-step="X1">
   <div class="task-head"><span class="num">X1</span><h3>A visitor</h3></div>
   <ol><li><strong>Security Operations → Visitors</strong>: log in <strong><span class="nm">[your name]</span> Visitor</strong> (delivery), then log them out.</li></ol>
   <div class="check"><strong>Check:</strong> The visit shows a time in and a time out.</div>
-  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
-</section>
-
-<h2>🧾 Accounting & Finance</h2>
-<p class="intro">Everything you did above should now be in the books.</p>
-<section class="task" data-step="A1">
-  <div class="task-head"><span class="num">A1</span><h3>The delivery is in the books</h3></div>
-  <ol><li><strong>Accounting &amp; Finance → Books → Journal</strong>: find the entry for your GRN number.</li></ol>
-  <div class="check"><strong>Check:</strong> Stock up <strong>₵320</strong>; <strong>Goods Received, Not Invoiced ₵320</strong>. The supplier is not owed yet.</div>
-  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
-</section>
-<section class="task" data-step="A2">
-  <div class="task-head"><span class="num">A2</span><h3>The supplier's bill</h3></div>
-  <ol><li><strong>Payable → New bill</strong>: <span class="nm">[your name]</span> Supplies Ltd, ₵320 + tax as the form offers. Fill <strong>Delivery / GRN #</strong> with your GRN number. <strong>Approve &amp; Post</strong>.</li></ol>
-  <div class="check"><strong>Check:</strong> <strong>Who we owe</strong>: <span class="nm">[your name]</span> Supplies Ltd is owed the bill total <strong>once</strong> (not twice).</div>
-  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
-</section>
-<section class="task" data-step="A3">
-  <div class="task-head"><span class="num">A3</span><h3>Pay the supplier</h3></div>
-  <ol><li>Open your bill → <strong>Record payment</strong>, full amount, bank transfer.</li></ol>
-  <div class="check"><strong>Check:</strong> The bill shows Paid; nothing owed to your supplier.</div>
-  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
-</section>
-<section class="task" data-step="A4">
-  <div class="task-head"><span class="num">A4</span><h3>The event balance</h3></div>
-  <ol><li><strong>Receivable</strong>: find <span class="nm">[your name]</span> Workshop. Record the balance <strong>₵2,630</strong> by bank transfer.</li></ol>
-  <div class="check"><strong>Check:</strong> The event shows fully paid: ₵3,630.00.</div>
-  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
-</section>
-<section class="task" data-step="A5">
-  <div class="task-head"><span class="num">A5</span><h3>Your money arrived</h3></div>
-  <ol><li><strong>Receivable → Receipts</strong>, or the Journal.</li></ol>
-  <div class="check"><strong>Check:</strong> You can find: the room cash (F2), event deposit ₵1,000, restaurant cash ₵133.10, meal ₵121 (mobile money) and event balance ₵2,630.</div>
-  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
-</section>
-<section class="task" data-step="A6">
-  <div class="task-head"><span class="num">A6</span><h3>The statements (look only)</h3></div>
-  <ol><li><strong>Accounting &amp; Finance → Statements</strong>: open <strong>Trial Balance</strong> and <strong>Balance Sheet</strong>. Do not close anything.</li></ol>
-  <div class="check"><strong>Check:</strong> Debits = credits. Assets = equity + liabilities.</div>
-  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
-</section>
-<section class="task" data-step="A7">
-  <div class="task-head"><span class="num">A7</span><h3>A payment in US dollars</h3></div>
-  <ol>
-    <li><strong>System Settings → Operational Policies → Currencies</strong>. Read the first line. If it is already taking a currency other than cedis, <strong>stop</strong>. Write that down and go on to HR. Do not press <strong>Use this</strong>.</li>
-    <li>If <strong>USD</strong> is not in the list: <strong>Add a currency</strong>. Code <strong>USD</strong>, main unit <strong>US dollar</strong>, small unit <strong>cents</strong>, Cedis per 1 <strong>15.50</strong>. If USD is already there, leave the rate as it is and write it down.</li>
-    <li>On the USD row, press <strong>Use this</strong>.</li>
-    <li><strong>Accounting &amp; Finance → Receivable → Receipts → Record receipt</strong>. Customer: <span class="nm">[your name]</span> Guest. Cash received: <strong>100</strong> (the box shows USD). Method: <strong>Bank transfer</strong>. Account: <strong>USD bank</strong>. Reference: <span class="nm">[your name]</span> dollars. Save.</li>
-    <li>Go straight back to <strong>Currencies</strong> and press <strong>Back to cedis</strong>. The first line must say cedis again before you do anything else.</li>
-  </ol>
-  <div class="check"><strong>Check:</strong> Under the amount it says <strong>Books ₵1,550.00</strong> when the rate is 15.50 (otherwise 100 × the rate you wrote down). The receipt list shows that cedi amount, and the note says <strong>Received USD 100.00</strong>. <strong>Accounting &amp; Finance → Cash</strong>: USD bank is up by <strong>100</strong>, not by 1,550. After <strong>Back to cedis</strong>, the first line says it is taking cedis.</div>
   <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
 </section>
 
@@ -272,13 +231,65 @@ table{width:100%;border-collapse:collapse;font-size:15px}td{border-top:1px solid
 <section class="task" data-step="C1">
   <div class="task-head"><span class="num">C1</span><h3>Taxes</h3></div>
   <ol><li><strong>Compliance &amp; Reports → Tax</strong>: look at <strong>From sales</strong>, <strong>On purchases</strong> and <strong>From payroll</strong>.</li></ol>
-  <div class="check"><strong>Check:</strong> Sales tax from your sales and input VAT from your supplier bill are included.</div>
+  <div class="check"><strong>Check:</strong> Sales tax from your room, meal and event is included. Payroll tax shows for a month that has been posted. The supplier bill's tax is checked in Accounting, after you post the bill.</div>
   <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
 </section>
 <section class="task" data-step="C2">
   <div class="task-head"><span class="num">C2</span><h3>The owner's dashboard</h3></div>
   <ol><li><strong>Executive Management → Main Dashboard</strong>, then <strong>Approvals</strong>.</li></ol>
   <div class="check"><strong>Check:</strong> Today's figures include your work. Note anything waiting for approval with your name.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+
+
+<h2>🧾 Accounting & Finance</h2>
+<p class="intro">Last. Everything you did, including payroll, should now be in the books. Post the bills and the money, then read the statements.</p>
+<section class="task" data-step="A1">
+  <div class="task-head"><span class="num">A1</span><h3>The delivery is in the books</h3></div>
+  <ol><li><strong>Accounting &amp; Finance → Books → Journal</strong>: find the entry for your GRN number.</li></ol>
+  <div class="check"><strong>Check:</strong> Stock up <strong>₵340</strong>; <strong>Goods Received, Not Invoiced ₵340</strong>. The supplier is not owed yet.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="A2">
+  <div class="task-head"><span class="num">A2</span><h3>The supplier's bill</h3></div>
+  <ol><li><strong>Payable → New bill</strong>: <span class="nm">[your name]</span> Supplies Ltd, ₵340 + tax as the form offers. Fill <strong>Delivery / GRN #</strong> with your GRN number. <strong>Approve &amp; Post</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> <strong>Who we owe</strong>: <span class="nm">[your name]</span> Supplies Ltd is owed the bill total <strong>once</strong> (not twice).</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="A3">
+  <div class="task-head"><span class="num">A3</span><h3>Pay the supplier</h3></div>
+  <ol><li>Open your bill → <strong>Record payment</strong>, full amount, bank transfer.</li></ol>
+  <div class="check"><strong>Check:</strong> The bill shows Paid; nothing owed to your supplier.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="A4">
+  <div class="task-head"><span class="num">A4</span><h3>The event balance</h3></div>
+  <ol><li><strong>Receivable</strong>: find <span class="nm">[your name]</span> Workshop. Record the balance <strong>₵2,630</strong> by bank transfer.</li></ol>
+  <div class="check"><strong>Check:</strong> The event shows fully paid: ₵3,630.00.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="A5">
+  <div class="task-head"><span class="num">A5</span><h3>Your money arrived</h3></div>
+  <ol><li><strong>Receivable → Receipts</strong>, or the Journal.</li></ol>
+  <div class="check"><strong>Check:</strong> You can find: the room cash (F2), event deposit ₵1,000, restaurant cash ₵133.10, meal ₵121 (mobile money) and event balance ₵2,630.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="A6">
+  <div class="task-head"><span class="num">A6</span><h3>A payment in US dollars</h3></div>
+  <ol>
+    <li><strong>System Settings → Operational Policies → Currencies</strong>. Read the first line. If it is already taking a currency other than cedis, <strong>stop</strong>. Write that down and go on to the statements. Do not press <strong>Use this</strong>.</li>
+    <li>If <strong>USD</strong> is not in the list: <strong>Add a currency</strong>. Code <strong>USD</strong>, main unit <strong>US dollar</strong>, small unit <strong>cents</strong>, Cedis per 1 <strong>15.50</strong>. If USD is already there, leave the rate as it is and write it down.</li>
+    <li>On the USD row, press <strong>Use this</strong>.</li>
+    <li><strong>Accounting &amp; Finance → Receivable → Receipts → Record receipt</strong>. Customer: <span class="nm">[your name]</span> Guest. Cash received: <strong>100</strong> (the box shows USD). Method: <strong>Bank transfer</strong>. Account: <strong>USD bank</strong>. Reference: <span class="nm">[your name]</span> dollars. Save.</li>
+    <li>Go straight back to <strong>Currencies</strong> and press <strong>Back to cedis</strong>. The first line must say cedis again before you do anything else.</li>
+  </ol>
+  <div class="check"><strong>Check:</strong> Under the amount it says <strong>Books ₵1,550.00</strong> when the rate is 15.50 (otherwise 100 × the rate you wrote down). The receipt list shows that cedi amount, and the note says <strong>Received USD 100.00</strong>. <strong>Accounting &amp; Finance → Cash</strong>: USD bank is up by <strong>100</strong>, not by 1,550. After <strong>Back to cedis</strong>, the first line says it is taking cedis.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="A7">
+  <div class="task-head"><span class="num">A7</span><h3>The statements (look only)</h3></div>
+  <ol><li><strong>Accounting &amp; Finance → Statements</strong>: open <strong>Trial Balance</strong>, <strong>Income Statement</strong> and <strong>Balance Sheet</strong>. Do not close anything.</li></ol>
+  <div class="check"><strong>Check:</strong> Debits = credits. Assets = equity + liabilities. The income statement shows your room, meal and event, and the tax on them. The dollar receipt is in the books as cedis. Salaries (gross pay) and PAYE show for a payroll month that has been posted. Your own cook is not in the books until that month is approved, which you do not do — if you cannot see your cook, write that down.</div>
   <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
 </section>
 
@@ -295,6 +306,7 @@ table{width:100%;border-collapse:collapse;font-size:15px}td{border-top:1px solid
 <tr><td>Till</td><td>One cashier's cash drawer for a shift. It must be open before taking cash.</td></tr>
 <tr><td>KOT</td><td>Kitchen order ticket, sent when an order is sent to the kitchen.</td></tr>
 <tr><td>Recipe</td><td>What one dish uses from stock. Selling the dish takes those amounts off stock.</td></tr>
+<tr><td>Room kit</td><td>The supplies a clean always uses, set per room type. A checkout takes the turnover kit off Housekeeping stock. The attendant does not type those quantities.</td></tr>
 <tr><td>PO / GRN</td><td>Purchase order (what we ask for) / goods received note (what arrived).</td></tr>
 <tr><td>Requisition / Issue</td><td>A department asking the store for stock / the store giving it.</td></tr>
 <tr><td>Goods Received, Not Invoiced</td><td>Stock that has arrived but whose bill is not entered yet. The bill with the GRN number clears it.</td></tr>
