@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AGM Sync tester guide</title>
+<style>
+:root{--ink:#1c1917;--muted:#57534e;--line:#e7e5e4;--teal:#0b5f64;--gold:#e9a23b;--bg:#fafaf9;--card:#fff;--ok:#15803d;--okbg:rgba(21,128,61,.08);--bad:#b91c1c;--badbg:rgba(185,28,28,.08)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--ink:#f5f5f4;--muted:#a8a29e;--line:#3f3a36;--bg:#1c1917;--card:#262220;--ok:#4ade80;--bad:#f87171}}
+:root[data-theme="dark"]{--ink:#f5f5f4;--muted:#a8a29e;--line:#3f3a36;--bg:#1c1917;--card:#262220;--ok:#4ade80;--bad:#f87171}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Segoe UI",system-ui,Arial,sans-serif}
+.wrap{max-width:820px;margin:0 auto;padding:20px 16px 60px}
+header{background:linear-gradient(120deg,var(--teal),#147a7f 60%,var(--gold));color:#fff;border-radius:16px;padding:22px 22px 18px}
+header h1{margin:0 0 4px;font-size:26px}header p{margin:4px 0;opacity:.95}
+.pill{display:inline-block;background:rgba(255,255,255,.18);border-radius:999px;padding:3px 10px;margin:6px 6px 0 0;font-size:13px}
+.me{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.me input{font:inherit;padding:7px 10px;border-radius:10px;border:0;min-width:200px;flex:1;max-width:320px}
+.bar{position:sticky;top:0;z-index:2;background:var(--bg);padding:10px 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;border-bottom:1px solid var(--line)}
+.bar span{color:var(--muted);font-size:14px;flex:1;min-width:160px}
+.bar button,.mark button{font:inherit;font-size:14px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:6px 12px;cursor:pointer}
+h2{font-size:20px;margin:30px 0 4px;color:var(--teal)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) h2{color:#5fc3c7}}
+.intro{margin:0 0 6px;color:var(--muted)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 18px}
+ul,ol{margin:6px 0;padding-left:22px}li{margin:4px 0}
+.task{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin:12px 0;break-inside:avoid}
+.task[data-result="pass"]{border-color:var(--ok)}.task[data-result="fail"]{border-color:var(--bad)}
+.task-head{display:flex;align-items:center;gap:10px}.task-head h3{margin:0;font-size:17px}
+.num{flex:none;background:var(--teal);color:#fff;border-radius:8px;padding:2px 8px;font-weight:700;font-size:14px}
+.check{margin-top:8px;padding:8px 10px;border-radius:10px;background:var(--okbg)}
+.mark{margin-top:8px;display:flex;flex-wrap:wrap;gap:8px}
+.mark button[aria-pressed="true"].pass{background:var(--okbg);border-color:var(--ok)}
+.mark button[aria-pressed="true"].fail{background:var(--badbg);border-color:var(--bad)}
+.mark textarea{flex-basis:100%;font:inherit;font-size:14px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);resize:vertical}
+.nm{font-weight:700}
+table{width:100%;border-collapse:collapse;font-size:15px}td{border-top:1px solid var(--line);padding:6px 4px;vertical-align:top}td:first-child{font-weight:600;width:34%}
+.pay{margin:8px 0;font-size:14px}.pay th{text-align:left;padding:4px;border-bottom:1px solid var(--line);font-weight:600}.pay td,.pay td:first-child{width:auto;padding:4px}
+@media (max-width:600px){.pay{display:block;overflow-x:auto}}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:10px;opacity:0;transition:opacity .2s;pointer-events:none}.toast.show{opacity:1}
+.foot{margin-top:30px;color:var(--muted);font-size:13px;text-align:center}
+@media print{body{background:#fff;color:#000}header{color:#000;background:none;border:1px solid #ccc}.pill{background:#eee}.bar,.mark button{display:none}.mark textarea{border:none;border-bottom:1px dashed #999;border-radius:0}}
+</style></head><body><div class="wrap">
+<header>
+  <h1>AGM Sync: test the whole hotel</h1>
+  <p>One of everything, through every desk: a guest, an event, stock, restaurant sales, housekeeping, the books and payroll. Everyone does the same steps with the same amounts, under their own name.</p>
+  <span class="pill">⏱ about 2.5 to 3 hours</span><span class="pill">🏨 every desk, in the order the work happens</span><span class="pill">🧾 30 short tasks</span>
+  <div class="me"><label for="tname">Your first name:</label><input id="tname" placeholder="e.g. Gina" autocomplete="given-name"></div>
+</header>
+
+<div class="bar"><span><strong id="done">0</strong> / <strong id="total">0</strong> checked · <strong id="fails">0</strong> problems</span><button type="button" id="copy">Copy my results</button><button type="button" onclick="window.print()">Print</button></div>
+
+<h2>1. Sign in</h2>
+<div class="card"><ol><li>Open <strong>www.agmsync.com</strong> on a laptop (Chrome or Edge).</li><li>Organization ID: <strong>demo</strong></li><li>Email and password: <strong>the ones you were sent</strong>. Do not share them.</li><li>If the page looks old after an update, press <strong>Ctrl + F5</strong>.</li></ol></div>
+
+<h2>2. A few rules</h2>
+<div class="card"><ul>
+<li>Type your first name at the top. The guide then shows your names, for example <strong><span class="nm">[your name]</span> Guest</strong>. Use <strong>exactly those names</strong>, so everyone's entries can be found and compared.</li>
+<li><strong>One of each</strong>: one guest, one event, one supplier, one employee. Do not make extra.</li>
+<li>Use <strong>the same amounts</strong> as this guide. Everyone should then see the same results; a different result is a problem worth reporting.</li>
+<li><strong>Everything is already set up</strong>: taxes, rooms, rates, departments. You only do the day-to-day work.</li>
+<li>Use <strong>any room that shows available</strong>. If another tester takes it first, pick another.</li>
+<li>Do <strong>not</strong> run <strong>Night Audit</strong>, close a period or year, approve a payroll month, or change <strong>System Settings</strong>. They affect everyone.</li>
+<li>If something waits for approval, note it and carry on.</li>
+<li>Press ✅ or ❌ under each task. For ❌, write what happened. This browser remembers your ticks.</li>
+<li>At the end, press <strong>Copy my results</strong> and paste them into WhatsApp.</li>
+</ul>
+<p>Taxes: rooms and events have <strong>21% added on top</strong> (VAT 15%, NHIL 2.5%, GETFund 2.5%, Tourism Levy 1%): ₵100 becomes ₵121. Your menu prices <strong>include</strong> the tax: ₵121 on the menu is ₵100 + ₵21 tax.</p></div>
+
+<h2>3. Your tasks</h2>
+<p class="intro">Do them in order: later tasks use what you made earlier. Getting lost is useful feedback too, so note it.</p>
+
+<h2>🛎️ Front Office</h2>
+<p class="intro">A guest arrives, stays, and later leaves (you check them out in F5).</p>
+<section class="task" data-step="F1">
+  <div class="task-head"><span class="num">F1</span><h3>Your guest</h3></div>
+  <ol><li><strong>Front Office Operations → Clients → New Client</strong>: <strong><span class="nm">[your name]</span> Guest</strong>, a person, with any phone number.</li></ol>
+  <div class="check"><strong>Check:</strong> <span class="nm">[your name]</span> Guest is in the client list.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="F2">
+  <div class="task-head"><span class="num">F2</span><h3>Walk-in for one night</h3></div>
+  <ol><li><strong>Front Office Operations → Desk → Walk-in</strong>: guest <span class="nm">[your name]</span> Guest, <strong>any room that shows available</strong>, leaving tomorrow.</li><li>Write down the <strong>room number</strong> and the <strong>nightly rate</strong>.</li><li>Take <strong>cash</strong> for the room (rate + 21% tax), then <strong>Check in</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> The folio shows one night: rate + 21% tax (₵200 becomes ₵242). Paid = the same amount. Outstanding ₵0.00. The room shows occupied.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="F3">
+  <div class="task-head"><span class="num">F3</span><h3>A booking that is cancelled</h3></div>
+  <ol><li><strong>Desk → Reservations → New Reservation</strong>: <span class="nm">[your name]</span> Guest, any available room, arriving in 7 days, one night. No payment.</li><li>Open it and <strong>cancel</strong> it (reason: guest called to cancel).</li></ol>
+  <div class="check"><strong>Check:</strong> It shows cancelled. Any fee shown follows the hotel's cancellation policy (write down what it said).</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+
+<h2>🎤 Events & Conferences</h2>
+<p class="intro">A small paid event.</p>
+<section class="task" data-step="E1">
+  <div class="task-head"><span class="num">E1</span><h3>Book an event with a deposit</h3></div>
+  <ol><li><strong>Events &amp; Conferences → Events</strong>: create <strong><span class="nm">[your name]</span> Workshop</strong>, client <span class="nm">[your name]</span> Guest, any free venue, a date next week, <strong>20 guests</strong> at <strong>₵150 per head</strong>.</li><li>Take a deposit of <strong>₵1,000</strong> by mobile money.</li></ol>
+  <div class="check"><strong>Check:</strong> Total <strong>₵3,630.00</strong> (₵3,000 + 21% tax). Paid ₵1,000. Balance <strong>₵2,630.00</strong>.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="E2">
+  <div class="task-head"><span class="num">E2</span><h3>The event shows everywhere</h3></div>
+  <ol><li>Switch the Events view to <strong>Calendar</strong>, then <strong>Gantt</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> Your workshop is on the right day and on its venue.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+
+<h2>📦 Inventory & Stores</h2>
+<p class="intro">Buy stock, receive it and send it to the kitchen and the bar.</p>
+<section class="task" data-step="S1">
+  <div class="task-head"><span class="num">S1</span><h3>Supplier and items</h3></div>
+  <ol><li><strong>Inventory &amp; Stores → Stock → 🏢 Suppliers</strong>: add <strong><span class="nm">[your name]</span> Supplies Ltd</strong>.</li><li><strong>📦 Items</strong>: add <strong><span class="nm">[your name]</span> Rice</strong> (kg, cost ₵20, food) and <strong><span class="nm">[your name]</span> Soda</strong> (bottle, cost ₵5, drink).</li></ol>
+  <div class="check"><strong>Check:</strong> Both items show with 0 in stock.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="S2">
+  <div class="task-head"><span class="num">S2</span><h3>Order</h3></div>
+  <ol><li><strong>📋 Purchase Orders → Create PO</strong>: <span class="nm">[your name]</span> Supplies Ltd, <strong>10 kg</strong> <span class="nm">[your name]</span> Rice at ₵20 and <strong>24</strong> <span class="nm">[your name]</span> Soda at ₵5. Write down the <strong>PO number</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> The PO totals <strong>₵320.00</strong> before tax.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="S3">
+  <div class="task-head"><span class="num">S3</span><h3>Receive</h3></div>
+  <ol><li><strong>Purchase Orders → 📥 Goods Receipt</strong>: receive everything into the <strong>main store</strong>. Write down the <strong>GRN number</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> Main store: Rice <strong>10</strong>, Soda <strong>24</strong>.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="S4">
+  <div class="task-head"><span class="num">S4</span><h3>Soda to the bar</h3></div>
+  <ol><li><strong>🔄 Transfers</strong>: move <strong>12</strong> <span class="nm">[your name]</span> Soda from the main store to <strong>Restaurant &amp; Bar</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> Main store 12, Restaurant &amp; Bar 12.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="S5">
+  <div class="task-head"><span class="num">S5</span><h3>Rice to the kitchen</h3></div>
+  <ol><li><strong>Kitchen → Supplies</strong>: request <strong>5 kg</strong> <span class="nm">[your name]</span> Rice.</li><li><strong>Inventory &amp; Stores → Stock → 📝 Requisitions</strong>: approve it, then issue it on <strong>📤 Issues</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> Main store Rice <strong>5</strong>, Kitchen Rice <strong>5</strong>.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+
+<h2>🍽️ Restaurant, Bar & Kitchen</h2>
+<p class="intro">Sell, cook, take payment, and watch the stock go down.</p>
+<section class="task" data-step="R1">
+  <div class="task-head"><span class="num">R1</span><h3>Menu and recipe</h3></div>
+  <ol><li><strong>Restaurant &amp; Bar → Menu</strong>: add <strong><span class="nm">[your name]</span> Jollof</strong> at <strong>₵121</strong> and <strong><span class="nm">[your name]</span> Soda</strong> at <strong>₵12.10</strong>, Tax: <strong>included</strong>. Link <span class="nm">[your name]</span> Soda to the stock item <span class="nm">[your name]</span> Soda.</li><li><strong>Kitchen → Recipes</strong>: recipe for <span class="nm">[your name]</span> Jollof using <strong>0.5 kg</strong> <span class="nm">[your name]</span> Rice.</li></ol>
+  <div class="check"><strong>Check:</strong> Both dishes are on the menu. The recipe cost is <strong>₵10</strong>.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="R2">
+  <div class="task-head"><span class="num">R2</span><h3>Open your till</h3></div>
+  <ol><li><strong>Restaurant &amp; Bar → Cash → Open till</strong>, float <strong>₵200</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> The till is open with ₵200.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="R3">
+  <div class="task-head"><span class="num">R3</span><h3>A cash sale</h3></div>
+  <ol><li><strong>POS Terminal</strong>: dine-in, 1 <span class="nm">[your name]</span> Jollof + 1 <span class="nm">[your name]</span> Soda → <strong>Send to kitchen</strong>.</li><li><strong>Kitchen → Kitchen Display</strong>: move the ticket to ready, then served.</li><li>Back on POS: pay <strong>cash</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> Bill <strong>₵133.10</strong> (₵110 + ₵23.10 tax inside). The receipt has an RCT number. The ticket showed on the kitchen display.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="R4">
+  <div class="task-head"><span class="num">R4</span><h3>Charge a meal to your room</h3></div>
+  <ol><li>POS: <strong>In-house</strong>, your room from F2, 1 <span class="nm">[your name]</span> Jollof → <strong>Bill to Room</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> <span class="nm">[your name]</span> Guest's folio shows <strong>₵121.00</strong> for the meal. It is not in your till.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="R5">
+  <div class="task-head"><span class="num">R5</span><h3>Stock went down</h3></div>
+  <ol><li><strong>Inventory &amp; Stores → Stock → Items</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> Kitchen Rice <strong>4</strong> (two Jollof × 0.5 kg). Restaurant &amp; Bar Soda <strong>11</strong>.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="R6">
+  <div class="task-head"><span class="num">R6</span><h3>Close your till</h3></div>
+  <ol><li><strong>Restaurant &amp; Bar → Cash</strong>: close the till and count the cash.</li></ol>
+  <div class="check"><strong>Check:</strong> Expected cash <strong>₵333.10</strong> (₵200 + ₵133.10). The room charge is not in it.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+
+<h2>🛏️ Housekeeping, Security & checkout</h2>
+<p class="intro">The guest leaves and the room is made ready again.</p>
+<section class="task" data-step="F4">
+  <div class="task-head"><span class="num">F4</span><h3>A housekeeping job</h3></div>
+  <ol><li><strong>Housekeeping &amp; Maintenance → Work</strong>: log "Air conditioner noisy" for your room, then mark it done.</li></ol>
+  <div class="check"><strong>Check:</strong> The job shows done, with your name.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="F5">
+  <div class="task-head"><span class="num">F5</span><h3>Check out</h3></div>
+  <ol><li><strong>Front Office Operations → Desk</strong>: open <span class="nm">[your name]</span> Guest. Take <strong>₵121</strong> by mobile money for the meal, then <strong>Check out</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> Outstanding ₵0.00 before checkout. The room turns <strong>dirty</strong>.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="F6">
+  <div class="task-head"><span class="num">F6</span><h3>Clean the room</h3></div>
+  <ol><li><strong>Housekeeping &amp; Maintenance → Floor</strong>: mark your room cleaned and inspected.</li></ol>
+  <div class="check"><strong>Check:</strong> The room shows vacant and clean again.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="X1">
+  <div class="task-head"><span class="num">X1</span><h3>A visitor</h3></div>
+  <ol><li><strong>Security Operations → Visitors</strong>: log in <strong><span class="nm">[your name]</span> Visitor</strong> (delivery), then log them out.</li></ol>
+  <div class="check"><strong>Check:</strong> The visit shows a time in and a time out.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+
+<h2>🧾 Accounting & Finance</h2>
+<p class="intro">Everything you did above should now be in the books.</p>
+<section class="task" data-step="A1">
+  <div class="task-head"><span class="num">A1</span><h3>The delivery is in the books</h3></div>
+  <ol><li><strong>Accounting &amp; Finance → Books → Journal</strong>: find the entry for your GRN number.</li></ol>
+  <div class="check"><strong>Check:</strong> Stock up <strong>₵320</strong>; <strong>Goods Received, Not Invoiced ₵320</strong>. The supplier is not owed yet.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="A2">
+  <div class="task-head"><span class="num">A2</span><h3>The supplier's bill</h3></div>
+  <ol><li><strong>Payable → New bill</strong>: <span class="nm">[your name]</span> Supplies Ltd, ₵320 + tax as the form offers. Fill <strong>Delivery / GRN #</strong> with your GRN number. <strong>Approve &amp; Post</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> <strong>Who we owe</strong>: <span class="nm">[your name]</span> Supplies Ltd is owed the bill total <strong>once</strong> (not twice).</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="A3">
+  <div class="task-head"><span class="num">A3</span><h3>Pay the supplier</h3></div>
+  <ol><li>Open your bill → <strong>Record payment</strong>, full amount, bank transfer.</li></ol>
+  <div class="check"><strong>Check:</strong> The bill shows Paid; nothing owed to your supplier.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="A4">
+  <div class="task-head"><span class="num">A4</span><h3>The event balance</h3></div>
+  <ol><li><strong>Receivable</strong>: find <span class="nm">[your name]</span> Workshop. Record the balance <strong>₵2,630</strong> by bank transfer.</li></ol>
+  <div class="check"><strong>Check:</strong> The event shows fully paid: ₵3,630.00.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="A5">
+  <div class="task-head"><span class="num">A5</span><h3>Your money arrived</h3></div>
+  <ol><li><strong>Receivable → Receipts</strong>, or the Journal.</li></ol>
+  <div class="check"><strong>Check:</strong> You can find: the room cash (F2), event deposit ₵1,000, restaurant cash ₵133.10, meal ₵121 (mobile money) and event balance ₵2,630.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="A6">
+  <div class="task-head"><span class="num">A6</span><h3>The statements (look only)</h3></div>
+  <ol><li><strong>Accounting &amp; Finance → Statements</strong>: open <strong>Trial Balance</strong> and <strong>Balance Sheet</strong>. Do not close anything.</li></ol>
+  <div class="check"><strong>Check:</strong> Debits = credits. Assets = equity + liabilities.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+
+<h2>👥 HR & Payroll</h2>
+<p class="intro">One employee, from hiring to payslip.</p>
+<section class="task" data-step="H1">
+  <div class="task-head"><span class="num">H1</span><h3>Add an employee: pick a pay option</h3></div>
+  <ol><li><strong>HR &amp; Payroll → People</strong>: search <strong>Test Cook</strong> to see which options other testers used. <strong>Pick one nobody has used yet</strong> (if all are used, pick any).<table class="pay"><tr><th>Option</th><th>Basic ₵</th><th>Allowances ₵</th><th>SSNIT</th><th>SSNIT ₵</th><th>PAYE ₵</th><th>Net ₵</th></tr><tr><td>A</td><td>3,000</td><td>0</td><td>Yes</td><td>165.00</td><td>375.73</td><td>2,459.27</td></tr><tr><td>B</td><td>2,500</td><td>500</td><td>Yes</td><td>137.50</td><td>380.54</td><td>2,481.96</td></tr><tr><td>C</td><td>2,000</td><td>1,000</td><td>Yes</td><td>110.00</td><td>385.35</td><td>2,504.65</td></tr><tr><td>D</td><td>2,500</td><td>500 + a benefit</td><td>Yes</td><td>137.50</td><td>as B, unless the benefit changes it</td><td></td></tr><tr><td>E</td><td>3,000</td><td>0</td><td>No</td><td>0.00</td><td>404.60</td><td>2,595.40</td></tr></table></li><li><strong>Add Employee</strong>: <strong><span class="nm">[your name]</span> Test Cook</strong>, Kitchen, Cook, with your option's basic and allowances and SSNIT. <strong>PAYE: Yes</strong>. Fields with <strong>*</strong> are required. Write your option letter in the notes below.</li><li>Option D only: <strong>HR &amp; Payroll → Benefits → Enrollments</strong>: enrol your employee in any existing package.</li></ol>
+  <div class="check"><strong>Check:</strong> The estimate on the form matches your option's row. Option D: write down what the benefit changed.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="H2">
+  <div class="task-head"><span class="num">H2</span><h3>Payroll and payslip (do not approve)</h3></div>
+  <ol><li><strong>HR &amp; Payroll → Payroll → Staff Payroll</strong>: find <span class="nm">[your name]</span> Test Cook.</li><li><strong>Payslips</strong>: tick your employee → <strong>Print selected</strong> (preview is enough).</li><li>⚠️ Do <strong>not</strong> approve the payroll month. It counts for the whole practice hotel.</li></ol>
+  <div class="check"><strong>Check:</strong> The payroll line and the payslip show your option's figures: basic, allowances, SSNIT, PAYE and net.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+
+<h2>⚖️ Compliance & the owner's view</h2>
+<p class="intro">Look only.</p>
+<section class="task" data-step="C1">
+  <div class="task-head"><span class="num">C1</span><h3>Taxes</h3></div>
+  <ol><li><strong>Compliance &amp; Reports → Tax</strong>: look at <strong>From sales</strong>, <strong>On purchases</strong> and <strong>From payroll</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> Sales tax from your sales and input VAT from your supplier bill are included.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+<section class="task" data-step="C2">
+  <div class="task-head"><span class="num">C2</span><h3>The owner's dashboard</h3></div>
+  <ol><li><strong>Executive Management → Main Dashboard</strong>, then <strong>Approvals</strong>.</li></ol>
+  <div class="check"><strong>Check:</strong> Today's figures include your work. Note anything waiting for approval with your name.</div>
+  <div class="mark"><button type="button" class="pass" aria-pressed="false">✅ Worked</button><button type="button" class="fail" aria-pressed="false">❌ Problem</button><textarea rows="1" placeholder="Notes: what happened, what you expected"></textarea></div>
+</section>
+
+<h2>4. When something goes wrong</h2>
+<div class="card"><p>Write down the <strong>task number</strong>, the <strong>screen</strong> (left menu and top tab), what you <strong>typed or clicked</strong>, what you <strong>expected</strong> and what <strong>actually happened</strong>. A screenshot or phone photo helps. Then carry on with the next task.</p></div>
+
+<h2>5. At the end, tell us</h2>
+<div class="card"><ul><li>Which screen was the <strong>easiest</strong>, and which was the <strong>most confusing</strong>?</li><li>Was any <strong>word or button name unclear</strong>?</li><li>Was anything <strong>slow</strong>?</li><li>What would you change before a real hotel uses this?</li></ul></div>
+
+<h2>Words you will see</h2>
+<div class="card"><table>
+<tr><td>Folio</td><td>A guest's bill: room nights, meals charged to the room, and payments.</td></tr>
+<tr><td>Walk-in</td><td>A guest who arrives without a booking.</td></tr>
+<tr><td>Till</td><td>One cashier's cash drawer for a shift. It must be open before taking cash.</td></tr>
+<tr><td>KOT</td><td>Kitchen order ticket, sent when an order is sent to the kitchen.</td></tr>
+<tr><td>Recipe</td><td>What one dish uses from stock. Selling the dish takes those amounts off stock.</td></tr>
+<tr><td>PO / GRN</td><td>Purchase order (what we ask for) / goods received note (what arrived).</td></tr>
+<tr><td>Requisition / Issue</td><td>A department asking the store for stock / the store giving it.</td></tr>
+<tr><td>Goods Received, Not Invoiced</td><td>Stock that has arrived but whose bill is not entered yet. The bill with the GRN number clears it.</td></tr>
+<tr><td>Payable / Receivable</td><td>Money the hotel owes suppliers / money customers owe the hotel.</td></tr>
+<tr><td>Journal</td><td>Every accounting entry, each with equal debits and credits.</td></tr>
+<tr><td>SSNIT / PAYE</td><td>Social security (5.5% of basic from the employee) / income tax taken from salary.</td></tr>
+</table></div>
+
+<p class="foot">AGM Sync · Your property, simply connected · www.agmsync.com</p>
+</div>
+<div class="toast" id="toast" role="status"></div>
+<script>
+(function(){
+  var KEY='agmsync.testerGuide.v1', state={};
+  try{state=JSON.parse(localStorage.getItem(KEY)||'{}')||{};}catch(e){state={};}
+  function save(){try{localStorage.setItem(KEY,JSON.stringify(state));}catch(e){}}
+  var name=document.getElementById('tname');
+  function paintName(){var v=(state.__name||'').trim();[].forEach.call(document.querySelectorAll('.nm'),function(s){s.textContent=v||'[your name]';});}
+  name.value=state.__name||'';
+  name.addEventListener('input',function(){state.__name=name.value;save();paintName();});
+  var steps=[].slice.call(document.querySelectorAll('.task'));
+  function paint(){var done=0,fails=0;steps.forEach(function(s){var r=(state[s.dataset.step]||{}).result||'';s.dataset.result=r;s.querySelector('.pass').setAttribute('aria-pressed',r==='pass');s.querySelector('.fail').setAttribute('aria-pressed',r==='fail');if(r)done++;if(r==='fail')fails++;});
+    document.getElementById('done').textContent=done;document.getElementById('total').textContent=steps.length;document.getElementById('fails').textContent=fails;}
+  steps.forEach(function(s){var id=s.dataset.step,rec=state[id]||(state[id]={}),ta=s.querySelector('textarea');ta.value=rec.note||'';
+    ta.addEventListener('input',function(){rec.note=ta.value;save();});
+    s.querySelector('.pass').addEventListener('click',function(){rec.result=rec.result==='pass'?'':'pass';save();paint();});
+    s.querySelector('.fail').addEventListener('click',function(){rec.result=rec.result==='fail'?'':'fail';save();paint();if(rec.result==='fail')ta.focus();});});
+  paintName();paint();
+  function toast(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(function(){t.classList.remove('show');},2200);}
+  document.getElementById('copy').addEventListener('click',function(){
+    var lines=['AGM Sync test: '+((state.__name||'').trim()||'(no name)'),new Date().toLocaleString(),''];
+    steps.forEach(function(s){var rec=state[s.dataset.step]||{};var title=s.dataset.step+' '+s.querySelector('h3').textContent.trim();
+      lines.push((rec.result==='pass'?'✅':rec.result==='fail'?'❌':'⬜')+' '+title+(rec.note?' | '+rec.note.trim():''));});
+    var text=lines.join('\n');
+    (navigator.clipboard?navigator.clipboard.writeText(text):Promise.reject()).then(function(){toast('Copied. Paste it into WhatsApp.');},function(){window.prompt('Copy this:',text);});
+  });
+})();
+</script>
+</body></html>

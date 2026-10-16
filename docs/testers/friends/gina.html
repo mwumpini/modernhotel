@@ -26,100 +26,160 @@ table{width:100%;border-collapse:collapse;font-size:15px}td{border-top:1px solid
 </style></head><body><div class="wrap">
 <header>
   <h1>Hi Gina, thanks for testing AGM Sync</h1>
-  <p>The restaurant from start to finish: till, orders, kitchen, paying, receipts, and how stock goes down when food sells.</p>
-  <span class="pill">⏱ about 1.5 to 2 hours</span><span class="pill">🛎️ Room <strong>103</strong> (for one meal charged to a room)</span><span class="pill">🧾 12 small tasks</span>
+  <p>The back office from start to finish: buying and receiving stock, the supplier's bill and payment, how it all reaches the accounts, and one employee through payroll.</p>
+  <span class="pill">⏱ about 2 to 2.5 hours</span><span class="pill">📦 Inventory → 🧾 Accounting → 👥 Payroll</span><span class="pill">🧾 18 small tasks</span>
 </header>
 
 <h2>1. Sign in</h2>
-<div class="card"><ol><li>Open <strong>www.agmsync.com</strong> on a laptop (Chrome or Edge). A phone works for the restaurant and housekeeping screens.</li><li>Organization ID: <strong>demo</strong></li><li>Email and password: <strong>the ones Abdul sent you</strong>. Do not share them.</li><li>If the page looks old after an update, press <strong>Ctrl + F5</strong>.</li></ol></div>
+<div class="card"><ol><li>Open <strong>www.agmsync.com</strong> on a laptop (Chrome or Edge). These screens are easier on a big screen.</li><li>Organization ID: <strong>demo</strong></li><li>Email and password: <strong>the ones Abdul sent you</strong>. Do not share them.</li><li>If the page looks old after an update, press <strong>Ctrl + F5</strong>.</li></ol></div>
 
 <h2>2. A few rules</h2>
-<div class="card"><ul><li>Everyone uses the same practice hotel (<strong>Demo Hotel</strong>). Use <strong>your own name</strong> on every guest, client or item you create, for example <strong>Gina Test Guest</strong>. That way nobody mixes up whose is whose.</li><li>Only use <strong>your rooms</strong> (listed in your guide). Other rooms belong to the other testers.</li><li>Do <strong>not</strong> run <strong>Night Audit</strong> unless your guide says so. It moves the whole hotel to the next day.</li><li>Nothing here is real money. Try things, even "wrong" things. Finding problems is the point.</li><li>Each task has a ✅ check. Tick it if it worked, or mark ❌ and write down what happened.</li></ul><p>Taxes: <strong>room and event prices</strong> have tax <strong>added on top</strong> (VAT 15%, NHIL 2.5%, GETFund 2.5%, Tourism Levy 1%). <strong>Menu prices already include tax</strong>: the guest pays the menu price and the tax is shown inside it. Bills list the taxes as <strong>NHIL/GETFund 5%, VAT 15%, Tourism Levy 1%</strong>.</p></div>
+<div class="card"><ul><li>Everyone uses the same practice hotel (<strong>Demo Hotel</strong>). Use <strong>your own name</strong> on every supplier, item or employee you create, for example <strong>Gina Fresh Farms</strong>. That way nobody mixes up whose is whose.</li><li>Do <strong>not</strong> run <strong>Night Audit</strong>. It moves the whole hotel to the next day.</li><li>Do <strong>not</strong> approve a <strong>payroll month</strong> without asking Abdul first (task G16).</li><li>Nothing here is real money. Try things, even "wrong" things. Finding problems is the point.</li><li>Each task has a ✅ check. Tick it if it worked, or mark ❌ and write down what happened.</li><li>Write down your <strong>PO number</strong> (G3) and <strong>GRN number</strong> (G4). You need them in Part B.</li></ul></div>
 
 <h2>3. Your tasks</h2>
-<p>Do them in order. Each one takes a few minutes. Getting lost is useful feedback too, so note it.</p>
+<p>Do them in order: each part uses what you made in the one before. Getting lost is useful feedback too, so note it.</p>
+
+<h2>Part A · Inventory & Stores</h2>
+<p>Buying stock, receiving it, using it and counting it.</p>
 
     <section class="task">
-      <div class="task-head"><span class="num">G1</span><h3>Open your till</h3></div>
-      <ol><li><strong>Restaurant &amp; Bar → Cash → Open till</strong>, float <strong>200</strong>.</li></ol>
-      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> The till shows open with 200 cash.</span></div>
+      <div class="task-head"><span class="num">G1</span><h3>Add your supplier</h3></div>
+      <ol><li><strong>Inventory &amp; Stores → Stock → 🏢 Suppliers</strong>: add <strong>Gina Fresh Farms</strong>, payment terms 30 days.</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> Gina Fresh Farms is in the supplier list.</span></div>
       <div class="note">Notes: <span class="line"></span></div>
     </section>
     <section class="task">
-      <div class="task-head"><span class="num">G2</span><h3>Look at the menu</h3></div>
-      <ol><li><strong>Restaurant &amp; Bar → Menu</strong>. Find <strong>Jollof Rice &amp; Chicken</strong> and <strong>Star Beer (Bottle)</strong>.</li><li>Note: menu prices already include tax.</li></ol>
-      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> Both dishes are there with prices.</span></div>
+      <div class="task-head"><span class="num">G2</span><h3>Add your stock item</h3></div>
+      <ol><li><strong>Stock → 📦 Items</strong>: add <strong>Gina Tomato Paste</strong>, unit <strong>tin</strong>, cost <strong>10</strong>, category food (kitchen stock), supplier Gina Fresh Farms.</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> The item shows with 0 in stock.</span></div>
       <div class="note">Notes: <span class="line"></span></div>
     </section>
     <section class="task">
-      <div class="task-head"><span class="num">G3</span><h3>Make a stock item for beer</h3></div>
-      <ol><li><strong>Inventory &amp; Stores → Stock → Items</strong>: add <strong>Gina Star Beer</strong>, unit <strong>bottle</strong>, cost <strong>10</strong>.</li><li>Give it stock: receive <strong>24</strong> bottles (Purchase Orders → receive, or Receive &amp; Recon), into <strong>Restaurant &amp; Bar</strong>.</li></ol>
-      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> Gina Star Beer shows 24 in Restaurant &amp; Bar.</span></div>
+      <div class="task-head"><span class="num">G3</span><h3>Order from the supplier</h3></div>
+      <ol><li><strong>Stock → 📋 Purchase Orders → 📋 Orders → Create PO</strong>: Gina Fresh Farms, <strong>50 tins</strong> of Gina Tomato Paste at <strong>10</strong>.</li><li>Send it for approval if asked. Write down the <strong>PO number</strong>.</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> The PO totals <strong>₵500</strong> and has a PO number.</span></div>
       <div class="note">Notes: <span class="line"></span></div>
     </section>
     <section class="task">
-      <div class="task-head"><span class="num">G4</span><h3>Link the beer to the menu</h3></div>
-      <ol><li><strong>Restaurant &amp; Bar → Menu</strong>: edit <strong>Star Beer (Bottle)</strong> and set <strong>Stock item</strong> to <strong>Gina Star Beer</strong>.</li></ol>
-      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> The menu item shows it is linked to stock.</span></div>
+      <div class="task-head"><span class="num">G4</span><h3>Receive the delivery</h3></div>
+      <ol><li><strong>Purchase Orders → 📥 Goods Receipt</strong>: find your PO, receive all <strong>50 tins</strong> into the main store. Write down the <strong>GRN number</strong>.</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> Gina Tomato Paste now shows <strong>50</strong> in stock, worth ₵500.</span></div>
       <div class="note">Notes: <span class="line"></span></div>
     </section>
     <section class="task">
-      <div class="task-head"><span class="num">G5</span><h3>A dine-in order</h3></div>
-      <ol><li><strong>POS Terminal</strong>: table <strong>T05</strong>, add <strong>2 Jollof Rice &amp; Chicken + 2 Star Beer</strong>.</li><li>Press <strong>Send to kitchen</strong>.</li></ol>
-      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> A KOT goes to the kitchen and a BOT goes to the bar.</span></div>
+      <div class="task-head"><span class="num">G5</span><h3>Give stock to the kitchen</h3></div>
+      <ol><li><strong>Stock → 📤 Issues → Issue Goods</strong>: issue <strong>10 tins</strong> to the <strong>Kitchen</strong>.</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> The store shows <strong>40</strong> tins left.</span></div>
       <div class="note">Notes: <span class="line"></span></div>
     </section>
     <section class="task">
-      <div class="task-head"><span class="num">G6</span><h3>The kitchen side</h3></div>
-      <ol><li><strong>Kitchen → Kitchen Display</strong>: find your ticket, move it to <strong>ready</strong>, then <strong>served</strong>.</li></ol>
-      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> The order shows on the display within a second or two of sending.</span></div>
+      <div class="task-head"><span class="num">G6</span><h3>Count the store</h3></div>
+      <ol><li><strong>Stock → 🔍 Stock Count</strong>: start a count for the main store. Enter <strong>39</strong> for Gina Tomato Paste (one tin "missing"), then <strong>Complete &amp; Post</strong>.</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> The count shows a difference of <strong>-1 tin (₵10)</strong> and the stock is now <strong>39</strong>.</span></div>
       <div class="note">Notes: <span class="line"></span></div>
     </section>
     <section class="task">
-      <div class="task-head"><span class="num">G7</span><h3>Take payment</h3></div>
-      <ol><li>Back on <strong>POS</strong>: <strong>Process payment → Cash</strong>.</li><li>Look at the receipt.</li></ol>
-      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> The total equals the menu prices. The receipt has a receipt number (RCT…) and lists the taxes inside the price.</span></div>
+      <div class="task-head"><span class="num">G7</span><h3>Check the supplier invoice match</h3></div>
+      <ol><li><strong>Stock → 🧾 Invoices</strong>: look for your PO. This screen compares the order, the delivery and the bill.</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> Your order and delivery are there. Note whether it is clear what to do next.</span></div>
+      <div class="note">Notes: <span class="line"></span></div>
+    </section>
+
+<h2>Part B · Accounting & Finance</h2>
+<p>How the stock you just moved reaches the books, and paying the supplier.</p>
+
+    <section class="task">
+      <div class="task-head"><span class="num">G8</span><h3>The delivery in the books</h3></div>
+      <ol><li><strong>Accounting &amp; Finance → 📒 Books → Journal</strong>: find the entry for your GRN number.</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> Stock (Food &amp; Beverage) goes up <strong>₵500</strong> and <strong>Goods Received, Not Invoiced</strong> shows <strong>₵500</strong>. The supplier is <strong>not</strong> owed yet, because there is no bill.</span></div>
       <div class="note">Notes: <span class="line"></span></div>
     </section>
     <section class="task">
-      <div class="task-head"><span class="num">G8</span><h3>Stock went down</h3></div>
-      <ol><li><strong>Inventory &amp; Stores → Stock → Items</strong>: look at <strong>Gina Star Beer</strong>.</li></ol>
-      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> It went from 24 to <strong>22</strong>.</span></div>
+      <div class="task-head"><span class="num">G9</span><h3>Enter the supplier's bill</h3></div>
+      <ol><li><strong>Accounting &amp; Finance → 🧾 Payable → New bill</strong>: supplier Gina Fresh Farms, amount <strong>500</strong>, plus VAT if the form offers it.</li><li>Fill <strong>Delivery / GRN #</strong> with your GRN number (or <strong>Our PO #</strong> with your PO number).</li><li>Press <strong>Approve &amp; Post</strong>.</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> In <strong>Who we owe</strong>, Gina Fresh Farms is owed the bill total <strong>once</strong> (₵500, or ₵500 + tax). Not ₵1,000.</span></div>
       <div class="note">Notes: <span class="line"></span></div>
     </section>
     <section class="task">
-      <div class="task-head"><span class="num">G9</span><h3>Mobile money and card</h3></div>
-      <ol><li>Make two more small orders (1 Star Beer each). Pay one with <strong>Mobile Money</strong> (pick MTN) and one with <strong>Card</strong> (pick Visa).</li></ol>
-      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> Receipts show the network / card brand you picked.</span></div>
+      <div class="task-head"><span class="num">G10</span><h3>The bill in the books</h3></div>
+      <ol><li><strong>Books → Journal</strong>: open the entry for your bill.</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> It clears <strong>Goods Received, Not Invoiced</strong> (₵500), puts any VAT in input tax, and records what is owed to the supplier. Stock is <strong>not</strong> added a second time.</span></div>
       <div class="note">Notes: <span class="line"></span></div>
     </section>
     <section class="task">
-      <div class="task-head"><span class="num">G10</span><h3>Charge to a room</h3></div>
-      <ol><li>Front desk part: <strong>Front Office → Desk → Walk-in</strong>: guest <strong>Gina Room Guest</strong>, room <strong>103</strong>, check in (no payment).</li><li>POS: <strong>In-house</strong>, room <strong>103</strong>, 1 Jollof, <strong>Bill to Room</strong>.</li></ol>
-      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> The meal shows on the room 103 folio, not in your cash.</span></div>
+      <div class="task-head"><span class="num">G11</span><h3>Pay the supplier</h3></div>
+      <ol><li><strong>Payable</strong>: open your bill → <strong>Record payment</strong>, full amount, by bank transfer.</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> The bill shows <strong>Paid</strong> and Gina Fresh Farms owes nothing in <strong>Who we owe</strong>.</span></div>
       <div class="note">Notes: <span class="line"></span></div>
     </section>
     <section class="task">
-      <div class="task-head"><span class="num">G11</span><h3>Reprint and void</h3></div>
-      <ol><li><strong>Restaurant &amp; Bar → Transactions</strong>: open your first order and press <strong>Print</strong>.</li><li>Make a new order, then <strong>Void</strong> one line of it.</li></ol>
-      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> The reprint has the same receipt number. The voided line no longer counts as sales.</span></div>
+      <div class="task-head"><span class="num">G12</span><h3>The kitchen issue and the count</h3></div>
+      <ol><li><strong>Books → Journal</strong>: find the entries for your issue (G5) and your count (G6).</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> The issue moves <strong>₵100</strong> from stock to a kitchen cost. The count posts a <strong>₵10</strong> stock loss.</span></div>
       <div class="note">Notes: <span class="line"></span></div>
     </section>
     <section class="task">
-      <div class="task-head"><span class="num">G12</span><h3>Close your till</h3></div>
-      <ol><li><strong>Restaurant &amp; Bar → Cash</strong>: close the till and count your cash.</li></ol>
-      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> Expected cash = 200 + your cash sales. Mobile money and card are shown separately.</span></div>
+      <div class="task-head"><span class="num">G13</span><h3>The statements</h3></div>
+      <ol><li><strong>Accounting &amp; Finance → 📑 Statements</strong>: open <strong>Trial Balance</strong>, then <strong>Balance Sheet</strong>, then <strong>Income Statement</strong>.</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> Trial Balance: total debits = total credits. Balance Sheet: assets = equity + liabilities. Your ₵100 kitchen cost and ₵10 loss appear as costs.</span></div>
+      <div class="note">Notes: <span class="line"></span></div>
+    </section>
+    <section class="task">
+      <div class="task-head"><span class="num">G14</span><h3>Who owes us (look only)</h3></div>
+      <ol><li><strong>Accounting &amp; Finance → 📝 Receivable</strong>: look at <strong>Who owes us</strong> and the <strong>Doubtful debts</strong> tab. Do not post anything here.</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> The ageing columns (Current, 1-30, 31-60…) make sense to you. Note anything unclear.</span></div>
+      <div class="note">Notes: <span class="line"></span></div>
+    </section>
+
+<h2>Part C · HR & Payroll</h2>
+<p>One employee from hiring to payslip, and the payroll in the books.</p>
+
+    <section class="task">
+      <div class="task-head"><span class="num">G15</span><h3>Add yourself as a staff member</h3></div>
+      <ol><li><strong>HR &amp; Payroll → 👥 People → Add Employee</strong>: <strong>Gina Test Cook</strong>, department Kitchen, position Cook, basic salary <strong>3,000</strong>, no allowances.</li><li>Set <strong>SSNIT: Yes</strong> and <strong>PAYE: Yes</strong>. Fields with a <strong>*</strong> are required.</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> The form shows a monthly estimate of about <strong>SSNIT ₵165</strong>, <strong>PAYE ₵375.73</strong>, <strong>net pay ₵2,459.27</strong>.</span></div>
+      <div class="note">Notes: <span class="line"></span></div>
+    </section>
+    <section class="task">
+      <div class="task-head"><span class="num">G16</span><h3>Look at the payroll</h3></div>
+      <ol><li><strong>HR &amp; Payroll → 💰 Payroll → Staff Payroll</strong>: find Gina Test Cook.</li><li>⚠️ Ask Abdul <strong>before</strong> you approve a payroll month. It counts for the whole practice hotel.</li><li>If Abdul says yes: <strong>Process payroll</strong>, then <strong>Approve payroll</strong>.</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> Your line shows gross <strong>₵3,000</strong>, SSNIT <strong>₵165</strong>, income tax <strong>₵375.73</strong>, net <strong>₵2,459.27</strong>.</span></div>
+      <div class="note">Notes: <span class="line"></span></div>
+    </section>
+    <section class="task">
+      <div class="task-head"><span class="num">G17</span><h3>Print your payslip</h3></div>
+      <ol><li><strong>Payroll → Payslips</strong>: tick Gina Test Cook → <strong>Print selected</strong>. Try <strong>Print all payslips</strong> too (just look, you do not need to print).</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> The payslip shows the same figures as G16, one payslip per page.</span></div>
+      <div class="note">Notes: <span class="line"></span></div>
+    </section>
+    <section class="task">
+      <div class="task-head"><span class="num">G18</span><h3>Payroll in the books and taxes</h3></div>
+      <ol><li>After the payroll is approved: <strong>Books → Journal</strong>, find the payroll entry.</li><li><strong>Compliance &amp; Reports → 🧮 Tax</strong>: look at <strong>From payroll</strong> and <strong>On purchases</strong>.</li></ol>
+      <div class="check"><span class="box" aria-hidden="true"></span><span><strong>Check:</strong> Salaries are a cost; PAYE and SSNIT show as owed to GRA and SSNIT. The Tax page shows PAYE from payroll and the input VAT from your G9 bill (if it had VAT).</span></div>
       <div class="note">Notes: <span class="line"></span></div>
     </section>
 
 <h2>4. When something goes wrong</h2>
-<div class="card"><p>Write down:</p><ol><li>The <strong>task number</strong> (for example M4).</li><li>The <strong>screen</strong>: the menu on the left and the tab at the top.</li><li>What you <strong>typed or clicked</strong>.</li><li>What you <strong>expected</strong>, and what <strong>actually happened</strong>.</li><li>A <strong>phone photo or screenshot</strong> of the screen, if you can.</li></ol><p>Then carry on with the next task. Send your notes and photos to Abdul on WhatsApp.</p></div>
+<div class="card"><p>Write down:</p><ul><li>The <strong>task number</strong> (for example G9).</li><li>The <strong>screen</strong>: the menu on the left and the tab at the top.</li><li>What you <strong>typed or clicked</strong>.</li><li>What you <strong>expected</strong>, and what <strong>actually happened</strong>.</li><li>A <strong>phone photo or screenshot</strong> of the screen, if you can.</li></ul><p>Then carry on with the next task. Send your notes and photos to Abdul on WhatsApp.</p></div>
 
 <h2>5. At the end, tell us</h2>
-<div class="card"><ol><li>Which screen was the <strong>easiest</strong> to use?</li><li>Which screen was the <strong>most confusing</strong>, and why?</li><li>Was any word or button name <strong>unclear</strong>? Which one?</li><li>Was anything <strong>slow</strong>?</li><li>What would you <strong>add or change</strong> before a real hotel uses this?</li></ol></div>
+<div class="card"><ul><li>Which screen was the <strong>easiest</strong> to use?</li><li>Which screen was the <strong>most confusing</strong>, and why?</li><li>Was any <strong>word or button name unclear</strong>? Which one?</li><li>Did the books show what you <strong>expected</strong> after each step?</li><li>Was anything <strong>slow</strong>?</li><li>What would you add or change before a real hotel uses this?</li></ul></div>
 
 <h2>Words you will see</h2>
-<div class="card"><table><tr><td>Folio</td><td>A guest's bill: room nights, restaurant charges, and payments.</td></tr><tr><td>In house</td><td>A guest who has checked in and not left yet.</td></tr><tr><td>Walk-in</td><td>A guest who arrives without a booking.</td></tr><tr><td>Night audit</td><td>The end-of-day close. It adds the next room night to every guest and moves the hotel to the next day.</td></tr><tr><td>Till</td><td>One cashier's cash drawer for a shift. It must be open before taking cash.</td></tr><tr><td>KOT / BOT</td><td>Kitchen / bar order ticket, printed when an order is sent.</td></tr><tr><td>Recipe</td><td>What one dish uses from stock. Selling the dish takes those amounts off stock.</td></tr><tr><td>Requisition</td><td>A department asking the store for stock.</td></tr><tr><td>PO / GRN</td><td>Purchase order (what we ask a supplier for) / goods received note (what arrived).</td></tr><tr><td>Receivable / Payable</td><td>Money customers owe the hotel / money the hotel owes suppliers.</td></tr></table></div>
+<div class="card"><table>
+<tr><td>PO</td><td>Purchase order: what we ask a supplier for.</td></tr>
+<tr><td>GRN</td><td>Goods received note: what actually arrived.</td></tr>
+<tr><td>Goods Received, Not Invoiced</td><td>Stock that has arrived but whose bill has not been entered yet. Entering the bill with the GRN or PO number clears it, so the supplier is owed only once.</td></tr>
+<tr><td>Issue</td><td>Giving stock from the store to a department (it becomes that department's cost).</td></tr>
+<tr><td>Stock count</td><td>Counting what is really on the shelf; any difference is posted as a gain or loss.</td></tr>
+<tr><td>Payable / Receivable</td><td>Money the hotel owes suppliers / money customers owe the hotel.</td></tr>
+<tr><td>Journal</td><td>The list of every accounting entry, each with equal debits and credits.</td></tr>
+<tr><td>Trial Balance</td><td>All accounts with their totals; debits must equal credits.</td></tr>
+<tr><td>Input VAT</td><td>VAT paid on purchases, which the hotel can take off the VAT it owes GRA.</td></tr>
+<tr><td>SSNIT</td><td>Social security: 5.5% of basic salary from the employee; the hotel pays its own share on top.</td></tr>
+<tr><td>PAYE</td><td>Income tax taken from salary and paid to GRA.</td></tr>
+<tr><td>Payslip</td><td>The employee's pay statement for the month.</td></tr>
+</table></div>
 
 <p class="foot">AGM Sync · Your property, simply connected · www.agmsync.com</p>
 </div></body></html>
