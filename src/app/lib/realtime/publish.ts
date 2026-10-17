@@ -83,11 +83,21 @@ function pickTenantId(model: string, args: any, result: any): string | undefined
 export async function afterWrite(model: string | undefined, operation: string, args: any, result: any) {
   if (!model || !WRITE_OPERATIONS.has(operation)) return
   if (model !== 'SyncLog') {
+    const record = async () => {
+      try {
+        const { recordWrite } = await import('../sync/record')
+        await recordWrite(model, operation, args, result)
+      } catch (error) {
+        console.warn('[sync] could not record the change', error)
+      }
+    }
+    // Inside a request: once the response is sent, so it never waits on (or deadlocks) the write's
+    // own transaction, and the cloud function still finishes it. Outside a request: straight away.
     try {
-      const { recordWrite } = await import('../sync/record')
-      await recordWrite(model, operation, args, result)
-    } catch (error) {
-      console.warn('[sync] could not record the change', error)
+      const { after } = await import('next/server')
+      after(record)
+    } catch {
+      void record()
     }
   }
   if (!realtimeEnabled()) return
