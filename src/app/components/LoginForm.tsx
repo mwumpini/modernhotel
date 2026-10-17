@@ -7,6 +7,7 @@ import { signIn } from 'next-auth/react';
 import { setClientTenantSubdomain } from '../lib/api/clientTenant';
 import BrandLogo from './BrandLogo';
 import ForgotPasswordPanel from './ForgotPasswordPanel';
+import { useHotelAddress } from '../lib/useHotelAddress';
 
 export default function LoginForm() {
   const [email, setEmail] = useState('');
@@ -20,6 +21,7 @@ export default function LoginForm() {
   const [needsCode, setNeedsCode] = useState(false);
   const [enrollSecret, setEnrollSecret] = useState('');
   const [code, setCode] = useState('');
+  const { address, mode } = useHotelAddress();
 
   const finishSignIn = async (otp?: string) => {
     setClientTenantSubdomain(tenantId.trim().toLowerCase());
@@ -213,6 +215,14 @@ export default function LoginForm() {
           )}
         </form>
         {forgot && <ForgotPasswordPanel tenantId={tenantId} login={email} onClose={() => setForgot(false)} />}
+        <p className="text-center text-sm">
+          <a href="/staff" className="font-semibold text-[#0E7C80] hover:underline">Save an icon on this phone or computer</a>
+        </p>
+        {mode === 'local' && address && (
+          <p className="text-center text-sm text-gray-600">
+            Other devices on this Wi-Fi open <span className="font-mono font-semibold text-ghana-black">{address}</span>.
+          </p>
+        )}
 
           {/* Local development only: on the live site this would hand anyone the admin login. */}
           {process.env.NODE_ENV !== 'production' && (

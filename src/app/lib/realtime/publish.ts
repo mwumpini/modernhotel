@@ -80,8 +80,17 @@ function pickTenantId(model: string, args: any, result: any): string | undefined
 }
 
 /** Prisma query hook: every write to a hotel's table queues a notice for that hotel. */
-export function afterWrite(model: string | undefined, operation: string, args: any, result: any) {
-  if (!model || !WRITE_OPERATIONS.has(operation) || !realtimeEnabled()) return
+export async function afterWrite(model: string | undefined, operation: string, args: any, result: any) {
+  if (!model || !WRITE_OPERATIONS.has(operation)) return
+  if (model !== 'SyncLog') {
+    try {
+      const { recordWrite } = await import('../sync/record')
+      await recordWrite(model, operation, args, result)
+    } catch (error) {
+      console.warn('[sync] could not record the change', error)
+    }
+  }
+  if (!realtimeEnabled()) return
   const tenantId = pickTenantId(model, args, result)
   const row = Array.isArray(result) ? result[0] : result
   const kind = model === 'TenantRecord' ? (row?.kind ?? args?.where?.kind ?? args?.data?.kind) : undefined

@@ -30,7 +30,10 @@ async function streamTextFromOpenAI(messages: Array<{ role: 'user'|'assistant'|'
       max_tokens: 400
     })
   });
-  if (!resp.ok || !resp.body) throw new Error('OpenAI response error');
+  if (!resp.ok || !resp.body) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`AI provider ${resp.status} (${model}): ${detail.slice(0, 300)}`);
+  }
   return plainTextFromSse(resp.body as ReadableStream<Uint8Array>);
 }
 
@@ -99,8 +102,10 @@ export async function POST(req: NextRequest) {
       const stream = await streamTextFromOpenAI(messages as any);
       return new Response(stream, { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Mamani-Source': 'ai' } });
     } catch (e) {
+      // Shows in the Vercel logs, so a wrong key or model name is easy to spot.
+      console.error('[ask-mamani] model unavailable, using the built-in reply:', e instanceof Error ? e.message : e);
       const fallback = localMamaniReply(prompt, { label: desk, snapshot, notices, help: help.map((h) => h.text) });
-      return new Response(fallback, { headers: { 'Content-Type': 'text/plain' } });
+      return new Response(fallback, { headers: { 'Content-Type': 'text/plain', 'X-Mamani-Source': 'local' } });
     }
   } catch (e: any) {
     return new Response(`Error: ${e.message || 'unknown'}`, { status: 400 });

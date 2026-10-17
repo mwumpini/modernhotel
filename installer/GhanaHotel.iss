@@ -16,21 +16,22 @@ PrivilegesRequired=admin
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 WizardStyle=modern
+SetupIconFile=agm-sync.ico
 InfoAfterFile=after-install.txt
-UninstallDisplayIcon={app}\node\node.exe
+UninstallDisplayIcon={app}\agm-sync.ico
 
 [Files]
 Source: "{#Dist}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "agm-sync.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\Start Hotel System.cmd"; WorkingDir: "{app}"
-Name: "{group}\{#MyAppName}"; Filename: "{app}\Start Hotel System.cmd"; WorkingDir: "{app}"
-Name: "{group}\Stop {#MyAppName}"; Filename: "{app}\Stop Hotel System.cmd"; WorkingDir: "{app}"
-Name: "{commonstartup}\{#MyAppName}"; Filename: "{app}\Start Hotel System.cmd"; WorkingDir: "{app}"
+Name: "{commondesktop}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\start-hidden.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\agm-sync.ico"
+Name: "{group}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\start-hidden.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\agm-sync.ico"
+Name: "{commonstartup}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\start-hidden.vbs"" serve"; WorkingDir: "{app}"; IconFilename: "{app}\agm-sync.ico"
 
 [Run]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\register.ps1"""; Flags: runhidden waituntilterminated
-Filename: "{app}\Start Hotel System.cmd"; Description: "Start the hotel system now"; Flags: postinstall nowait skipifsilent
+Filename: "{sys}\wscript.exe"; Parameters: """{app}\start-hidden.vbs"""; Description: "Open AGM Sync"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\unregister.ps1"""; Flags: runhidden waituntilterminated

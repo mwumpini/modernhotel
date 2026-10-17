@@ -36,7 +36,8 @@ function createClient(): PrismaClient {
       $allModels: {
         async $allOperations({ model, operation, args, query }) {
           const result = await query(args)
-          afterWrite(model, operation, args, result)
+          // Not awaited: a sync or realtime note must never hold up (or deadlock) the write itself.
+          void afterWrite(model, operation, args, result)
           return result
         },
       },

@@ -56,6 +56,12 @@ export async function tryScheduledNightAudit(now = new Date()): Promise<AutoNigh
   const result = await frontOfficeStore.executeNightAudit();
   const elapsedSec = ((performance.now() - started) / 1000).toFixed(1);
 
+  if (result.status === 'completed' && (result.daysClosed?.length ?? 0) === 0) {
+    markAutoRunAttempted(now);
+    logScheduler(`${stamp} — nothing to close; the open day stays open`);
+    return { action: 'skipped', reason: 'today_still_open' };
+  }
+
   if (result.status === 'completed') {
     markAutoRunAttempted(now);
     logScheduler(`${stamp} — running now — completed in ${elapsedSec}s`);

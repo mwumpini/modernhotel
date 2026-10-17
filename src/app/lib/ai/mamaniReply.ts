@@ -17,6 +17,8 @@ type Facts = {
   onDuty?: number;
   patrols?: number;
   incidents?: number;
+  /** "revenue GHS 1,234.00 before tax; received …" */
+  money?: string;
   extra: string[];
 };
 
@@ -44,6 +46,11 @@ function asksForLiveStatus(prompt: string): boolean {
 function parseSnapshot(lines: string[]): Facts {
   const facts: Facts = { extra: [] };
   for (const line of lines) {
+    const money = line.match(/^Money today: (.*?)\.?$/);
+    if (money) {
+      facts.money = money[1];
+      continue;
+    }
     const rooms = line.match(/^(\d+) rooms: (\d+) occupied, (\d+) vacant, (\d+) dirty, (\d+) clean, (\d+) maintenance\./);
     if (rooms) {
       facts.rooms = {
@@ -205,8 +212,13 @@ function noticeAnswer(notices: string[]): string {
   return `There are ${lines.length} recent notices.\n${lines.map((line) => `• ${line}`).join('\n')}`;
 }
 
+function moneyAnswer(money: string): string {
+  return `Today so far: ${money.charAt(0).toLowerCase()}${money.slice(1)}.`;
+}
+
 function briefing(facts: Facts, label: string): string {
   const parts: string[] = [];
+  if (facts.money) parts.push(moneyAnswer(facts.money));
   if (facts.rooms) parts.push(roomAnswer('', facts.rooms));
   if (facts.stays) parts.push(stayAnswer(facts.stays));
   if (facts.stock && (facts.stock.out > 0 || facts.stock.low > 0)) parts.push(stockAnswer('', facts.stock));
@@ -266,6 +278,9 @@ function draftNotice(prompt: string, facts: Facts, notices: string[]): string {
 
 function answerFromFacts(prompt: string, facts: Facts, notices: string[], label: string): string {
   const parts: string[] = [];
+  if (/\b(make|made|revenue|takings|sales|money|earn\w*|income|received|collected)\b/i.test(prompt)) {
+    parts.push(facts.money ? moneyAnswer(facts.money) : 'Today\'s money is not loaded on this desk. Ask from the Executive or Accounting desk.');
+  }
   if (/\b(rooms?|dirty|clean\w*|occup\w*|vacan\w*|housekeep\w*|maint\w*)\b/i.test(prompt) && facts.rooms) {
     parts.push(roomAnswer(prompt, facts.rooms));
   }

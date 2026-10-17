@@ -22,6 +22,8 @@ import * as apiHelpers from './helpers/api';
 import * as seedHelpers from './helpers/seed';
 import * as invoiceHelpers from './helpers/invoice';
 import { getClientTenantSubdomain } from '../api/clientTenant';
+import { getZonedClockParts } from './propertyTime';
+import { resolvePropertyTimezone } from './propertyTimeClient';
 import {
   isValidRateBreakdown,
   quoteFromRateBreakdown,
@@ -816,7 +818,10 @@ class FrontOfficeStore {
       const raw = localStorage.getItem('fo.nightAudit');
       if (!raw) return;
       const parsed = JSON.parse(raw);
-      if (parsed.businessDate && !this.businessDateSynced) this.businessDate = parsed.businessDate;
+      if (parsed.businessDate && !this.businessDateSynced) {
+        const today = getZonedClockParts(new Date(), resolvePropertyTimezone()).date;
+        this.businessDate = parsed.businessDate > today ? today : parsed.businessDate;
+      }
       if (Array.isArray(parsed.nightAuditHistory)) this.nightAuditHistory = parsed.nightAuditHistory;
       if (parsed.lastNightAuditAt) this.lastNightAuditAt = parsed.lastNightAuditAt;
       if (Array.isArray(parsed.wakeUpCalls)) this.wakeUpCalls = parsed.wakeUpCalls;
@@ -838,7 +843,7 @@ class FrontOfficeStore {
     } catch {}
   }
 
-  scheduleWakeUpCall(reservationId: string, date: string, time: string, notes?: string) {
+  scheduleWakeUpCall(reservationId: string, date: string, time: string, notes?: string, alert: 'silent' | 'alarm' = 'silent') {
     const res = this.reservations.find(r => r.id === reservationId);
     if (!res) return null;
     const call: import('./types').WakeUpCall = {
@@ -849,6 +854,7 @@ class FrontOfficeStore {
       date,
       time,
       status: 'scheduled',
+      alert,
       notes,
       createdAt: new Date().toISOString(),
     };
@@ -895,9 +901,10 @@ class FrontOfficeStore {
       const data = await res.json().catch(() => ({} as any));
       if (!res.ok) return failed(data.error || `HTTP ${res.status}`);
       const r = data.result || {};
+      const daysClosed = Array.isArray(r.daysClosed) ? r.daysClosed.filter(Boolean) : [];
       const run: NightAuditResult = {
-        id: r.logId || `NA-${r.businessDate}`,
-        businessDate: r.businessDate,
+        id: r.logId || `NA-${r.businessDate || this.businessDate}`,
+        businessDate: r.businessDate || this.businessDate,
         completedAt: r.completedAt,
         roomChargesPosted: r.roomChargesPosted || 0,
         noShowsProcessed: r.noShowsMarked || 0,
@@ -906,8 +913,13 @@ class FrontOfficeStore {
         folioPaymentsTotal: r.folioPaymentsTotal || 0,
         status: r.status === 'failed' ? 'failed' : 'completed',
         error: Array.isArray(r.errors) && r.errors.length ? r.errors.join('; ') : undefined,
-        daysClosed: Array.isArray(r.daysClosed) ? r.daysClosed : undefined,
+        daysClosed,
       };
+      // The current calendar day stays open. A skipped run must not be recorded
+      // as a close, or the next 1:00 AM run will think that day is already done.
+      if (r.skipped && daysClosed.length === 0 && run.status !== 'failed') {
+        return run;
+      }
       if (r.nextBusinessDate) this.businessDate = r.nextBusinessDate;
       this.lastNightAuditAt = run.completedAt;
       this.nightAuditHistory = [run, ...(this.nightAuditHistory || [])].slice(0, 30);

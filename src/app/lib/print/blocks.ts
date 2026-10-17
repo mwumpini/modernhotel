@@ -201,6 +201,9 @@ export interface TemplateStyle {
   pageWidth?: 'full' | 'narrow';
 }
 
+/** Line added only on an emailed or downloaded PDF. Print and preview leave it off. */
+export const DEFAULT_EMAIL_NOTE = 'System generated. This copy was not signed.';
+
 export interface BlockTemplate {
   /** 'builtin-<type>-<slug>' for shipped defaults, 'custom-<nanoid>' for tenant-created. */
   id: string;
@@ -209,6 +212,8 @@ export interface BlockTemplate {
   isBuiltIn: boolean;
   blocks: BlockConfig[];
   style: TemplateStyle;
+  /** Unset uses DEFAULT_EMAIL_NOTE. An empty string leaves the emailed PDF unmarked. */
+  emailNote?: string;
   createdAt: string;
   updatedAt: string;
 }

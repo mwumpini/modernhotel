@@ -69,6 +69,7 @@ export function DateFilterPills({
   onFrom,
   to,
   onTo,
+  compact = false,
 }: {
   mode: DateMode;
   onMode: (mode: DateMode) => void;
@@ -78,13 +79,14 @@ export function DateFilterPills({
   onFrom: (value: string) => void;
   to: string;
   onTo: (value: string) => void;
+  compact?: boolean;
 }) {
   const showPicker = mode === 'specific' || mode === 'range';
 
   return (
     <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
       {/* Compact Select below lg / zoomed; chip bar on standard desktop */}
-      <div className="w-[12.5rem] max-w-full shrink-0 lg:hidden">
+      <div className={`w-[12.5rem] max-w-full shrink-0 ${compact ? '' : 'lg:hidden'}`}>
         <Select
           size="sm"
           aria-label="Date filter"
@@ -105,7 +107,7 @@ export function DateFilterPills({
         </Select>
       </div>
 
-      <div className="hidden min-w-0 flex-wrap items-center justify-end gap-2 lg:flex">
+      <div className={`${compact ? 'hidden' : 'hidden lg:flex'} min-w-0 flex-wrap items-center justify-end gap-2`}>
         <span className="mr-1 text-sm font-medium text-gray-500">📅 Date:</span>
         {DATE_OPTIONS.map((option) => (
           <button

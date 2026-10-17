@@ -5,6 +5,9 @@ $port = 3000
 $data = Join-Path $env:ProgramData 'GhanaHotel'
 New-Item -ItemType Directory -Force -Path $data | Out-Null
 & icacls $data /grant 'Users:(OI)(CI)M' | Out-Null
+$cache = Join-Path $PSScriptRoot 'app\node_modules\.cache'
+New-Item -ItemType Directory -Force -Path $cache | Out-Null
+& icacls $cache /grant 'Users:(OI)(CI)M' | Out-Null
 
 $existing = Get-NetFirewallRule -DisplayName 'AGM Sync' -ErrorAction SilentlyContinue
 if ($existing) { $existing | Remove-NetFirewallRule }

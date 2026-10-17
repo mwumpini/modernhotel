@@ -33,6 +33,7 @@ import {
 	FRONT_OFFICE_FOLIO_RECEIPT_SOURCE,
 	mapUiPaymentMethodToStore,
 	printCustomerReceipt,
+	renderCustomerReceiptHtml,
 	receiptCanEdit,
 	receiptCanVoid,
 	resolvePaymentsForReceiptTarget,
@@ -66,6 +67,9 @@ import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableCol
 import { useDeskPagination } from '../dashboard/deskTableUi';
 import { DeskKpiStrip, deskBookTabsClassNames, deskBookTabPanelClassName, useAccountingDeskPeriod } from './DeskKpiStrip';
 import { isInPeriod } from '@/app/lib/dashboard/useDashboardPeriod';
+import { notifyError, notifySuccess } from '@/app/lib/notifications/notify';
+import { confirmDocumentSend, documentIntro, sendDocumentEmail } from '@/app/lib/platform/sendDocumentEmail';
+import { HtmlDocumentPreview } from '@/app/components/documents/HtmlDocumentPreview';
 
 // Shared by the New Invoice form's "new customer" payment-terms select and the due-date
 // auto-calc below it — keeps both in sync with the one mapping instead of two copies.
@@ -480,6 +484,7 @@ export default function AccountsReceivable() {
 
 	// Modal states
 	const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
+	const [docPreview, setDocPreview] = useState<{ title: string; html: string } | null>(null);
 	const [isDetailOpen, setIsDetailOpen] = useState(false);
 	const [showInvoiceCharges, setShowInvoiceCharges] = useState(false);
 	const [selectedReceipt, setSelectedReceipt] = useState<any>(null);
@@ -640,7 +645,7 @@ export default function AccountsReceivable() {
 		[printTargetPayments, printForm.paymentId],
 	);
 
-	const printCustomerReceiptForPayment = useCallback(
+	const customerReceiptData = useCallback(
 		(payment: StoredReceiptPayment, target?: ReceiptTarget | null) => {
 			const targetResolved =
 				target ??
@@ -672,7 +677,7 @@ export default function AccountsReceivable() {
 				currency: printCurrency,
 				docNumber: payment.paymentNumber || payment.id,
 			});
-			printCustomerReceipt(receiptTemplateKey, data);
+			return { data, invoice };
 		},
 		[
 			receiptTargets,
@@ -681,8 +686,15 @@ export default function AccountsReceivable() {
 			foFolios,
 			printOrg,
 			printCurrency,
-			receiptTemplateKey,
 		],
+	);
+
+	const printCustomerReceiptForPayment = useCallback(
+		(payment: StoredReceiptPayment, target?: ReceiptTarget | null) => {
+			const built = customerReceiptData(payment, target);
+			printCustomerReceipt(receiptTemplateKey, built.data);
+		},
+		[customerReceiptData, receiptTemplateKey],
 	);
 
 	// WHT Certificates filtered
@@ -1103,12 +1115,8 @@ export default function AccountsReceivable() {
 	}, [filteredAging]);
 
 	// Print Individual Invoice/Proforma PDF
-	const printInvoicePDF = useCallback((invoice: any) => {
-		try {
-			if (!invoice) {
-				window.alert('No invoice selected to print.');
-				return;
-			}
+	const invoiceDocumentHtml = useCallback((invoice: any): string | null => {
+			if (!invoice) return null;
 			const esc = (value: unknown) => String(value ?? '').replace(/[&<>"]/g, (ch) => (
 				ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : '&quot;'
 			));
@@ -1273,12 +1281,22 @@ export default function AccountsReceivable() {
 					<tbody>${receiptRows}</tbody>
 				</table></div>` : ''}
 				</body></html>`;
-			openPrintPreview(html);
+			return html;
+	}, [foFolios, foGuests, foReservations, getInvoiceReceipts]);
+
+	const printInvoicePDF = useCallback((invoice: any) => {
+		try {
+			if (!invoice) {
+				window.alert('No invoice selected to print.');
+				return;
+			}
+			const html = invoiceDocumentHtml(invoice);
+			if (html) openPrintPreview(html);
 		} catch (err) {
 			console.error('[AR] Print invoice failed', err);
 			window.alert('Could not print this invoice. Please try again.');
 		}
-	}, [foFolios, foGuests, foReservations, getInvoiceReceipts]);
+	}, [invoiceDocumentHtml]);
 
 	// Print Individual Receipt (hotel template via folio/invoice picker context)
 	const printReceiptPDF = useCallback(
@@ -1297,6 +1315,75 @@ export default function AccountsReceivable() {
 		},
 		[printCustomerReceiptForPayment],
 	);
+
+	const accountEmail = (partnerId?: string, fallback?: string) => {
+		const saved = partnerId ? customers.find((c) => c.id === partnerId)?.email : '';
+		return String(saved || fallback || '').trim();
+	};
+
+	const hotelMailName = () => useSettingsStore.getState().saasSettings.customBranding.companyName || 'the hotel';
+
+	const emailAccountDocument = async (to: string, subject: string, documentHtml: string, documentName: string, who: string) => {
+		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+			notifyError('This account has no email address. Nothing was sent.', 'Email');
+			return;
+		}
+		if (!(await confirmDocumentSend(to, documentName))) return;
+		const result = await sendDocumentEmail({
+			to,
+			subject,
+			intro: documentIntro(who, documentName, hotelMailName()),
+			documentHtml,
+			filename: documentName,
+		});
+		if (!result.ok) notifyError(result.error, 'Email');
+		else notifySuccess(`Sent to ${to}`, 'Email sent');
+	};
+
+	const emailInvoicePDF = (invoice: any) => {
+		const html = invoiceDocumentHtml(invoice);
+		if (!html) {
+			notifyError('No invoice selected to send.', 'Email');
+			return;
+		}
+		const to = accountEmail(invoice.businessPartnerId, invoice.customerEmail);
+		const label = invoice.isProforma || String(invoice.invoiceNumber || '').startsWith('PRO-') ? 'Proforma' : 'Invoice';
+		void emailAccountDocument(to, `${label} from ${hotelMailName()}`, html, label.toLowerCase(), invoice.customerName || 'Customer');
+	};
+
+	const emailReceiptPDF = (receipt: StoredReceiptPayment) => {
+		if (!receipt || receipt.status === 'Void') return;
+		const built = customerReceiptData(receipt);
+		const to = accountEmail(receipt.businessPartnerId || built.invoice?.businessPartnerId, built.invoice?.customerEmail);
+		void emailAccountDocument(to, `Receipt from ${hotelMailName()}`, renderCustomerReceiptHtml(receiptTemplateKey, built.data), 'receipt', built.data.guest?.name || receipt.customerName || 'Customer');
+	};
+
+	const customerStatementHtml = (row: { customerName: string; customerId: string; totalInvoiced: number; totalPaid: number; balance: number; current: number; days30: number; days60: number; days90: number; over90: number }) => {
+		const lines = filterFinanceArInvoices(allSalesInvoices).filter((inv) => inv.businessPartnerId === row.customerId);
+		const money = (amount: number) => formatAccountingCurrency(amount);
+		const esc = (value: unknown) => String(value ?? '').replace(/[&<>"]/g, (ch) => (
+			ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : '&quot;'
+		));
+		const body = lines.map((inv) => {
+			const balance = (inv.total || 0) - (inv.paidAmount || 0);
+			return `<tr><td>${esc(inv.invoiceNumber || inv.id)}</td><td>${esc(new Date(inv.date).toLocaleDateString())}</td><td class="num">${esc(money(inv.total || 0))}</td><td class="num">${esc(money(inv.paidAmount || 0))}</td><td class="num">${esc(money(balance))}</td></tr>`;
+		}).join('');
+		return `<!doctype html><html><head><meta charset="utf-8"><title>Statement ${esc(row.customerName)}</title>
+			<style>body{font-family:Arial,sans-serif;color:#111;margin:0;padding:28px}h1{font-size:20px;margin:0}table{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}th,td{border:1px solid #e5e7eb;padding:6px 8px;text-align:left}th{background:#f9fafb}.num{text-align:right}</style></head><body>
+			<h1>Statement of account</h1>
+			<p>${esc(row.customerName)}</p>
+			<p>Invoiced ${esc(money(row.totalInvoiced))} · Paid ${esc(money(row.totalPaid))} · Balance ${esc(money(row.balance))}</p>
+			<p>Current ${esc(money(row.current))} · 1–30 days ${esc(money(row.days30))} · 31–60 days ${esc(money(row.days60))} · 61–90 days ${esc(money(row.days90))} · 90+ days ${esc(money(row.over90))}</p>
+			<table><thead><tr><th>Invoice</th><th>Date</th><th class="num">Total</th><th class="num">Paid</th><th class="num">Balance</th></tr></thead><tbody>${body || '<tr><td colspan="5">No invoices.</td></tr>'}</tbody></table>
+			</body></html>`;
+	};
+
+	const emailCustomerStatement = (row: { customerId: string; customerName: string; totalInvoiced: number; totalPaid: number; balance: number; current: number; days30: number; days60: number; days90: number; over90: number }) => {
+		const lines = filterFinanceArInvoices(allSalesInvoices).filter((inv) => inv.businessPartnerId === row.customerId);
+		const fallback = lines.map((inv) => (inv as { customerEmail?: string }).customerEmail).find((email) => !!email);
+		const to = accountEmail(row.customerId, fallback);
+		void emailAccountDocument(to, `Statement from ${hotelMailName()}`, customerStatementHtml(row), 'statement', row.customerName || 'Customer');
+	};
 
 	// Recomputes Due Date from Invoice Date + payment terms — an existing customer's own
 	// terms on file, or the "new customer" terms picked in this same form — instead of a
@@ -3012,6 +3099,11 @@ export default function AccountsReceivable() {
 												<TableCell>
 														<div className="font-medium text-blue-600 hover:underline">{c.customerName}</div>
 														<div className="text-xs text-gray-500">{c.invoiceCount} invoices</div>
+														<div className="flex gap-1" onClick={(click) => click.stopPropagation()}>
+															<Button size="sm" variant="light" className="h-7 min-w-0 px-1" onPress={() => setDocPreview({ title: 'Statement', html: customerStatementHtml(c) })}>Preview</Button>
+															<Button size="sm" variant="light" className="h-7 min-w-0 px-1" onPress={() => openPrintPreview(customerStatementHtml(c))}>Print</Button>
+															<Button size="sm" variant="light" className="h-7 min-w-0 px-1" onPress={() => emailCustomerStatement(c)}>Email</Button>
+														</div>
 												</TableCell>
 													<TableCell>
 														<Chip size="sm" color={source.color} variant="flat">{source.icon}</Chip>
@@ -4909,8 +5001,17 @@ export default function AccountsReceivable() {
 											➕ Record receipt
 										</Button>
 									)}
+									<Button variant="flat" size="sm" onPress={() => {
+										const html = invoiceDocumentHtml(selectedInvoice);
+										if (html) setDocPreview({ title: 'Invoice', html });
+									}}>
+										Preview
+									</Button>
 									<Button color="primary" variant="flat" size="sm" onPress={() => printInvoicePDF(selectedInvoice)}>
-										Print PDF
+										Print
+									</Button>
+									<Button variant="flat" size="sm" onPress={() => emailInvoicePDF(selectedInvoice)}>
+										Email
 									</Button>
                             </ModalFooter>
                         </>
@@ -5125,8 +5226,21 @@ export default function AccountsReceivable() {
 										</Button>
 									)}
 									{selectedReceipt.status !== 'Void' && (
+										<Button variant="flat" size="sm" onPress={() => {
+											const built = customerReceiptData(selectedReceipt);
+											setDocPreview({ title: 'Receipt', html: renderCustomerReceiptHtml(receiptTemplateKey, built.data) });
+										}}>
+											Preview
+										</Button>
+									)}
+									{selectedReceipt.status !== 'Void' && (
 										<Button color="primary" variant="flat" size="sm" onPress={() => printReceiptPDF(selectedReceipt)}>
-											Print Receipt
+											Print
+										</Button>
+									)}
+									{selectedReceipt.status !== 'Void' && (
+										<Button variant="flat" size="sm" onPress={() => emailReceiptPDF(selectedReceipt)}>
+											Email
 										</Button>
 									)}
 								</ModalFooter>
@@ -5148,6 +5262,7 @@ export default function AccountsReceivable() {
 					/>
 				</Suspense>
 			)}
+			<HtmlDocumentPreview title={docPreview?.title || 'Preview'} html={docPreview?.html || null} onClose={() => setDocPreview(null)} />
 		</div>
 	);
 }

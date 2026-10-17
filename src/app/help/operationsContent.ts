@@ -121,7 +121,7 @@ export const operationsTopics: HelpTopic[] = [
     description: `${POLICIES} → Night audit and billing. When room nights are charged, and how bills are rounded.`,
     rules: [
       { name: 'Post the first night at check-in', meaning: 'On: the first night appears on the bill as soon as the guest checks in. The night audit will not charge that night again. Off: every night, including the first, is charged by the night audit.' },
-      { name: 'Run night audit at 1:00am', meaning: 'Closes the business day automatically while the app is open: posts the room night for every guest in house, marks bookings that did not arrive as no-shows (and applies the no-show rule), then moves the hotel date on. A failure notifies the Night Manager.' },
+      { name: 'Run night audit at 1:00am', meaning: 'Once the calendar has moved on, closes the day that just ended: posts the room night for every guest in house, marks bookings that did not arrive as no-shows (and applies the no-show rule), then moves the hotel date up to the new day. It does not close a day that is still today. A failure notifies the Night Manager.' },
       { name: 'Line and tax rounding', meaning: 'How each line and each tax is rounded to the pesewa: nearest, always up, or always down.' },
       { name: 'Round the amount due to', meaning: 'Rounds what the guest is asked to pay (for example to the nearest ₵0.50 for cash). The difference goes to account 4900 Rounding Adjustment, so the books still balance.' },
     ],

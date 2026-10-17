@@ -59,7 +59,9 @@ function FolioStageActions() {
         <>
           <Button size="sm" color="primary" variant="flat" onPress={openInvoice}>{invoice ? 'Invoice' : 'To invoice'}</Button>
           <Button size="sm" variant="flat" onPress={() => eventsScreen.openEventForEdit(event, true)}>Edit</Button>
+          <Button size="sm" variant="flat" onPress={() => eventsScreen.showDocumentPreview('Quotation', eventsScreen.quoteHtmlFromEvent(event))}>Preview</Button>
           <Button size="sm" variant="flat" onPress={() => eventsScreen.handleDownloadQuotePdf(event)}>Print</Button>
+          <Button size="sm" variant="flat" onPress={() => eventsScreen.handleEmailQuoteFromEvent(event)}>Email</Button>
           <Button size="sm" color="danger" variant="flat" onPress={() => { void eventsScreen.cancelMissedEvent(event); }}>Cancel</Button>
         </>
       )}
@@ -215,9 +217,17 @@ export function EventFolioModal() {
                         </Button>
                         <div className="ml-auto flex items-center gap-2">
                           {invoice && (
-                            <Button size="sm" variant="flat" onPress={() => eventsScreen.handleDownloadInvoicePdf(invoice)}>
-                              Print invoice
-                            </Button>
+                            <>
+                              <Button size="sm" variant="flat" onPress={() => eventsScreen.showDocumentPreview('Invoice', eventsScreen.eventInvoiceHtml(invoice))}>
+                                Preview
+                              </Button>
+                              <Button size="sm" variant="flat" onPress={() => eventsScreen.handleDownloadInvoicePdf(invoice)}>
+                                Print
+                              </Button>
+                              <Button size="sm" variant="flat" onPress={() => eventsScreen.handleEmailInvoicePdf(invoice)}>
+                                Email
+                              </Button>
+                            </>
                           )}
                           <Button size="sm" variant="flat" onPress={eventsScreen.handlePrintEventFolio}>
                             Report

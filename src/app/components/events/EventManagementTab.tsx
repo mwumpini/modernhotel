@@ -1328,7 +1328,10 @@ export function EventManagementTab() {
               <Table
                 aria-label="Events management table"
                 removeWrapper
-                classNames={managementTableClassNames}
+                classNames={{
+                  ...managementTableClassNames,
+                  td: 'border-b border-gray-100 px-3 py-[7.9px] align-middle whitespace-nowrap',
+                }}
               >
                 <TableHeader>
                   <TableColumn key="eventId">
@@ -1866,6 +1869,14 @@ export function EventManagementTab() {
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant="flat"
+                        className="flex-1 sm:flex-none min-w-[120px]"
+                        onPress={() => eventsScreen.showDocumentPreview('Function schedule', eventsScreen.functionScheduleHtml(filteredManagedEvents, managementGanttTimelineTitle || 'Filtered Events'))}
+                      >
+                        Preview
+                      </Button>
                       <Button 
                         size="sm" 
                         color="primary" 
@@ -1873,7 +1884,16 @@ export function EventManagementTab() {
                         className="flex-1 sm:flex-none min-w-[120px]"
                         onPress={() => exportManagementFunctionSchedulePDF()}
                       >
-                        🖨️ Print Schedule
+                        Print
+                      </Button>
+                      <Button
+                        size="sm"
+                        color="primary"
+                        variant="bordered"
+                        className="flex-1 sm:flex-none min-w-[120px]"
+                        onPress={() => eventsScreen.emailFunctionScheduleFromEvents(filteredManagedEvents, managementGanttTimelineTitle || 'Filtered Events')}
+                      >
+                        Email
                       </Button>
                       <Button 
                         size="sm" 

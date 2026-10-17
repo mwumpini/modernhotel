@@ -138,6 +138,7 @@ model Tenant {
   securityCheckpointLocations SecurityCheckpointLocation[]
   securityPatrolRoutes   SecurityPatrolRoute[]
   securityShifts         SecurityShift[]
+  syncLogs               SyncLog[]
 
   @@map("tenants")
 }
@@ -3055,6 +3056,26 @@ model NumberCounter {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, series])
+}
+
+/// A change made on one copy of the hotel (the computer in the building, or the cloud)
+/// so the other copy can apply it. The later change is the one that remains.
+model SyncLog {
+  id        String   @id
+  tenantId  String
+  nodeId    String
+  model     String
+  recordId  String
+  op        String
+  at        DateTime
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, nodeId, at])
+  @@index([tenantId, model, recordId])
+  @@map("sync_logs")
 }
 
 /// A hotel asking for a demo from the agmsync.com website. Not tied to any hotel account.

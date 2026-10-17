@@ -7,7 +7,7 @@ import { isPlatformOperator } from '@/app/lib/platform/operatorRole'
 // Routes that must stay reachable without a session: `/` renders its own login form
 // client-side when unauthenticated, and `/setup` is the first-run onboarding wizard that
 // creates the tenant/first user before any login is possible.
-const PUBLIC_PATHS = ['/setup', '/site']
+const PUBLIC_PATHS = ['/setup', '/site', '/staff', '/sync']
 
 /**
  * API routes that answer without a login, each guarded its own way: sign-in and
@@ -15,8 +15,8 @@ const PUBLIC_PATHS = ['/setup', '/site']
  * Vercel cron (CRON_SECRET), the setup wizard's "is this hotel set up?" check, and the
  * website's demo request form (honeypot and rate limit).
  */
-const PUBLIC_API_PREFIXES = ['/api/auth/', '/api/health', '/api/booking/', '/api/cron/', '/api/demo-request']
-const PUBLIC_API_GET = ['/api/settings/setup-status']
+const PUBLIC_API_PREFIXES = ['/api/auth/', '/api/health', '/api/booking/', '/api/cron/', '/api/demo-request', '/api/sync/']
+const PUBLIC_API_GET = ['/api/settings/setup-status', '/api/hotel-address']
 
 function isPublicApi(request: NextRequest): boolean {
   const { pathname } = request.nextUrl
@@ -73,7 +73,10 @@ function routeSiteHost(request: NextRequest): NextResponse | null {
   if (!SITE_HOSTS.has(host)) return null
   const { pathname, search } = request.nextUrl
   if (pathname === '/') return NextResponse.rewrite(new URL('/site', request.url))
-  if (pathname === '/site' || pathname.startsWith('/site/')) return NextResponse.next()
+  if (pathname === '/site' || pathname === '/site/') {
+    return NextResponse.redirect(new URL('/' + search, request.url), 308)
+  }
+  if (pathname.startsWith('/site/')) return NextResponse.next()
   return NextResponse.redirect(new URL(pathname + search, APP_ORIGIN), 308)
 }
 

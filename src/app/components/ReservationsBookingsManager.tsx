@@ -4,6 +4,8 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import HeadingInfo from './HeadingInfo';
 import { chooseDanger, confirmChoice, confirmDanger, confirmDelete, confirmVoid } from './DangerConfirm';
+import { confirmDocumentSend, documentPdfBase64 } from '../lib/platform/sendDocumentEmail';
+import { HtmlDocumentPreview } from './documents/HtmlDocumentPreview';
 import { 
   Card, 
   CardBody, 
@@ -141,6 +143,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   // load-reservations effect below — so this component's first render can't
   // diverge from the server-rendered HTML.
   const [businessDate, setBusinessDate] = useState<string | null>(null);
+  const [confirmationPreview, setConfirmationPreview] = useState<string | null>(null);
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [filteredReservations, setFilteredReservations] = useState<Reservation[]>([]);
   const [resPage, setResPage] = useState(1);
@@ -293,39 +296,13 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     } as any;
   };
 
-  // html2canvas (bundled inside html2pdf.js) can't parse the oklch() color
-  // functions Tailwind v4 emits, so screenshotting this tab's own live DOM
-  // (the "Summary / Print" panel above, styled with Tailwind classes) throws
-  // "Attempting to parse an unsupported color function oklch" and silently
-  // produces no PDF. Rendering the Document Templates engine's HTML instead —
-  // same content, but with the hardcoded hex/rgb CSS every built-in template
-  // uses, no Tailwind involved — into an off-screen iframe sidesteps that
-  // entirely; html2canvas rasterizes the iframe's real, laid-out document.
-  const renderReservationPdfSource = async (reservation: Reservation): Promise<{ el: HTMLElement; cleanup: () => void }> => {
+  const confirmationHtml = (reservation: Reservation) => {
     const settingsState = useSettingsStore.getState();
-    const html = renderPrint(
+    return renderPrint(
       'accommodation-proforma' as any,
       settingsState.printing['accommodation-proforma'] || 'builtin-accommodation-proforma-standard',
       buildReservationConfirmationPrintData(reservation)
     );
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.left = '-10000px';
-    iframe.style.top = '0';
-    iframe.style.width = '800px';
-    iframe.style.height = '1200px';
-    iframe.style.border = '0';
-    document.body.appendChild(iframe);
-    await new Promise<void>((resolve) => {
-      iframe.onload = () => resolve();
-      iframe.srcdoc = html;
-    });
-    const body = iframe.contentDocument?.body;
-    if (!body) {
-      iframe.remove();
-      throw new Error('Failed to render PDF source');
-    }
-    return { el: body, cleanup: () => iframe.remove() };
   };
 
   const printConfirmation = (reservation: Reservation) => {
@@ -338,16 +315,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     const guestEmail = (formData.email || '').trim()
       || (frontOfficeStore.guests.find(g => g.id === reservation.guestId)?.email || '').trim();
     if (!guestEmail) return;
-    let cleanup: (() => void) | undefined;
+    if (!(await confirmDocumentSend(guestEmail, 'reservation confirmation'))) return;
     try {
-      const { el, cleanup: c } = await renderReservationPdfSource(reservation);
-      cleanup = c;
-      // @ts-ignore
-      const ensure = async () => (window as any).html2pdf || await new Promise((res, rej) => { const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; s.onload=()=>res((window as any).html2pdf); s.onerror=()=>rej(); document.body.appendChild(s); });
-      // @ts-ignore
-      const h2p = await ensure();
-      const pdfBuffer = await h2p().set({ jsPDF: { unit: 'pt', format: 'a4', orientation: 'portrait' }, margin: 16 }).from(el).outputPdf('datauristring');
-      cleanup();
+      const pdfBuffer = await documentPdfBase64(confirmationHtml(reservation));
       const response = await fetch('/api/email/send-proforma', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -355,7 +325,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           reservationId: reservation.resId || reservation.id,
           guestEmail,
           guestName: reservation.guestName || '',
-          pdfBuffer: pdfBuffer.split(',')[1],
+          pdfBuffer,
           hotelName: useSettingsStore.getState().saasSettings.customBranding.companyName || 'Hotel',
           reservationDetails: {
             checkIn: new Date(reservation.arrival).toLocaleDateString(),
@@ -373,7 +343,6 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         alert(`Failed to send: ${error.error || 'Unknown error'}`);
       }
     } catch (error) {
-      cleanup?.();
       console.error('Error sending confirmation:', error);
       alert('Failed to send. Please try again.');
     }
@@ -1805,29 +1774,26 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                     {/* Print, PDF and Send to guest live here only (not in the footer). */}
                     <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-gray-200 pt-3">
                       <Button size="sm" variant="flat" onClick={async () => {
-                        let cleanup: (() => void) | undefined;
+                        const filename = `reservation-${selectedReservation?.resId || selectedReservation?.id || 'summary'}.pdf`;
                         try {
-                          const { el, cleanup: c } = await renderReservationPdfSource(selectedReservation!);
-                          cleanup = c;
-                          // lazy load html2pdf.js
-                          // @ts-ignore
-                          const ensure = async () => (window as any).html2pdf || await new Promise((res, rej) => { const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; s.onload=()=>res((window as any).html2pdf); s.onerror=()=>rej(); document.body.appendChild(s); });
-                          // @ts-ignore
-                          const h2p = await ensure();
-                          const filename = `reservation-${selectedReservation?.resId || selectedReservation?.id || 'summary'}.pdf`;
-                          await h2p().set({ filename, jsPDF: { unit: 'pt', format: 'a4', orientation: 'portrait' }, margin: 16 }).from(el).save();
-                          cleanup();
-
+                          const pdf = await documentPdfBase64(confirmationHtml(selectedReservation!));
+                          const bytes = Uint8Array.from(atob(pdf), (char) => char.charCodeAt(0));
+                          const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+                          const link = document.createElement('a');
+                          link.href = url;
+                          link.download = filename;
+                          link.click();
+                          URL.revokeObjectURL(url);
                           trackEvent('Proforma.Downloaded', { reservationId: selectedReservation?.id, guestName: selectedReservation?.guestName, filename }, { sourceModule: 'FrontOffice' });
                         } catch {
-                          cleanup?.();
                           trackEvent('Proforma.Printed', { reservationId: selectedReservation?.id, guestName: selectedReservation?.guestName, fallbackToPrint: true }, { sourceModule: 'FrontOffice' });
                           window.print();
                         }
                       }}>Download PDF</Button>
+                      <Button size="sm" variant="flat" onPress={() => setConfirmationPreview(confirmationHtml(selectedReservation))}>Preview</Button>
                       <Button size="sm" color="primary" variant="flat" onPress={() => printConfirmation(selectedReservation)}>Print</Button>
                       {((formData.email || '').trim() || (frontOfficeStore.guests.find(g => g.id === selectedReservation.guestId)?.email || '').trim()) && (
-                        <Button size="sm" color="primary" onPress={() => sendConfirmation(selectedReservation)}>Send to guest</Button>
+                        <Button size="sm" color="primary" onPress={() => sendConfirmation(selectedReservation)}>Email</Button>
                       )}
                     </div>
                   </div>
@@ -3181,6 +3147,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           </ModalFooter>
         </ModalContent>
       </Modal>
+      <HtmlDocumentPreview title="Reservation confirmation" html={confirmationPreview} onClose={() => setConfirmationPreview(null)} />
     </div>
   );
 }

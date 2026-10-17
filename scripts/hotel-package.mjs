@@ -125,7 +125,7 @@ console.log('Copying the Windows runtime and installer...')
 fs.mkdirSync(path.join(dest, 'node'), { recursive: true })
 fs.copyFileSync(process.execPath, path.join(dest, 'node', 'node.exe'))
 for (const name of fs.readdirSync(installerDir)) {
-  if (name.endsWith('.iss') || name === 'after-install.txt') continue
+  if (name.endsWith('.iss') || name === 'after-install.txt' || name === 'AGMSync-Staff-Setup.cmd') continue
   const from = path.join(installerDir, name)
   if (fs.statSync(from).isFile()) fs.copyFileSync(from, path.join(dest, name))
 }
@@ -136,11 +136,10 @@ fs.writeFileSync(path.join(dest, 'INSTALL.txt'), `AGM Sync
 
 1. Double-click "Install Hotel System.cmd"
 2. Approve the Windows prompt
-3. Leave the AGM Sync window open while the hotel is working
-4. On this computer and on the other computers, open the address shown in that window
+3. Leave this computer on. It is the hotel server
+4. On the other computer, phones, and tablet, join the same Wi-Fi and open the address on the sign-in page
 
-The internet can be down. This computer is the one that must stay on.
-Hotel records stay in C:\\ProgramData\\GhanaHotel
+https://app.agmsync.com is a separate cloud copy.
 `, 'utf8')
 
 const isccCandidates = [
@@ -152,13 +151,11 @@ const iscc = isccCandidates.find((candidate) => fs.existsSync(candidate))
 if (iscc) {
   console.log('Building Setup.exe...')
   run(iscc, [path.join(installerDir, 'GhanaHotel.iss')])
-  console.log(`Setup program: ${path.join(root, 'dist', 'GhanaHotel-Setup.exe')}`)
-  console.log('Building the staff setup...')
-  run(iscc, [path.join(installerDir, 'GhanaHotelStaff.iss')])
-  console.log(`Staff setup: ${path.join(root, 'dist', 'GhanaHotel-Staff-Setup.exe')}`)
+  console.log(`Setup program: ${path.join(root, 'dist', 'AGMSync-Setup.exe')}`)
+  run(iscc, [path.join(installerDir, 'GhanaHotelCloud.iss')])
+  console.log(`Cloud and premises setup: ${path.join(root, 'dist', 'AGMSync-Cloud-Premises-Setup.exe')}`)
 } else {
   console.log('Inno Setup is not installed, so there is no single Setup.exe.')
   console.log('Copy dist\\GhanaHotel to the hotel computer and double-click "Install Hotel System.cmd".')
 }
-
 console.log(`Package ready: ${dest}`)

@@ -32,6 +32,7 @@ type Hotel = {
   onTrial: boolean;
   payments?: FeePayment[];
   modules: PaidModules;
+  mail: { host: string; port: number; user: string } | null;
   createdAt: string;
 };
 
@@ -119,6 +120,10 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
   const [adminEmail, setAdminEmail] = useState('');
   const [adminUsername, setAdminUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [mailHost, setMailHost] = useState('');
+  const [mailPort, setMailPort] = useState('465');
+  const [mailUser, setMailUser] = useState('');
+  const [mailPass, setMailPass] = useState('');
   const [modules, setModules] = useState<PaidModules>(frontDeskOnly);
 
   const load = async () => {
@@ -179,6 +184,10 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
     setAdminEmail('');
     setAdminUsername('');
     setPassword('');
+    setMailHost('');
+    setMailPort('465');
+    setMailUser('');
+    setMailPass('');
     setHosting('cloud');
     setFee(String(DEFAULT_MONTHLY_FEE.cloud));
     setFeeTouched(false);
@@ -207,7 +216,21 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
       const res = await fetch('/api/platform/tenants', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, subdomain, hosting, monthlyFee, trialDays: days, adminName, adminEmail, adminUsername, password, modules }),
+        body: JSON.stringify({
+          name,
+          subdomain,
+          hosting,
+          monthlyFee,
+          trialDays: days,
+          adminName,
+          adminEmail,
+          adminUsername,
+          password,
+          modules,
+          mail: mailHost.trim() || mailUser.trim() || mailPass.trim()
+            ? { host: mailHost, port: mailPort, user: mailUser, pass: mailPass }
+            : undefined,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -248,6 +271,28 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
         setError(data.error || 'Could not update this hotel.');
         return;
       }
+      setHotels((rows) => rows.map((row) => (row.id === hotel.id ? { ...row, ...data } : row)));
+      await refreshSelected(hotel.id);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const saveMail = async (hotel: Hotel, host: string, port: string, user: string, pass: string) => {
+    setError('');
+    setBusy('mail');
+    try {
+      const res = await fetch(`/api/platform/tenants/${hotel.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mail: { host, port, user, pass } }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || 'Could not save the mailbox.');
+        return;
+      }
+      setNotice(`${hotel.name} will send mail as ${data.mail?.user || user}.`);
       setHotels((rows) => rows.map((row) => (row.id === hotel.id ? { ...row, ...data } : row)));
       await refreshSelected(hotel.id);
     } finally {
@@ -416,6 +461,7 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
             onSetTrial={setTrial}
             onModules={saveModules}
             onResetLogin={resetAdminLogin}
+            onSaveMail={saveMail}
             onDeleteAsk={() => setDeleteOpen(true)}
             onDeleteText={setDeleteText}
             onDelete={deleteHotel}
@@ -565,6 +611,18 @@ export default function OperatorConsole({ onLogout }: { onLogout: () => void }) 
                 variant="bordered"
                 classNames={fieldClass}
               />
+              <fieldset className="space-y-3 rounded-2xl border border-gray-200 p-4">
+                <legend className="px-1 text-sm font-medium text-ghana-black">Outgoing email</legend>
+                <p className="text-xs text-gray-500">Optional. The mailbox guests see. Use the secure outgoing server, usually port 465. Leave this blank and add it later.</p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Input label="Outgoing server" placeholder="mail.hotel.com" value={mailHost} onChange={(e) => setMailHost(e.target.value)} variant="bordered" classNames={fieldClass} />
+                  <Input type="number" label="SMTP port" description="465 is the secure port." value={mailPort} onChange={(e) => setMailPort(e.target.value)} variant="bordered" classNames={fieldClass} />
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Input type="email" label="Mailbox" placeholder="marketing@hotel.com" value={mailUser} onChange={(e) => setMailUser(e.target.value)} variant="bordered" classNames={fieldClass} />
+                  <Input type="password" label="Mailbox password" value={mailPass} onChange={(e) => setMailPass(e.target.value)} variant="bordered" classNames={fieldClass} />
+                </div>
+              </fieldset>
             </form>
           </ModalBody>
           <ModalFooter>
@@ -896,6 +954,7 @@ function HotelDesk({
   onSetTrial,
   onModules,
   onResetLogin,
+  onSaveMail,
   onDeleteAsk,
   onDeleteText,
   onDelete,
@@ -914,6 +973,7 @@ function HotelDesk({
   onSetTrial: (hotel: Hotel, days: number) => void;
   onModules: (hotel: Hotel, modules: PaidModules) => void;
   onResetLogin: (hotel: Hotel, email: string, username: string, password: string) => void;
+  onSaveMail: (hotel: Hotel, host: string, port: string, user: string, pass: string) => void;
   onDeleteAsk: () => void;
   onDeleteText: (value: string) => void;
   onDelete: (hotel: Hotel) => void;
@@ -922,6 +982,10 @@ function HotelDesk({
   const [loginEmail, setLoginEmail] = useState('');
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [mailHost, setMailHost] = useState('');
+  const [mailPort, setMailPort] = useState('465');
+  const [mailUser, setMailUser] = useState('');
+  const [mailPass, setMailPass] = useState('');
   const [keyCopied, setKeyCopied] = useState(false);
   const [copyError, setCopyError] = useState('');
   useEffect(() => {
@@ -930,6 +994,10 @@ function HotelDesk({
     setLoginEmail(detail.adminEmail || '');
     setLoginUsername(detail.adminUsername || '');
     setLoginPassword('');
+    setMailHost(detail.mail?.host || '');
+    setMailPort(String(detail.mail?.port || 465));
+    setMailUser(detail.mail?.user || '');
+    setMailPass('');
     setKeyCopied(false);
     setCopyError('');
   }, [detail]);
@@ -1008,6 +1076,30 @@ function HotelDesk({
               <p>Send the key as Authorization: Bearer, or as the X-Api-Key header. Do not put the key in the web address.</p>
             </div>
           </div>
+          <form
+            className="space-y-3 rounded-2xl border border-gray-200 bg-white p-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              onSaveMail(detail, mailHost, mailPort, mailUser, mailPass);
+              setMailPass('');
+            }}
+          >
+            <h3 className="text-sm font-semibold text-ghana-black">Outgoing email</h3>
+            <p className="text-xs text-gray-500">
+              {detail.mail
+                ? `Guests receive mail from ${detail.mail.user}. Leave the password blank to keep the one already saved.`
+                : 'The mailbox guests see. Use the secure outgoing server, usually port 465.'}
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input label="Outgoing server" placeholder="mail.hotel.com" value={mailHost} onChange={(e) => setMailHost(e.target.value)} variant="bordered" classNames={fieldClass} />
+              <Input type="number" label="SMTP port" description="465 is the secure port." value={mailPort} onChange={(e) => setMailPort(e.target.value)} variant="bordered" classNames={fieldClass} />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input type="email" label="Mailbox" placeholder="marketing@hotel.com" value={mailUser} onChange={(e) => setMailUser(e.target.value)} variant="bordered" classNames={fieldClass} />
+              <Input type="password" label="Mailbox password" value={mailPass} onChange={(e) => setMailPass(e.target.value)} variant="bordered" classNames={fieldClass} />
+            </div>
+            <Button type="submit" className="bg-ghana-green text-white" isLoading={busy === 'mail'}>Save mailbox</Button>
+          </form>
           <form
             className="space-y-3 rounded-2xl border border-gray-200 bg-white p-4"
             onSubmit={(e) => {

@@ -7,9 +7,10 @@
  * or that a guest never got checked out.
  */
 
-import type { Reservation, FolioCharge, FolioPayment } from './types';
+import type { Reservation } from './types';
 import { resolveRateForDate, type StoreLike } from './roomCharges';
 import { chargeNet, isPostedRoomCharge } from './folioLedger';
+import { findMainFolio } from './helpers/folio';
 
 export type NightAuditDiscrepancy = {
   reservationId: string;
@@ -60,9 +61,9 @@ export type DailyRevenue = {
  * the fact). Scoped to checked-in/checked-out reservations, matching
  * nightAudit.ts's sumFolioActivity.
  */
-export function computeDailyRevenue(
-  store: { reservations: Reservation[]; getOrCreateFolio: (reservationId: string) => { charges?: FolioCharge[]; payments?: FolioPayment[] } },
-  businessDate: string,
+export function computeRevenueWhere(
+  store: { reservations: Reservation[]; folios?: Parameters<typeof findMainFolio>[0] },
+  include: (businessDate: string) => boolean,
 ): DailyRevenue {
   const result: DailyRevenue = {
     roomCharges: 0,
@@ -75,10 +76,12 @@ export function computeDailyRevenue(
 
   for (const r of store.reservations) {
     if (r.status !== 'checked-in' && r.status !== 'checked-out') continue;
-    const folio = store.getOrCreateFolio(r.id);
+    const folio = findMainFolio(store.folios, r.id);
+    if (!folio) continue;
 
     for (const c of folio.charges || []) {
-      if ((c.date || '').slice(0, 10) !== businessDate) continue;
+      const postedOn = (c.date || '').slice(0, 10);
+      if (!include(postedOn)) continue;
       const net = chargeNet(c as any);
       if (isPostedRoomCharge(c)) result.roomCharges += net;
       else result.otherCharges += net;
@@ -86,7 +89,7 @@ export function computeDailyRevenue(
     }
 
     for (const p of folio.payments || []) {
-      if ((p.status || 'completed') !== 'completed' || (p.date || '').slice(0, 10) !== businessDate) continue;
+      if ((p.status || 'completed') !== 'completed' || !include((p.date || '').slice(0, 10))) continue;
       switch (p.method) {
         case 'Cash': result.paymentsByMethod.cash += p.amount || 0; break;
         case 'Card': result.paymentsByMethod.card += p.amount || 0; break;
@@ -99,4 +102,11 @@ export function computeDailyRevenue(
   result.totalCharges = result.roomCharges + result.otherCharges + result.taxTotal;
   result.totalPayments = result.paymentsByMethod.cash + result.paymentsByMethod.card + result.paymentsByMethod.mobileMoney + result.paymentsByMethod.other;
   return result;
+}
+
+export function computeDailyRevenue(
+  store: { reservations: Reservation[]; folios?: Parameters<typeof findMainFolio>[0] },
+  businessDate: string,
+): DailyRevenue {
+  return computeRevenueWhere(store, (date) => date === businessDate);
 }

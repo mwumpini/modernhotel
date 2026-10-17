@@ -201,8 +201,14 @@ export function EventClientModals() {
               <Button color="secondary" variant="flat" onPress={() => eventsScreen.handleContractDocx(contractTemplateKey)}>
                 Download DOCX
               </Button>
-              <Button color="primary" onPress={() => eventsScreen.handleContractPrint(contractTemplateKey)}>
-                Print Contract
+              <Button variant="flat" onPress={() => eventsScreen.showDocumentPreview('Contract', eventsScreen.contractHtml(contractTemplateKey))}>
+                Preview
+              </Button>
+              <Button color="primary" variant="flat" onPress={() => eventsScreen.handleContractPrint(contractTemplateKey)}>
+                Print
+              </Button>
+              <Button color="primary" variant="flat" onPress={() => eventsScreen.handleContractEmail(contractTemplateKey)}>
+                Email
               </Button>
             </ModalFooter>
           </ModalContent>

@@ -36,7 +36,7 @@ export default function DemoForm() {
 
   if (state.status === 'sent') {
     return (
-      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-8 text-center">
+      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-8 py-4 text-center">
         <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-600 text-2xl text-white">✓</div>
         <h3 className="text-xl font-semibold text-slate-900">Thank you. We’ll be in touch shortly.</h3>
         <p className="mt-2 text-slate-600">We usually reply within one working day. For a faster answer, message us on WhatsApp.</p>

@@ -9,6 +9,7 @@ import FrontOfficeBackButton from '../../../components/FrontOfficeBackButton';
 import { Card, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Badge, Chip, Switch, Tooltip } from '@heroui/react';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Textarea, useDisclosure } from '@heroui/react';
 import { worksheetTableClassNames } from '../../../components/frontoffice/StayWorksheetTable';
+import { SortLabel, useResizableColumns } from '../../../components/frontoffice/columnResize';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
 import { useSettingsStore } from '../../../lib/settings/store';
 import { COUNTRIES, countryCodeToNationalityAdjective } from '../../../lib/countries';
@@ -98,6 +99,14 @@ interface ReservationHistory {
 	notes?: string;
 }
 
+const CLIENT_COL_WIDTHS = {
+	index: 40, id: 90, name: 200, email: 150, phone: 110, secondaryPhone: 110,
+	gender: 70, nationality: 90, dob: 90, company: 150, jobTitle: 120,
+	industry: 120, contactPerson: 140, address: 160, city: 90,
+	type: 110, stays: 90, services: 80, dateJoined: 100,
+};
+type ClientCol = keyof typeof CLIENT_COL_WIDTHS;
+
 export function ClientsServicesContent({ embedded = false }: { embedded?: boolean }) {
 	const [rows, setRows] = useState<ClientRow[]>([]);
 	const [searchTerm, setSearchTerm] = useState('');
@@ -145,20 +154,14 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage] = useState(20);
     const [sortState, setSortState] = useState<{ column: string; direction: 'asc'|'desc' }>({ column: 'name', direction: 'asc' });
-    const defaultColWidths: Record<string, number> = { 
-        index: 40, id: 90, name: 200, email: 150, phone: 110, secondaryPhone: 110, 
-        gender: 70, nationality: 90, dob: 90, company: 150, jobTitle: 120, 
-        industry: 120, contactPerson: 140, address: 160, city: 90, 
-        type: 110, stays: 90, services: 80, dateJoined: 100
-    };
-    const [colWidths, setColWidths] = useState<Record<string, number>>(defaultColWidths);
-    
+
     // People and companies do not share a column set. "All" keeps a Type column so both can sit in one list.
-    const visibleColumns: Array<keyof typeof colWidths> = typeFilter === 'corporate'
+    const visibleColumns: ClientCol[] = typeFilter === 'corporate'
         ? ['index', 'id', 'name', 'contactPerson', 'email', 'phone', 'stays']
         : typeFilter === 'individual'
             ? ['index', 'id', 'name', 'email', 'phone', 'nationality', 'stays']
             : ['index', 'id', 'name', 'type', 'email', 'phone', 'stays'];
+    const cols = useResizableColumns<ClientCol>(CLIENT_COL_WIDTHS, { activeKeys: visibleColumns, flexKeys: ['name'] });
     
     // Optimized form input handlers
     const handleInputChange = React.useCallback((field: string, value: any) => {
@@ -999,38 +1002,6 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 	
 	// Debug logging
 	// Debug logging removed for production
-    const HeaderCell = ({ colKey, title }: { colKey: string; title: string }) => {
-        const isSortable = colKey !== 'index';
-        const isActive = sortState.column === colKey;
-        
-        return (
-            <div className="flex items-center w-full select-none">
-                <div 
-                    className={`mx-1 flex items-center px-1 py-0.5 rounded transition-colors ${
-                        isSortable 
-                            ? 'cursor-pointer hover:bg-gray-100 active:bg-gray-200' 
-                            : 'cursor-default'
-                    }`}
-                    onClick={() => {
-                        if (isSortable) {
-                            setSortState(prev => ({ 
-                                column: colKey, 
-                                direction: prev.column === colKey && prev.direction === 'asc' ? 'desc' : 'asc' 
-                            }));
-                        }
-                    }}
-                >
-                    <span className="font-semibold text-ghana-black">{title}{isActive ? (sortState.direction === 'asc' ? ' ↑' : ' ↓') : ''}</span>
-                </div>
-            </div>
-        );
-    };
-
-    const colStyle = (key: keyof typeof colWidths): React.CSSProperties => ({ 
-        width: colWidths[key], 
-        minWidth: colWidths[key]
-    });
-
 	const content = (
 		<>
 			<div className={embedded ? '' : 'py-8 px-6'}>
@@ -1316,18 +1287,20 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 					)}
 							<Card className="border-0 shadow-lg">
 								<CardBody className="px-2 py-3">
+									<div ref={cols.frameRef} style={cols.frameStyle}>
 									<Table
 										aria-label="Clients and services table"
 										removeWrapper
 										classNames={{
 											...worksheetTableClassNames,
-											th: `${worksheetTableClassNames.th} py-2`,
+											table: 'table-fixed w-[var(--col-table-width)] min-w-[var(--col-table-width)] max-w-none',
+											th: `${worksheetTableClassNames.th} relative py-2`,
 											td: `${worksheetTableClassNames.td} overflow-hidden text-ellipsis py-1.5`,
 										}}
 									>
 						<TableHeader>
 							{visibleColumns.map(columnKey => {
-								const columnTitles: Record<string, string> = {
+								const columnTitles: Record<ClientCol, string> = {
 									index: "#",
 									id: "Client ID",
 									name: typeFilter === 'corporate' ? 'Company' : 'Name',
@@ -1347,15 +1320,29 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 									stays: "Stays",
 									services: "Services",
 									dateJoined: "Date Joined",
-									actions: "Actions"
 								};
 								
 								return (
-									<TableColumn 
-										key={columnKey} 
-										style={columnKey === 'index' ? colStyle(columnKey) : { width: colWidths[columnKey] }}
+									<TableColumn
+										key={columnKey}
+										className="relative"
+										style={cols.style(columnKey)}
 									>
-										<HeaderCell colKey={columnKey} title={columnTitles[columnKey]} />
+										{columnKey === 'index' ? (
+											<span className="font-semibold text-ghana-black">{columnTitles[columnKey]}</span>
+										) : (
+											<SortLabel
+												active={sortState.column === columnKey}
+												dir={sortState.direction}
+												onPress={() => setSortState((prev) => ({
+													column: columnKey,
+													direction: prev.column === columnKey && prev.direction === 'asc' ? 'desc' : 'asc',
+												}))}
+											>
+												{columnTitles[columnKey]}
+											</SortLabel>
+										)}
+										{cols.sizer(columnKey, columnTitles[columnKey])}
 									</TableColumn>
 								);
 							})}
@@ -1370,12 +1357,12 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 										const renderCell = (): JSX.Element => {
 											switch (columnKey) {
 												case 'index':
-													return <TableCell style={colStyle('index')}>{startIndex + idx + 1}</TableCell>;
+													return <TableCell>{startIndex + idx + 1}</TableCell>;
 												case 'id':
-													return <TableCell className="text-gray-600" style={{ width: colWidths.id }}>{row.serialNumber}</TableCell>;
+													return <TableCell className="text-gray-600">{row.serialNumber}</TableCell>;
 												case 'name':
 													return (
-														<TableCell style={{ width: colWidths.name }}>
+														<TableCell>
 											<div>
 												<div className="flex items-center gap-2">
 												<p className="font-semibold text-ghana-black">{row.name}</p>
@@ -1388,46 +1375,46 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 									</TableCell>
 													);
 												case 'email':
-													return <TableCell style={{ width: colWidths.email }}>{row.email || '—'}</TableCell>;
+													return <TableCell>{row.email || '—'}</TableCell>;
 												case 'phone':
-													return <TableCell style={{ width: colWidths.phone }}>{row.phone || '—'}</TableCell>;
+													return <TableCell>{row.phone || '—'}</TableCell>;
 												case 'secondaryPhone':
-													return <TableCell style={{ width: colWidths.secondaryPhone }}>{row.secondaryPhone || '—'}</TableCell>;
+													return <TableCell>{row.secondaryPhone || '—'}</TableCell>;
 												case 'gender':
-													return <TableCell style={{ width: colWidths.gender }}>{row.gender || '—'}</TableCell>;
+													return <TableCell>{row.gender || '—'}</TableCell>;
 												case 'nationality':
-													return <TableCell style={{ width: colWidths.nationality }}>{row.nationality || '—'}</TableCell>;
+													return <TableCell>{row.nationality || '—'}</TableCell>;
 												case 'dob':
-													return <TableCell style={{ width: colWidths.dob }}>{row.dateOfBirth ? new Date(row.dateOfBirth).toLocaleDateString() : '—'}</TableCell>;
+													return <TableCell>{row.dateOfBirth ? new Date(row.dateOfBirth).toLocaleDateString() : '—'}</TableCell>;
 												case 'company':
-													return <TableCell style={{ width: colWidths.company }}>{row.company || '—'}</TableCell>;
+													return <TableCell>{row.company || '—'}</TableCell>;
 												case 'jobTitle':
-													return <TableCell style={{ width: colWidths.jobTitle }}>{row.jobTitle || '—'}</TableCell>;
+													return <TableCell>{row.jobTitle || '—'}</TableCell>;
 												case 'industry':
-													return <TableCell style={{ width: colWidths.industry }}>{row.industry || '—'}</TableCell>;
+													return <TableCell>{row.industry || '—'}</TableCell>;
 												case 'contactPerson':
-													return <TableCell style={{ width: colWidths.contactPerson }}>{row.contactPerson || '—'}</TableCell>;
+													return <TableCell>{row.contactPerson || '—'}</TableCell>;
 												case 'address':
-													return <TableCell style={{ width: colWidths.address }}>{row.address || '—'}</TableCell>;
+													return <TableCell>{row.address || '—'}</TableCell>;
 												case 'city':
-													return <TableCell style={{ width: colWidths.city }}>{row.city || '—'}</TableCell>;
+													return <TableCell>{row.city || '—'}</TableCell>;
 												case 'type':
 													return (
-														<TableCell style={{ width: colWidths.type }}>
+														<TableCell>
 										<Chip size="sm" variant="flat" color={row.type==='corporate'?'primary':'default'}>{row.type === 'corporate' ? 'Company' : 'Person'}</Chip>
 									</TableCell>
 													);
 												case 'stays':
 													return (
-														<TableCell style={{ width: colWidths.stays }}>
+														<TableCell>
 															<span className="block text-center font-medium">{row.stayCount}</span>
 														</TableCell>
 													);
 												case 'services':
-													return <TableCell style={{ width: colWidths.services }}>{row.services}</TableCell>;
+													return <TableCell>{row.services}</TableCell>;
 												case 'dateJoined':
 													return (
-														<TableCell style={{ width: colWidths.dateJoined }}>
+														<TableCell>
 															<span className="block text-center text-sm">{new Date(row.createdAt).toLocaleDateString()}</span>
 														</TableCell>
 													);
@@ -1442,7 +1429,8 @@ export function ClientsServicesContent({ embedded = false }: { embedded?: boolea
 								);
 							})}
 						</TableBody>
-					</Table>
+									</Table>
+									</div>
 								</CardBody>
 							</Card>
 							

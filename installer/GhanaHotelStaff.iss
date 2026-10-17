@@ -10,16 +10,22 @@ DisableDirPage=yes
 DisableProgramGroupPage=yes
 OutputDir=..\dist
 OutputBaseFilename=AGMSync-Staff-Setup
-Compression=lzma2
-SolidCompression=yes
+Compression=none
+SolidCompression=no
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+; This file is the setup. A loader that starts a second copy from the temp folder is blocked by Windows Application Control (error 4551).
+UseSetupLdr=no
 WizardStyle=modern
+SetupIconFile=agm-sync.ico
 InfoAfterFile=staff-after.txt
 UninstallDisplayName={#MyAppName}
+UninstallDisplayIcon={app}\agm-sync.ico
 
 [Files]
 Source: "staff-after.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "agm-sync.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [UninstallDelete]
 Type: files; Name: "{userdesktop}\AGM Sync.url"
@@ -33,11 +39,11 @@ var
 procedure InitializeWizard;
 begin
   UrlPage := CreateInputQueryPage(wpWelcome,
-    'Office computer',
-    'Where is the hotel system running?',
-    'On the office computer, look at the AGM Sync window and type the address shown there. Then click Next.');
+    'Hotel page',
+    'This only adds an AGM Sync icon.',
+    'It opens the hotel page in the browser, the same way a saved webpage does. On the office computer, look at the AGM Sync window and type the address shown there. Then click Next.');
   UrlPage.Add('Address:', False);
-  UrlPage.Values[0] := 'http://192.168.1.20:3000';
+  UrlPage.Values[0] := '';
 end;
 
 function NormalizeUrl(const Value: String): String;

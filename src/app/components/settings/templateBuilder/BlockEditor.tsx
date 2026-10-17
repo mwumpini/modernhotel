@@ -3,7 +3,7 @@
 import React, { useRef, useState } from 'react';
 import { Button, Input, Switch, Textarea } from '@heroui/react';
 import { ChevronDown, ChevronUp, Copy, Eye, EyeOff, GripVertical, Plus, Search, Trash2 } from 'lucide-react';
-import type { BlockConfig, BlockTemplate, BlockType, TemplateStyle } from '../../../lib/print/blocks';
+import { DEFAULT_EMAIL_NOTE, type BlockConfig, type BlockTemplate, type BlockType, type TemplateStyle } from '../../../lib/print/blocks';
 import type { PrintData } from '../../../lib/print/templates';
 import { SELF_BORDERED_TYPES } from '../../../lib/print/blockRenderer';
 import TemplatePreview from './TemplatePreview';
@@ -543,6 +543,16 @@ export default function BlockEditor({ template, onChange, sampleData }: BlockEdi
             <p className="text-sm text-gray-500">
               Drag to reorder, drop a field into a Layout to place them side by side, and rename labels. The preview updates as you go.
             </p>
+            <div className="space-y-2">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Email</div>
+              <Textarea
+                label="Line on the emailed copy"
+                description="Added only when this template is emailed. Print and preview leave it off. Clear it to send the PDF without this line. Save, then set this template active, for the new wording to be used."
+                minRows={2}
+                value={template.emailNote ?? DEFAULT_EMAIL_NOTE}
+                onValueChange={(value) => onChange({ ...template, emailNote: value, updatedAt: new Date().toISOString() })}
+              />
+            </div>
             {template.blocks.length === 0 ? (
               <div className="rounded-lg border border-dashed border-gray-300 bg-white px-4 py-8 text-center text-sm text-gray-500">
                 This form is empty. Add a letterhead, a title, or a layout to start.

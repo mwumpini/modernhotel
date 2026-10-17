@@ -214,9 +214,27 @@ export async function runTenantNightAudit(params: {
   }
 }
 
+function dayLeftOpen(openDate: string, completedAt: string): NightAuditServerResult {
+  return {
+    skipped: true,
+    businessDate: openDate,
+    nextBusinessDate: openDate,
+    roomChargesPosted: 0,
+    noShowsMarked: 0,
+    checkedInCount: 0,
+    folioChargesTotal: 0,
+    folioPaymentsTotal: 0,
+    status: 'completed',
+    errors: [],
+    completedAt,
+    daysClosed: [],
+  }
+}
+
 /**
  * Close every hotel day that is already behind the property calendar.
- * Today stays open. When the open day is already today, one run closes that day.
+ * The open day stays open while it is still that calendar day, and a date
+ * already ahead of the calendar is not closed either.
  */
 export async function catchUpTenantNightAudit(params: {
   tenantId: string
@@ -229,7 +247,7 @@ export async function catchUpTenantNightAudit(params: {
   const elapsed = elapsedBusinessDates(openDate, today)
 
   if (elapsed.length === 0) {
-    return runTenantNightAudit({ ...params, businessDate: openDate })
+    return dayLeftOpen(openDate, new Date().toISOString())
   }
 
   let roomChargesPosted = 0

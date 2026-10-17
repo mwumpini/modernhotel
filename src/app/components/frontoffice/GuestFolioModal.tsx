@@ -33,11 +33,13 @@ import { companyKeyOf, guestEarlierStays, lookupCompanyName } from '../../lib/fr
 import { shortDay, stayClock, stayFigures } from '../../lib/frontoffice/stayWorksheet';
 import { postDueRoomCharges } from '../../lib/frontoffice/roomCharges';
 import { chargeGross, type FolioLineJson } from '../../lib/frontoffice/folioLedger';
-import { getFolioDisplayTotals } from '../../lib/frontoffice/helpers/folio';
+import { findMainFolio, getFolioDisplayTotals } from '../../lib/frontoffice/helpers/folio';
 import type { Folio, FolioCharge, FolioPayment } from '../../lib/frontoffice/types';
 import { formatMoney } from '../../lib/format/currency';
 import { buildOrgProfile } from '../../lib/print/buildOrgProfile';
 import { openHtmlPrintWindow } from '../../lib/print/engine';
+import { HtmlDocumentPreview } from '../documents/HtmlDocumentPreview';
+import { confirmDocumentSend, documentIntro, sendDocumentEmail } from '../../lib/platform/sendDocumentEmail';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import { logAudit } from '../../lib/analytics/auditLogStore';
 import { notifyError, notifySuccess } from '../../lib/notifications/notify';
@@ -153,7 +155,7 @@ function accountRows(folio: Folio): AccountRow[] {
   return posted;
 }
 
-function printFolio(reservation: ReservationLike) {
+function folioHtml(reservation: ReservationLike) {
   const settings = useSettingsStore.getState();
   const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
   const org = buildOrgProfile(settings);
@@ -178,7 +180,11 @@ function printFolio(reservation: ReservationLike) {
       <p>Charges ${fmt(figures.totalCharges)} · Payments ${fmt(figures.totalPayments)} · ${due < -0.01 ? 'Credit' : 'Amount due'} ${fmt(Math.abs(due))}</p>
       <table><thead><tr><th>Date</th><th>Description</th><th>Reference</th><th class="right">Charge</th><th class="right">Payment</th><th class="right">Balance</th></tr></thead><tbody>${body}</tbody></table>
     </body></html>`;
-  openHtmlPrintWindow(html);
+  return html;
+}
+
+function printFolio(reservation: ReservationLike) {
+  openHtmlPrintWindow(folioHtml(reservation));
   try { trackEvent('Print.Folio' as never, { reservationId: reservation.id, guestName: reservation.guestName }); } catch { /* ignore */ }
   try { logAudit({ area: 'frontdesk', action: 'print', entity: 'Folio', entityId: reservation.id, details: `Printed folio for ${reservation.guestName}`, severity: 'low' }); } catch { /* ignore */ }
 }
@@ -219,6 +225,8 @@ export default function GuestFolioModal({
   const [splitTargetId, setSplitTargetId] = useState('');
   const [splitAmount, setSplitAmount] = useState(0);
   const [splitNote, setSplitNote] = useState('');
+  const [mailing, setMailing] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
 
   useEffect(() => frontOfficeStore.subscribe(() => setTick((n) => n + 1)), []);
 
@@ -228,7 +236,11 @@ export default function GuestFolioModal({
       setEntrySearch('');
       return;
     }
-    if (!reservation || reservation.status !== 'checked-in') return;
+    if (!reservation) return;
+    if (!findMainFolio(frontOfficeStore.folios, reservation.id)) {
+      frontOfficeStore.getOrCreateFolio(reservation.id);
+    }
+    if (reservation.status !== 'checked-in') return;
     const through = frontOfficeStore.businessDate || new Date().toISOString().slice(0, 10);
     postDueRoomCharges(frontOfficeStore as never, reservation.id, through);
   }, [isOpen, reservation]);
@@ -239,7 +251,7 @@ export default function GuestFolioModal({
   void tick;
 
   const changed = () => onChanged?.();
-  const folio = stay ? frontOfficeStore.getOrCreateFolio(stay.id) : null;
+  const folio = stay ? findMainFolio(frontOfficeStore.folios, stay.id) ?? null : null;
   const locked = folio?.status === 'closed' || folio?.status === 'void';
   const guest = stay ? frontOfficeStore.guests.find((item) => item.id === stay.guestId) : undefined;
   const companyName = stay ? lookupCompanyName(stay as never, guest) : null;
@@ -420,7 +432,31 @@ export default function GuestFolioModal({
                   </Button>
                   <div className="ml-auto flex items-center gap-2">
                     {headerExtra}
+                    <Button size="sm" variant="flat" onPress={() => setPreviewHtml(folioHtml(stay))}>Preview</Button>
                     <Button size="sm" variant="flat" onPress={() => printFolio(stay)}>Print</Button>
+                    <Button size="sm" variant="flat" isLoading={mailing} onPress={async () => {
+                      const to = (frontOfficeStore.guests.find((guest) => guest.id === stay.guestId)?.email || '').trim();
+                      if (!to) {
+                        notifyError('This guest has no email address. Nothing was sent.', 'Email');
+                        return;
+                      }
+                      if (!(await confirmDocumentSend(to, 'guest folio'))) return;
+                      const hotel = useSettingsStore.getState().saasSettings.customBranding.companyName || 'the hotel';
+                      setMailing(true);
+                      try {
+                        const result = await sendDocumentEmail({
+                          to,
+                          subject: `Guest folio from ${hotel}`,
+                          intro: documentIntro(stay.guestName || 'Guest', 'guest folio', hotel),
+                          documentHtml: folioHtml(stay),
+                          filename: `${stay.resId || 'folio'}-guest-folio`,
+                        });
+                        if (!result.ok) notifyError(result.error, 'Email');
+                        else notifySuccess(`Folio sent to ${to}`, 'Email sent');
+                      } finally {
+                        setMailing(false);
+                      }
+                    }}>Email</Button>
                   </div>
                 </div>
 
@@ -668,6 +704,7 @@ export default function GuestFolioModal({
           <ModalFooter><Button variant="light" onPress={() => setCompanyFocus(null)}>Close</Button></ModalFooter>
         </ModalContent>
       </Modal>
+      <HtmlDocumentPreview title="Guest folio" html={previewHtml} onClose={() => setPreviewHtml(null)} />
     </>
   );
 }

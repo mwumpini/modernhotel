@@ -521,6 +521,8 @@ export interface WakeUpCall {
   date: string; // YYYY-MM-DD
   time: string; // HH:MM, 24h
   status: 'scheduled' | 'completed' | 'cancelled';
+  /** Silent leaves a notice. Alarm also sounds until the call is done or quieted. */
+  alert?: 'silent' | 'alarm';
   notes?: string;
   completedBy?: string;
   createdAt: string;

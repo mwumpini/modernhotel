@@ -15,6 +15,31 @@ export const processFlowsManual = {
 const t = (topic: Omit<HelpTopic, 'category'>): HelpTopic => ({ ...topic, category: 'operations' });
 
 export const processFlows: HelpTopic[] = [
+  t({
+    id: 'flow-premises',
+    title: 'Open the hotel on the premises only',
+    keywords: ['install', 'premises', 'wifi', 'wi-fi', 'server', 'setup'],
+    description: 'One computer keeps the records. Other devices on the hotel Wi-Fi open that computer.',
+    flow: [
+      { who: 'The person who sets up the hotel computer', where: 'AGMSync-Setup.exe', action: 'Run the setup on the computer that stays on.', result: 'The AGM Sync icon opens the hotel. No black window stays open.' },
+      { who: 'Front desk', where: 'Sign-in page', action: 'Read the address. It looks like http://192.168.x.x:3000.', result: 'That address is this computer.' },
+      { who: 'Staff on a phone, tablet or another computer', where: 'The same Wi-Fi', action: 'Open that address and sign in. Save it as an icon from Save an icon.', result: 'They share the records on the hotel computer. The internet can be down. This computer must stay on.' },
+    ],
+    notHere: 'https://app.agmsync.com does not show these records. Use the cloud and premises flow when both must match.',
+  }),
+  t({
+    id: 'flow-cloud-premises',
+    title: 'Link the hotel computer to the cloud',
+    keywords: ['cloud', 'sync', 'home', 'link', 'app.agmsync.com'],
+    description: 'People at home and people in the hotel work on the same records.',
+    flow: [
+      { who: 'The person who sets up the hotel computer', where: 'AGMSync-Cloud-Premises-Setup.exe', action: 'Close any other AGM Sync window, then run this setup on the computer that stays on.', result: 'The icon opens the link page.' },
+      { who: 'The person who sets up the hotel computer', where: 'Link this computer to the cloud', action: 'Enter the cloud address, the hotel code, and the cloud sign-in.', result: 'This computer is paired with that hotel on https://app.agmsync.com.' },
+      { who: 'Someone at home', where: 'https://app.agmsync.com', action: 'Sign in and change a booking, a guest or any other record.', result: 'While the hotel computer has internet, that change arrives on the premises.' },
+      { who: 'Someone in the hotel', where: 'The address on the sign-in page, or https://app.agmsync.com', action: 'Sign in and work. Either address is the same hotel after a sync.', result: 'The change is sent to the other side while the internet is up.' },
+      { who: 'The hotel computer', where: '—', action: 'Keep running when the internet drops.', result: 'Work continues on this computer. Missed changes catch up when the internet returns. If both sides changed the same record, the later change remains.' },
+    ],
+  }),
   // ---------------- Executive Management ----------------
   t({
     id: 'flow-exec-daily',
@@ -38,7 +63,7 @@ export const processFlows: HelpTopic[] = [
       { who: 'Front desk', where: 'Front Office → Reservations → New reservation', action: 'Enter the guest, dates, room type and rate plan (or a quoted rate).', result: 'The booking is saved with a price for each night. A guest profile is created or reused.' },
       { who: 'Front desk / cashier', where: 'The booking → Payments', action: 'Take the deposit if the business asks for one.', result: 'Deposit recorded on the folio and held in Guest Deposits (owed to the guest). The booking can become confirmed if a deposit is required to confirm.' },
       { who: 'Front desk', where: 'Front Office → Desk (arrivals)', action: 'Check the guest in: confirm details, assign a clean room, print the registration card.', result: 'Stay is in-house, room occupied. The deposit now counts against the stay. The first night is charged now if that rule is on.' },
-      { who: 'Night auditor (or automatic at 1:00am)', where: 'Front Office → Night', action: 'Close the business day.', result: 'Each in-house guest is charged that night\'s room rate and taxes, as revenue of that day.' },
+      { who: 'Night auditor (or automatic at 1:00am)', where: 'Front Office → Night', action: 'Catch up missed days, or leave the close to 1:00am once the calendar has moved on.', result: 'Each in-house guest is charged that night\'s room rate and taxes, as revenue of that day. The current calendar day is not closed.' },
       { who: 'Restaurant, bar, other outlets', where: 'POS → Room charge / folio', action: 'Charge meals, drinks or services to the room.', result: 'Added to the guest\'s folio and to revenue the same day.' },
       { who: 'Cashier', where: 'The stay → Invoices & Payments / Cashiering', action: 'Take payments during the stay or at the end (cash, card, MoMo, bank, or bill the company).', result: 'Each payment reduces the guest\'s balance and is in the books when taken.' },
       { who: 'Front desk', where: 'The stay → Check out', action: 'Review the bill, take the final payment, check out, print the checkout bill.', result: 'Early/late checkout rules applied. Invoice and receipts created. Anything still owed moves to receivables. The room becomes dirty for housekeeping, unless Settings → Operational Policies → After checkout has Mark the room dirty turned off, in which case the room is vacant and can be sold at once.' },
@@ -84,13 +109,25 @@ export const processFlows: HelpTopic[] = [
     ],
   }),
   t({
+    id: 'flow-wake-up',
+    title: 'Wake-up call',
+    keywords: ['wake-up', 'wake up', 'alarm', 'silent', 'morning call'],
+    description: 'A morning call for an in-house guest. Role: front desk. The reminder stays on the browser where it was set.',
+    flow: [
+      { who: 'Front desk', where: 'Desk → open the in-house stay → Wake-up', action: 'Set the morning, the time and a note. Choose Silent or Alarm, then Schedule.', result: 'The call is saved on this browser. The form stays closed until Wake-up is pressed again.' },
+      { who: 'Front desk', where: 'Desk', action: 'Read the one line of calls still to make. Done or Cancel the next one, or open More for the rest.', result: 'Finished calls leave the desk line.' },
+      { who: 'Whoever has this browser open', where: 'Any screen of the open app', action: 'When the hotel clock reaches the time, read the notice. Press Done, or Quiet to stop an alarm tone.', result: 'Silent shows the notice only. Alarm repeats a tone until Done or Quiet. Another computer does not receive it.' },
+      { who: 'Manager', where: 'Front Office → Reports & Analysis → Wake-up Calls', action: 'Read the sheet for a past date.', result: 'Scheduled, done and cancelled calls for that period.' },
+    ],
+  }),
+  t({
     id: 'flow-night-audit',
     title: 'End of day (night audit)',
     keywords: ['night audit', 'business date', 'end of day', 'close day'],
     description: 'Closing the hotel\'s business day. Role: night auditor (or automatic at 1:00am).',
     flow: [
-      { who: 'Night auditor', where: 'Front Office → Night', action: 'Check arrivals still expected, guests past departure, and tills still open.', result: 'Shows what is outstanding before closing.' },
-      { who: 'Night auditor', where: 'Night → Close', action: 'Close the day (or Catch up if days were missed).', result: 'Room nights charged to every in-house guest; bookings that did not arrive marked no-show with the no-show rule applied; the business date moves to the next day.' },
+      { who: 'Night auditor', where: 'Front Office → Night', action: 'Check arrivals still expected, guests past departure, and tills still open. Read Charges, Payments and On account. The date control can show today, one date, a range, or all dates. The (i) shows the last run.', result: 'Looking does not close the day. On account is what was charged and not yet paid.' },
+      { who: 'Night auditor', where: 'Night → Catch up', action: 'Catch up only when the hotel date is behind the calendar. The open day stays open.', result: 'Missed days are closed: room nights charged, bookings that did not arrive marked no-show, and the business date moves up to today and stops there.' },
       { who: 'Night manager', where: 'Notices', action: 'Act on any failure notice.', result: 'A failed audit notifies the Night Manager role.' },
       { who: 'Manager (next morning)', where: 'Front Office → Reports & Analysis', action: 'Read the daily flash report: occupancy, revenue, payments.', result: '—' },
     ],
@@ -252,8 +289,9 @@ export const processFlows: HelpTopic[] = [
 /** Chapters of the Process Flows document, in reading order. */
 /** Chapters in side-menu order (Executive Management → … → Compliance & Reports); a desk with no flow yet is left out. */
 export const processFlowModules = [
+  { id: 'flows-reach', title: 'Opening AGM Sync', intro: 'The hotel computer on its own, or the hotel computer linked to the cloud.', topicIds: ['flow-premises', 'flow-cloud-premises'] },
   { id: 'flows-exec', title: 'Executive Management', intro: 'The daily review and approvals.', topicIds: ['flow-exec-daily'] },
-  { id: 'flows-frontdesk', title: 'Front Office Operations', intro: 'From booking to checkout, company billing, cancellations, the end of day and the cashier shift.', topicIds: ['flow-stay', 'flow-walk-in', 'flow-company-billing', 'flow-cancel-no-show', 'flow-night-audit', 'flow-cashier-shift'] },
+  { id: 'flows-frontdesk', title: 'Front Office Operations', intro: 'From booking to checkout, company billing, cancellations, wake-up calls, the end of day and the cashier shift.', topicIds: ['flow-stay', 'flow-walk-in', 'flow-company-billing', 'flow-cancel-no-show', 'flow-wake-up', 'flow-night-audit', 'flow-cashier-shift'] },
   { id: 'flows-events', title: 'Events & Conferences', intro: 'Halls, conferences and functions.', topicIds: ['flow-event'] },
   { id: 'flows-restaurant', title: 'Restaurant & Bar', intro: 'From order to payment, through the kitchen.', topicIds: ['flow-restaurant-sale'] },
   { id: 'flows-housekeeping', title: 'Housekeeping & Maintenance', intro: 'Room turnover and fixing faults.', topicIds: ['flow-housekeeping'] },

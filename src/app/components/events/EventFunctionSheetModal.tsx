@@ -354,8 +354,14 @@ export function EventFunctionSheetModal() {
             </ModalBody>
             <ModalFooter className="justify-between">
               <div className="flex flex-wrap gap-1">
+                <Button size="sm" variant="light" onPress={() => eventsScreen.showDocumentPreview('Function schedule', eventsScreen.functionScheduleHtml(eventsScreen.allEvents, 'All Events'))}>
+                  Preview
+                </Button>
                 <Button size="sm" variant="light" onPress={() => eventsScreen.exportFunctionSchedulePDF()}>
-                  Print schedule
+                  Print
+                </Button>
+                <Button size="sm" variant="light" onPress={() => eventsScreen.emailFunctionScheduleFromEvents(eventsScreen.allEvents, 'All Events')}>
+                  Email
                 </Button>
                 <Button size="sm" variant="light" onPress={() => eventsScreen.exportFunctionSheetPDF()}>
                   Function sheet

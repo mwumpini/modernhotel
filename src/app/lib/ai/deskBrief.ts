@@ -37,7 +37,7 @@ const LABELS: Record<DepartmentKey, string> = {
 
 const PROMPTS: Record<DepartmentKey, string[]> = {
   all: ["Summarize today's notices", 'Draft a notice to all departments'],
-  master: ["Summarize today's notices", 'Draft a notice to all departments'],
+  master: ['How much did we make today?', "Summarize today's notices"],
   gm: ["Summarize today's notices", 'Draft a notice to all departments'],
   frontdesk: ["Summarize today's rooms", 'Draft an arrival notice'],
   housekeeping: ['Summarize rooms that need cleaning', 'Draft a maintenance notice'],
@@ -128,6 +128,34 @@ function invoiceLine(): string | null {
   }
 }
 
+const cedis = (n: number) => `GHS ${n.toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** Today's money: revenue posted to the books (4xxx, net of tax) and receipts taken, by method. */
+function moneyLine(): string | null {
+  try {
+    const { journalEntries, payments } = useAccountingStore.getState();
+    const today = todayIso();
+    let revenue = 0;
+    for (const e of journalEntries || []) {
+      if (e.status !== 'Posted' || String(e.date || '').slice(0, 10) !== today) continue;
+      for (const l of e.lines || []) {
+        if (String(l.accountCode).startsWith('4')) revenue += Number(l.credit || 0) - Number(l.debit || 0);
+      }
+    }
+    const byMethod = new Map<string, number>();
+    for (const p of payments || []) {
+      if (p.type !== 'Receipt' || String(p.date || '').slice(0, 10) !== today) continue;
+      byMethod.set(p.paymentMethod, (byMethod.get(p.paymentMethod) || 0) + Number(p.amount || 0));
+    }
+    const received = Array.from(byMethod.values()).reduce((s, v) => s + v, 0);
+    if (Math.abs(revenue) < 0.005 && received < 0.005) return 'Money today: no revenue or receipts recorded yet.';
+    const methods = Array.from(byMethod).map(([m, v]) => `${m} ${cedis(v)}`).join(', ');
+    return `Money today: revenue ${cedis(revenue)} before tax; received ${cedis(received)}${methods ? ` (${methods})` : ''}.`;
+  } catch {
+    return null;
+  }
+}
+
 function orderLine(): string | null {
   try {
     const orders = ordersStore.all();
@@ -173,7 +201,7 @@ function linesFor(desk: DepartmentKey): string[] {
     case 'hr':
       return push(staffLine(), payrollLine());
     case 'accounting':
-      return push(invoiceLine());
+      return push(moneyLine(), invoiceLine());
     case 'f&b':
       return push(orderLine(), stockLine());
     case 'events':
@@ -181,7 +209,7 @@ function linesFor(desk: DepartmentKey): string[] {
     case 'master':
     case 'gm':
     case 'all':
-      return push(roomLine(), stayLine(), stockLine(), staffLine(), ...securityLines(), orderLine());
+      return push(moneyLine(), roomLine(), stayLine(), stockLine(), staffLine(), ...securityLines(), orderLine());
     default:
       return [];
   }
@@ -204,7 +232,7 @@ const MODULE_LINES: Array<[string, () => string[]]> = [
   ['housekeeping', () => [roomLine()].filter((x): x is string => !!x)],
   ['inventory', () => [stockLine()].filter((x): x is string => !!x)],
   ['hr', () => [staffLine(), payrollLine()].filter((x): x is string => !!x)],
-  ['accounting', () => [invoiceLine()].filter((x): x is string => !!x)],
+  ['accounting', () => [moneyLine(), invoiceLine()].filter((x): x is string => !!x)],
   ['restaurant', () => [orderLine()].filter((x): x is string => !!x)],
   ['kitchen', () => [orderLine()].filter((x): x is string => !!x)],
   ['security', () => securityLines()],

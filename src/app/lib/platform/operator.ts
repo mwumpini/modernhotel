@@ -8,6 +8,7 @@ import { addDaysISO, nextPaidUntil, onFreeTrial, parseMonthlyFee, parseTrialDays
 import { frontDeskOnly, normalizePaidModules, readPaidModules, type PaidModules } from '@/app/lib/platform/hotelModules';
 import { ensureStandardDepartments, provisionGhanaHotel } from '@/app/lib/platform/ghanaStarter';
 import { ensureBookingApiKey, newBookingApiKey } from '@/app/lib/booking/websiteApiKey';
+import { hotelMailSummary, parseHotelMail, readHotelMail } from '@/app/lib/platform/hotelMail';
 
 import { OPERATOR_ROLE, PLATFORM_SUBDOMAIN } from './operatorRole';
 export { OPERATOR_ROLE, PLATFORM_SUBDOMAIN, isPlatformOperator } from './operatorRole';
@@ -114,6 +115,7 @@ function presentHotel(row: { id: string; name: string; subdomain: string; status
     onTrial: onFreeTrial(row.metadata),
     payments: readPayments(row.metadata),
     modules: readPaidModules(row.metadata),
+    mail: hotelMailSummary(row.metadata),
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -138,6 +140,7 @@ export async function openHotel(input: {
   adminUsername: string;
   password: string;
   modules?: unknown;
+  mail?: { host?: unknown; port?: unknown; user?: unknown; pass?: unknown };
 }) {
   const subdomain = hotelSubdomain(input.subdomain);
   if (!subdomain) {
@@ -160,6 +163,8 @@ export async function openHotel(input: {
   if (monthlyFee == null) return { error: 'Enter a monthly fee in cedis.' };
   const trialDays = parseTrialDays(input.trialDays);
   if (trialDays == null) return { error: 'Enter the free trial in whole days, from 0 to 365.' };
+  const mail = parseHotelMail(input.mail ?? {}, null);
+  if (!mail.ok) return { error: mail.error };
 
   const taken = await prisma.tenant.findUnique({ where: { subdomain }, select: { id: true } });
   if (taken) return { error: 'That Organization ID is already used.' };
@@ -187,6 +192,7 @@ export async function openHotel(input: {
         industry: 'hospitality',
         bookingApiKey: newBookingApiKey(),
         modules: input.modules == null ? frontDeskOnly() : normalizePaidModules(input.modules),
+        ...(mail.mail ? { mail: mail.mail } : {}),
       },
     },
   });
@@ -250,6 +256,22 @@ export async function setHotelModules(id: string, raw: unknown) {
     data: { metadata: { ...meta, modules } },
   });
   await ensureStandardDepartments(hotel.id);
+  return { hotel: presentHotel(updated) };
+}
+
+export async function setHotelMail(id: string, input: { host?: unknown; port?: unknown; user?: unknown; pass?: unknown }) {
+  const hotel = await prisma.tenant.findUnique({ where: { id } });
+  if (!hotel || hotel.subdomain === PLATFORM_SUBDOMAIN) return { error: 'Hotel not found.' as const };
+  const parsed = parseHotelMail(input, readHotelMail(hotel.metadata));
+  if (!parsed.ok) return { error: parsed.error };
+  if (!parsed.mail) return { error: 'Enter the outgoing server, the mailbox, and the password.' as const };
+  const meta = hotel.metadata && typeof hotel.metadata === 'object' && !Array.isArray(hotel.metadata)
+    ? (hotel.metadata as Record<string, unknown>)
+    : {};
+  const updated = await prisma.tenant.update({
+    where: { id },
+    data: { metadata: { ...meta, mail: parsed.mail } },
+  });
   return { hotel: presentHotel(updated) };
 }
 

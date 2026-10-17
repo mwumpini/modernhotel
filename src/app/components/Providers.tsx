@@ -7,6 +7,7 @@ import type { Session } from 'next-auth';
 import '../lib/demo/init';
 import HelpF12Shortcut from './HelpF12Shortcut';
 import NightAuditScheduler from './NightAuditScheduler';
+import WakeUpWatcher from './WakeUpWatcher';
 import SessionIdleGuard from './SessionIdleGuard';
 import NotificationToaster from './NotificationToaster';
 import DangerConfirmHost from './DangerConfirm';
@@ -28,6 +29,7 @@ export default function Providers({ children, session = null }: ProvidersProps) 
           <DangerConfirmHost />
           <HelpF12Shortcut />
           <NightAuditScheduler />
+          <WakeUpWatcher />
           <SessionIdleGuard />
           <DataResetWatcher />
           <OldBrowserNotice />

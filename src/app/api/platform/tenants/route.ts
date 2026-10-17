@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
     adminUsername: String(body.adminUsername || ''),
     password: String(body.password || ''),
     modules: body.modules,
+    mail: body.mail && typeof body.mail === 'object' ? body.mail : {},
   });
   if (result.error) return NextResponse.json({ error: result.error }, { status: 400 });
   return NextResponse.json(result.hotel, { status: 201 });

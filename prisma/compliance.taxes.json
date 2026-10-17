@@ -164,7 +164,7 @@
   {
     "id": "gh-tier3-relief-cap",
     "countryCode": "GH",
-    "name": "Provident Fund Manager",
+    "name": "Provident Fund Manager (Tier 3)",
     "rate": 16.5,
     "glCode": "2221",
     "appliesTo": [
@@ -183,7 +183,7 @@
   {
     "id": "gh-ssnit-tier1",
     "countryCode": "GH",
-    "name": "SSNIT",
+    "name": "SSNIT (Tier 1)",
     "rate": 5.5,
     "employerRate": 8,
     "ceiling": 69000,
@@ -200,12 +200,13 @@
     "stacking": "additive",
     "domain": "payroll",
     "operation": "internal",
-    "effect": "informational"
+    "effect": "informational",
+    "ssnitDefaultApplied": true
   },
   {
     "id": "gh-ssnit-tier2",
     "countryCode": "GH",
-    "name": "Enterprise Trustees",
+    "name": "Enterprise Trustees (Tier 2)",
     "rate": 0,
     "employerRate": 5,
     "ceiling": 69000,

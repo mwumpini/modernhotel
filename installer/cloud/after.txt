@@ -1,0 +1,9 @@
+AGM Sync on this computer is linked to the cloud.
+
+Close any other AGM Sync window first, then use this icon.
+The first page asks for the hotel code and the cloud sign-in.
+After that, people at home and people in the hotel share the same records.
+
+When the internet is down, this computer keeps working.
+Changes catch up when the internet returns.
+Phones and other computers on this Wi-Fi open the address on the sign-in page.

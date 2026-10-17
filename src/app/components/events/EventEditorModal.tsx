@@ -9,6 +9,7 @@ import { useEventsScreen } from './eventsScreenContext';
 import { stayNightDates } from '../../lib/frontoffice/folioLedger';
 import { calendarDay } from '../../lib/frontoffice/backdate';
 import { useEventStartLock } from './useEventStartLock';
+import { notifyError } from '../../lib/notifications/notify';
 
 function guestPersonName(guest: any) {
   return String(guest?.name || `${guest?.firstName || ''} ${guest?.lastName || ''}`).trim();
@@ -38,6 +39,43 @@ export function EventEditorModal() {
     ? ''
     : calendarDay(eventsScreen.editingEvent?.arrivalDate || eventsScreen.editingEvent?.startDate);
   const datesEditable = !eventsScreen.isViewMode || eventsScreen.isEditingInvoiceDetails;
+  const [receiptPick, setReceiptPick] = useState('');
+  const liveReceipts = (eventsScreen.linkedEventReceipts || []).filter((receipt) => receipt.status !== 'Void');
+  const pickedReceipt = liveReceipts.find((receipt) => receipt.id === receiptPick) || liveReceipts[0];
+  const runPickedDocument = (action: 'preview' | 'print' | 'email') => {
+    const tab = eventsScreen.activePrintTab;
+    if (tab === 'quote') {
+      const template = eventsScreen.selectedProformaTemplate || undefined;
+      if (action === 'preview') eventsScreen.showDocumentPreview('Quotation', eventsScreen.eventQuoteHtml(template));
+      else if (action === 'print') eventsScreen.handlePrintQuotePdf(template);
+      else void eventsScreen.handleEmailQuotePdf(template);
+      return;
+    }
+    if (tab === 'invoice') {
+      const template = eventsScreen.selectedInvoiceTemplate || undefined;
+      const invoice = eventsScreen.linkedEventInvoice;
+      if (invoice) {
+        if (action === 'preview') eventsScreen.showDocumentPreview('Invoice', eventsScreen.eventInvoiceHtml(invoice, template));
+        else if (action === 'print') eventsScreen.handleDownloadInvoicePdf(invoice, template);
+        else void eventsScreen.handleEmailInvoicePdf(invoice, template);
+        return;
+      }
+      if (action === 'preview') eventsScreen.showDocumentPreview('Invoice', eventsScreen.eventLiveInvoiceHtml(template));
+      else if (action === 'print') eventsScreen.handlePrintEventInvoicePdf(template);
+      else void eventsScreen.handleEmailEventInvoicePdf(template);
+      return;
+    }
+    if (tab === 'receipt') {
+      if (!pickedReceipt) {
+        notifyError(action === 'email' ? 'This event has no receipt on file. Nothing was sent.' : 'This event has no receipt on file.', action === 'email' ? 'Email' : 'Print');
+        return;
+      }
+      const template = eventsScreen.selectedReceiptTemplate || undefined;
+      if (action === 'preview') eventsScreen.showDocumentPreview('Receipt', eventsScreen.eventReceiptHtml(pickedReceipt, template));
+      else if (action === 'print') eventsScreen.handleDownloadReceiptPdf(pickedReceipt, template);
+      else void eventsScreen.handleEmailEventReceipt(pickedReceipt, template);
+    }
+  };
   const startTooEarly = datesEditable && Boolean(startLock.errorFor(eventsScreen.startDate, savedStart || undefined));
   const startMin = startLock.floor && !(savedStart && savedStart < startLock.floor && calendarDay(eventsScreen.startDate) === savedStart)
     ? startLock.floor
@@ -986,33 +1024,52 @@ export function EventEditorModal() {
                       {eventsScreen.isEditingInvoiceDetails ? (
                         <div className="space-y-4">
                           <p className="text-xs text-gray-500">Layout set in Settings → Document Templates</p>
-                          <div className="flex gap-2">
+                          <div className="flex flex-wrap gap-2">
                             <Button
                               size="sm"
-                              color="primary"
-                              className="flex-1"
+                              variant="flat"
                               onPress={() => {
                                 const invoice = eventsScreen.eventInvoices.find((inv) => inv.eventId === eventsScreen.editingEvent?.id);
-                                if (invoice) {
-                                  eventsScreen.handleDownloadInvoicePdf(invoice);
-                                } else {
-                                  alert('Please save the invoice first before printing.');
-                                }
+                                if (invoice) eventsScreen.showDocumentPreview('Invoice', eventsScreen.eventInvoiceHtml(invoice));
+                                else alert('Please save the invoice first.');
                               }}
                             >
-                              🖨️ Print Invoice
+                              Preview
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="flat"
+                              onPress={() => {
+                                const invoice = eventsScreen.eventInvoices.find((inv) => inv.eventId === eventsScreen.editingEvent?.id);
+                                if (invoice) eventsScreen.handleDownloadInvoicePdf(invoice);
+                                else alert('Please save the invoice first.');
+                              }}
+                            >
+                              Print
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="flat"
+                              onPress={() => {
+                                const invoice = eventsScreen.eventInvoices.find((inv) => inv.eventId === eventsScreen.editingEvent?.id);
+                                if (invoice) void eventsScreen.handleEmailInvoicePdf(invoice);
+                                else alert('Please save the invoice first.');
+                              }}
+                            >
+                              Email
                             </Button>
                             <Button
                               size="sm"
                               color="secondary"
-                              className="flex-1"
+                              variant="flat"
                               onPress={eventsScreen.handleExportEventXls}
                             >
-                              📊 Export XLS
+                              Export XLS
                             </Button>
                           </div>
                         </div>
                       ) : (
+                      <>
                       <Tabs
                         size="sm"
                         variant="underlined"
@@ -1034,14 +1091,6 @@ export function EventEditorModal() {
                               >
                                 {proformaOptions.map((opt) => (<SelectItem key={opt.key}>{opt.name}</SelectItem>))}
                               </Select>
-                              <Button
-                                size="sm"
-                                color="primary"
-                                className="w-full"
-                                onPress={() => eventsScreen.handlePrintQuotePdf(eventsScreen.selectedProformaTemplate || proformaDefault)}
-                              >
-                                🖨️ Print Proforma
-                              </Button>
                             </div>
                           </Tab>
                           );
@@ -1064,16 +1113,6 @@ export function EventEditorModal() {
                               >
                                 {invoiceOptions.map((opt) => (<SelectItem key={opt.key}>{opt.name}</SelectItem>))}
                               </Select>
-                              <Button
-                                size="sm"
-                                color="primary"
-                                className="w-full"
-                                onPress={() => eventsScreen.linkedEventInvoice
-                                  ? eventsScreen.handleDownloadInvoicePdf(eventsScreen.linkedEventInvoice, eventsScreen.selectedInvoiceTemplate || invoiceDefault)
-                                  : eventsScreen.handlePrintEventInvoicePdf(eventsScreen.selectedInvoiceTemplate || invoiceDefault)}
-                              >
-                                🖨️ Print Invoice
-                              </Button>
                             </div>
                           </Tab>
                           );
@@ -1119,14 +1158,24 @@ export function EventEditorModal() {
                                   >
                                     {receiptOptions.map((opt) => (<SelectItem key={opt.key}>{opt.name}</SelectItem>))}
                                   </Select>
+                                  {liveReceipts.length > 1 && (
+                                    <Select
+                                      size="sm"
+                                      label="Receipt"
+                                      selectedKeys={pickedReceipt ? [pickedReceipt.id] : []}
+                                      onSelectionChange={(keys) => {
+                                        const key = Array.from(keys)[0] as string;
+                                        if (key) setReceiptPick(key);
+                                      }}
+                                    >
+                                      {liveReceipts.map((rcpt) => (
+                                        <SelectItem key={rcpt.id}>{`${rcpt.date} · ${eventsScreen.formatCurrency(rcpt.amount)} · ${paymentMethodLabel(rcpt.method)}`}</SelectItem>
+                                      ))}
+                                    </Select>
+                                  )}
                                   <p className="text-xs text-gray-500">Receipts on file</p>
                                   {eventsScreen.linkedEventReceipts.map((rcpt) => (
-                                    <div key={rcpt.id} className="flex items-center justify-between gap-2 text-sm">
-                                      <span className={`text-gray-600 ${rcpt.status === 'Void' ? 'line-through' : ''}`}>{rcpt.date} · {eventsScreen.formatCurrency(rcpt.amount)} · {paymentMethodLabel(rcpt.method)}{rcpt.status === 'Void' ? ' · void' : ''}</span>
-                                      {rcpt.status !== 'Void' && (
-                                        <Button size="sm" variant="flat" onPress={() => eventsScreen.handleDownloadReceiptPdf(rcpt, eventsScreen.selectedReceiptTemplate || receiptDefault)}>🖨️ Print</Button>
-                                      )}
-                                    </div>
+                                    <p key={rcpt.id} className={`text-sm text-gray-600 ${rcpt.status === 'Void' ? 'line-through' : ''}`}>{rcpt.date} · {eventsScreen.formatCurrency(rcpt.amount)} · {paymentMethodLabel(rcpt.method)}{rcpt.status === 'Void' ? ' · void' : ''}</p>
                                   ))}
                                 </div>
                               )}
@@ -1150,6 +1199,14 @@ export function EventEditorModal() {
                           </div>
                         </Tab>
                       </Tabs>
+                      {eventsScreen.activePrintTab !== 'xls' && eventsScreen.showQuotePrintInModal && eventsScreen.editingEvent && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Button size="sm" variant="flat" onPress={() => runPickedDocument('preview')}>Preview</Button>
+                          <Button size="sm" variant="flat" onPress={() => runPickedDocument('print')}>Print</Button>
+                          <Button size="sm" variant="flat" onPress={() => runPickedDocument('email')}>Email</Button>
+                        </div>
+                      )}
+                      </>
                       )}
                     </CardBody>
                   </Card>

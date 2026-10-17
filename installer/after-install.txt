@@ -1,6 +1,8 @@
-The hotel system is now on this computer.
+AGM Sync is the hotel server on this computer.
 
-Leave the AGM Sync window open while the hotel is working. On this computer and on the other computers, open the address shown in that window.
+The icon opens the hotel on this computer. No black window stays open.
+Phones, tablets, and the other computer must be on this same Wi-Fi.
+They open the address shown on the sign-in page.
 
-The internet can be down. This computer is the one that must stay on.
-Hotel records stay in C:\ProgramData\GhanaHotel
+This computer must stay on. The internet can be down.
+https://app.agmsync.com is a separate cloud copy. It does not share these records.

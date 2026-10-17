@@ -126,6 +126,52 @@ export const helpMaintainerGuide = {
 
 export const helpTopics: HelpTopic[] = [
   {
+    id: 'reach-premises',
+    title: 'On-premises only',
+    description: 'One computer in the hotel keeps the records. Phones, tablets and other computers on the same Wi-Fi open that computer.',
+    keywords: ['install', 'setup', 'premises', 'server', 'wifi', 'wi-fi', 'exe', 'agm sync setup', 'local'],
+    category: 'dashboard',
+    steps: [
+      'Run AGMSync-Setup.exe on the computer that stays on.',
+      'The AGM Sync icon opens the hotel in the browser. No black window stays open.',
+      'On the sign-in page, note the address. It looks like http://192.168.x.x:3000.',
+      'Put every other phone, tablet and computer on the same Wi-Fi and open that address. They share this computer’s records.',
+      'This computer must stay on. The internet can be down.',
+    ],
+    notHere: 'https://app.agmsync.com is a separate copy. It does not share these records. Use Cloud and premises when home and the hotel must see the same records.',
+  },
+  {
+    id: 'reach-cloud',
+    title: 'Cloud and premises',
+    description: 'The hotel computer and https://app.agmsync.com keep one set of records. A change at home shows in the hotel, and a change in the hotel shows at home.',
+    keywords: ['cloud', 'sync', 'link', 'home', 'internet', 'app.agmsync.com', 'two way', 'premises'],
+    category: 'dashboard',
+    href: '/sync',
+    steps: [
+      'Close any other AGM Sync window, then run AGMSync-Cloud-Premises-Setup.exe on the computer that stays on.',
+      'On the link page, enter the cloud address, the hotel code, and the cloud sign-in.',
+      'Someone at home opens https://app.agmsync.com. Someone in the hotel opens the address on the sign-in page. After a sync, both show the same records.',
+      'While the internet is up, changes pass both ways. When it is down, this computer keeps working, and the missed changes catch up when the internet returns.',
+      'If both sides change the same record before they connect, the later change is the one that remains.',
+    ],
+    notHere: 'AGMSync-Setup.exe does not send records to the cloud.',
+  },
+  {
+    id: 'reach-icon',
+    title: 'Save an icon on a phone, tablet or computer',
+    description: 'Save the hotel page the same way you save any webpage. The icon opens the sign-in.',
+    keywords: ['icon', 'home screen', 'shortcut', 'android', 'iphone', 'ipad', 'tablet', 'staff', 'mac', 'windows'],
+    category: 'dashboard',
+    href: '/staff',
+    steps: [
+      'Open Save an icon from the sign-in page, or go to /staff. Copy the address shown there.',
+      'On the hotel Wi-Fi that address is the hotel computer. On the cloud it is https://app.agmsync.com.',
+      'Android: open it in Chrome, then the menu, then Add to Home screen.',
+      'iPhone, iPad and tablet: open it in Safari, tap Share, then Add to Home Screen.',
+      'Windows: open it in Chrome or Edge, then Create shortcut, or Apps then Install. On a Mac: Safari File then Add to Dock, or Chrome Create shortcut.',
+    ],
+  },
+  {
     id: 'start-desks',
     title: 'How a desk is laid out',
     description: 'Every department screen has a title, a summary you can hide, and tabs for the work.',
@@ -432,7 +478,7 @@ export const helpTopics: HelpTopic[] = [
     imageAlt: 'Front Office desk with room status and tabs',
     steps: [
       'Open Front Office Operations in the side menu. Under it: Desk, Rooms, Billing, Clients, Night, and Reports. Each name opens that part of this desk.',
-      'Desk is the counter for the guest in front of you. Check-in, the open stay, and checkout start here.',
+      'Desk is the counter for the guest in front of you. Check-in, the open stay, wake-up calls, and checkout start here.',
       'Rooms is the board: occupied, vacant, or needs housekeeping. Room Transfer, on this part, moves a guest and keeps the same folio.',
       'Billing holds the folio (Invoices & Payments) and Cashiering, where you take the money. Clients is the guest and company list.',
       'Night closes the business date. Reports is the period summary.',
@@ -454,6 +500,22 @@ export const helpTopics: HelpTopic[] = [
       'Press Check-in. The stay becomes in-house and the room shows occupied.',
       'If no vacant room matches the dates, the desk can still post the night and leave the room open. Assign a room as soon as one is free.',
     ],
+  },
+  {
+    id: 'front-wakeup',
+    title: 'Schedule a wake-up call',
+    description: 'A morning call for an in-house guest. The reminder stays on the browser where it was set.',
+    keywords: ['wake-up', 'wake up', 'alarm', 'silent', 'morning call', 'notice'],
+    category: 'frontdesk',
+    section: 'frontdesk',
+    steps: [
+      'Open the in-house stay from Desk. Press Wake-up on the stay header. The form stays closed until you press it.',
+      'Set the morning, the time, and a note if you need one. Under When due, choose Silent or Alarm, then press Schedule.',
+      'The desk keeps one line of calls still to make: how many, the next guest and time, and Done and Cancel. More opens the rest, so a long list does not cover the worksheet. Finished calls leave that line.',
+      'While this browser has the app open, a due call shows a notice at the bottom of any screen. Silent is the notice only. Alarm also sounds until Done or Quiet.',
+      'The call stays on this browser. A person who later uses another computer does not get that notice. The sheet of calls is under Reports & Analysis → Wake-up Calls.',
+    ],
+    notHere: 'Night Audit does not schedule or ring wake-ups. A chargeable concierge service of the same name, if the hotel sells one, is a folio charge, not this reminder.',
   },
   {
     id: 'front-checkout',
@@ -498,10 +560,13 @@ export const helpTopics: HelpTopic[] = [
     section: 'frontdesk',
     steps: [
       'Open Front Office → Night Audit. Night in the side menu opens the same screen.',
-      'Read the in-house count and the business date on the card.',
-      'Press Close and the date shown. If the audit is behind, the button says Catch up instead.',
-      'History of past runs is under Reports & Analysis.',
+      'The business date is on the title row. The (i) beside it shows the last run, whether today is still open, and that 1:00 AM closes the day once the calendar has moved on.',
+      'The date control (All Dates, Today, Specific Date, Date Range) only changes which posted totals you are reading. It does not close a day.',
+      'Posted totals are three figures: Charges (room, other, and tax), Payments (cash, card, and mobile money), and On account (charged and not yet paid).',
+      'While the hotel date is still today, the button on the right says Still open and does nothing. When the hotel date is behind the calendar, press Catch up. That closes only the missed days and stops on today.',
+      'At 1:00 AM the same close runs by itself, once the calendar has moved on. History of past runs is under Reports & Analysis.',
     ],
+    notHere: 'Wake-up calls are set on the in-house stay from Desk, not on this screen.',
   },
   {
     id: 'hk',
@@ -1154,15 +1219,15 @@ export const helpModules: {
     id: 'dashboard',
     title: 'Executive Management',
     intro:
-      'The first desk in the side menu. It is the hotel-wide picture. Every desk after this uses the same layout, Ask Mamani, and notices.',
-    topicIds: ['start-desks', 'exec', 'start-mamani', 'start-notices', 'messenger'],
+      'How people open AGM Sync, then the hotel-wide picture. Every desk after this uses the same layout, Ask Mamani, and notices.',
+    topicIds: ['reach-premises', 'reach-cloud', 'reach-icon', 'start-desks', 'exec', 'start-mamani', 'start-notices', 'messenger'],
   },
   {
     id: 'frontdesk',
     title: 'Front Office Operations',
     intro:
-      'The second desk. Open Desk, Rooms, Billing, Clients, Night, and Reports from the side menu. The topics below follow that path: the counter, a room move, the folio, checkout, and night audit.',
-    topicIds: ['front', 'front-checkin', 'front-transfer', 'void-folio-charge', 'front-checkout', 'front-audit'],
+      'The second desk. Open Desk, Rooms, Billing, Clients, Night, and Reports from the side menu. The topics below follow that path: the counter, a wake-up, a room move, the folio, checkout, and night audit.',
+    topicIds: ['front', 'front-checkin', 'front-wakeup', 'front-transfer', 'void-folio-charge', 'front-checkout', 'front-audit'],
   },
   {
     id: 'events',

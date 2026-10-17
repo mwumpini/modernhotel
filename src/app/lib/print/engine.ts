@@ -1,7 +1,7 @@
 import { printTemplates, listTemplates, type PrintType, type PrintData } from './templates';
 import { renderBlockTemplate } from './blockRenderer';
 import { getBuiltInTemplate, listBuiltInTemplates } from './blockDefaults';
-import type { BlockTemplate } from './blocks';
+import { DEFAULT_EMAIL_NOTE, type BlockTemplate } from './blocks';
 import { useSettingsStore } from '../settings/store';
 
 /**
@@ -43,6 +43,21 @@ function activeTemplateKey(type: PrintType): string {
   return listBuiltInTemplates(type)[0]?.id || Object.keys(printTemplates[type] || {})[0] || '';
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/** Hidden marker. The PDF step reads it and paints the line; print and preview do not. */
+function stampEmailNote(html: string, note: string | undefined): string {
+  const text = note === undefined ? DEFAULT_EMAIL_NOTE : note;
+  const marker = `<div id="agm-email-note" hidden>${escapeHtml(text)}</div>`;
+  if (html.includes('</body>')) return html.replace('</body>', `${marker}</body>`);
+  return `${html}${marker}`;
+}
+
 export function renderPrint(type: PrintType, templateKey: string, data: PrintData): string {
   // An explicit key wins when it is a real template for this document type.
   // Otherwise use the one Set Active stored, so a newly activated template
@@ -54,12 +69,12 @@ export function renderPrint(type: PrintType, templateKey: string, data: PrintDat
   if (type === 'fb-receipt' && !data.taxLabelStyle) data = { ...data, taxLabelStyle: 'short' };
   if (block && block.docType === type) {
     const withUser = data.userName ? data : { ...data, userName: signedInUserName() };
-    return renderBlockTemplate(block, withUser);
+    return stampEmailNote(renderBlockTemplate(block, withUser), block.emailNote);
   }
 
   const typeRegistry = printTemplates[type] || {};
   const tmpl = typeRegistry[key] || typeRegistry[Object.keys(typeRegistry)[0]];
-  return tmpl ? tmpl(data) : '<html><body>No template</body></html>';
+  return stampEmailNote(tmpl ? tmpl(data) : '<html><body>No template</body></html>', undefined);
 }
 
 /** Strip inline print scripts — we trigger print explicitly after the document loads. */

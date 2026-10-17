@@ -23,26 +23,30 @@ export async function getPropertyCalendarDate(tenantId: string, now = new Date()
   return getZonedClockParts(now, property?.timezone || DEFAULT_PROPERTY_TIMEZONE).date
 }
 
-export async function getFrontOfficeBusinessDate(tenantId: string): Promise<string> {
+export async function getFrontOfficeBusinessDate(tenantId: string, now = new Date()): Promise<string> {
+  const today = await getPropertyCalendarDate(tenantId, now)
   const settings = await prisma.systemSettings.findUnique({
     where: { tenantId },
     select: { hotelSettings: true },
   })
   const stored = (settings?.hotelSettings as { frontOfficeBusinessDate?: string } | null)?.frontOfficeBusinessDate
-  if (stored && /^\d{4}-\d{2}-\d{2}$/.test(stored)) return stored
+  if (stored && /^\d{4}-\d{2}-\d{2}$/.test(stored)) {
+    if (stored > today) {
+      await setFrontOfficeBusinessDate(tenantId, today, now)
+      return today
+    }
+    return stored
+  }
 
-  const property = await prisma.property.findFirst({
-    where: { tenantId, isActive: true },
-    select: { timezone: true },
-  })
-  const date = getZonedClockParts(new Date(), property?.timezone || DEFAULT_PROPERTY_TIMEZONE).date
-  await setFrontOfficeBusinessDate(tenantId, date)
-  return date
+  await setFrontOfficeBusinessDate(tenantId, today, now)
+  return today
 }
 
-export async function setFrontOfficeBusinessDate(tenantId: string, date: string): Promise<void> {
+export async function setFrontOfficeBusinessDate(tenantId: string, date: string, now = new Date()): Promise<void> {
+  const today = await getPropertyCalendarDate(tenantId, now)
+  const locked = date > today ? today : date
   const existing = await prisma.systemSettings.findUnique({ where: { tenantId } })
-  const hotelSettings = { ...((existing?.hotelSettings as object) || {}), frontOfficeBusinessDate: date }
+  const hotelSettings = { ...((existing?.hotelSettings as object) || {}), frontOfficeBusinessDate: locked }
   await prisma.systemSettings.upsert({
     where: { tenantId },
     update: { hotelSettings },

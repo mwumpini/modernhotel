@@ -8,12 +8,16 @@ import {
   Card,
   CardBody,
   CardHeader,
+  Chip,
   Input,
   Modal,
   ModalBody,
   ModalContent,
   ModalFooter,
   ModalHeader,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   Select,
   SelectItem,
   Switch,
@@ -51,6 +55,7 @@ import StayWorksheetTable from './frontoffice/StayWorksheetTable';
 import GuestFolioModal from './frontoffice/GuestFolioModal';
 import { DateFilterPills, type DateMode } from './fb/DateFilterPills';
 import { notifyError, notifySuccess } from '../lib/notifications/notify';
+import { confirmDocumentSend, documentIntro, sendDocumentEmail } from '../lib/platform/sendDocumentEmail';
 import { openHtmlPrintWindow, renderPrint } from '../lib/print/engine';
 import { computeSalesTax } from '../lib/tax/engine';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
@@ -196,7 +201,16 @@ export default function FrontDeskCounter() {
   const [focus, setFocus] = useState<DeskFocus>('arrival');
   const [narrow, setNarrow] = useState('all');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const id = localStorage.getItem('fo.deskStay');
+      localStorage.removeItem('fo.deskStay');
+      return id || null;
+    } catch {
+      return null;
+    }
+  });
   const [chosenRoom, setChosenRoom] = useState('');
   /** "Assign room" from the no-room check-in prompt: pick a room, then check in. */
   const [assignThenCheckIn, setAssignThenCheckIn] = useState(false);
@@ -212,10 +226,21 @@ export default function FrontDeskCounter() {
   const [preview, setPreview] = useState<{ title: string; html: string } | null>(null);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [folioOpen, setFolioOpen] = useState(false);
+  const [wakeOpen, setWakeOpen] = useState(false);
+  const [wakeDate, setWakeDate] = useState('');
+  const [wakeTime, setWakeTime] = useState('06:00');
+  const [wakeNotes, setWakeNotes] = useState('');
+  const [wakeAlert, setWakeAlert] = useState<'silent' | 'alarm'>('silent');
   const lateCheckoutPolicy = useSettingsStore((s) => s.roomManagement);
   const canWaiveLateCheckout = useSettingsStore((s) => s.hasPermission('frontdesk.waive-late-checkout'));
 
   useEffect(() => frontOfficeStore.subscribe(() => setTick((n) => n + 1)), []);
+  useEffect(() => {
+    setWakeOpen(false);
+    setWakeDate(nextCalendarDate(todayKey()));
+    setWakeTime('06:00');
+    setWakeNotes('');
+  }, [selectedId]);
 
   // Keep desk date filter aligned with Customize → KPI period (drives KPI strip + list).
   useEffect(() => {
@@ -503,9 +528,9 @@ export default function FrontDeskCounter() {
     }
   };
 
-  const stayDocument = () => {
+  const stayDocument = (kind: PrintChoice = printKind) => {
     if (!selected) return null;
-    const choice = PRINTS.find((item) => item.key === printKind) || PRINTS[1];
+    const choice = PRINTS.find((item) => item.key === kind) || PRINTS[1];
     const payments = (folio?.payments || []).filter((payment) => !payment.status || payment.status === 'completed');
     if (choice.key === 'receipt' && payments.length === 0) {
       notifyError('This stay has no payment to put on a receipt.', 'Print');
@@ -575,6 +600,50 @@ export default function FrontDeskCounter() {
     if (document) setPreview(document);
   };
 
+  const guestEmail = () => {
+    if (!selected) return '';
+    return (frontOfficeStore.guests.find((guest) => guest.id === selected.guestId)?.email || '').trim();
+  };
+
+  const emailDocument = async (kind: PrintChoice = printKind) => {
+    if (!selected || busy) return;
+    const to = guestEmail();
+    if (!to) {
+      notifyError('This guest has no email address. Nothing was sent.', 'Email');
+      return;
+    }
+    const document = stayDocument(kind);
+    if (!document) return;
+    const hotel = useSettingsStore.getState().saasSettings.customBranding.companyName || 'the hotel';
+    const subject = kind === 'receipt'
+      ? `Receipt from ${hotel}`
+      : kind === 'registration-card'
+        ? `Registration card from ${hotel}`
+        : `Checkout bill from ${hotel}`;
+    const sent = kind === 'receipt' ? 'Receipt' : kind === 'registration-card' ? 'Registration card' : 'Bill';
+    const documentName = kind === 'receipt' ? 'receipt' : kind === 'registration-card' ? 'registration card' : 'bill';
+    if (!(await confirmDocumentSend(to, documentName))) return;
+    setBusy(true);
+    try {
+      const result = await sendDocumentEmail({
+        to,
+        subject,
+        intro: documentIntro(selected.guestName, documentName, hotel),
+        documentHtml: document.html,
+        filename: `${selected.resId || 'stay'}-${documentName}`,
+      });
+      if (!result.ok) {
+        notifyError(result.error, 'Email');
+        return;
+      }
+      notifySuccess(`${sent} sent to ${to}`, 'Email sent');
+    } catch {
+      notifyError('Could not send the email.', 'Email');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const changeNights = (direction: 1 | -1) => {
     if (!selected || busy) return;
     const count = Math.floor(Number(nightCount));
@@ -642,6 +711,20 @@ export default function FrontDeskCounter() {
   };
 
   const staying = selected?.status === 'checked-in';
+  const morning = nextCalendarDate(today);
+  const wakeUpsDue = frontOfficeStore.wakeUpCalls
+    .filter((call) => call.status === 'scheduled' && (call.date === today || call.date === morning))
+    .slice()
+    .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
+  const nextWakeUp = wakeUpsDue[0];
+  const stayWakeUps = selected
+    ? frontOfficeStore.wakeUpCalls.filter((call) => call.reservationId === selected.id)
+    : [];
+  const scheduleWakeUp = () => {
+    if (!selected || !wakeDate || !wakeTime) return;
+    frontOfficeStore.scheduleWakeUpCall(selected.id, wakeDate, wakeTime, wakeNotes.trim() || undefined, wakeAlert);
+    setWakeNotes('');
+  };
   const departed = selected?.status === 'checked-out';
   const arriving = selected?.status === 'confirmed' || selected?.status === 'pending';
   const quote = selected ? frontOfficeStore.getReservationQuote(selected) : null;
@@ -804,6 +887,55 @@ export default function FrontDeskCounter() {
         </div>
       )}
 
+      {nextWakeUp && (
+        <div className="flex flex-wrap items-center gap-2 rounded-large border border-gray-200 bg-content1 px-3 py-1.5">
+          <span className="text-sm font-semibold text-ghana-black">Wake-ups</span>
+          <span className="text-xs text-gray-500">{wakeUpsDue.length} to make</span>
+          <button
+            type="button"
+            className="min-w-0 truncate text-left text-sm font-semibold text-ghana-black hover:underline"
+            onClick={() => openStay(nextWakeUp.reservationId)}
+          >
+            {nextWakeUp.guestName}
+            {nextWakeUp.roomNumber && nextWakeUp.roomNumber !== 'TBD' ? ` · ${nextWakeUp.roomNumber}` : ''}
+          </button>
+          <span className="text-sm tabular-nums text-gray-600">
+            {nextWakeUp.date === today ? nextWakeUp.time : `${shortDay(nextWakeUp.date)} · ${nextWakeUp.time}`}
+          </span>
+          <div className="ml-auto flex items-center gap-1">
+            {wakeUpsDue.length > 1 && (
+              <Popover placement="bottom-end">
+                <PopoverTrigger>
+                  <Button size="sm" variant="flat">{wakeUpsDue.length - 1} more</Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-80 items-stretch p-2">
+                  <ul className="max-h-64 w-full divide-y divide-gray-100 overflow-y-auto">
+                    {wakeUpsDue.map((call) => (
+                      <li key={call.id} className="flex items-center gap-2 py-1.5 text-sm">
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 truncate text-left font-semibold text-ghana-black hover:underline"
+                          onClick={() => openStay(call.reservationId)}
+                        >
+                          {call.guestName}
+                          {call.roomNumber && call.roomNumber !== 'TBD' ? ` · ${call.roomNumber}` : ''}
+                        </button>
+                        <span className="shrink-0 tabular-nums text-gray-600">
+                          {call.date === today ? call.time : `${shortDay(call.date)} · ${call.time}`}
+                        </span>
+                        <Button size="sm" variant="flat" color="success" onPress={() => frontOfficeStore.completeWakeUpCall(call.id)}>Done</Button>
+                      </li>
+                    ))}
+                  </ul>
+                </PopoverContent>
+              </Popover>
+            )}
+            <Button size="sm" variant="flat" color="success" onPress={() => frontOfficeStore.completeWakeUpCall(nextWakeUp.id)}>Done</Button>
+            <Button size="sm" variant="flat" onPress={() => frontOfficeStore.cancelWakeUpCall(nextWakeUp.id)}>Cancel</Button>
+          </div>
+        </div>
+      )}
+
       <Card className="border-0 shadow-lg">
         <CardBody className="px-2 py-3">
           <StayWorksheetTable
@@ -868,13 +1000,93 @@ export default function FrontDeskCounter() {
         <ModalContent>
           {selected && (
             <>
-              <ModalHeader className="bg-gradient-to-r from-blue-600 to-purple-600 pr-12 text-white">
-                <div>
-                  <h2 className="text-xl font-bold">{selected.guestName}</h2>
+              <ModalHeader className="flex w-full items-center justify-between gap-3 bg-gradient-to-r from-blue-600 to-purple-600 pr-12 text-white">
+                <div className="min-w-0">
+                  <h2 className="truncate text-xl font-bold">{selected.guestName}</h2>
                   <p className="text-sm font-normal text-blue-100">
                     {selected.resId || selected.id} • Room {hasRoom ? selected.roomId : 'Unassigned'}
                   </p>
                 </div>
+                {staying && (
+                  <Popover placement="bottom-end" isOpen={wakeOpen} onOpenChange={setWakeOpen}>
+                    <PopoverTrigger>
+                      <Button size="sm" variant="flat" className="shrink-0 bg-white/20 text-white">
+                        Wake-up
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[36rem] max-w-[calc(100vw-2rem)] items-stretch p-3">
+                      <div className="grid w-full grid-cols-[9.5rem_8rem_minmax(0,1fr)_auto] items-end gap-2">
+                        <Input
+                          size="sm"
+                          type="date"
+                          label="Morning"
+                          value={wakeDate}
+                          onValueChange={setWakeDate}
+                        />
+                        <Input
+                          size="sm"
+                          type="time"
+                          label="Time"
+                          value={wakeTime}
+                          onValueChange={setWakeTime}
+                        />
+                        <Input
+                          size="sm"
+                          label="Notes"
+                          placeholder="Optional"
+                          value={wakeNotes}
+                          onValueChange={setWakeNotes}
+                        />
+                        <Button
+                          size="sm"
+                          className="h-12 min-h-12 bg-ghana-green text-white"
+                          onPress={scheduleWakeUp}
+                          isDisabled={!wakeDate || !wakeTime}
+                        >
+                          Schedule
+                        </Button>
+                      </div>
+                      <div className="mt-2 flex items-center gap-1.5">
+                        <span className="mr-1 text-xs text-gray-500">When due</span>
+                        {(['silent', 'alarm'] as const).map((mode) => (
+                          <Button
+                            key={mode}
+                            size="sm"
+                            variant={wakeAlert === mode ? 'solid' : 'flat'}
+                            className={wakeAlert === mode ? 'bg-ghana-black text-white' : ''}
+                            onPress={() => setWakeAlert(mode)}
+                          >
+                            {mode === 'silent' ? 'Silent' : 'Alarm'}
+                          </Button>
+                        ))}
+                      </div>
+                      {stayWakeUps.length > 0 && (
+                        <ul className="mt-2 w-full divide-y divide-gray-100">
+                          {stayWakeUps.map((call) => (
+                            <li key={call.id} className="flex flex-wrap items-center gap-2 py-1.5 text-sm">
+                              <span className="tabular-nums text-ghana-black">{shortDay(call.date)} · {call.time}</span>
+                              {call.notes && <span className="min-w-0 truncate text-gray-500">{call.notes}</span>}
+                              <Chip
+                                size="sm"
+                                variant="flat"
+                                color={call.status === 'completed' ? 'success' : call.status === 'cancelled' ? 'default' : 'warning'}
+                                className="ml-auto"
+                              >
+                                {call.status === 'completed' ? 'Done' : call.status === 'cancelled' ? 'Cancelled' : 'Scheduled'}
+                              </Chip>
+                              {call.status === 'scheduled' && (
+                                <div className="flex gap-1">
+                                  <Button size="sm" variant="flat" color="success" onPress={() => frontOfficeStore.completeWakeUpCall(call.id)}>Done</Button>
+                                  <Button size="sm" variant="flat" onPress={() => frontOfficeStore.cancelWakeUpCall(call.id)}>Cancel</Button>
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </PopoverContent>
+                  </Popover>
+                )}
               </ModalHeader>
               <ModalBody className="gap-4">
                 <Card shadow="sm" className="shrink-0">
@@ -938,21 +1150,22 @@ export default function FrontDeskCounter() {
                   />
                 )}
 
-                <div className="flex shrink-0 flex-wrap items-end gap-2">
+                <div className="flex shrink-0 flex-nowrap items-end gap-[0.4rem]">
                   {(staying || arriving) && (
                     <>
-                      <Button size="sm" variant="flat" className="h-12 min-h-12 w-12 shrink-0 px-0" isLoading={busy} aria-label="Remove nights" onPress={() => changeNights(-1)}>
+                      <Button size="sm" variant="flat" className="!h-[2.4rem] !min-h-[2.4rem] !w-[2.4rem] !min-w-[2.4rem] shrink-0 px-0" isLoading={busy} aria-label="Remove nights" onPress={() => changeNights(-1)}>
                         −
                       </Button>
                       <Input
                         size="sm"
                         type="number"
                         label="Nights"
-                        className="w-24"
+                        className="w-[4.8rem] shrink-0"
+                        classNames={{ inputWrapper: '!h-[2.4rem] !min-h-[2.4rem]' }}
                         value={nightCount}
                         onValueChange={setNightCount}
                       />
-                      <Button size="sm" variant="flat" color="primary" className="h-12 min-h-12 w-12 shrink-0 px-0" isLoading={busy} aria-label="Add nights" onPress={() => changeNights(1)}>
+                      <Button size="sm" variant="flat" color="primary" className="!h-[2.4rem] !min-h-[2.4rem] !w-[2.4rem] !min-w-[2.4rem] shrink-0 px-0" isLoading={busy} aria-label="Add nights" onPress={() => changeNights(1)}>
                         +
                       </Button>
                     </>
@@ -961,7 +1174,8 @@ export default function FrontDeskCounter() {
                   <Select
                     size="sm"
                     label="Print"
-                    className="w-[12.5rem]"
+                    className="w-[10rem] shrink-0"
+                    classNames={{ trigger: '!h-[2.4rem] !min-h-[2.4rem]' }}
                     selectedKeys={[printKind]}
                     onSelectionChange={(keys) => {
                       const value = Array.from(keys)[0];
@@ -972,8 +1186,9 @@ export default function FrontDeskCounter() {
                       <SelectItem key={item.key}>{item.label}</SelectItem>
                     ))}
                   </Select>
-                  <Button size="sm" variant="flat" className="h-12 min-h-12 shrink-0" onPress={previewStay}>Preview</Button>
-                  <Button size="sm" variant="flat" className="h-12 min-h-12 shrink-0" onPress={printStay}>Print</Button>
+                  <Button size="sm" variant="flat" className="!h-[2.4rem] !min-h-[2.4rem] !min-w-[3.2rem] shrink-0 px-[0.6rem]" onPress={previewStay}>Preview</Button>
+                  <Button size="sm" variant="flat" className="!h-[2.4rem] !min-h-[2.4rem] !min-w-[3.2rem] shrink-0 px-[0.6rem]" onPress={printStay}>Print</Button>
+                  <Button size="sm" variant="flat" className="!h-[2.4rem] !min-h-[2.4rem] !min-w-[3.2rem] shrink-0 px-[0.6rem]" isLoading={busy} onPress={() => emailDocument()}>Email</Button>
                 </div>
 
                 {arriving && !hasRoom && rooms.length > 0 && (

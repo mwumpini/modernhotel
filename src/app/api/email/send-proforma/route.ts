@@ -1,19 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/app/lib/auth/auth';
+import { prisma } from '@/app/lib/database/client';
+import { readHotelMail, type HotelMail } from '@/app/lib/platform/hotelMail';
+import { mailNote } from '@/app/lib/platform/mailNote';
 
-// Email configuration from environment variables
-const emailConfig = {
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: parseInt(process.env.SMTP_PORT || '587'),
-  secure: false, // true for 465, false for other ports
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-};
-
-// Create transporter
-const transporter = nodemailer.createTransport(emailConfig);
+async function mailboxForSender(): Promise<HotelMail | null> {
+  const session = await getServerSession(authOptions);
+  const tenantId = session?.user?.tenantId;
+  if (!tenantId) return null;
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { metadata: true } });
+  return tenant ? readHotelMail(tenant.metadata) : null;
+}
 
 interface SendProformaRequest {
   reservationId: string;
@@ -39,7 +38,6 @@ export async function POST(request: NextRequest) {
       guestName, 
       pdfBuffer, 
       hotelName,
-      reservationDetails 
     } = body;
 
     // Validate required fields
@@ -50,44 +48,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const mailbox = await mailboxForSender();
+    if (!mailbox) {
+      return NextResponse.json(
+        { error: 'This hotel has no outgoing mailbox yet. Add it when the hotel is opened in the platform.' },
+        { status: 400 },
+      );
+    }
+
     // Convert base64 to buffer
     const pdfAttachment = Buffer.from(pdfBuffer, 'base64');
 
     // Email content
     const subject = `Reservation Confirmation - ${hotelName}`;
-    const htmlContent = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #2563eb;">Reservation Confirmation</h2>
-        <p>Dear ${guestName},</p>
-        
-        <p>Thank you for choosing ${hotelName}! Your reservation has been confirmed.</p>
-        
-        <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
-          <h3 style="margin-top: 0; color: #1e40af;">Reservation Details</h3>
-          <p><strong>Check-in:</strong> ${reservationDetails.checkIn}</p>
-          <p><strong>Check-out:</strong> ${reservationDetails.checkOut}</p>
-          <p><strong>Room Type:</strong> ${reservationDetails.roomType}</p>
-          <p><strong>Total Amount:</strong> ${reservationDetails.currency} ${reservationDetails.totalAmount.toFixed(2)}</p>
-        </div>
-        
-        <p>Please find your detailed reservation proforma attached to this email.</p>
-        
-        <p>If you have any questions or need to make changes to your reservation, please don't hesitate to contact us.</p>
-        
-        <p>We look forward to welcoming you!</p>
-        
-        <hr style="margin: 30px 0; border: none; border-top: 1px solid #e5e7eb;">
-        <p style="color: #6b7280; font-size: 14px;">
-          Best regards,<br>
-          ${hotelName} Team
-        </p>
-      </div>
-    `;
+    const htmlContent = mailNote({
+      name: guestName,
+      documentName: 'reservation confirmation',
+      facility: hotelName,
+    });
 
 
     // Send email
     const mailOptions = {
-      from: `"${hotelName}" <${process.env.SMTP_USER}>`,
+      from: `"${hotelName}" <${mailbox.user}>`,
       to: guestEmail,
       subject,
       html: htmlContent,
@@ -100,6 +83,12 @@ export async function POST(request: NextRequest) {
       ],
     };
 
+    const transporter = nodemailer.createTransport({
+      host: mailbox.host,
+      port: mailbox.port,
+      secure: mailbox.port === 465,
+      auth: { user: mailbox.user, pass: mailbox.pass },
+    });
     const result = await transporter.sendMail(mailOptions);
 
 
@@ -131,19 +120,9 @@ export async function POST(request: NextRequest) {
 
 // Health check for email service
 export async function GET() {
-  try {
-    await transporter.verify();
-    return NextResponse.json({
-      status: 'healthy',
-      service: 'email',
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    return NextResponse.json({
-      status: 'unhealthy',
-      service: 'email',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString(),
-    }, { status: 503 });
+  const mailbox = await mailboxForSender();
+  if (!mailbox) {
+    return NextResponse.json({ status: 'unconfigured', service: 'email' }, { status: 404 });
   }
+  return NextResponse.json({ status: 'configured', service: 'email', from: mailbox.user });
 }

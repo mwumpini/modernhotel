@@ -52,6 +52,11 @@ function lanAddress() {
   return preferred || found[0] || null
 }
 
+function hotelUrl() {
+  const host = lanAddress() || '127.0.0.1'
+  return `http://${host}:${PORT}`
+}
+
 function readEnvFile(file) {
   const out = {}
   if (!fs.existsSync(file)) return out
@@ -125,9 +130,10 @@ async function waitUntilReady(port) {
 
 const records = dataDir()
 
+const background = process.argv.includes('--background')
+
 if (process.argv.includes('--check')) {
-  const address = lanAddress() || '127.0.0.1'
-  console.log(`Address: http://${address}:${PORT}`)
+  console.log(`Address: ${hotelUrl()}`)
   console.log(`Records: ${records}`)
   process.exit(0)
 }
@@ -143,7 +149,7 @@ if (process.argv.includes('--open')) {
     console.log('The hotel system is not running. Double-click Start Hotel System first.')
     process.exit(1)
   }
-  openBrowser(fs.readFileSync(urlFile, 'utf8').trim())
+  openBrowser(hotelUrl())
   process.exit(0)
 }
 
@@ -155,11 +161,20 @@ if (!fs.existsSync(path.join(appDir, 'server.js')) || !fs.existsSync(nodeExe)) {
 const pidFile = path.join(records, 'server.pid')
 const existingPid = readPid(pidFile)
 if (existingPid && pidAlive(existingPid)) {
-  const urlFile = path.join(records, 'url.txt')
-  const url = fs.existsSync(urlFile) ? fs.readFileSync(urlFile, 'utf8').trim() : `http://127.0.0.1:${PORT}`
+  const url = fs.existsSync(path.join(root, 'sync-mode.txt')) && fs.existsSync(path.join(records, 'sync.json'))
+    ? (() => {
+        try {
+          const saved = JSON.parse(fs.readFileSync(path.join(records, 'sync.json'), 'utf8'))
+          return saved.token ? hotelUrl() : `${hotelUrl()}/sync`
+        } catch {
+          return `${hotelUrl()}/sync`
+        }
+      })()
+    : hotelUrl()
+  fs.writeFileSync(path.join(records, 'url.txt'), url, 'utf8')
   console.log('The hotel system is already running.')
   console.log(url)
-  openBrowser(url)
+  if (!background) openBrowser(url)
   process.exit(0)
 }
 
@@ -195,19 +210,38 @@ if (fs.existsSync(prismaCli)) {
   }
 }
 
-const host = lanAddress() || '127.0.0.1'
-const publicUrl = `http://${host}:${PORT}`
-fs.writeFileSync(path.join(records, 'url.txt'), publicUrl, 'utf8')
+const publicUrl = hotelUrl()
+const syncing = fs.existsSync(path.join(root, 'sync-mode.txt'))
+const syncFile = path.join(records, 'sync.json')
+let syncConfig = {}
+if (syncing) {
+  try {
+    if (fs.existsSync(syncFile)) syncConfig = JSON.parse(fs.readFileSync(syncFile, 'utf8'))
+  } catch {
+    syncConfig = {}
+  }
+  if (!syncConfig.nodeId) {
+    syncConfig.nodeId = `premises-${crypto.randomBytes(8).toString('hex')}`
+    fs.writeFileSync(syncFile, JSON.stringify(syncConfig, null, 2), 'utf8')
+  }
+}
+function browserUrl() {
+  if (syncing && !syncConfig.token) return `${publicUrl}/sync`
+  return publicUrl
+}
+fs.writeFileSync(path.join(records, 'url.txt'), browserUrl(), 'utf8')
 fs.writeFileSync(pidFile, String(process.pid), 'utf8')
 
 const clearPid = () => fs.rmSync(pidFile, { force: true })
 process.on('exit', clearPid)
 
 console.log('')
-console.log('AGM Sync is starting on this computer.')
-console.log(`This computer and the other computers in the hotel open: ${publicUrl}`)
-console.log('Leave this window open. Closing it stops the system.')
-console.log('The internet can be down. This computer is the one that must stay on.')
+console.log('AGM Sync is the hotel server on this computer.')
+console.log(`Other devices on this Wi-Fi open: ${publicUrl}`)
+console.log('This computer must stay on.')
+console.log(syncing
+  ? 'While the internet is up, this computer and the cloud keep the same records.'
+  : 'The internet can be down.')
 if (firstDatabase) {
   console.log('')
   console.log('First sign-in')
@@ -226,16 +260,27 @@ const child = spawn(nodeExe, ['server.js'], {
     PORT: String(PORT),
     HOSTNAME: '0.0.0.0',
     SQLITE_DATABASE_URL: sqliteFileUrl(dbFile),
+    AUTH_TRUST_HOST: 'true',
     NEXTAUTH_URL: publicUrl,
     NEXTAUTH_SECRET: secret,
     NEXT_TELEMETRY_DISABLED: '1',
+    CLOUD_SYNC_MODE: syncing ? '1' : '',
+    CLOUD_SYNC_CONFIG: syncFile,
   },
   stdio: 'inherit',
 })
 
 const ready = await waitUntilReady(PORT)
-if (ready) openBrowser(publicUrl)
-else console.log(`The window did not open by itself. Open ${publicUrl} in a browser.`)
+if (ready && syncing) {
+  spawn(nodeExe, [path.join(root, 'sync-loop.mjs')], {
+    env: { ...process.env, PORT: String(PORT) },
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  }).unref()
+}
+if (ready && !background) openBrowser(browserUrl())
+else if (!ready) console.log(`The window did not open by itself. Open ${browserUrl()} in a browser.`)
 
 const code = await new Promise((resolve) => {
   child.on('exit', resolve)

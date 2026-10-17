@@ -49,6 +49,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: "AGM Sync",
   description: "Your property, simply connected. agmsync.com",
+  robots: { index: false, follow: false },
   openGraph: {
     title: 'AGM Sync',
     description: 'Your property, simply connected.',
@@ -63,6 +64,12 @@ export const metadata: Metadata = {
     images: ['/brand/og-image.png'],
   },
   // src/app/icon.svg is picked up as the browser-tab icon; favicon.ico stays for old browsers.
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    title: 'AGM Sync',
+    statusBarStyle: 'default',
+  },
   icons: {
     icon: [{ url: '/icon.svg', type: 'image/svg+xml' }, { url: '/favicon.ico' }],
     shortcut: '/favicon.ico',

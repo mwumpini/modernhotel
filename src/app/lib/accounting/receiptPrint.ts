@@ -1,4 +1,4 @@
-import { openPrintPreview } from '../print/engine';
+import { openPrintPreview, renderPrint } from '../print/engine';
 import type { PrintData, PrintOrgInfo } from '../print/templates';
 import type { Invoice, Payment } from './models';
 import type { Folio, FolioPayment, Reservation } from '../frontoffice/types';
@@ -260,6 +260,10 @@ export function resolvePaymentsForReceiptTarget(
 
 export function printCustomerReceipt(templateKey: string, data: PrintData) {
   openPrintPreview('receipt', templateKey, data);
+}
+
+export function renderCustomerReceiptHtml(templateKey: string, data: PrintData) {
+  return renderPrint('receipt', templateKey, data);
 }
 
 export function receiptCanEdit(receipt: StoredReceiptPayment): boolean {

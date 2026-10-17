@@ -68,10 +68,12 @@ import { enhancedFrontOfficeStore } from '../lib/frontoffice/enhancedStore';
 import { fetchEventBookings, saveEventBooking } from '../lib/frontoffice/eventsApi';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { eventStartBackdateError } from '../lib/frontoffice/backdate';
-import { notifyError } from '../lib/notifications/notify';
+import { notifyError, notifySuccess } from '../lib/notifications/notify';
+import { confirmDocumentSend, documentIntro, sendDocumentEmail } from '../lib/platform/sendDocumentEmail';
 import type { EventBooking, GuestProfile } from '../lib/frontoffice/types';
 import { genId } from '../lib/frontoffice/helpers/ids';
-import { openPrintPreview, openHtmlPrintWindow } from '../lib/print/engine';
+import { openPrintPreview, openHtmlPrintWindow, renderPrint } from '../lib/print/engine';
+import { HtmlDocumentPreview } from './documents/HtmlDocumentPreview';
 import type { PrintType } from '../lib/print/templates';
 import { paymentMethodLabel } from '../lib/accounting/receiptPrint';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
@@ -877,6 +879,14 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
   
   const [quoteDays, setQuoteDays] = useState<QuoteDay[]>([]);
   const [activePrintTab, setActivePrintTab] = useState<'quote' | 'invoice' | 'receipt' | 'xls'>('quote');
+  const [documentPreview, setDocumentPreview] = useState<{ title: string; html: string } | null>(null);
+  const showDocumentPreview = (title: string, html: string) => {
+    if (!html) {
+      notifyError('This document could not be prepared.', 'Preview');
+      return;
+    }
+    setDocumentPreview({ title, html });
+  };
   const [selectedProformaTemplate, setSelectedProformaTemplate] = useState<string>('');
   const [selectedInvoiceTemplate, setSelectedInvoiceTemplate] = useState<string>('');
   const [selectedReceiptTemplate, setSelectedReceiptTemplate] = useState<string>('');
@@ -4444,6 +4454,27 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     };
   };
 
+  const hotelMailName = () => useSettingsStore.getState().saasSettings.customBranding.companyName || 'the hotel';
+
+  const eventClientAddress = (event?: any) => String(event?.contactEmail || event?.clientEmail || orgClientEmail || '').trim();
+
+  const sendClientDocument = async (to: string, subject: string, documentHtml: string, documentName: string, who: string) => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      notifyError('This client has no email address. Nothing was sent.', 'Email');
+      return;
+    }
+    if (!(await confirmDocumentSend(to, documentName))) return;
+    const result = await sendDocumentEmail({
+      to,
+      subject,
+      intro: documentIntro(who, documentName, hotelMailName()),
+      documentHtml,
+      filename: documentName,
+    });
+    if (!result.ok) notifyError(result.error, 'Email');
+    else notifySuccess(`Sent to ${to}`, 'Email sent');
+  };
+
   const handlePrintQuotePdf = (templateOverride?: string) => {
     const { type, data } = buildEventPrintData('proforma');
     if (!data) {
@@ -4480,6 +4511,37 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     trackEvent('Events.EventCreated', { action: 'invoice_pdf_downloaded', invoiceId: invoice.id, eventId: invoice.eventId });
   };
 
+  const handleEmailQuotePdf = async (templateOverride?: string) => {
+    const { type, data } = buildEventPrintData('proforma');
+    if (!data) {
+      notifyError('Unable to generate proforma data for this event.', 'Email');
+      return;
+    }
+    const html = renderPrint(type, templateOverride || resolveEventTemplateKey(type), data as any);
+    await sendClientDocument(eventClientAddress(editingEvent), `Quotation from ${hotelMailName()}`, html, 'quotation', editingEvent?.organization || editingEvent?.clientName || 'Client');
+  };
+
+  const handleEmailEventInvoicePdf = async (templateOverride?: string) => {
+    const { type, data } = buildEventPrintData('invoice');
+    if (!data) {
+      notifyError('Unable to generate invoice data for this event.', 'Email');
+      return;
+    }
+    const html = renderPrint(type, templateOverride || resolveEventTemplateKey(type), data as any);
+    await sendClientDocument(eventClientAddress(editingEvent), `Invoice from ${hotelMailName()}`, html, 'invoice', editingEvent?.organization || editingEvent?.clientName || 'Client');
+  };
+
+  const handleEmailInvoicePdf = async (invoice: EventInvoice, templateOverride?: string) => {
+    const event = allEvents.find((ev) => ev.id === invoice.eventId);
+    if (!event) {
+      notifyError('Event not found for this invoice.', 'Email');
+      return;
+    }
+    const { type, data } = buildInvoicePrintData(invoice, event);
+    const html = renderPrint(type, templateOverride || resolveEventTemplateKey(type), data as any);
+    await sendClientDocument(eventClientAddress(event), `Invoice from ${hotelMailName()}`, html, 'invoice', invoice.clientName || event.organization || 'Client');
+  };
+
   const handleDownloadQuotePdf = (eventData: any) => {
     if (!eventData) {
       alert('Quote data not available for this event.');
@@ -4494,6 +4556,41 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       eventId: eventData.id,
       quoteNumber: eventData.quoteNumber || formatEventId(eventData.id),
     });
+  };
+
+  const handleEmailQuoteFromEvent = async (eventData: any) => {
+    if (!eventData) {
+      notifyError('Quote data not available for this event.', 'Email');
+      return;
+    }
+    const { type, data } = buildQuotePrintDataFromEvent(eventData);
+    const html = renderPrint(type, resolveEventTemplateKey(type), data as any);
+    await sendClientDocument(eventClientAddress(eventData), `Quotation from ${hotelMailName()}`, html, 'quotation', eventData.organization || eventData.clientName || 'Client');
+  };
+
+  const eventQuoteHtml = (templateOverride?: string) => {
+    const { type, data } = buildEventPrintData('proforma');
+    if (!data) return '';
+    return renderPrint(type, templateOverride || resolveEventTemplateKey(type), data as any);
+  };
+
+  const eventLiveInvoiceHtml = (templateOverride?: string) => {
+    const { type, data } = buildEventPrintData('invoice');
+    if (!data) return '';
+    return renderPrint(type, templateOverride || resolveEventTemplateKey(type), data as any);
+  };
+
+  const eventInvoiceHtml = (invoice: EventInvoice, templateOverride?: string) => {
+    const event = allEvents.find((ev) => ev.id === invoice.eventId);
+    if (!event) return '';
+    const { type, data } = buildInvoicePrintData(invoice, event);
+    return renderPrint(type, templateOverride || resolveEventTemplateKey(type), data as any);
+  };
+
+  const quoteHtmlFromEvent = (eventData: any) => {
+    if (!eventData) return '';
+    const { type, data } = buildQuotePrintDataFromEvent(eventData);
+    return renderPrint(type, resolveEventTemplateKey(type), data as any);
   };
 
   /** Mirrors buildCustomerReceiptPrintData() in lib/accounting/receiptPrint.ts for front-desk receipts. */
@@ -4542,6 +4639,22 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     const { type, data } = buildEventReceiptPrintData(receipt);
     if (!openPrintPreview(type, templateOverride || resolveEventTemplateKey(type), data as any)) return;
     trackEvent('Events.EventCreated', { action: 'receipt_pdf_downloaded', receiptId: receipt.id, eventId: receipt.eventId, method: receipt.method });
+  };
+
+  const eventReceiptHtml = (receipt: EventReceipt, templateOverride?: string) => {
+    if (!receipt || receipt.status === 'Void') return '';
+    const { type, data } = buildEventReceiptPrintData(receipt);
+    return renderPrint(type, templateOverride || resolveEventTemplateKey(type), data as any);
+  };
+
+  const handleEmailEventReceipt = async (receipt: EventReceipt, templateOverride?: string) => {
+    const html = eventReceiptHtml(receipt, templateOverride);
+    if (!html) {
+      notifyError('This event has no receipt to send.', 'Email');
+      return;
+    }
+    const event = allEvents.find((ev) => ev.id === receipt.eventId) || editingEvent;
+    await sendClientDocument(eventClientAddress(event), `Receipt from ${hotelMailName()}`, html, 'receipt', receipt.clientName || event?.organization || 'Client');
   };
 
   // Comprehensive Quoting System Functions
@@ -5684,6 +5797,21 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     trackEvent('Events.EventCreated', { action: trackAction, eventCount: events.length });
     const html = buildFunctionSchedulePrintHtml(events, scheduleTitle);
     if (!openHtmlPrintWindow(html)) return;
+  };
+
+  const emailFunctionScheduleFromEvents = async (events: any[], scheduleTitle: string) => {
+    const addresses = [...new Set(events.map((event) => String(event?.contactEmail || event?.clientEmail || '').trim().toLowerCase()).filter(Boolean))];
+    if (addresses.length === 0) {
+      notifyError('These events have no client email. Nothing was sent.', 'Email');
+      return;
+    }
+    if (addresses.length > 1) {
+      notifyError('This schedule covers more than one client. Filter to one client, then send.', 'Email');
+      return;
+    }
+    const html = buildFunctionSchedulePrintHtml(events, scheduleTitle);
+    const client = events.find((event) => String(event?.contactEmail || event?.clientEmail || '').trim().toLowerCase() === addresses[0]);
+    await sendClientDocument(addresses[0], `Function schedule from ${hotelMailName()}`, html, 'function-schedule', client?.organization || client?.clientName || 'Client');
   };
 
   const exportFunctionSchedulePDF = () => {
@@ -10794,6 +10922,23 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     trackEvent('Analytics.ActionClicked', { action: 'ContractPrinted', clientId: selectedClient.id });
   };
 
+  const handleContractEmail = async (templateKey?: string) => {
+    if (!selectedClient) return;
+    const state = useSettingsStore.getState();
+    const hotel = buildOrgProfile(state as any);
+    const key = templateKey || (state.printing as any)['event-contract'] || '';
+    const html = renderPrint('event-contract', key, buildContractPrintData(selectedClient, selectedContractEventInfo, hotel));
+    await sendClientDocument(String(selectedClient.email || '').trim(), `Contract from ${hotel.name || hotelMailName()}`, html, 'contract', selectedClient.name || selectedClient.organization || 'Client');
+  };
+
+  const contractHtml = (templateKey?: string) => {
+    if (!selectedClient) return '';
+    const state = useSettingsStore.getState();
+    const hotel = buildOrgProfile(state as any);
+    const key = templateKey || (state.printing as any)['event-contract'] || '';
+    return renderPrint('event-contract', key, buildContractPrintData(selectedClient, selectedContractEventInfo, hotel));
+  };
+
   const handleContractDocx = (templateKey?: string) => {
     if (!selectedClient) return;
     const state = useSettingsStore.getState();
@@ -10893,6 +11038,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     eventTotals,
     expectedPax,
     exportEventsForView,
+    emailFunctionScheduleFromEvents,
     exportFunctionSchedulePDF,
     exportFunctionSheetPDF,
     filteredFolioEntries,
@@ -10945,12 +11091,24 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     handleCalendarToday,
     handleCalendarViewChange,
     handleContractDocx,
+    handleContractEmail,
     handleContractPrint,
+    contractHtml,
     handleCreateFolio,
     handleDeleteVenue,
     handleDownloadInvoicePdf,
     handleDownloadQuotePdf,
     handleDownloadReceiptPdf,
+    handleEmailEventInvoicePdf,
+    handleEmailEventReceipt,
+    handleEmailInvoicePdf,
+    handleEmailQuoteFromEvent,
+    handleEmailQuotePdf,
+    eventInvoiceHtml,
+    eventLiveInvoiceHtml,
+    eventQuoteHtml,
+    eventReceiptHtml,
+    quoteHtmlFromEvent,
     handleEditInvoiceFromFolio,
     handleEditReceiptFromFolio,
     handleEventSubmit,
@@ -11034,6 +11192,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     prepaymentType,
     prepaymentValue,
     printFunctionScheduleFromEvents,
+    functionScheduleHtml: buildFunctionSchedulePrintHtml,
+    showDocumentPreview,
     processRefund,
     ratesByParticulars,
     receiptErrors,
@@ -11226,6 +11386,11 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       {isFolioCreateModalOpen && <EventFolioCreateModal />}
       {isInvoiceEventPickerOpen && <EventProformaPickerModal />}
       {docCautionPrompt && <EventDocCautionModal />}
+      <HtmlDocumentPreview
+        title={documentPreview?.title || 'Preview'}
+        html={documentPreview?.html || null}
+        onClose={() => setDocumentPreview(null)}
+      />
     </>
     </EventsScreenProvider>
   );

@@ -62,8 +62,8 @@ A loop is the same fact on two desks. If you did it on one screen and the next s
 | --- | --- |
 | **Folio** | A guest's bill: room nights, restaurant charges, and payments |
 | **In house** | A guest who has checked in and not yet left |
-| **Night audit** | The end-of-day close. It moves the hotel to the next business day and adds the next room night to every in-house guest |
-| **Business date** | The day the hotel is working on. It changes when night audit runs, not at midnight |
+| **Night audit** | The end-of-day close. It adds that night's room charge to every in-house guest and moves the hotel date forward, but only for a day the calendar has already passed |
+| **Business date** | The day the hotel is working on. It stays on today until the calendar moves on; the 1:00 AM run, or Catch up the next morning, then closes yesterday |
 | **On account** | A bill the guest or company will pay later. It shows as money owed to the hotel |
 | **Receivable (AR)** | Money customers owe the hotel |
 | **Payable (AP)** | Money the hotel owes suppliers |
@@ -396,10 +396,8 @@ Then open **Records** and add five employees. Put each person in the department 
 **A13. Night audit.** Go to **Front Office Operations → Night** (Night Audit).
 1. Read the business date. It should be **Day 1**.
 2. ✅ The in-house count is **4**: Ama, Kwame, Esi, Yaw.
-3. Press **Close** (or **Catch up** if the screen asks).
-4. ✅ The business date changes to **Day 2**.
-
-If the system already ran night audit by itself, write down the time it ran and carry on.
+3. While the calendar is still Day 1, the button says **Still open** and does not close the day.
+4. After midnight, **Catch up** (or the 1:00 AM run) closes Day 1. ✅ The business date changes to **Day 2**.
 
 ---
 
@@ -443,7 +441,7 @@ If the system already ran night audit by itself, write down the time it ran and 
 
 **A21. End of day: night audit.** *Wait for B's Day 2 till close (B21).* Go to **Night**.
 1. ✅ In-house is **4**: Ama, Esi, Yaw, Akosua.
-2. Close the day. ✅ The business date is **Day 3**.
+2. Catch up only after the calendar has passed Day 2. ✅ The business date is **Day 3**. While Day 2 is still today, the button stays **Still open**.
 
 ## Day 2: Tester B
 
@@ -781,7 +779,7 @@ If one screen has it and the other doesn't, the step fails.
 | Journal posted | Books tab still lists the accounts; Trial Balance still balances |
 | Event created | Calendar, Gantt and the function sheet, then Receivable |
 | Patrol, visitor, incident | Security → Reports & Analysis |
-| Night audit | Next room night on every in-house guest; business date moves on |
+| Night audit | Next room night on every in-house guest; business date moves on only after that calendar day has passed |
 
 ---
 
