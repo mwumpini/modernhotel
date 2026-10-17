@@ -1,7 +1,7 @@
 import { CONTACT, FAQS } from './content';
 
 /** The public website. The app at app.agmsync.com is a different address and is not indexed. */
-export const SITE_ORIGIN = 'https://agmsync.com';
+export const SITE_ORIGIN = 'https://www.agmsync.com';
 
 export const SITE_TITLE = 'Property management system (PMS) | AGM Sync';
 
