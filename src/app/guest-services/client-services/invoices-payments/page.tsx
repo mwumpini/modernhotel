@@ -36,6 +36,7 @@ import { FoDeskKpiCustomize, FO_INVOICES_KPI_SECTIONS, useFrontOfficeDeskVisibil
 import { useHostSummaryCollapsed } from '../../../lib/dashboard/useSummaryCollapsed';
 import { periodToDateFilter } from '../../../lib/dashboard/useDashboardPeriod';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
+import { STAYED_NIGHT_VOID_MESSAGE } from '../../../lib/frontoffice/roomCharges';
 import { computeChargeTax, stayFolio } from '../../../lib/frontoffice/helpers/folio';
 import { loadRecords } from '../../../lib/api/tenantRecords';
 import { useAccountingStore } from '../../../lib/accounting/store';
@@ -1528,10 +1529,14 @@ export default function InvoicesPaymentsPage() {
                   alert(postedMessage);
                   return;
                 }
+                if (stay?.status === 'checked-in' && !frontOfficeStore.canVoidFreshCheckIn(stay.id)) {
+                  alert(STAYED_NIGHT_VOID_MESSAGE);
+                  return;
+                }
                 const ok = await confirmVoid(stay?.resId || 'this invoice', 'The invoice stays on file as Void. Charges are reversed and payments are refunded.');
                 if (!ok || !stay) return;
                 if (!frontOfficeStore.voidReservation(stay.id, 'Void invoice')) {
-                  alert(postedMessage);
+                  alert(stay.status === 'checked-in' && !frontOfficeStore.canVoidFreshCheckIn(stay.id) ? STAYED_NIGHT_VOID_MESSAGE : postedMessage);
                   return;
                 }
                 onViewClose();

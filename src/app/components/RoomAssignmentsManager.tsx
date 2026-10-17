@@ -86,7 +86,11 @@ export default function RoomAssignmentsManager({ onNewReservation }: { onNewRese
   useEffect(() => {
     loadRoomAssignments();
     const unsubscribe = frontOfficeStore.subscribe(loadRoomAssignments);
-    return unsubscribe;
+    const unsubscribeRooms = housekeepingStore.subscribe(loadRoomAssignments);
+    return () => {
+      unsubscribe();
+      unsubscribeRooms();
+    };
   }, []);
 
   useEffect(() => {

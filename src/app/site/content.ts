@@ -47,7 +47,7 @@ export const CUSTOMISE_POINTS = [
   { title: 'More than one currency', text: 'The books stay in cedis. Add a currency, such as US dollars, take a payment in it, and the books record the cedi value. Switch back to cedis when you are done.' },
   { title: 'At the hotel and at home', text: 'Work on the cloud, on a computer in the building, or on both at once. A change at home shows at the front desk, and a change at the desk shows at home.' },
   { title: 'Only the modules you need', text: 'A restaurant can run POS, kitchen and stores without a front desk. Switch modules on as you grow.' },
-  { title: 'Your logo, your documents', text: 'Bills, quotations, receipts and registration cards carry your logo and details, laid out the way you like.' },
+  { title: 'Your logo, your documents', text: 'Bills, quotations, receipts and registration cards carry your logo and details, laid out the way you like. The same document can be printed or emailed to the guest or client.' },
   { title: 'Your numbering and dates', text: 'Invoice and receipt numbers, date formats, your accounting year and check-in times, set once and used everywhere.' },
   { title: 'Your taxes and charges', text: 'Choose which taxes apply to rooms, food, drinks, events and services.' },
   { title: 'Your people, your rules', text: 'Roles and permissions per desk, approvals for discounts and voids, and an audit trail of who did what.' },
@@ -94,7 +94,7 @@ export const SETUP_OPTIONS = [
 
 export const GHANA_POINTS = [
   { title: 'Ghana taxes, done right', text: 'NHIL and GETFund, VAT and the Tourism Levy are worked out on every bill and printed in the order guests expect.' },
-  { title: 'Bills your guests know', text: 'Check-out bills, quotations, receipts and registration cards in a familiar layout, with your logo. 80 mm till slips for the restaurant.' },
+  { title: 'Bills your guests know', text: 'Check-out bills, quotations, receipts and registration cards in a familiar layout, with your logo. Email the same document, or print it. 80 mm till slips for the restaurant.' },
   { title: 'Cedis, other currencies, and Mobile Money', text: 'The books stay in cedis. Take cash, card, Mobile Money, or a payment in another currency such as dollars, and balance each till at the end of a shift.' },
   { title: 'Runs when the light stays on', text: 'Use the cloud, the computer in the hotel, or both. On the premises the hotel keeps working when the internet is down. Phones and tablets on the Wi-Fi open the same system.' },
   { title: 'Your data stays yours', text: 'Each business’s data is kept apart from every other’s, behind staff sign-in with roles and permissions.' },
@@ -116,6 +116,7 @@ export const FAQS = [
   { q: 'Can we take US dollars as well as cedis?', a: 'Yes. The books stay in Ghana cedis. You add a currency, such as US dollars, and how many cedis one unit is worth. While that currency is on, a receipt is entered in it and the books record the cedi value. Switch back to cedis when you want.' },
   { q: 'Is there an assistant?', a: 'Yes. Ask Mamani sits on each desk. Press F1 and ask how to do something, or ask for today’s numbers. It can draft a notice for you to send. It does not change bookings, bills, or the books on its own.' },
   { q: 'Can it print to my receipt printer?', a: 'Yes. A4 printers for invoices and bills, and standard 80 mm thermal printers for restaurant and bar slips and kitchen tickets.' },
+  { q: 'Can we email a bill instead of only printing it?', a: 'Yes. The registration card, invoice, receipt, quotation, statement and event paperwork can be emailed as a PDF. The guest or client needs an email address on file, and the person sending confirms before it goes out.' },
   { q: 'How much does it cost?', a: 'Pricing depends on the size of your business, the modules you use and how you run it. Book a demo and we will send a clear quote. Our first partners get hands-on setup and launch pricing.' },
   { q: 'Can someone at home and someone at the desk work at the same time?', a: 'Yes, with cloud and premises. Home opens https://app.agmsync.com. The desk opens the hotel computer, on the premises address or on the cloud. They see the same records. A booking made at home shows at the desk, and a check-in at the desk shows at home.' },
   { q: 'Can we bring in our existing guests and rooms?', a: 'Yes. During setup we enter your rooms, rates, menu and staff, and bring over your guest list so your team starts with what they know.' },

@@ -12,6 +12,7 @@ import type { Reservation } from './types';
 import { roundMoney2 } from '../tax/engine';
 import { genId } from './helpers/ids';
 import { isPostedRoomCharge, nextCalendarDate } from './folioLedger';
+import { businessToday, calendarDay } from './backdate';
 
 export type StoreLike = {
   reservations: Reservation[];
@@ -26,6 +27,29 @@ export const ROOM_CHARGE_DESCRIPTION = 'Room Charge';
 
 export function isRoomLine(description?: string): boolean {
   return isPostedRoomCharge({ description });
+}
+
+export const STAYED_NIGHT_VOID_MESSAGE =
+  'This guest has already stayed. Correct a charge on the folio, or check them out and reverse the bill in Accounting.';
+
+/**
+ * A mistaken check-in can be voided on the day it happened. The first night
+ * posted at check-in is reversed with it. A stay that began on an earlier day,
+ * or that already has a room night dated before today, has been occupied.
+ */
+export function freshCheckInCanBeVoided(
+  stay: { status?: string; arrival?: string; checkedInAt?: string },
+  folio: { charges?: Array<{ description?: string; category?: string; date?: string }> } | undefined,
+  today = businessToday(),
+): boolean {
+  if (stay.status !== 'checked-in') return false;
+  const checkedInDay = calendarDay(stay.checkedInAt) || calendarDay(stay.arrival);
+  if (checkedInDay !== today) return false;
+  if (calendarDay(stay.arrival) !== today) return false;
+  for (const date of getRoomChargeDatesOnFolio(folio || {})) {
+    if (date < today) return false;
+  }
+  return true;
 }
 
 export function getRoomChargeDatesOnFolio(folio: { charges?: Array<{ description?: string; category?: string; date?: string }> }): Set<string> {

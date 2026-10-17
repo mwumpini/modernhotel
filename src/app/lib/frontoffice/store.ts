@@ -32,7 +32,7 @@ import {
   type ReservationQuote,
 } from './helpers/rates';
 import { isCorporateGuest } from './helpers/guests';
-import { postFirstNightAtCheckIn } from './roomCharges';
+import { freshCheckInCanBeVoided, postFirstNightAtCheckIn } from './roomCharges';
 import { nextCalendarDate, previousCalendarDate, roundCents, stayNightDates } from './folioLedger';
 import { isLateCheckoutNow } from './lateCheckout';
 import { depositBlocksConfirm, planEarlyCheckout, requiredDeposit, shouldMarkRoomDirtyOnCheckout } from './operationalPolicies';
@@ -399,7 +399,7 @@ class FrontOfficeStore {
         if (this.folioServerSig.get(folio.id) === sig) this.folioServerSig.delete(folio.id);
         throw e;
       }
-      if (saved?.id) {
+      if (saved?.id && this.reservations.some((r) => r.id === saved.reservationId)) {
         this.folioServerSig.set(saved.id, folioSignature(saved));
         const idx = this.folios.findIndex((f) => f.id === saved.id);
         if (idx >= 0) this.folios[idx] = saved;
@@ -1083,12 +1083,16 @@ class FrontOfficeStore {
 
   deleteReservation(id: string) {
     const res = this.reservations.find(r => r.id === id);
-    if (!res || res.status !== 'pending') return false;
-    const folio = this.folios?.find(f => f.id === id);
-    const hasMoney = (folio?.charges?.length || 0) > 0 || (folio?.payments?.length || 0) > 0;
-    if (hasMoney) return false;
+    // A voided stay can be removed: void already reversed its charges and payments.
+    const voided = res?.status === 'void';
+    if (!res || (!voided && res.status !== 'pending')) return false;
+    if (!voided) {
+      const folio = this.folios?.find(f => f.id === id || f.reservationId === id);
+      const hasMoney = (folio?.charges?.length || 0) > 0 || (folio?.payments?.length || 0) > 0;
+      if (hasMoney) return false;
+    }
     this.reservations = this.reservations.filter(r => r.id !== id);
-    this.folios = (this.folios || []).filter(f => f.id !== id);
+    this.folios = (this.folios || []).filter(f => f.id !== id && f.reservationId !== id);
     this.notify();
     trackEvent('FO.Reservation.Deleted', { id });
     const t = this.tenant();
@@ -1113,10 +1117,19 @@ class FrontOfficeStore {
     return false;
   }
 
+  /** True for a check-in from today whose room nights, if any, are also from today. */
+  canVoidFreshCheckIn(id: string) {
+    const res = this.reservations.find(r => r.id === id);
+    if (!res) return false;
+    const folio = (this.folios || []).find(f => f.id === id || f.reservationId === id);
+    return freshCheckInCanBeVoided(res, folio);
+  }
+
   voidReservation(id: string, reason = 'Void') {
     const res = this.reservations.find(r => r.id === id);
     if (!res || res.status === 'void' || res.status === 'cancelled' || res.status === 'pending') return false;
     if (this.stayPostedToBooks(id)) return false;
+    if (res.status === 'checked-in' && !this.canVoidFreshCheckIn(id)) return false;
     const folio = this.getOrCreateFolio(id);
     for (const charge of [...(folio.charges || [])]) {
       if (String(charge.description || '').startsWith('VOID ')) continue;

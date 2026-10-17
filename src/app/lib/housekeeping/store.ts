@@ -37,6 +37,9 @@ function taskDetailsPayload(task: HousekeepingTask) {
   };
 }
 
+/** A finished clean stays Clean for this long, then becomes Vacant on its own. */
+const CLEAN_TO_VACANT_MS = 10 * 60 * 1000;
+
 function isOpenCleaningTask(t: Pick<HousekeepingTask, 'status' | 'taskType'>): boolean {
   return (
     (t.status === 'pending' || t.status === 'in-progress') &&
@@ -75,6 +78,8 @@ class HousekeepingStore {
   // vacant locally and the occupancy reconcile would "fix" and re-log it.
   private serverRoomStatus = new Map<string, RoomStatus>();
   private serverRoomStatusLoaded = false;
+  /** When the room was last marked clean. Used to turn it vacant after 10 minutes. */
+  private cleanSince = new Map<string, number>();
 
   constructor() {
     // Start empty; will sync from Settings
@@ -114,8 +119,10 @@ class HousekeepingStore {
       setTimeout(() => {
         void this.loadServerRoomStatuses().finally(() => {
           try {
+            this.promoteCleanRooms();
             this.reconcileOccupancyFromFrontOffice();
             frontOfficeStore.subscribe(() => this.reconcileOccupancyFromFrontOffice());
+            window.setInterval(() => this.promoteCleanRooms(), 15000);
           } catch (e) {
             console.warn('HK: Front Office occupancy reconciliation subscription failed', e);
           }
@@ -143,17 +150,52 @@ class HousekeepingStore {
     }
   }
 
-  private applyServerRoomStatuses(logs: Array<{ roomNumber: string; toStatus: string }>) {
+  private applyServerRoomStatuses(logs: Array<{ roomNumber: string; toStatus: string; createdAt?: string }>) {
     // logs are ordered desc by createdAt — first occurrence per room is the latest.
     this.serverRoomStatus.clear();
     for (const log of logs) {
-      if (!this.serverRoomStatus.has(log.roomNumber)) this.serverRoomStatus.set(log.roomNumber, log.toStatus as RoomStatus);
+      if (this.serverRoomStatus.has(log.roomNumber)) continue;
+      const status = log.toStatus as RoomStatus;
+      this.serverRoomStatus.set(log.roomNumber, status);
+      const room = this.rooms.get(log.roomNumber);
+      if (room) {
+        room.status = status;
+        if (log.createdAt) room.lastUpdated = log.createdAt;
+      }
+      this.noteCleanClock(log.roomNumber, status, log.createdAt);
     }
-    this.serverRoomStatus.forEach((status, roomNumber) => {
-      const room = this.rooms.get(roomNumber);
-      if (room) room.status = status;
-    });
     this.serverRoomStatusLoaded = true;
+  }
+
+  private noteCleanClock(roomNumber: string, status: RoomStatus, at?: string) {
+    if (status !== 'clean') {
+      this.cleanSince.delete(roomNumber);
+      return;
+    }
+    const ms = at ? new Date(at).getTime() : Date.now();
+    this.cleanSince.set(roomNumber, Number.isFinite(ms) ? ms : Date.now());
+  }
+
+  /** Clean rooms with no guest in them become vacant 10 minutes after the clean. */
+  private promoteCleanRooms() {
+    if (!this.serverRoomStatusLoaded) return;
+    const now = Date.now();
+    let inHouse: Set<string>;
+    try {
+      inHouse = new Set(
+        frontOfficeStore.reservations
+          .filter((stay) => stay.status === 'checked-in' && stay.roomId && stay.roomId !== 'TBD')
+          .map((stay) => String(stay.roomId)),
+      );
+    } catch {
+      return;
+    }
+    for (const room of this.rooms.values()) {
+      if (room.status !== 'clean' || inHouse.has(room.roomNumber)) continue;
+      const since = this.cleanSince.get(room.roomNumber) ?? new Date(room.lastUpdated).getTime();
+      if (!Number.isFinite(since) || now - since < CLEAN_TO_VACANT_MS) continue;
+      this.updateRoomStatus(room.roomNumber, 'vacant', 'System', 'Clean for 10 minutes');
+    }
   }
 
   private async loadServerRoomStatuses(): Promise<void> {
@@ -282,6 +324,7 @@ class HousekeepingStore {
           previousStatus: (log.fromStatus || 'vacant') as RoomStatus,
         }));
         this.applyServerRoomStatuses(logs);
+        this.promoteCleanRooms();
       }
 
       this.notify();
@@ -359,11 +402,13 @@ class HousekeepingStore {
     if (opts?.persist === false) {
       room.status = status;
       room.lastUpdated = new Date().toISOString();
+      this.noteCleanClock(roomNumber, status, room.lastUpdated);
       this.notify();
       return;
     }
     room.status = status;
     room.lastUpdated = new Date().toISOString();
+    this.noteCleanClock(roomNumber, status, room.lastUpdated);
 
     // Add to history
     this.statusHistory.unshift({

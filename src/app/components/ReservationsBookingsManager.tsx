@@ -58,7 +58,8 @@ import { DateFilterPills } from './fb/DateFilterPills';
 import { openPrintPreview, renderPrint } from '../lib/print/engine';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
 import { notifyError, notifySuccess } from '../lib/notifications/notify';
-import { BACKDATE_MESSAGE, arrivalFloor, calendarDay } from '../lib/frontoffice/backdate';
+import { BACKDATE_MESSAGE, arrivalFloor, businessToday, calendarDay } from '../lib/frontoffice/backdate';
+import { STAYED_NIGHT_VOID_MESSAGE } from '../lib/frontoffice/roomCharges';
 
 interface ReservationFormData {
   guestName: string;
@@ -126,6 +127,12 @@ const RESERVATIONS_DASHBOARD_SECTIONS = FO_RESERVATIONS_KPI_SECTIONS;
 function guestDisplayName(guest: GuestProfile): string {
   const g = guest as any;
   return String(g.name || `${g.firstName || ''} ${g.lastName || ''}`).trim();
+}
+
+/** Walk-in dated after today is a reservation. Today, or the open business date, still checks in. */
+function arrivalIsAfterToday(value: unknown): boolean {
+  const day = calendarDay(value);
+  return day !== '' && day > businessToday();
 }
 
 const POSTED_STAY_VOID_MESSAGE =
@@ -1150,13 +1157,19 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         return `${name} will be ${verb}${room}${dates}.`;
       };
       const leadName = guestNames.length === 1 ? guestNames[0] : '';
+      const arrivingNow = mode === 'checkin' ? bulkGuests.filter((g) => !arrivalIsAfterToday(g.arrival)) : [];
+      const bookingAhead = mode === 'checkin' ? bulkGuests.filter((g) => arrivalIsAfterToday(g.arrival)) : [];
+      const aheadNote = bookingAhead.length
+        ? ` ${bookingAhead.map((g) => guestDisplayName(g.guest) || 'Guest').join(', ')} will be reserved for a later date.`
+        : '';
       let walkInLeaveOpen = false;
-      if (mode === 'checkin') {
-        const roomless = bulkGuests.filter((g) => !g.roomId);
+      if (mode === 'checkin' && arrivingNow.length > 0) {
+        const roomless = arrivingNow.filter((g) => !g.roomId);
+        const nowNames = arrivingNow.map((g) => guestDisplayName(g.guest) || 'Guest');
         if (roomless.length === 0) {
           const ok = await confirmChoice(
-            leadName ? `Check in ${leadName}?` : `Check in ${bulkGuests.length} guests?`,
-            bulkGuests.map((g, i) => bookingLine(g, guestNames[i], 'checked in')).join(' '),
+            nowNames.length === 1 ? `Check in ${nowNames[0]}?` : `Check in ${arrivingNow.length} guests?`,
+            arrivingNow.map((g, i) => bookingLine(g, nowNames[i], 'checked in')).join(' ') + aheadNote,
             'Check in',
           );
           if (!ok) return;
@@ -1166,7 +1179,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           const choice = await chooseDanger({
             tone: 'void',
             title: roomless.length === 1 ? `Check in ${who} without a room?` : `Check in ${roomless.length} guests without a room?`,
-            message: 'No room is assigned. Assign one now, or check them in anyway and assign the room later.',
+            message: `No room is assigned. Assign one now, or check them in anyway and assign the room later.${aheadNote}`,
             confirmLabel: 'Check in anyway',
             altLabel: 'Assign room',
           });
@@ -1267,16 +1280,18 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         // If in check-in mode, immediately check-in each created reservation.
         // A walk-in with no room asks before the stay is marked in house.
         if (mode === 'checkin') {
-          // Asked before saving (see walkInLeaveOpen above).
+          // Asked before saving (see walkInLeaveOpen above). A future arrival stays a reservation.
           const leaveOpen = walkInLeaveOpen;
           createdReservations.forEach((r) => {
+            if (arrivalIsAfterToday(r.arrival)) return;
             const open = !r.roomId || r.roomId === 'TBD';
             if (open && !leaveOpen) return;
             try { frontOfficeStore.checkIn(r.id, open ? { leaveRoomOpen: true } : undefined); } catch {}
           });
           const updated = createdReservations.map((r) => frontOfficeStore.reservations.find((stay) => stay.id === r.id) || r);
           const housed = updated.filter((r) => r.status === 'checked-in');
-          const waiting = updated.filter((r) => r.status !== 'checked-in');
+          const reserved = updated.filter((r) => arrivalIsAfterToday(r.arrival));
+          const waiting = updated.filter((r) => r.status !== 'checked-in' && !arrivalIsAfterToday(r.arrival));
           if (housed.length > 0) {
             const who = housed.map((r) => r.guestName).filter(Boolean).join(', ') || 'Guest';
             const rooms = housed.map((r) => (r.roomId && r.roomId !== 'TBD' ? `Room ${r.roomId}` : 'room still to assign')).join(', ');
@@ -1285,6 +1300,14 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           if (waiting.length > 0) {
             const who = waiting.map((r) => r.guestName).filter(Boolean).join(', ') || 'Guest';
             notifySuccess(`${who} is still on Check-in. Assign a room, then check them in.`, 'Walk-in');
+          }
+          if (reserved.length > 0) {
+            const who = reserved.map((r) => r.guestName).filter(Boolean).join(', ') || 'Guest';
+            const when = [...new Set(reserved.map((r) => stayDate(r.arrival)).filter(Boolean))].join(', ');
+            notifySuccess(
+              `${who} ${reserved.length === 1 ? 'is' : 'are'} reserved${when ? ` for ${when}` : ''}.`,
+              'Reservation',
+            );
           }
           onFinished?.(createdReservations.map((r) => r.id));
         } else {
@@ -1492,7 +1515,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
 
   /** Drop a guest's chosen room once new dates make it unavailable (any type — it may be an upgrade). */
   const keepRoomIfStillFree = (bulkGuestId: string, roomId: string | undefined, _roomTypeId: string, arrival: string, departure: string) => {
-    if (roomId && !getRoomsFreeForStay(null, arrival, departure, bulkGuestId).includes(roomId)) {
+    const readyNow = mode === 'checkin' && !arrivalIsAfterToday(arrival);
+    if (roomId && !getRoomsFreeForStay(null, arrival, departure, bulkGuestId, undefined, readyNow).includes(roomId)) {
       updateBulkGuest(bulkGuestId, 'roomId', '');
     }
   };
@@ -1501,6 +1525,16 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     onClose();
     onFinished?.([]);
   };
+
+  const futureArrivals = mode === 'checkin' ? bulkGuests.filter((guest) => arrivalIsAfterToday(guest.arrival)).length : 0;
+  const walkInBooksAhead = isCreatingNew && mode === 'checkin' && bulkGuests.length > 0 && futureArrivals === bulkGuests.length;
+  const walkInActionLabel = (() => {
+    if (bulkGuests.length === 0) return 'Add guest first';
+    const now = bulkGuests.length - futureArrivals;
+    if (now === 0) return `Create ${futureArrivals} reservation${futureArrivals !== 1 ? 's' : ''}`;
+    if (futureArrivals === 0) return `Check in ${now} guest${now !== 1 ? 's' : ''}`;
+    return `Check in ${now}, reserve ${futureArrivals}`;
+  })();
 
   return (
     <div className={embed ? '' : 'space-y-3'}>
@@ -1675,7 +1709,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       <Modal isOpen={isOpen} onClose={dismissForm} size="4xl" className="mx-2 sm:mx-4">
         <ModalContent className="max-h-[90vh]">
           <ModalHeader className="pb-2">
-            {isCreatingNew ? (mode === 'checkin' ? 'Walk-in' : 'Create New Reservation') : 'View / Edit Reservation'}
+            {isCreatingNew ? (walkInBooksAhead ? 'Reservation' : mode === 'checkin' ? 'Walk-in' : 'Create New Reservation') : 'View / Edit Reservation'}
           </ModalHeader>
           <ModalBody className="overflow-y-auto pt-1">
             <Tabs aria-label="Reservation details" classNames={{ panel: "py-1" }} selectedKey={tabKey} onSelectionChange={(key)=> setTabKey(key as string)}>
@@ -2241,7 +2275,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                             bulkGuest.departure,
                                             bulkGuest.id,
                                             undefined,
-                                            mode === 'checkin', // walk-in checks in now: only rooms empty today
+                                            mode === 'checkin' && !arrivalIsAfterToday(bulkGuest.arrival), // same-day walk-in: only rooms empty today
                                           );
                                           const typeName = (num: string) => {
                                             const typeId = housekeepingStore.getAllRooms().find((r) => r.roomNumber === num)?.roomTypeId;
@@ -2992,10 +3026,14 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                   alert(POSTED_STAY_VOID_MESSAGE);
                   return;
                 }
+                if (selectedReservation.status === 'checked-in' && !frontOfficeStore.canVoidFreshCheckIn(selectedReservation.id)) {
+                  alert(STAYED_NIGHT_VOID_MESSAGE);
+                  return;
+                }
                 const ok = await confirmVoid(selectedReservation.resId || 'this stay', 'The stay stays on file as Void. Charges are reversed and any payment is refunded so the books stay even.');
                 if (!ok) return;
                 if (!frontOfficeStore.voidReservation(selectedReservation.id, 'Void stay')) {
-                  alert(POSTED_STAY_VOID_MESSAGE);
+                  alert(selectedReservation.status === 'checked-in' && !frontOfficeStore.canVoidFreshCheckIn(selectedReservation.id) ? STAYED_NIGHT_VOID_MESSAGE : POSTED_STAY_VOID_MESSAGE);
                   return;
                 }
                 loadReservations();
@@ -3013,7 +3051,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
               {isCreatingNew
                 ? (bulkGuests.length > 0
                     ? (mode === 'checkin'
-                        ? `Check in ${bulkGuests.length} guest${bulkGuests.length !== 1 ? 's' : ''}`
+                        ? walkInActionLabel
                         : `💾 Create ${bulkGuests.length} Reservation${bulkGuests.length !== 1 ? 's' : ''}`)
                     : (mode === 'checkin' ? 'Add guest first' : '💾 Add Guest First'))
                 : '💾 Update Reservation'

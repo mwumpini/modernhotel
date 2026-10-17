@@ -661,11 +661,11 @@ export const operationsTopics: HelpTopic[] = [
     title: 'Company profile, dates and documents',
     category: 'operations',
     keywords: ['company profile', 'logo', 'TIN', 'date format', 'time zone', 'document templates'],
-    description: 'Settings → Company Profile and Settings → Document Templates. What prints on every document.',
+    description: 'Settings → Company Profile and Settings → Document Templates. What prints on every document, and what is attached when that document is emailed.',
     rules: [
       { name: 'Company details', meaning: 'Trading and legal name, logo (with its position and size), tax and registration numbers, address and contacts: printed on bills, invoices, receipts, quotations, registration cards and payslips.' },
       { name: 'Time zone and date format', meaning: 'Decide the hotel\'s day (when the night audit closes it) and how dates print (for example 16/10/2026).' },
-      { name: 'Document templates', meaning: 'Pick the design for each document type (checkout bill, quotation, receipt, registration card, payslip …). The one set active is used everywhere that document prints.' },
+      { name: 'Document templates', meaning: 'Pick the design for each document type (checkout bill, quotation, receipt, registration card, payslip …). The one set active is used everywhere that document prints, and it is the PDF attached when that document is emailed.' },
     ],
   },
 ];

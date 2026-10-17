@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import HeadingInfo from '../../components/HeadingInfo';
-import { confirmVoid } from '../../components/DangerConfirm';
+import { confirmDelete, confirmVoid } from '../../components/DangerConfirm';
 import {
   Card,
   CardBody,
@@ -792,9 +792,22 @@ export default function ServiceChargesPage() {
     setIsEditModalOpen(true);
   };
 
+  const reverseServiceCharge = (charge: ServiceCharge) => {
+    if (!charge.reservationId || !charge.folioChargeId) return;
+    const folio = findMainFolio(frontOfficeStore.folios, charge.reservationId);
+    const alreadyVoided = folio?.charges.some((line) => (line as { voidsChargeId?: string }).voidsChargeId === charge.folioChargeId);
+    if (!alreadyVoided) frontOfficeStore.voidCharge(charge.reservationId, charge.folioChargeId, 'Void service charge');
+    for (const payment of folio?.payments || []) {
+      const tagged = payment.ref === charge.id || (payment.notes || '').includes(charge.id);
+      if (tagged && (!payment.status || payment.status === 'completed')) {
+        frontOfficeStore.refundPayment(charge.reservationId, payment.id, payment.amount, 'Void service charge');
+      }
+    }
+  };
+
   const saveEdit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCharge || selectedCharge.status === 'void' || selectedCharge.status === 'paid') return;
+    if (!selectedCharge || selectedCharge.status === 'void') return;
     const quantity = Math.max(1, Math.round(editForm.quantity) || 1);
     const unit = selectedCharge.quantity > 0 ? selectedCharge.amount / selectedCharge.quantity : selectedCharge.amount;
     const amount = Math.round(unit * quantity * 100) / 100;
@@ -1414,21 +1427,34 @@ export default function ServiceChargesPage() {
                 Pay
               </Button>
             )}
-            {selectedCharge && selectedCharge.status !== 'void' && selectedCharge.status !== 'paid' && (
+            {selectedCharge && selectedCharge.status !== 'void' && (
               <Button variant="flat" onPress={() => openEdit(selectedCharge)}>
                 Edit
               </Button>
             )}
-            {selectedCharge && selectedCharge.status !== 'void' && selectedCharge.status !== 'paid' && (
+            {selectedCharge && selectedCharge.status !== 'void' && (
               <Button color="warning" variant="flat" onPress={async () => {
-                const ok = await confirmVoid('this service charge', 'The charge stays on file as Void. A reversing folio line keeps the guest bill even.');
+                const ok = await confirmVoid('this service charge', 'The charge stays on file as Void. The folio charge is reversed and any payment for it is refunded.');
                 if (!ok) return;
-                if (selectedCharge.reservationId && selectedCharge.folioChargeId) {
-                  frontOfficeStore.voidCharge(selectedCharge.reservationId, selectedCharge.folioChargeId, 'Void service charge');
-                }
+                reverseServiceCharge(selectedCharge);
                 setServiceCharges(prev => prev.map(c => c.id === selectedCharge.id ? { ...c, status: 'void' } : c));
                 setIsViewModalOpen(false);
               }}>Void</Button>
+            )}
+            {selectedCharge && (
+              <Button color="danger" variant="flat" onPress={async () => {
+                const alreadyVoid = selectedCharge.status === 'void';
+                const ok = await confirmDelete(
+                  selectedCharge.id,
+                  alreadyVoid
+                    ? 'This voided service charge will be removed.'
+                    : 'The folio charge is reversed, any payment for it is refunded, and this service charge is removed.',
+                );
+                if (!ok) return;
+                if (!alreadyVoid) reverseServiceCharge(selectedCharge);
+                setServiceCharges(prev => prev.filter(c => c.id !== selectedCharge.id));
+                setIsViewModalOpen(false);
+              }}>Delete</Button>
             )}
             <Button
               variant="flat"

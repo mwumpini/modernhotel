@@ -215,10 +215,10 @@ export async function updateReservationRow(
 }
 
 /**
- * Hard-delete a reservation that never became a stay. Refused once it is past
- * pending or its folio holds any charge or payment (those are voided instead,
- * so the money stays on file). Folios are not linked by a foreign key, so an
- * empty folio is removed here too rather than left orphaned.
+ * Hard-delete a reservation that never became a stay, or one already voided.
+ * Refused once it is past pending, unless it is void: void reversed the charges
+ * and payments first, so the stay can then be removed. Folios are not linked by
+ * a foreign key, so they are removed here too rather than left orphaned.
  */
 export async function deleteReservationRow(
   tenantId: string,
@@ -226,13 +226,15 @@ export async function deleteReservationRow(
 ): Promise<'deleted' | 'not-found' | 'not-pending' | 'has-money'> {
   const existing = await prisma.reservation.findFirst({ where: { id, tenantId } })
   if (!existing) return 'not-found'
-  if (existing.status !== 'pending') return 'not-pending'
-  const folios = await prisma.guestFolio.findMany({ where: { tenantId, reservationId: id } })
-  const hasMoney = folios.some((f) => asLineArray(f.charges).length > 0 || asLineArray(f.payments).length > 0)
-  if (hasMoney) return 'has-money'
+  if (existing.status !== 'pending' && existing.status !== 'void') return 'not-pending'
+  if (existing.status === 'pending') {
+    const folios = await prisma.guestFolio.findMany({ where: { tenantId, reservationId: id } })
+    const hasMoney = folios.some((f) => asLineArray(f.charges).length > 0 || asLineArray(f.payments).length > 0)
+    if (hasMoney) return 'has-money'
+  }
   await prisma.$transaction([
     prisma.guestFolio.deleteMany({ where: { tenantId, reservationId: id } }),
-    prisma.reservation.delete({ where: { id } }),
+    prisma.reservation.deleteMany({ where: { id, tenantId } }),
   ])
   return 'deleted'
 }

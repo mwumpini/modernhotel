@@ -31,10 +31,10 @@ import { periodToDateFilter } from '../lib/dashboard/useDashboardPeriod';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { useSettingsStore } from '../lib/settings/store';
-import { chooseDanger } from './DangerConfirm';
+import { chooseDanger, confirmVoid } from './DangerConfirm';
 import { findMainFolio, getFolioDisplayTotals } from '../lib/frontoffice/helpers/folio';
 import { isPostedRoomCharge, nextCalendarDate, previousCalendarDate } from '../lib/frontoffice/folioLedger';
-import { getRoomChargeDatesOnFolio, postDueRoomCharges, postRoomChargeForDate } from '../lib/frontoffice/roomCharges';
+import { getRoomChargeDatesOnFolio, postDueRoomCharges, postRoomChargeForDate, STAYED_NIGHT_VOID_MESSAGE } from '../lib/frontoffice/roomCharges';
 import { isLateCheckoutNow } from '../lib/frontoffice/lateCheckout';
 import { isCorporateGuest } from '../lib/frontoffice/helpers/guests';
 import { calculateStayNights } from '../lib/frontoffice/helpers/rates';
@@ -217,6 +217,8 @@ export default function FrontDeskCounter() {
   const [assignPickRoom, setAssignPickRoom] = useState('');
   const [method, setMethod] = useState<PayMethod>('Cash');
   const [payAmount, setPayAmount] = useState('');
+  const [discountAmount, setDiscountAmount] = useState('');
+  const [discountReason, setDiscountReason] = useState('');
   const [leaveOnAccount, setLeaveOnAccount] = useState(false);
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
@@ -330,6 +332,8 @@ export default function FrontDeskCounter() {
     setMethod('Cash');
     setLeaveOnAccount(false);
     setNotes('');
+    setDiscountAmount('');
+    setDiscountReason('');
     const stay = frontOfficeStore.reservations.find((r) => r.id === selectedId);
     setPreview(null);
     setCheckoutOpen(false);
@@ -506,6 +510,32 @@ export default function FrontDeskCounter() {
     }
   };
 
+  const applyDiscount = () => {
+    if (!selected || busy) return;
+    const amount = Number(discountAmount);
+    const reason = discountReason.trim();
+    if (!(amount > 0) || !reason) {
+      notifyError('Enter the discount amount and a reason.', 'Discount');
+      return;
+    }
+    if (amount - balance > 0.009) {
+      notifyError(balance > 0.009 ? `The discount cannot be more than the ${money(balance)} still due.` : 'There is no balance to discount.', 'Discount');
+      return;
+    }
+    setBusy(true);
+    try {
+      frontOfficeStore.addCharge(selected.id, `Discount: ${reason}`, -amount);
+      const next = findMainFolio(frontOfficeStore.folios, selected.id);
+      const due = next ? getFolioDisplayTotals(next).outstandingBalance : 0;
+      setPayAmount(due > 0 ? due.toFixed(2) : '');
+      setDiscountAmount('');
+      setDiscountReason('');
+      notifySuccess(`${money(amount)} discount applied`, 'Discount');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const checkOut = () => {
     if (!selected || busy) return;
     if (balance > 0 && !(canLeaveBalance && leaveOnAccount)) {
@@ -523,6 +553,38 @@ export default function FrontDeskCounter() {
       setCheckoutOpen(false);
       setSelectedId(null);
       setView('leaving');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const voidCheckIn = async () => {
+    if (!selected || busy || selected.status !== 'checked-in') return;
+    const postedMessage = 'This stay is already in the books. Void its receipts and invoice in Accounting instead.';
+    if (frontOfficeStore.stayPostedToBooks(selected.id)) {
+      notifyError(postedMessage, 'Void');
+      return;
+    }
+    if (!frontOfficeStore.canVoidFreshCheckIn(selected.id)) {
+      notifyError(STAYED_NIGHT_VOID_MESSAGE, 'Void');
+      return;
+    }
+    const ok = await confirmVoid(selected.resId || 'this stay', 'Charges are reversed and any payment is refunded so the books stay even. The stay is then removed.');
+    if (!ok) return;
+    setBusy(true);
+    try {
+      if (!frontOfficeStore.voidReservation(selected.id, 'Void stay')) {
+        notifyError(frontOfficeStore.canVoidFreshCheckIn(selected.id) ? postedMessage : STAYED_NIGHT_VOID_MESSAGE, 'Void');
+        return;
+      }
+      if (!frontOfficeStore.deleteReservation(selected.id)) {
+        notifyError('The stay was voided, but it could not be removed.', 'Void');
+        return;
+      }
+      notifySuccess(`${selected.guestName} was voided and the stay was removed.`, 'Void');
+      setCheckoutOpen(false);
+      setFolioOpen(false);
+      setSelectedId(null);
     } finally {
       setBusy(false);
     }
@@ -1264,6 +1326,28 @@ export default function FrontDeskCounter() {
                             Take payment
                           </Button>
                         </div>
+                        <div className="flex items-end gap-2">
+                          <Input
+                            size="sm"
+                            type="number"
+                            label="Discount"
+                            className="w-[124px] shrink-0"
+                            value={discountAmount}
+                            onValueChange={setDiscountAmount}
+                            startContent={<span className="text-gray-400">₵</span>}
+                          />
+                          <Input
+                            size="sm"
+                            label="Reason"
+                            className="min-w-0 flex-1"
+                            placeholder="Why this discount"
+                            value={discountReason}
+                            onValueChange={setDiscountReason}
+                          />
+                          <Button size="sm" color="primary" variant="flat" className="h-12 min-h-12 shrink-0 px-3" onPress={applyDiscount} isLoading={busy}>
+                            Apply
+                          </Button>
+                        </div>
                         {staying && balance > 0 && canLeaveBalance && (
                           <Switch isSelected={leaveOnAccount} onValueChange={setLeaveOnAccount} size="sm">
                             Leave the balance on account
@@ -1304,6 +1388,11 @@ export default function FrontDeskCounter() {
                 {arriving && (
                   <Button color="success" className="bg-green-600 font-semibold text-white" isLoading={busy} onPress={() => checkIn()}>
                     Check in
+                  </Button>
+                )}
+                {staying && frontOfficeStore.canVoidFreshCheckIn(selected.id) && (
+                  <Button color="warning" variant="flat" className="font-semibold" isLoading={busy} onPress={voidCheckIn}>
+                    Void
                   </Button>
                 )}
                 {staying && (
@@ -1403,10 +1492,20 @@ export default function FrontDeskCounter() {
           defaultDeparture={addDays(today, 1)}
           onFinished={(ids) => {
             setWalkOpen(false);
-            if (ids[0]) {
-              const stay = frontOfficeStore.reservations.find((r) => r.id === ids[0]);
-              setSelectedId(ids[0]);
-              setView(stay?.status === 'checked-in' ? 'inhouse' : 'arriving');
+            let housedId = '';
+            let dueId = '';
+            for (const id of ids) {
+              const stay = frontOfficeStore.reservations.find((r) => r.id === id);
+              if (!stay) continue;
+              if (!housedId && stay.status === 'checked-in') housedId = stay.id;
+              if (!dueId && dayOf(stay.arrival) <= today) dueId = stay.id;
+            }
+            if (housedId) {
+              setSelectedId(housedId);
+              setView('inhouse');
+            } else if (dueId) {
+              setSelectedId(dueId);
+              setView('arriving');
             }
           }}
         />

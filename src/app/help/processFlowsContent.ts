@@ -66,7 +66,7 @@ export const processFlows: HelpTopic[] = [
       { who: 'Night auditor (or automatic at 1:00am)', where: 'Front Office → Night', action: 'Catch up missed days, or leave the close to 1:00am once the calendar has moved on.', result: 'Each in-house guest is charged that night\'s room rate and taxes, as revenue of that day. The current calendar day is not closed.' },
       { who: 'Restaurant, bar, other outlets', where: 'POS → Room charge / folio', action: 'Charge meals, drinks or services to the room.', result: 'Added to the guest\'s folio and to revenue the same day.' },
       { who: 'Cashier', where: 'The stay → Invoices & Payments / Cashiering', action: 'Take payments during the stay or at the end (cash, card, MoMo, bank, or bill the company).', result: 'Each payment reduces the guest\'s balance and is in the books when taken.' },
-      { who: 'Front desk', where: 'The stay → Check out', action: 'Review the bill, take the final payment, check out, print the checkout bill.', result: 'Early/late checkout rules applied. Invoice and receipts created. Anything still owed moves to receivables. The room becomes dirty for housekeeping, unless Settings → Operational Policies → After checkout has Mark the room dirty turned off, in which case the room is vacant and can be sold at once.' },
+      { who: 'Front desk', where: 'The stay → Check out', action: 'Review the bill, take the final payment, check out, then print or email the checkout bill.', result: 'Early/late checkout rules applied. Invoice and receipts created. Anything still owed moves to receivables. The room becomes dirty for housekeeping, unless Settings → Operational Policies → After checkout has Mark the room dirty turned off, in which case the room is vacant and can be sold at once.' },
       { who: 'Housekeeping', where: 'Housekeeping → Floor', action: 'Clean and inspect the room.', result: 'Room ready to sell again.' },
     ],
     notHere: 'Fees for cancellations, no-shows and early or late checkout follow Settings → Operational Policies (see the Operations Manual).',
@@ -79,7 +79,7 @@ export const processFlows: HelpTopic[] = [
     flow: [
       { who: 'Front desk', where: 'Front Office → Desk → Walk-in', action: 'Check room availability, create the stay for tonight, assign a clean room.', result: 'Booking and check-in in one step; room occupied.' },
       { who: 'Cashier', where: 'Cashiering', action: 'Take payment up front if the business requires it.', result: 'Payment in the books at once, against the stay.' },
-      { who: 'Front desk', where: 'Desk', action: 'Print the registration card and hand over the key.', result: 'From here the stay follows "Booking to checkout".' },
+      { who: 'Front desk', where: 'Desk', action: 'Print or email the registration card and hand over the key.', result: 'From here the stay follows "Booking to checkout".' },
     ],
   }),
   t({
@@ -90,7 +90,7 @@ export const processFlows: HelpTopic[] = [
     flow: [
       { who: 'Front desk', where: 'Reservation → Billing person / company', action: 'Link the stay to the company and add the purchase order or reference (required if the business asks).', result: 'The company appears as who pays.' },
       { who: 'Front desk', where: 'Checkout → Payment: Corporate Account', action: 'Check out with the balance billed to the company.', result: 'Invoice issued to the company with its credit terms (company terms, else the default). The amount moves to receivables.' },
-      { who: 'Accountant', where: 'Accounting → Accounts Receivable', action: 'Send the invoice and statements; follow up by age.', result: 'The invoice shows in the company\'s aging until paid.' },
+      { who: 'Accountant', where: 'Accounting → Accounts Receivable', action: 'Email the invoice or the statement, then follow up by age.', result: 'The invoice shows in the company\'s aging until paid. Nothing is emailed until the address is confirmed.' },
       { who: 'Accountant', where: 'Accounts Receivable → Receipts', action: 'Record the company\'s payment (and any withholding tax certificate).', result: 'Bank up, receivable down; a certificate becomes a tax credit.' },
       { who: 'Accountant (month end)', where: 'Accounts Receivable → Doubtful debts', action: 'Review old debts; update the allowance; write off what will not be paid.', result: 'Receivables shown at what is expected to be collected (IFRS 9).' },
     ],
@@ -107,6 +107,27 @@ export const processFlows: HelpTopic[] = [
       { who: 'Manager', where: 'Folio of the booking', action: 'Approve the refund of what is left.', result: '—' },
       { who: 'Cashier', where: 'Folio → Refund', action: 'Pay the refund back (cash, MoMo or bank).', result: 'Cash out; Guest Deposits back to zero for that booking.' },
     ],
+  }),
+  t({
+    id: 'flow-email-document',
+    title: 'Email a document',
+    keywords: ['email', 'pdf', 'send', 'invoice', 'receipt', 'quotation', 'statement'],
+    description: 'Send the document on screen as a PDF. Role: whoever has the document open.',
+    flow: [
+      { who: 'Front desk, cashier, or accountant', where: 'The stay, the folio, the reservation, Accounts Receivable, or the event', action: 'Confirm the guest or client has an email address. Choose the document, then press Email.', result: 'A confirmation shows the address. Keep as is sends nothing.' },
+      { who: 'The person sending', where: 'Send this email?', action: 'Press Send.', result: 'The document goes out as a PDF from the hotel mailbox. The screen says it was sent, or why it was not.' },
+    ],
+    notHere: 'The outgoing mailbox is set up when the hotel is opened. It is not a setting on the desk.',
+  }),
+  t({
+    id: 'flow-void-checkin',
+    title: 'Void a check-in made today',
+    keywords: ['void', 'check-in', 'mistake', 'delete stay'],
+    description: 'A guest was checked in today by mistake, and no earlier night is on the bill. Role: front desk.',
+    flow: [
+      { who: 'Front desk', where: 'Desk → the stay → Void', action: 'Confirm the void. Keep as is leaves the stay.', result: 'Charges are reversed, a payment for this stay is refunded, and the stay is removed.' },
+    ],
+    notHere: 'A stay that began on an earlier day is corrected on the folio, or checked out and reversed in Accounting.',
   }),
   t({
     id: 'flow-wake-up',
@@ -139,7 +160,7 @@ export const processFlows: HelpTopic[] = [
     description: 'From checkout to a room ready to sell, and fixing faults. Roles: housekeeping, supervisor, maintenance, front desk.',
     flow: [
       { who: 'System', where: '—', action: '—', result: 'At checkout the room becomes dirty, unless Mark the room dirty is off. Then the room stays vacant and this cleaning flow does not start.' },
-      { who: 'Housekeeping', where: 'Housekeeping → Floor / Work', action: 'Take the room, clean it, mark it done.', result: 'Room shows cleaned.' },
+      { who: 'Housekeeping', where: 'Housekeeping → Floor / Work', action: 'Take the room, clean it, mark it done.', result: 'Room shows cleaned. After 10 minutes it becomes vacant on its own.' },
       { who: 'Supervisor', where: 'Housekeeping → Inspections', action: 'Inspect and pass the room.', result: 'Room ready; Front Office can sell or assign it.' },
       { who: 'Anyone', where: 'Housekeeping → Maintenance request', action: 'Report a fault; set the room out of order if it cannot be sold.', result: 'Out-of-order rooms are not offered for sale.' },
       { who: 'Maintenance', where: 'Maintenance work order', action: 'Fix it and close the work order.', result: 'Room back in service.' },
@@ -291,7 +312,7 @@ export const processFlows: HelpTopic[] = [
 export const processFlowModules = [
   { id: 'flows-reach', title: 'Opening AGM Sync', intro: 'The hotel computer on its own, or the hotel computer linked to the cloud.', topicIds: ['flow-premises', 'flow-cloud-premises'] },
   { id: 'flows-exec', title: 'Executive Management', intro: 'The daily review and approvals.', topicIds: ['flow-exec-daily'] },
-  { id: 'flows-frontdesk', title: 'Front Office Operations', intro: 'From booking to checkout, company billing, cancellations, wake-up calls, the end of day and the cashier shift.', topicIds: ['flow-stay', 'flow-walk-in', 'flow-company-billing', 'flow-cancel-no-show', 'flow-wake-up', 'flow-night-audit', 'flow-cashier-shift'] },
+  { id: 'flows-frontdesk', title: 'Front Office Operations', intro: 'From booking to checkout, company billing, cancellations, email, a mistaken check-in, wake-up calls, the end of day and the cashier shift.', topicIds: ['flow-stay', 'flow-walk-in', 'flow-company-billing', 'flow-cancel-no-show', 'flow-email-document', 'flow-void-checkin', 'flow-wake-up', 'flow-night-audit', 'flow-cashier-shift'] },
   { id: 'flows-events', title: 'Events & Conferences', intro: 'Halls, conferences and functions.', topicIds: ['flow-event'] },
   { id: 'flows-restaurant', title: 'Restaurant & Bar', intro: 'From order to payment, through the kitchen.', topicIds: ['flow-restaurant-sale'] },
   { id: 'flows-housekeeping', title: 'Housekeeping & Maintenance', intro: 'Room turnover and fixing faults.', topicIds: ['flow-housekeeping'] },

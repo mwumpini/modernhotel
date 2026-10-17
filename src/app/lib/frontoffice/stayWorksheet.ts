@@ -78,6 +78,10 @@ export function stayClock(stay: {
   return planned || plannedClock(which);
 }
 
+export function isDiscountLine(charge: { description?: string }) {
+  return String(charge.description || '').startsWith('Discount:');
+}
+
 export function isRoomLine(charge: { description?: string; category?: string }) {
   const category = (charge.category || '').toLowerCase();
   if (category === 'room') return true;
@@ -138,9 +142,12 @@ export function stayFigures(stay: Reservation) {
   const totals = folio ? getFolioDisplayTotals(folio) : null;
   const billed = (stay.status === 'checked-in' || stay.status === 'checked-out') && !!totals && totals.totalCharges > 0;
   const charges = folio?.charges || [];
-  const discount = charges.reduce((sum, charge) => sum + (charge.discountAmount || 0), 0);
+  const discount = charges.reduce((sum, charge) => {
+    if (isDiscountLine(charge)) return sum + Math.abs(charge.amount || 0);
+    return sum + (charge.discountAmount || 0);
+  }, 0);
   const other = charges.reduce((sum, charge) => {
-    if (isRoomLine(charge)) return sum;
+    if (isRoomLine(charge) || isDiscountLine(charge)) return sum;
     const net = (charge.amount || 0) + (charge.serviceCharge || 0) - (charge.discountAmount || 0);
     return sum + net + (charge.tax || 0);
   }, 0);

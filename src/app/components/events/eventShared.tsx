@@ -379,95 +379,39 @@ export interface VenueFormState {
   currency: string;
 }
 
-export const supplementalVenueSeeds: VenueDetails[] = [
-  {
-    id: 'venue-001',
-    name: 'Accra Conference Hall',
-    type: 'conference',
-    capacity: 200,
-    basePrice: 6000,
-    currency: 'GH₵',
-    status: 'available',
-    features: ['Projector', 'Sound System', 'WiFi', 'Catering Kitchen'],
-    location: 'Main Building, 1st Floor'
-  },
-  {
-    id: 'venue-002',
-    name: 'Kumasi Meeting Room',
-    type: 'meeting',
-    capacity: 50,
-    basePrice: 2000,
-    currency: 'GH₵',
-    status: 'booked',
-    features: ['Projector', 'Whiteboard', 'Coffee Service'],
-    location: 'East Wing, Ground Floor'
-  },
-  {
-    id: 'venue-003',
-    name: 'Ghana Banquet Hall',
-    type: 'banquet',
-    capacity: 300,
-    basePrice: 8000,
-    currency: 'GH₵',
-    status: 'setup',
-    features: ['Dance Floor', 'Bar', 'Kitchen', 'Parking'],
-    location: 'Garden Area, Separate Building'
-  },
-  {
-    id: 'venue-004',
-    name: 'Accra Auditorium',
-    type: 'auditorium',
-    capacity: 500,
-    basePrice: 12000,
-    currency: 'GH₵',
-    status: 'maintenance',
-    features: ['Stage', 'Lighting', 'Sound System', 'VIP Seating'],
-    location: 'Main Building, 2nd Floor'
-  }
-];
+export const supplementalVenueSeeds: VenueDetails[] = [];
 
 export const baseVenueSeeds: VenueDetails[] = [
   {
-    id: 'oforwaa-hall',
-    name: 'Oforwaa Hall',
+    id: 'hall-1',
+    name: 'Hall 1',
     capacity: 200,
     type: 'conference',
-    location: 'Main Building, Ground Floor',
-    features: ['Projector', 'Sound System', 'WiFi', 'Air Conditioning', 'Flexible Layout'],
+    location: 'Main Building',
+    features: ['Projector', 'Sound System', 'WiFi', 'Air Conditioning'],
     basePrice: 800,
     currency: 'GH₵',
     status: 'available'
   },
   {
-    id: 'dankwah-hall',
-    name: 'Dankwah Hall',
+    id: 'hall-2',
+    name: 'Hall 2',
     capacity: 150,
     type: 'conference',
-    location: 'Main Building, First Floor',
-    features: ['Projector', 'Sound System', 'WiFi', 'Air Conditioning', 'Fixed Theater Layout'],
+    location: 'Main Building',
+    features: ['Projector', 'Sound System', 'WiFi', 'Air Conditioning'],
     basePrice: 600,
     currency: 'GH₵',
     status: 'available'
   },
   {
-    id: 'aqua-blue-room',
-    name: 'Aqua Blue Room',
+    id: 'hall-3',
+    name: 'Hall 3',
     capacity: 80,
-    type: 'meeting',
-    location: 'East Wing, Second Floor',
-    features: ['Projector', 'WiFi', 'Air Conditioning', 'U-Shape Layout'],
+    type: 'conference',
+    location: 'Main Building',
+    features: ['Projector', 'Sound System', 'WiFi', 'Air Conditioning'],
     basePrice: 400,
-    currency: 'GH₵',
-    status: 'available'
-  },
-  {
-    id: 'gold-coast-hall',
-    name: 'Gold Coast Hall',
-    capacity: 300,
-    type: 'banquet',
-    location: 'West Wing, Ground Floor',
-    features: ['Stage', 'Sound System', 'WiFi', 'Air Conditioning', 'Banquet Layout'],
-    basePrice: 1200,
     currency: 'GH₵',
     status: 'available'
   }
@@ -1155,38 +1099,6 @@ export const DEFAULT_CONFERENCE_RATES = [
     clientName: '',
     isActive: true,
     notes: 'Standard dinner rate per person',
-    createdAt: '2026-01-01',
-    updatedAt: '2026-01-01',
-  },
-  {
-    id: 'rate-005',
-    name: 'T-TEL Accommodation & Breakfast Rate',
-    type: 'accommodation',
-    baseRate: 180,
-    unit: 'per_room',
-    customLabel: 'Accommodation & Breakfast',
-    applicableDates: { startDate: '2026-01-01', endDate: '2026-09-30', isAllYear: false },
-    clientSpecific: true,
-    clientId: '',
-    clientName: 'T-TEL',
-    isActive: true,
-    notes: 'Corporate rate for T-TEL through Q3 2026',
-    createdAt: '2026-01-01',
-    updatedAt: '2026-01-01',
-  },
-  {
-    id: 'rate-006',
-    name: 'Agrivest Co Conference with 2 Snacks Rate',
-    type: 'conference',
-    baseRate: 250,
-    unit: 'per_person',
-    customLabel: 'Conference with 2 Snacks',
-    applicableDates: { startDate: '2026-03-01', endDate: '2026-12-31', isAllYear: false },
-    clientSpecific: true,
-    clientId: '',
-    clientName: 'Agrivest Co',
-    isActive: true,
-    notes: 'Negotiated rate for Agrivest Co conferences',
     createdAt: '2026-01-01',
     updatedAt: '2026-01-01',
   },
