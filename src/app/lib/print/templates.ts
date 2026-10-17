@@ -69,6 +69,10 @@ export interface PrintEmployeeInfo {
   payPeriod?: string;
   dateOfJoining?: string;
   workedDays?: number;
+  /** Weekdays in the pay month before leave. */
+  payableDays?: number;
+  /** Approved unpaid leave days taken off the month. */
+  leaveDays?: number;
 }
 
 export interface PrintLineItem {
@@ -126,6 +130,8 @@ export interface PrintSignature {
   role?: string;
   name?: string;
   signedDate?: string;
+  /** Handwritten signature image, when the signer has one. */
+  imageUrl?: string;
 }
 
 export interface PrintBankDetails {

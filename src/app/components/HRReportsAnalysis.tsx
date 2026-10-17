@@ -14,7 +14,8 @@ import ReportPageInfoTip from './dashboard/ReportPageInfoTip';
 import { SortableReportTable } from './reports/SortableReportTable';
 import { useEmployeeStore } from '../lib/hr/employeeStore';
 import { usePayrollStore } from '../lib/hr/payrollStore';
-import { useLeaveAttendanceStore, DEFAULT_LEAVE_ENTITLEMENTS } from '../lib/hr/leaveAttendanceStore';
+import { useLeaveAttendanceStore } from '../lib/hr/leaveAttendanceStore';
+import { openLeaveTypes } from '../lib/hr/leavePolicy';
 import { useStaffDebtStore } from '../lib/hr/staffDebtStore';
 import { useOnboardingStore } from '../lib/hr/onboardingStore';
 import { usePerformanceLogStore } from '../lib/hr/performanceLogStore';
@@ -131,8 +132,6 @@ function employeeName(employees: { id: string; firstName: string; lastName: stri
 
 const RANGE_REPORT_KEYS = new Set(['payroll-records', 'payroll-periods', 'payroll-cost-staff', 'payroll-cost-department', 'leave', 'attendance', 'shifts', 'benefits', 'training', 'performance', 'staff-changes', 'performance-log']);
 const NO_DATE_REPORT_KEYS = new Set(['employees', 'departments', 'positions', 'onboarding', 'leave-balances', 'staff-debts', 'labour-compliance']);
-const LEAVE_BALANCE_TYPES = (Object.keys(DEFAULT_LEAVE_ENTITLEMENTS) as Array<keyof typeof DEFAULT_LEAVE_ENTITLEMENTS>).filter((type) => type !== 'other');
-
 const REPORT_GROUPS = {
   people: {
     title: 'People',
@@ -448,6 +447,7 @@ export default function HRReportsAnalysis({ embedded = false }: { embedded?: boo
   const payrollPeriods = usePayrollStore((s) => s.payrollPeriods);
   const hydratePayroll = usePayrollStore((s) => s.hydrateFromApi);
   const leaveRequests = useLeaveAttendanceStore((s) => s.leaveRequests);
+  const leavePolicy = useLeaveAttendanceStore((s) => s.leavePolicy);
   const attendances = useLeaveAttendanceStore((s) => s.attendances);
   const shifts = useLeaveAttendanceStore((s) => s.shifts);
   const hydrateLeave = useLeaveAttendanceStore((s) => s.hydrateFromApi);
@@ -733,8 +733,7 @@ export default function HRReportsAnalysis({ embedded = false }: { embedded?: boo
       case 'leave-balances': {
         const year = new Date().getFullYear();
         return employees
-          .filter((employee) => employee.status === 'active')
-          .flatMap((employee) => LEAVE_BALANCE_TYPES.map((leaveType) => {
+          .flatMap((employee) => openLeaveTypes(leavePolicy).map((type) => type.key).map((leaveType) => {
             const balance = getLeaveBalance(employee.id, leaveType, year);
             return {
               employee: `${employee.firstName} ${employee.lastName}`.trim(),
@@ -991,7 +990,7 @@ export default function HRReportsAnalysis({ embedded = false }: { embedded?: boo
       { label: 'Status', value: 'Current', hint: generatedAt ? `Refreshed ${generatedAt}` : 'Preparing report' },
     ];
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedReport, startDate, endDate, reportDateMode, generatedAt, refreshVersion, mounted, filters, employees, payrollRecords, payrollPeriods, leaveRequests, attendances, shifts, positions, onboardingChecklists, staffChanges, staffDebts, performanceLog, trainingPrograms, trainingEnrollments]);
+  }, [selectedReport, startDate, endDate, reportDateMode, generatedAt, refreshVersion, mounted, filters, employees, payrollRecords, payrollPeriods, leaveRequests, leavePolicy, attendances, shifts, positions, onboardingChecklists, staffChanges, staffDebts, performanceLog, trainingPrograms, trainingEnrollments]);
 
   const hiddenKpiLabels = hiddenKpisByReport[selectedReport] || [];
   const visibleReportKpis = reportKpis.filter((kpi) => !hiddenKpiLabels.includes(kpi.label));

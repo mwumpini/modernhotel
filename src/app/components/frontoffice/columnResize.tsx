@@ -76,7 +76,7 @@ export function ColumnSizer({
   );
 }
 
-export function useResizableColumns<T extends string>(defaults: Record<T, number>, options?: { flexKeys?: T[] }) {
+export function useResizableColumns<T extends string>(defaults: Record<T, number>, options?: { flexKeys?: T[]; activeKeys?: T[] }) {
   const [widths, setWidths] = useState(defaults);
   const widthsRef = useRef(widths);
   widthsRef.current = widths;
@@ -85,6 +85,13 @@ export function useResizableColumns<T extends string>(defaults: Record<T, number
   defaultsRef.current = defaults;
   const flexKeysRef = useRef(options?.flexKeys);
   flexKeysRef.current = options?.flexKeys;
+  const activeKeysRef = useRef(options?.activeKeys);
+  activeKeysRef.current = options?.activeKeys;
+  const sizedKeys = () => {
+    const all = Object.keys(defaultsRef.current) as T[];
+    const active = activeKeysRef.current?.filter((key) => key in defaultsRef.current);
+    return active && active.length > 0 ? active : all;
+  };
   const userSized = useRef(false);
   const defaultsKey = Object.entries(defaults).map(([key, width]) => `${key}:${width}`).join('|');
   // A plain useRef's assignment doesn't re-run effects, and these table
@@ -139,7 +146,7 @@ export function useResizableColumns<T extends string>(defaults: Record<T, number
       const containerWidth = entries[0]?.contentRect.width;
       if (!containerWidth) return;
       setWidths((current) => {
-        const keys = Object.keys(defaultsRef.current) as T[];
+        const keys = sizedKeys();
         const currentTotal = keys.reduce((sum, k) => sum + (current[k] || 0), 0);
         if (currentTotal <= 0 || containerWidth - 8 <= currentTotal + 1) return current;
         const preferred = flexKeysRef.current;
@@ -163,7 +170,8 @@ export function useResizableColumns<T extends string>(defaults: Record<T, number
     return () => observer.disconnect();
   }, [frameEl, defaultsKey]);
 
-  const tableWidth = (Object.keys(defaults) as T[]).reduce((sum, key) => sum + (widths[key] ?? defaults[key]), 0);
+  const widthKeys = options?.activeKeys?.filter((key) => key in defaults);
+  const tableWidth = (widthKeys && widthKeys.length > 0 ? widthKeys : (Object.keys(defaults) as T[])).reduce((sum, key) => sum + (widths[key] ?? defaults[key]), 0);
 
   return {
     frameRef: setFrameEl,

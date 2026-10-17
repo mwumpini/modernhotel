@@ -3,6 +3,9 @@ import type { PrintData, PrintOrgInfo, PrintType } from './templates';
 /** Shown on template samples when the hotel has not uploaded its own logo. */
 export const SAMPLE_LOGO_URL = '/brand/agm-sync-icon.svg';
 
+/** Handwritten mark on the workshop document samples. */
+const sampleSignature = [{ label: 'Prepared by', imageUrl: '/print/sample-signature.png' }];
+
 const placeholderOrg: PrintOrgInfo = {
   name: 'Golden Palm Hotel',
   address: '12 Independence Ave, Accra, Ghana',
@@ -212,6 +215,7 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
         },
         totals: { subTotal: 5900, taxes: { nhil: 295, vat: 885, levy: 59 }, grandTotal: 7139 },
         footerNotes: ['This is a proforma invoice — not a demand for payment. Valid for 14 days.'],
+        signatures: sampleSignature,
         currency: '₵',
       };
     case 'event-invoice':
@@ -232,6 +236,7 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
         ],
         totals: { subTotal: 5900, taxes: { nhil: 295, vat: 885, levy: 59 }, payments: 4000, balance: 3139, grandTotal: 7139 },
         footerNotes: ['Generated via Events & Conferences workflow.'],
+        signatures: sampleSignature,
         currency: '₵',
       };
     case 'event-contract':
@@ -247,6 +252,7 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
         ],
         totals: { subTotal: 0, grandTotal: 0 },
         event: { summary: 'Adjei Family Naming Ceremony\n3 October 2026\nOforwaa Hall (200 seats)\n60 guests · Day event' },
+        signatures: sampleSignature,
         currency: '₵',
       };
     case 'event-receipt':
@@ -258,6 +264,7 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
         title: 'Receipt — Conference & Events',
         items: [{ description: 'Payment (Bank Transfer)', amount: 4000, date: new Date().toISOString() }],
         totals: { subTotal: 4000, payments: 4000, balance: 0, grandTotal: 4000 },
+        signatures: sampleSignature,
         currency: '₵',
       };
     case 'fb-receipt':
@@ -341,6 +348,10 @@ function sampleDocument(docType: PrintType, org: PrintOrgInfo): PrintData {
           { description: 'SSNIT (Tier 1)', amount: 605 },
           { description: 'PAYE (Income Tax)', amount: 1495 },
           { description: 'Provident Fund (Tier 3)', amount: 400 },
+        ],
+        signatures: [
+          { label: 'Employer Signature', imageUrl: '/print/sample-signature.png' },
+          { label: 'Employee Signature' },
         ],
         currency: '₵',
       };

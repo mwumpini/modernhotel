@@ -8,8 +8,15 @@ import { openHtmlPrintWindow } from './engine';
  * or template selection needed for an internal ops report like a shift
  * schedule or an overtime log.
  */
-export function printSimpleReport(title: string, subtitle: string, columns: string[], rows: (string | number)[][]) {
+export function printSimpleReport(
+  title: string,
+  subtitle: string,
+  columns: string[],
+  rows: (string | number)[][],
+  options?: { landscape?: boolean },
+) {
   const escape = (v: string | number) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const landscape = options?.landscape === true;
   const html = `
     <html>
       <head>
@@ -19,10 +26,11 @@ export function printSimpleReport(title: string, subtitle: string, columns: stri
           h1 { font-size: 18px; margin: 0 0 4px; }
           p.subtitle { font-size: 13px; color: #555; margin: 0 0 4px; }
           p.timestamp { font-size: 11px; color: #888; margin: 0 0 16px; }
-          table { width: 100%; border-collapse: collapse; font-size: 12px; }
-          th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
+          table { width: 100%; border-collapse: collapse; font-size: ${landscape ? '10px' : '12px'}; }
+          th, td { border: 1px solid #ccc; padding: ${landscape ? '4px 5px' : '6px 8px'}; text-align: left; }
           th { background: #f2f2f2; }
           @media print { body { padding: 0; } }
+          ${landscape ? '@page { size: A4 landscape; margin: 10mm; }' : ''}
         </style>
       </head>
       <body>
@@ -41,6 +49,22 @@ export function printSimpleReport(title: string, subtitle: string, columns: stri
     </html>
   `;
   openHtmlPrintWindow(html);
+}
+
+/** Spreadsheet download of the same columns and rows a list prints. Excel opens the CSV. */
+export function downloadCsvRows(filename: string, columns: string[], rows: (string | number)[][]) {
+  const cell = (value: string | number) => {
+    const text = String(value ?? '').replace(/"/g, '""');
+    return /[",\n]/.test(text) ? `"${text}"` : text;
+  };
+  const csv = `\uFEFF${[columns.map(cell).join(','), ...rows.map((row) => row.map(cell).join(','))].join('\n')}`;
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${filename}_${new Date().toISOString().split('T')[0]}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 /** Key/value “open form” print — same window pipeline as printSimpleReport, for click-to-open detail modals. */

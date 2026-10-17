@@ -36,7 +36,7 @@ export function addDays(day: string, n: number) {
 }
 
 /** Leave types whose entitlement is working days (Mon–Fri). Sick and maternity are calendar days. */
-const WORKING_DAY_LEAVE = new Set(['annual', 'personal', 'paternity', 'bereavement']);
+const WORKING_DAY_LEAVE = new Set(['annual', 'personal', 'paternity', 'bereavement', 'unpaid']);
 
 /** Gregorian Easter Sunday, YYYY-MM-DD. */
 function easterSunday(year: number) {

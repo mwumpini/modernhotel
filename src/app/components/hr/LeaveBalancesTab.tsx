@@ -4,21 +4,14 @@ import React from 'react';
 import { Card, CardBody, CardHeader, Input, Pagination, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from '@heroui/react';
 import { useLeaveAttendanceStore } from '@/app/lib/hr/leaveAttendanceStore';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
+import { bandName, openLeaveTypes, resolveLeaveBandId } from '@/app/lib/hr/leavePolicy';
+import LeaveAllowancesEditor from './LeaveAllowancesEditor';
 import { useSectionExport } from '@/app/lib/export/useSectionExport';
 import ExportButtons from '@/app/components/ExportButtons';
 import type { LeaveRequest } from '@/app/lib/hr/models';
 import type { ExportFormat } from '@/app/lib/frontoffice/reportExportFormat';
 import { SortLabel, unifiedTableClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { useDeskPagination } from '../dashboard/deskTableUi';
-
-const TYPES: Array<{ key: LeaveRequest['leaveType']; label: string }> = [
-  { key: 'annual', label: 'Annual' },
-  { key: 'sick', label: 'Sick' },
-  { key: 'personal', label: 'Personal' },
-  { key: 'maternity', label: 'Maternity' },
-  { key: 'paternity', label: 'Paternity' },
-  { key: 'bereavement', label: 'Bereavement' },
-];
 
 type BalanceSortKey = 'staff' | 'department' | LeaveRequest['leaveType'] | 'pending';
 
@@ -31,6 +24,7 @@ const defaultWidths: Record<BalanceSortKey, number> = {
   maternity: 110,
   paternity: 110,
   bereavement: 120,
+  unpaid: 120,
   other: 100,
   pending: 100,
 };
@@ -38,6 +32,7 @@ const defaultWidths: Record<BalanceSortKey, number> = {
 /** Days each current staff member has left of every leave type this year. */
 export default function LeaveBalancesTab() {
   const requests = useLeaveAttendanceStore((s) => s.leaveRequests);
+  const leavePolicy = useLeaveAttendanceStore((s) => s.leavePolicy);
   const getLeaveBalance = useLeaveAttendanceStore((s) => s.getLeaveBalance);
   const employees = useEmployeeStore((s) => s.employees);
   const departments = useEmployeeStore((s) => s.departments);
@@ -45,6 +40,7 @@ export default function LeaveBalancesTab() {
   const exportSection = useSectionExport();
 
   const thisYear = new Date().getFullYear();
+  const types = openLeaveTypes(leavePolicy);
   const [year, setYear] = React.useState(thisYear);
   const [deptFilter, setDeptFilter] = React.useState('all');
   const [q, setQ] = React.useState('');
@@ -62,14 +58,16 @@ export default function LeaveBalancesTab() {
     });
 
     const mapped = staff.map((e) => {
-      const balances = Object.fromEntries(TYPES.map((t) => [t.key, getLeaveBalance(e.id, t.key, year)])) as Record<LeaveRequest['leaveType'], ReturnType<typeof getLeaveBalance>>;
+      const balances = Object.fromEntries(types.map((t) => [t.key, getLeaveBalance(e.id, t.key, year)])) as Record<LeaveRequest['leaveType'], ReturnType<typeof getLeaveBalance>>;
       const pending = requests
         .filter((r) => r.employeeId === e.id && r.status === 'pending' && new Date(r.startDate).getUTCFullYear() === year)
         .reduce((sum, r) => sum + (r.totalDays || 0), 0);
+      const bandId = resolveLeaveBandId(e, departments);
       return {
         e,
         name: `${e.firstName} ${e.lastName}`,
         department: getDepartment(e.departmentId)?.name || '—',
+        group: bandName(leavePolicy, bandId),
         balances,
         pending,
       };
@@ -90,7 +88,7 @@ export default function LeaveBalancesTab() {
       return 0;
     });
     return sortDir === 'asc' ? sorted : sorted.reverse();
-  }, [employees, deptFilter, q, year, requests, getLeaveBalance, getDepartment, sortKey, sortDir]);
+  }, [employees, departments, deptFilter, q, year, requests, getLeaveBalance, getDepartment, leavePolicy, types, sortKey, sortDir]);
 
   const { page, setPage, pages, paged } = useDeskPagination(rows, [deptFilter, q, year, sortKey, sortDir]);
 
@@ -112,19 +110,26 @@ export default function LeaveBalancesTab() {
   const download = (format: ExportFormat) =>
     exportSection(format, `Leave Balances ${year}`, {
       title: `Leave Balances ${year}`,
-      columns: ['Staff', 'Department', ...TYPES.map((t) => `${t.label} (left / entitled)`), 'Pending days'],
+      columns: ['Staff', 'Department', 'Group', ...types.map((t) => `${t.label} (left / entitled)`), 'Pending days'],
       rows: rows.map((r) => [
         r.name,
         r.department,
-        ...TYPES.map((t) => `${r.balances[t.key].remaining} / ${r.balances[t.key].entitlement}`),
+        r.group,
+        ...types.map((t) => `${r.balances[t.key].remaining} / ${r.balances[t.key].entitlement}`),
         r.pending,
       ]),
     });
 
   return (
     <Card>
-      <CardHeader className="justify-between gap-2 flex-wrap">
-        <div className="font-medium">Leave balances</div>
+      <CardHeader className="flex-col items-stretch gap-2 px-3 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="font-medium">Leave balances</div>
+          <div className="flex shrink-0 items-center gap-2">
+            <ExportButtons onDownload={download} />
+            <LeaveAllowancesEditor />
+          </div>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <Input size="sm" placeholder="Search staff" value={q} onChange={(e) => setQ(e.target.value)} variant="bordered" className="w-44" />
           <Select
@@ -141,7 +146,6 @@ export default function LeaveBalancesTab() {
           <Select disallowEmptySelection size="sm" aria-label="Year" className="w-28" variant="bordered" selectedKeys={[String(year)]} onSelectionChange={(k) => setYear(Number(Array.from(k)[0]))}>
             {[thisYear - 1, thisYear, thisYear + 1].map((y) => <SelectItem key={String(y)}>{String(y)}</SelectItem>)}
           </Select>
-          <ExportButtons onDownload={download} />
         </div>
       </CardHeader>
       <CardBody>
@@ -160,7 +164,7 @@ export default function LeaveBalancesTab() {
             {[
               column('staff', 'Staff'),
               column('department', 'Department'),
-              ...TYPES.map((t) => column(t.key, t.label, 'center')),
+              ...types.map((t) => column(t.key, t.label, 'center')),
               column('pending', 'Pending', 'center'),
             ]}
           </TableHeader>
@@ -170,11 +174,12 @@ export default function LeaveBalancesTab() {
                 {[
                   <TableCell key="staff" className="font-semibold text-ghana-black">
                     <span className="block truncate" title={r.name}>{r.name}</span>
+                    <span className="block truncate text-[11px] font-normal text-gray-400">{r.group}</span>
                   </TableCell>,
                   <TableCell key="department">
                     <span className="block truncate" title={r.department}>{r.department}</span>
                   </TableCell>,
-                  ...TYPES.map((t) => {
+                  ...types.map((t) => {
                     const b = r.balances[t.key];
                     return (
                       <TableCell key={t.key} className="text-center tabular-nums">
@@ -193,7 +198,7 @@ export default function LeaveBalancesTab() {
         <div className="mt-3 flex justify-end">
           <Pagination page={page} total={pages} onChange={setPage} showControls size="sm" />
         </div>
-        <p className="text-xs text-gray-500 mt-2">Days left / days entitled for {year}. Only approved leave is deducted; pending requests are shown separately.</p>
+        <p className="text-xs text-gray-500 mt-2">Days left / days entitled for {year}. Only approved leave is deducted; pending requests are shown separately. Each person follows the Staff or Management allowance.</p>
       </CardBody>
     </Card>
   );

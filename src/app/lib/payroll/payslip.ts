@@ -5,12 +5,23 @@ import { buildOrgProfile } from '../print/buildOrgProfile';
 import { openHtmlPrintWindow, renderPrint } from '../print/engine';
 import type { PrintData, PrintLineItem } from '../print/templates';
 import { useSettingsStore } from '../settings/store';
+import { readPayDays } from './leavePay';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export type DeductionLabels = { tier1: string; tier2: string; tier3: string };
 
 const PAYMENT_METHOD: Record<string, string> = { bank_transfer: 'Bank transfer', check: 'Cheque', cash: 'Cash' };
+
+function readPenalty(notes?: string) {
+  if (!notes) return 0;
+  try {
+    const amount = Number(JSON.parse(notes)?.adjustments?.penalty);
+    return Number.isFinite(amount) ? amount : 0;
+  } catch {
+    return 0;
+  }
+}
 
 export function payslipMonth(period?: Pick<PayrollPeriod, 'startDate'>): string {
   const d = period?.startDate ? new Date(period.startDate) : new Date();
@@ -50,10 +61,16 @@ export function buildPayslipData(params: {
       description: `Staff ${String(l.type || 'debt').replace(/_/g, ' ')} repayment`,
       amount: l.amount,
     })),
+    { description: 'Penalty', amount: readPenalty(record.notes) },
   ].filter((it) => Number(it.amount) > 0.004);
   const listedTotal = listed.reduce((s, it) => s + Number(it.amount || 0), 0);
   const other = round2(Number(record.grossPay || 0) - Number(record.netPay || 0) - listedTotal);
   const deductionsItems = other > 0.004 ? [...listed, { description: 'Other deductions', amount: other }] : listed;
+
+  const days = readPayDays(record.notes);
+  const leaveNote = days && days.leaveDays > 0
+    ? `Basic paid for ${days.workedDays} of ${days.payableDays} working days (${days.leaveDays} day${days.leaveDays === 1 ? '' : 's'} unpaid leave).`
+    : '';
 
   const bank = (employee as { bankAccount?: { accountNumber?: string; bankName?: string; branchCode?: string } } | undefined)?.bankAccount;
   return {
@@ -66,6 +83,9 @@ export function buildPayslipData(params: {
       department: names.department,
       payPeriod: payslipMonth(period),
       dateOfJoining: employee?.hireDate ? new Date(employee.hireDate).toISOString() : undefined,
+      workedDays: days?.workedDays,
+      payableDays: days?.payableDays,
+      leaveDays: days?.leaveDays,
     },
     docDate: (record.paidAt ? new Date(record.paidAt) : new Date()).toISOString(),
     docNumber: `${period?.periodNumber || ''}-${record.employeeNumber || ''}`.replace(/^-|-$/g, ''),
@@ -81,6 +101,7 @@ export function buildPayslipData(params: {
     },
     footerNotes: [
       ...(record.paymentMethod ? [`Paid by ${(PAYMENT_METHOD[record.paymentMethod] || record.paymentMethod).toLowerCase()}.`] : []),
+      ...(leaveNote ? [leaveNote] : []),
       'This is a system generated payslip.',
     ],
     currency: '₵',

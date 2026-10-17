@@ -7,6 +7,7 @@ import { useOnboardingStore } from '@/app/lib/hr/onboardingStore';
 import { SortLabel, unifiedTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { useDeskPagination } from '../dashboard/deskTableUi';
 import EmployeeProfileModal from './EmployeeProfileModal';
+import { downloadCsvRows, printSimpleReport } from '@/app/lib/print/simpleReport';
 
 type HireSortKey = 'number' | 'name' | 'hired' | 'department' | 'position' | 'onboarding';
 
@@ -99,6 +100,23 @@ export default function NewHiresPanel() {
   const viewingComplete = !!(viewingChecklist && viewingDone === viewingTotal && viewingTotal > 0);
 
   const activeEmployee = activeEmployeeId ? employees.find((e) => e.id === activeEmployeeId) : undefined;
+
+  const hireColumns = ['Number', 'Name', 'Hired', 'Department', 'Position', 'Onboarding'];
+  const hireRows = hires.map((e) => {
+    const checklist = checklists[e.id];
+    const done = checklist ? checklist.tasks.filter((t) => t.completed).length : 0;
+    const total = checklist ? checklist.tasks.length : 0;
+    const complete = checklist && done === total && total > 0;
+    return [
+      e.employeeNumber,
+      `${e.firstName} ${e.lastName}`.trim(),
+      new Date(e.hireDate).toLocaleDateString(),
+      getDepartment(e.departmentId)?.name || '—',
+      getPosition(e.positionId)?.title || '—',
+      complete ? 'Onboarded' : checklist ? `${done}/${total}` : 'Not started',
+    ];
+  });
+  const hireSubtitle = `Last ${days} days · ${hires.length} hire${hires.length === 1 ? '' : 's'}`;
   const activeChecklist = activeEmployeeId ? checklists[activeEmployeeId] : undefined;
 
   return (
@@ -107,6 +125,8 @@ export default function NewHiresPanel() {
         <CardHeader className="justify-between">
           <div className="font-medium">New Hires</div>
           <div className="flex items-center gap-2">
+            <Button size="sm" variant="flat" onPress={() => printSimpleReport('New hires', hireSubtitle, hireColumns, hireRows, { landscape: true })}>PDF</Button>
+            <Button size="sm" variant="flat" onPress={() => downloadCsvRows('new_hires', hireColumns, hireRows)}>Excel</Button>
             <Input size="sm" placeholder="Search name/number" value={q} onChange={(e) => setQ(e.target.value)} variant="bordered" className="w-56" />
             <Select disallowEmptySelection size="sm" selectedKeys={[String(days)]} onSelectionChange={(k) => setDays(parseInt(Array.from(k)[0] as string, 10))} className="w-32" variant="bordered" aria-label="Period">
               <SelectItem key="7">7 days</SelectItem>

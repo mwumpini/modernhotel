@@ -109,6 +109,10 @@ export interface InventoryScreen {
   handlePOItemChange: (itemCode: string, itemIndex: number) => void;
   handlePOSupplierChange: (supplierId: string) => void;
   handlePrintStockCount: (count: StockCount) => void;
+  printPurchaseOrder: (po: PurchaseOrder) => void;
+  printRequisition: (req: Requisition) => void;
+  printStockTransfer: (transfer: StockTransfer) => void;
+  printGoodsIssue: (issue: GoodsIssue) => void;
   printInventorySheet: (doc: {
     title: string;
     subtitle?: string;

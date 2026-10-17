@@ -13,6 +13,9 @@ import ScoreChip from './ScoreChip';
 import { useComplianceStore } from '@/app/lib/compliance/store';
 import { useSettingsStore } from '@/app/lib/settings/store';
 import { formatMoney } from '@/app/lib/format/currency';
+import { banksInUse, salaryBankOptions } from '@/app/lib/hr/salaryBanks';
+import { usePaySetupStore } from '@/app/lib/hr/paySetupStore';
+import { downloadCsvRows, printSimpleReport } from '@/app/lib/print/simpleReport';
 import AttachmentUpload from '@/app/components/shared/AttachmentUpload';
 import { SortLabel, unifiedTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { useDeskPagination } from '../dashboard/deskTableUi';
@@ -48,6 +51,9 @@ const recordColumnWidths: Record<RecordSortKey, number> = {
 
 export default function EmployeeRecordsPanel() {
   const employees = useEmployeeStore((s) => s.employees);
+  const paySetup = usePaySetupStore((s) => s.setup);
+  const payBanksSaved = usePaySetupStore((s) => s.saved);
+  const payBanks = paySetup?.banks || [];
   const departments = useEmployeeStore((s) => s.departments);
   const positions = useEmployeeStore((s) => s.positions);
   const addEmployee = useEmployeeStore((s) => s.addEmployee);
@@ -930,6 +936,83 @@ export default function EmployeeRecordsPanel() {
     }
   };
 
+  const recordsSheet = () => {
+    const labels: Record<RecordSortKey, string> = {
+      idNo: 'Ghana Card',
+      staffNo: 'Staff No.',
+      name: 'Name',
+      department: 'Department',
+      position: 'Position',
+      residencyClass: 'Residency / Class',
+      status: 'Status',
+      type: 'Type',
+      secondEmployment: 'Second Employ',
+      basicSalary: 'Basic Salary',
+      socialSecurity: tier1Label,
+      tier2: tier2Label,
+      tier3: tier3Label,
+      allowances: 'Allowances',
+      vehicleBenefit: 'Vehicle Benefit',
+      housingBenefit: 'Housing Benefit',
+      otherNonCash: 'Other Non-Cash',
+      incomeTax: 'Income Tax',
+      netSalary: 'Net Salary',
+      actions: 'Actions',
+    };
+    const keys = allColumnKeys.filter((key) => key !== 'actions' && visibleColumns.has(key));
+    const money = (n: number) => formatMoney(Number(n || 0));
+    const rows = filtered.map((e) => {
+      const latest = payrollRecords
+        .filter((r) => r.employeeId === e.id && r.status === 'paid')
+        .sort((a, b) => (b.paidAt?.getTime() || 0) - (a.paidAt?.getTime() || 0))[0];
+      const est = latest ? null : estimateMonthlyPay(e as any, { tier1: tier1Rule, tier2: tier2Rule });
+      const paid = (value: number | undefined, estimate: number | undefined) => money(latest ? Number(value || 0) : Number(estimate || 0));
+      const benefit = (value?: number) => (Number(value || 0) > 0 ? money(Number(value)) : '—');
+      const cell = (key: RecordSortKey) => {
+        switch (key) {
+          case 'idNo': return (e as any).ghanaCardNumber || '—';
+          case 'staffNo': return e.employeeNumber || '—';
+          case 'name': return `${e.firstName} ${e.lastName}`.trim();
+          case 'department': return getDepartment(e.departmentId)?.name || '—';
+          case 'position': return getPosition(e.positionId)?.title || '—';
+          case 'residencyClass': return `${((e as any).residencyStatus || 'resident').replace('_', ' ')} / ${((e as any).employmentClass || 'regular').replace('_', ' ')}`;
+          case 'status': return e.status || '—';
+          case 'type': return e.employmentType || '—';
+          case 'secondEmployment': return (e as any).secondEmployment ? 'Y' : 'N';
+          case 'basicSalary': return money((e as any).basicSalary ?? (e as any).salary ?? (e as any).baseSalary ?? 0);
+          case 'socialSecurity': return paid(latest?.deductions?.socialSecurity, est?.tier1);
+          case 'tier2': return paid(latest?.deductions?.pension, est?.tier2);
+          case 'tier3': return paid((latest as any)?.deductions?.tier3, est?.tier3);
+          case 'allowances': return money((e as any).allowances ?? 0);
+          case 'vehicleBenefit': return benefit((e as any).vehicleBenefit);
+          case 'housingBenefit': return benefit((e as any).housingBenefit);
+          case 'otherNonCash': return benefit((e as any).otherNonCashBenefits);
+          case 'incomeTax': return paid(latest?.deductions?.tax, est?.tax);
+          case 'netSalary': return paid(latest?.netPay, est?.net);
+          default: return '';
+        }
+      };
+      return keys.map(cell);
+    });
+    const deptName = deptFilter === 'all' ? 'All departments' : (getDepartment(deptFilter)?.name || 'Department');
+    const statusName = statusFilter === 'all' ? 'all statuses' : statusFilter.replace('_', ' ');
+    return {
+      columns: keys.map((key) => labels[key]),
+      rows,
+      subtitle: `${filtered.length} employee${filtered.length === 1 ? '' : 's'} · ${deptName} · ${statusName}`,
+    };
+  };
+
+  const printRecords = () => {
+    const sheet = recordsSheet();
+    printSimpleReport('Employee records', sheet.subtitle, sheet.columns, sheet.rows, { landscape: true });
+  };
+
+  const exportRecords = () => {
+    const sheet = recordsSheet();
+    downloadCsvRows('employee_records', sheet.columns, sheet.rows);
+  };
+
   return (
     <div className="space-y-4">
       <Card>
@@ -955,6 +1038,8 @@ export default function EmployeeRecordsPanel() {
               <SelectItem key="terminated" textValue="Terminated">Terminated</SelectItem>
             </Select>
             <Button variant="flat" onPress={() => setShowColumns(true)}>Columns</Button>
+            <Button size="sm" variant="flat" onPress={printRecords}>PDF</Button>
+            <Button size="sm" variant="flat" onPress={exportRecords}>Excel</Button>
             <Button color="primary" onPress={openCreate}>+ Add Employee</Button>
           </div>
         </CardHeader>
@@ -1357,7 +1442,25 @@ export default function EmployeeRecordsPanel() {
                     <div className="text-sm font-medium mb-2">Bank Account</div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <Input label="Account Number" value={form.bankAccount.accountNumber} onChange={(e) => setForm({ ...form, bankAccount: { ...form.bankAccount, accountNumber: e.target.value } })} variant="bordered" />
-                      <Input label="Bank Name" value={form.bankAccount.bankName} onChange={(e) => setForm({ ...form, bankAccount: { ...form.bankAccount, bankName: e.target.value } })} variant="bordered" />
+                      <Select
+                        label="Bank Name"
+                        description="Banks saved under Payroll → Pay setup."
+                        variant="bordered"
+                        selectedKeys={form.bankAccount.bankName ? [form.bankAccount.bankName] : []}
+                        onSelectionChange={(keys) => {
+                          const name = String(Array.from(keys)[0] || '');
+                          setForm({ ...form, bankAccount: { ...form.bankAccount, bankName: name } });
+                        }}
+                      >
+                        {salaryBankOptions({
+                          saved: payBanksSaved,
+                          banks: payBanks,
+                          inUse: banksInUse(employees.map((employee) => employee.bankAccount?.bankName)),
+                          current: form.bankAccount.bankName,
+                        }).map((name) => (
+                          <SelectItem key={name} textValue={name}>{name}</SelectItem>
+                        ))}
+                      </Select>
                       <Input label="Branch Code" value={form.bankAccount.branchCode} onChange={(e) => setForm({ ...form, bankAccount: { ...form.bankAccount, branchCode: e.target.value } })} variant="bordered" />
                     </div>
                   </div>

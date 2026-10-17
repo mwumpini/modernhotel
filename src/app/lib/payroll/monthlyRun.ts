@@ -8,6 +8,7 @@ import { useComplianceStore } from '../compliance/store';
 import { syncPayrollRunToComplianceFiling } from '../compliance/payrollSync';
 import type { PayrollPeriod, PayrollRecord } from '../hr/models';
 import type { JournalEntry } from '../accounting/models';
+import { basicAfterLeave, payDaysForEmployee, type MonthPayDays } from './leavePay';
 
 export interface MonthlyRunInput {
   builder: UniversalPayrollBuilder;
@@ -20,6 +21,8 @@ export interface MonthlyRunInput {
   year: number;
   /** Per-employee overtime hours that override the HR-approved figure for the month. */
   overtimeOverrides?: Record<string, number>;
+  /** Edits made on the preview, applied to those people when the month is prepared. */
+  lineAdjustments?: Record<string, StaffAdjustments>;
   userName: string;
   complianceCountry: string;
 }
@@ -54,6 +57,8 @@ export interface StaffAdjustments {
   bonus?: number;
   /** A deduction taken after tax (loan repayment, salary advance…). */
   otherDeduction?: number;
+  /** A one-off penalty taken after tax for this month. */
+  penalty?: number;
   reason?: string;
   editedBy?: string;
   editedAt?: string;
@@ -145,20 +150,22 @@ function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number
 
   // Create or update employee profile for the run
   const eid = emp.id || emp.employeeNumber || `EMP-${Math.floor(Math.random() * 10000)}`;
-  const basicForRate = Number((emp as any).basicSalary ?? (emp as any).salary ?? 0);
-  const hourly = impliedHourlyRate(basicForRate, (emp as any).hourlyRate);
+  const contractualBasic = Number((emp as any).basicSalary ?? (emp as any).salary ?? 0);
+  const attendance: MonthPayDays = payDaysForEmployee(String(emp.id || eid), year, month);
+  const paidBasic = basicAfterLeave(contractualBasic, attendance);
+  const hourly = impliedHourlyRate(contractualBasic, (emp as any).hourlyRate);
   const profiles = (builder as any).employeeProfiles as Map<string, any>;
   if (!profiles.get(eid)) {
     builder.createEmployee({
       id: eid,
       employeeId: emp.employeeNumber || eid,
       firstName: emp.firstName, lastName: emp.lastName, email: emp.email,
-      employment: { type: emp.employmentType || 'full_time', department: emp.departmentId, position: emp.positionId, salary: basicForRate, currency: ((builder as any).payrollConfigs.get(runtimeId)?.currency || 'GHS'), hourlyRate: hourly },
+      employment: { type: emp.employmentType || 'full_time', department: emp.departmentId, position: emp.positionId, salary: paidBasic, currency: ((builder as any).payrollConfigs.get(runtimeId)?.currency || 'GHS'), hourlyRate: hourly },
       taxInfo: { filingStatus: (emp as any).taxWithholding?.filingStatus || 'single', allowances: Number((emp as any).taxWithholding?.allowances || 0), additionalWithholding: Number((emp as any).taxWithholding?.additionalWithholding || 0) },
     });
   } else {
     const existing = profiles.get(eid);
-    existing.employment.salary = basicForRate;
+    existing.employment.salary = paidBasic;
     existing.employment.hourlyRate = hourly;
   }
 
@@ -203,18 +210,17 @@ function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number
   // when the employee opted in with a contribution rate; capped at the statutory
   // relief ceiling. The rule's own (renameable) name is used for the deduction label
   // so a rename actually shows up on payslips instead of a hardcoded string.
-  runtimeConfig.deductions = (runtimeConfig.deductions || []).filter((d: any) => d.code !== 'TIER3_EMP' && d.code !== 'OTHER_DED' && d.code !== 'STAFF_DEBT');
+  runtimeConfig.deductions = (runtimeConfig.deductions || []).filter((d: any) => d.code !== 'TIER3_EMP' && d.code !== 'OTHER_DED' && d.code !== 'PENALTY' && d.code !== 'STAFF_DEBT');
   const tier3Pct = Number((emp as any).tier3Enrolled ? (emp as any).tier3ContributionPct || 0 : 0);
   if (tier3Pct > 0) {
-    const basicSalary = Number((emp as any).basicSalary ?? (emp as any).salary ?? 0);
-    const grossForTier3 = basicSalary + allowances;
+    const grossForTier3 = paidBasic + allowances;
     const reliefCapPct = tier3CapRule?.rate ?? 16.5;
     // The relief cap limits the RESULTING contribution amount to reliefCapPct% of basic
     // salary — it's not an income ceiling the rate stops applying above (that's what
     // `limits.ceiling` means for Tier 1/2), so compute and clamp the amount directly
     // here rather than pushing a 'percentage' deduction with a ceiling.
     const rawAmount = grossForTier3 * (tier3Pct / 100);
-    const maxRelief = basicSalary * (reliefCapPct / 100);
+    const maxRelief = paidBasic * (reliefCapPct / 100);
     runtimeConfig.deductions.push({
       name: tier3CapRule?.name || 'Tier 3',
       code: 'TIER3_EMP',
@@ -235,6 +241,17 @@ function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number
       category: 'other',
       calculationType: 'fixed',
       amount: otherDeduction,
+      base: 'net',
+    });
+  }
+  const penalty = Number(adj.penalty || 0);
+  if (penalty > 0) {
+    runtimeConfig.deductions.push({
+      name: 'Penalty',
+      code: 'PENALTY',
+      category: 'other',
+      calculationType: 'fixed',
+      amount: penalty,
       base: 'net',
     });
   }
@@ -286,6 +303,7 @@ function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number
 
   return {
     calc,
+    attendance,
     employerContribution: calc.taxes.employer || 0,
     tier1Employer,
     tier2Employer,
@@ -298,7 +316,7 @@ function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number
       employeeName: `${emp.firstName} ${emp.lastName}`,
       department: useEmployeeStore.getState().getDepartment(emp.departmentId)?.name ?? 'Unassigned',
       position: useEmployeeStore.getState().getPosition(emp.positionId)?.title ?? 'Unassigned',
-      basicSalary: Number((emp as any).basicSalary ?? (emp as any).salary ?? 0),
+      basicSalary: paidBasic,
       allowances,
       overtimePay,
       bonuses: bonusPaid,
@@ -333,7 +351,7 @@ export function calculateEmployeeMonth(ctx: CalcContext, emp: any, overtimeHours
  * saves the period and its records (awaiting approval) and files the PAYE/SSNIT hints. Nothing
  * is approved, paid or posted to the ledger here — approving a month posts it. */
 export function runMonthlyPayroll(input: MonthlyRunInput): MonthlyRunResult {
-  const { builder, runtimeId, employees, periods: payrollPeriods, month, year, overtimeOverrides, userName, complianceCountry } = input;
+  const { builder, runtimeId, employees, periods: payrollPeriods, month, year, overtimeOverrides, lineAdjustments, userName, complianceCountry } = input;
   const { createPayrollPeriod, createPayrollRecord, updatePayrollPeriod } = usePayrollStore.getState();
 
   const activeEmployees = (employees || []).filter((e: any) => e.status === 'active');
@@ -361,7 +379,8 @@ export function runMonthlyPayroll(input: MonthlyRunInput): MonthlyRunResult {
   const totals = { gross: 0, net: 0, tax: 0, ssnit: 0, employerTax: 0, tier1Employer: 0, tier2Employer: 0, deductions: 0 };
   activeEmployees.forEach((emp: any) => {
     const eid = emp.id || emp.employeeNumber;
-    const r = calculateStaff(ctx, emp, Number(overtimeOverrides?.[eid] ?? approvedOvertimeFor(eid, month, year)));
+    const adj = lineAdjustments?.[eid];
+    const r = calculateStaff(ctx, emp, Number(adj?.overtimeHours ?? overtimeOverrides?.[eid] ?? approvedOvertimeFor(eid, month, year)), adj || {});
     totals.gross += r.calc.summary.gross;
     totals.net += r.calc.summary.net;
     totals.tax += r.calc.taxes.employee;
@@ -378,6 +397,8 @@ export function runMonthlyPayroll(input: MonthlyRunInput): MonthlyRunResult {
       notes: JSON.stringify({
         source: 'Monthly payroll run',
         debtRepayments: r.debtRepayments || [],
+        ...r.attendance,
+        ...(adj ? { adjustments: adj } : {}),
       }),
     } as any);
   });
@@ -464,6 +485,7 @@ export function recalculateStaffLine(input: EditLineInput): EditLineResult {
       source: 'Monthly payroll run',
       adjustments: { ...adjustments, editedAt: changedAt },
       debtRepayments: r.debtRepayments || [],
+      ...r.attendance,
     }),
   } as any);
 

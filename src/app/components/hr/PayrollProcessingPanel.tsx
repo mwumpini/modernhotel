@@ -7,13 +7,15 @@ import { usePayrollStore, payrollRecordLabels } from '@/app/lib/hr/payrollStore'
 import { todayKey } from '@/app/lib/hr/leaveDates';
 import { useComplianceStore } from '@/app/lib/compliance/store';
 import { amountToWordsGhana, generatePaymentAdvicePDF } from '@/app/lib/hr/payrollPdf';
+import { adviceAccountHeading, adviceAddressee, adviceInstruction, adviceMoney, paymentAdviceLetterHtml, printPaymentAdviceLetter } from '@/app/lib/hr/paymentAdviceLetter';
+import { buildOrgProfile } from '@/app/lib/print/buildOrgProfile';
 import { useSettingsStore } from '@/app/lib/settings/store';
 import { useSectionExport } from '@/app/lib/export/useSectionExport';
 import { useCurrentUserName } from '@/app/lib/auth/useCurrentUserName';
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { useLeaveAttendanceStore } from '@/app/lib/hr/leaveAttendanceStore';
 import UniversalPayrollBuilder from '@/app/lib/payroll/builder';
-import { approvedOvertimeFor, buildPayrollJournal, monthYearOf, prepareBuilderForRun, readAdjustments, readEmployerContribution, recalculateStaffLine, runMonthlyPayroll } from '@/app/lib/payroll/monthlyRun';
+import { approvedOvertimeFor, buildPayrollJournal, calculateEmployeeMonth, monthYearOf, prepareBuilderForRun, readAdjustments, readEmployerContribution, recalculateStaffLine, runMonthlyPayroll, type StaffAdjustments } from '@/app/lib/payroll/monthlyRun';
 import { notifyError, notifySuccess } from '@/app/lib/notifications/notify';
 import { estimateMonthlyPay } from '@/app/lib/payroll/estimate';
 import PayslipsPanel from './PayslipsPanel';
@@ -21,7 +23,8 @@ import ExportButtons from '@/app/components/ExportButtons';
 import type { PayrollPeriod, PayrollRecord } from '@/app/lib/hr/models';
 import type { ExportFormat } from '@/app/lib/frontoffice/reportExportFormat';
 import { formatGhs, formatMoney } from '@/app/lib/format/currency';
-import { printDetailSheet, printSimpleReport } from '@/app/lib/print/simpleReport';
+import { usePaySetupStore } from '@/app/lib/hr/paySetupStore';
+import { printDetailSheet } from '@/app/lib/print/simpleReport';
 import { DESK_PAGE_SIZE, useDeskPagination } from '../dashboard/deskTableUi';
 import { deskBookTabsClassNames, deskBookTabPanelClassName } from '../dashboard/deskTabsUi';
 import { SortLabel, deskResizableTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
@@ -32,13 +35,13 @@ import { postingDateError } from '@/app/lib/frontoffice/backdate';
 
 type PayrollColKey =
   | 'idNo' | 'staffNo' | 'name' | 'department' | 'position' | 'residencyClass' | 'status' | 'type' | 'secondEmployment'
-  | 'basicSalary' | 'allowances' | 'overtime' | 'gross' | 'incomeTax' | 'socialSecurity' | 'tier2' | 'tier3' | 'other'
+  | 'basicSalary' | 'allowances' | 'overtime' | 'gross' | 'incomeTax' | 'socialSecurity' | 'tier2' | 'tier3' | 'owing' | 'penalty' | 'other'
   | 'net' | 'payStatus' | 'paidOn';
 
 const payrollDefaultWidths: Record<PayrollColKey, number> = {
-  idNo: 100, staffNo: 88, name: 148, department: 120, position: 120, residencyClass: 140, status: 110, type: 80,
+  idNo: 100, staffNo: 88, name: 186, department: 179, position: 120, residencyClass: 140, status: 110, type: 80,
   secondEmployment: 96, basicSalary: 104, allowances: 104, overtime: 112, gross: 104, incomeTax: 96, socialSecurity: 96,
-  tier2: 96, tier3: 96, other: 104, net: 104, payStatus: 128, paidOn: 100,
+  tier2: 96, tier3: 96, owing: 96, penalty: 88, other: 104, net: 104, payStatus: 128, paidOn: 100,
 };
 
 type HistorySortKey = 'month' | 'staff' | 'gross' | 'deductions' | 'net' | 'processed' | 'approved' | 'payment';
@@ -48,7 +51,7 @@ const historyColWidths: Record<HistorySortKey, number> = {
 
 type AdviceSortKey = 'channel' | 'count' | 'amount' | 'words' | 'payment';
 const adviceColWidths: Record<AdviceSortKey, number> = {
-  channel: 160, count: 88, amount: 120, words: 200, payment: 120,
+  channel: 168, count: 72, amount: 118, words: 240, payment: 220,
 };
 
 // Shared by both the on-screen Payment Advice summary and the downloadable PDF/XLS — one
@@ -118,16 +121,27 @@ export default function PayrollProcessingPanel() {
   const [deleteOpen, setDeleteOpen] = React.useState(false);
   // The staff line being edited, and its form (kept as text so a field can be cleared while typing).
   const [editRow, setEditRow] = React.useState<any | null>(null);
-  const [editForm, setEditForm] = React.useState({ allowances: '', overtimeHours: '', bonus: '', otherDeduction: '', reason: '' });
+  const [drafts, setDrafts] = React.useState<Record<string, StaffAdjustments>>({});
+  const [editForm, setEditForm] = React.useState({ allowances: '', overtimeHours: '', bonus: '', otherDeduction: '', penalty: '', reason: '' });
   const [editError, setEditError] = React.useState('');
   const taxRules = useComplianceStore((s) => s.taxRules);
   const hotelName = useSettingsStore((s) => s.hotelSettings.hotelName) || 'Hotel';
+  const company = useSettingsStore((s) => s.companySettings);
+  const org = React.useMemo(() => {
+    const profile = buildOrgProfile({ companySettings: company } as never);
+    return { ...profile, name: profile.name || hotelName };
+  }, [company, hotelName]);
   const exportFile = useSectionExport();
-  const owedByEmployee = useStaffDebtStore((s) => s.owedByEmployee);
+  const debts = useStaffDebtStore((s) => s.debts);
+  const installmentDue = useStaffDebtStore((s) => s.installmentDue);
   const [activeTab, setActiveTab] = React.useState<string>('staff');
-  const staffCols = useResizableColumns<PayrollColKey>(payrollDefaultWidths);
+  const defaultColumns: PayrollColKey[] = ['staffNo', 'name', 'department', 'position', 'basicSalary', 'allowances', 'overtime', 'gross', 'incomeTax', 'socialSecurity', 'tier2', 'tier3', 'owing', 'penalty', 'net', 'payStatus'];
+  const [visibleColumns, setVisibleColumns] = React.useState<Set<string>>(new Set(defaultColumns));
+  const staffCols = useResizableColumns<PayrollColKey>(payrollDefaultWidths, {
+    activeKeys: defaultColumns.filter((key) => visibleColumns.has(key)),
+  });
   const historyCols = useResizableColumns<HistorySortKey>(historyColWidths);
-  const adviceCols = useResizableColumns<AdviceSortKey>(adviceColWidths);
+  const adviceCols = useResizableColumns<AdviceSortKey>(adviceColWidths, { flexKeys: ['words', 'channel'] });
   const [staffSortKey, setStaffSortKey] = React.useState<string>('name');
   const [staffSortDir, setStaffSortDir] = React.useState<'asc' | 'desc'>('asc');
   const [historySortKey, setHistorySortKey] = React.useState<HistorySortKey>('month');
@@ -180,9 +194,7 @@ export default function PayrollProcessingPanel() {
   const [statusFilter, setStatusFilter] = React.useState<string>('all');
   const [deptFilter, setDeptFilter] = React.useState<string>('all');
   const [q, setQ] = React.useState<string>('');
-  const defaultColumns = ['staffNo', 'name', 'department', 'position', 'basicSalary', 'allowances', 'overtime', 'gross', 'incomeTax', 'socialSecurity', 'tier2', 'tier3', 'net', 'payStatus'];
   const [showColumns, setShowColumns] = React.useState<boolean>(false);
-  const [visibleColumns, setVisibleColumns] = React.useState<Set<string>>(new Set(defaultColumns));
   const toggleColumn = (key: string, checked: boolean) => {
     setVisibleColumns(prev => { const next = new Set(prev); if (checked) next.add(key); else next.delete(key); return next; });
   };
@@ -196,10 +208,23 @@ export default function PayrollProcessingPanel() {
   // Employee payroll detail modal state (Staff Payroll table's "View" action)
   const [detailRow, setDetailRow] = React.useState<any | null>(null);
 
+  const paySetup = usePaySetupStore((s) => s.setup);
+  const paySetupSaved = usePaySetupStore((s) => s.saved);
+  const savedInstruction = paySetupSaved ? paySetup?.instruction || '' : '';
+
   const handleOpenAdvice = (label: string) => {
+    const current = usePaySetupStore.getState();
+    setSignerName(current.saved ? current.setup?.signerName || '' : '');
+    setSignerPosition(current.saved ? current.setup?.signerPosition || '' : '');
     setAdviceLabel(label);
     setAdviceOpen(true);
   };
+
+  React.useEffect(() => {
+    if (!adviceOpen || !paySetupSaved || !paySetup) return;
+    setSignerName((current) => current.trim() ? current : paySetup.signerName);
+    setSignerPosition((current) => current.trim() ? current : paySetup.signerPosition);
+  }, [adviceOpen, paySetupSaved, paySetup]);
 
   const buildAdviceForLabel = (label: string) => {
     type Row = { employeeName: string; accountNumber: string; net: number; paidAt?: Date };
@@ -221,84 +246,39 @@ export default function PayrollProcessingPanel() {
 
   const handleDownloadAdvicePdf = async (label: string) => {
     const { rows, monthLabel } = buildAdviceForLabel(label);
-    const companyLogoUrl = '/logo.png';
     const bankLogoUrl = bankLogoUrlFor(label);
     await generatePaymentAdvicePDF({
-      hotelName,
+      hotelName: org.name,
       monthLabel,
       bankOrChannel: label,
       rows,
       signerName: signerName || 'Authorized Signatory',
       signerPosition: signerPosition || 'Finance Manager',
-      companyLogoUrl,
+      signerSignature: paySetupSaved ? paySetup?.signature || '' : '',
+      companyLogoUrl: org.logoUrl,
       bankLogoUrl,
+      orgAddress: org.address,
+      orgPhone: org.phone,
+      orgEmail: org.email,
+      orgTaxId: org.taxId,
+      instruction: adviceInstruction(label, org.name, monthLabel, rows.reduce((sum, row) => sum + (row.net || 0), 0), savedInstruction),
       fileName: `Salary_Payment_Advice_${label.replace(/\s+/g,'_')}_${monthLabel.replace(/\s+/g,'_')}.pdf`,
     });
   };
 
   const handleDownloadAdviceXls = (label: string) => {
-    const { rows, monthLabel, total } = buildAdviceForLabel(label);
-    const printed = new Date().toLocaleString('en-GB');
-    const words = amountToWordsGhana(total);
-    const companyLogoUrl = '/logo.png';
-    const bankLogoUrl = bankLogoUrlFor(label) ?? '';
-    const html = `<!DOCTYPE html>
-<html><head><meta charset="utf-8" />
-<style>
-  table { border-collapse: collapse; }
-  th, td { border: 1px solid #000; padding: 4px 6px; }
-  th.left, td.left { text-align: left; }
-  th.right, td.right { text-align: right; }
-  th.center, td.center { text-align: center; }
-  caption, .meta { text-align: left; margin-bottom: 6px; }
-  .meta b { display: inline-block; width: 140px; }
-  .title { text-align: center; font-weight: bold; font-size: 14px; margin-bottom: 6px; }
-  .subtitle { text-align: center; font-size: 12px; margin-bottom: 8px; }
-  .intro { margin: 8px 0 10px 0; }
-  .logos { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-  .logos img { height: 28px; }
-</style>
-</head><body>
-  <div class="logos">
-    <img src="${companyLogoUrl}" alt="Company" onerror="this.style.display='none'" />
-    <img src="${bankLogoUrl}" alt="Bank" onerror="this.style.display='none'" />
-  </div>
-  <div class="title">${hotelName}</div>
-  <div class="subtitle">Salary Payment Advice - ${label}</div>
-  <div class="subtitle">${monthLabel}</div>
-  <div class="meta"><b>Signer Name:</b> ${signerName || 'Authorized Signatory'}</div>
-  <div class="meta"><b>Signer Position:</b> ${signerPosition || 'Finance Manager'}</div>
-  <div class="meta"><b>Date Printed:</b> ${printed}</div>
-  <div class="intro">Please pay the underlisted staff of ${hotelName} their net salaries via ${label} for ${monthLabel}. The total amount is GHS ${total.toFixed(2)} (${words}).</div>
-  <table>
-    <colgroup>
-      <col style="width: 12%" />
-      <col style="width: 40%" />
-      <col style="width: 30%" />
-      <col style="width: 18%" />
-    </colgroup>
-    <thead>
-      <tr>
-        <th class="center">No.</th>
-        <th class="left">Name</th>
-        <th class="left">Account / Wallet</th>
-        <th class="right">Net Salary (GHS)</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${rows.map((r, i) => `<tr><td class="center">${i + 1}</td><td class="left">${(r.employeeName || '').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;')}</td><td class="left">${(r.accountNumber || '').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;')}</td><td class="right">${(r.net || 0).toFixed(2)}</td></tr>`).join('')}
-    </tbody>
-    <tfoot>
-      <tr>
-        <td></td>
-        <td><b>Total</b></td>
-        <td></td>
-        <td class="right"><b>${total.toFixed(2)}</b></td>
-      </tr>
-    </tfoot>
-  </table>
-  <div class="meta" style="margin-top:8px;"><b>Amount in words:</b> ${words}</div>
-</body></html>`;
+    const { rows, monthLabel } = buildAdviceForLabel(label);
+    const html = paymentAdviceLetterHtml({
+      org,
+      bankOrChannel: label,
+      monthLabel,
+      rows,
+      signerName: signerName || 'Authorized Signatory',
+      signerPosition: signerPosition || 'Finance Manager',
+      signature: paySetupSaved ? paySetup?.signature : '',
+      bankLogoUrl: bankLogoUrlFor(label),
+      instruction: savedInstruction,
+    });
     const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -346,31 +326,59 @@ export default function PayrollProcessingPanel() {
   interface Row {
     key: string; e?: (typeof employees)[number]; staffNo: string; name: string; deptName: string; posTitle: string;
     basic: number; allowances: number; overtime: number; gross: number;
-    tax: number; tier1: number; tier2: number; tier3: number; other: number; net: number;
+    tax: number; tier1: number; tier2: number; tier3: number; owing: number; penalty: number; other: number; net: number;
     pay: PayStatus; paidAt?: Date; record?: PayrollRecord;
   }
 
   const buildRows = (p?: PayrollPeriod): Row[] => {
+    void debts.length;
     if (p) {
       const st = periodStage(p);
       return payrollRecords.filter((r) => r.payrollPeriodId === p.id).map((r) => {
         const e = empById.get(r.employeeId);
         const labels = payrollRecordLabels(r);
         const pay: PayStatus = r.status === 'paid' ? 'paid' : r.status === 'failed' ? 'failed' : r.status === 'pending' ? 'pending' : st === 'approved' || st === 'paid' ? 'approved' : 'processed';
+        const owing = readDebtRepayments(r.notes).reduce((s, l) => s + l.amount, 0);
+        const penalty = Number(readAdjustments(r.notes).penalty || 0);
         return {
           key: r.id, e, staffNo: r.employeeNumber, name: r.employeeName, deptName: labels.department, posTitle: labels.position,
           basic: r.basicSalary, allowances: r.allowances, overtime: r.overtimePay + (r.bonuses || 0), gross: r.grossPay,
           tax: r.deductions.tax, tier1: r.deductions.socialSecurity, tier2: r.deductions.pension, tier3: r.deductions.tier3 || 0,
-          other: (r.deductions.other || 0) + (r.deductions.healthInsurance || 0), net: r.netPay,
+          owing, penalty,
+          other: Math.max(0, (r.deductions.other || 0) + (r.deductions.healthInsurance || 0) - owing - penalty),
+          net: r.netPay,
           pay, paidAt: r.paidAt, record: r,
         };
       });
     }
+    const now = new Date();
     return employees.map((e) => {
+      const draft = drafts[e.id];
+      if (draft) {
+        const builder = new UniversalPayrollBuilder();
+        const runtimeId = prepareBuilderForRun(builder, useComplianceStore.getState().country);
+        const calc = calculateEmployeeMonth(
+          { builder, runtimeId, month: now.getMonth() + 1, year: now.getFullYear() },
+          e,
+          Number(draft.overtimeHours ?? approvedOvertimeFor(e.id, now.getMonth() + 1, now.getFullYear())),
+          draft,
+        );
+        const owing = (calc.debtRepayments || []).reduce((s, l) => s + l.amount, 0);
+        const penalty = Number(draft.penalty || 0);
+        return {
+          key: e.id, e, staffNo: e.employeeNumber, name: `${e.firstName} ${e.lastName}`, deptName: getDepartment(e.departmentId)?.name || '-', posTitle: getPosition(e.positionId)?.title || '-',
+          basic: calc.fields.basicSalary, allowances: calc.fields.allowances, overtime: calc.fields.overtimePay + (calc.fields.bonuses || 0), gross: calc.fields.grossPay,
+          tax: calc.fields.deductions.tax, tier1: calc.fields.deductions.socialSecurity, tier2: calc.fields.deductions.pension, tier3: calc.fields.deductions.tier3 || 0,
+          owing, penalty, other: Math.max(0, (calc.fields.deductions.other || 0) - owing - penalty), net: calc.fields.netPay,
+          pay: 'estimate' as PayStatus,
+        };
+      }
       const { basic, allowances, gross, tax, tier1, tier2, tier3, net } = estimateMonthlyPay(e as any, { tier1: tier1Rule, tier2: tier2Rule });
+      const installment = installmentDue(e.id, { month: now.getMonth() + 1, year: now.getFullYear() }).reduce((s, l) => s + l.amount, 0);
+      const owing = Math.min(installment, Math.max(0, net));
       return {
         key: e.id, e, staffNo: e.employeeNumber, name: `${e.firstName} ${e.lastName}`, deptName: getDepartment(e.departmentId)?.name || '-', posTitle: getPosition(e.positionId)?.title || '-',
-        basic, allowances, overtime: 0, gross, tax, tier1, tier2, tier3, other: 0, net,
+        basic, allowances, overtime: 0, gross, tax, tier1, tier2, tier3, owing, penalty: 0, other: 0, net: Math.round((net - owing) * 100) / 100,
         pay: 'estimate' as PayStatus,
       };
     });
@@ -395,20 +403,7 @@ export default function PayrollProcessingPanel() {
   const columns: Array<{ key: string; label: string; money?: boolean; value: (r: Row) => string | number; render?: (r: Row) => React.ReactNode }> = [
     { key: 'idNo', label: 'Ghana Card', value: (r) => (r.e as any)?.ghanaCardNumber || '-' },
     { key: 'staffNo', label: 'Staff No.', value: (r) => r.staffNo },
-    { key: 'name', label: 'Name', value: (r) => r.name, render: (r) => {
-      const owed = r.e ? owedByEmployee(r.e.id) : 0;
-      const debtOnSlip = r.record ? readDebtRepayments(r.record.notes).reduce((s, l) => s + l.amount, 0) : 0;
-      return (
-        <div className="min-w-0">
-          <span className="block truncate font-semibold text-ghana-black" title={r.name}>{r.name}</span>
-          {(owed > 0 || debtOnSlip > 0) && (
-            <Chip size="sm" variant="flat" color="warning" className="mt-0.5">
-              {debtOnSlip > 0 ? `Debt ${formatMoney(debtOnSlip)}` : `Owes ${formatMoney(owed)}`}
-            </Chip>
-          )}
-        </div>
-      );
-    } },
+    { key: 'name', label: 'Name', value: (r) => r.name, render: (r) => <span className="block truncate font-semibold text-ghana-black" title={r.name}>{r.name}</span> },
     { key: 'department', label: 'Department', value: (r) => r.deptName },
     { key: 'position', label: 'Position', value: (r) => r.posTitle },
     { key: 'residencyClass', label: 'Residency / Class', value: (r) => (r.e ? `${((r.e as any).residencyStatus || 'resident').replace('_', ' ')} / ${((r.e as any).employmentClass || 'regular').replace('_', ' ')}` : '-') },
@@ -423,6 +418,11 @@ export default function PayrollProcessingPanel() {
     { key: 'socialSecurity', label: tier1Label, money: true, value: (r) => r.tier1, render: (r) => <span className="tabular-nums">{formatMoney(r.tier1)}</span> },
     { key: 'tier2', label: tier2Label, money: true, value: (r) => r.tier2, render: (r) => <span className="tabular-nums">{formatMoney(r.tier2)}</span> },
     { key: 'tier3', label: tier3Label, money: true, value: (r) => r.tier3, render: (r) => <span className="tabular-nums">{formatMoney(r.tier3)}</span> },
+    { key: 'owing', label: 'Owing', money: true, value: (r) => r.owing, render: (r) => {
+      const balance = r.e ? debts.filter((d) => d.employeeId === r.e!.id && d.status === 'active').reduce((s, d) => s + Number(d.remainingBalance || 0), 0) : 0;
+      return <span className="tabular-nums" title={balance > 0 ? `${formatMoney(balance)} still owed` : undefined}>{formatMoney(r.owing)}</span>;
+    } },
+    { key: 'penalty', label: 'Penalty', money: true, value: (r) => r.penalty, render: (r) => <span className="tabular-nums">{formatMoney(r.penalty)}</span> },
     { key: 'other', label: 'Other deductions', money: true, value: (r) => r.other, render: (r) => <span className="tabular-nums">{formatMoney(r.other)}</span> },
     { key: 'net', label: 'Net pay', money: true, value: (r) => r.net, render: (r) => <span className="font-semibold text-green-700 tabular-nums">{formatMoney(r.net)}</span> },
     { key: 'payStatus', label: 'Payment status', value: (r) => PAY_CHIP[r.pay].label, render: (r) => <Chip size="sm" variant="flat" color={PAY_CHIP[r.pay].color}>{PAY_CHIP[r.pay].label}</Chip> },
@@ -596,26 +596,26 @@ export default function PayrollProcessingPanel() {
   };
 
   const filterBar = (
-    <div className="flex items-center gap-2 flex-wrap">
+    <div className="flex flex-wrap items-center gap-2">
+      <Input size="sm" variant="bordered" placeholder="Search staff no./name" className="w-44" value={q} onChange={(e) => setQ(e.target.value)} />
       <Select
         size="sm"
         selectedKeys={[deptFilter]}
         onSelectionChange={(k) => setDeptFilter(Array.from(k)[0] as string)}
-        className="w-48"
+        className="w-44"
         variant="bordered"
         aria-label="Department"
         items={[{ id: 'all', name: 'All Departments' }, ...departments.map((d) => ({ id: d.id, name: d.name }))]}
       >
         {(item: any) => <SelectItem key={item.id}>{item.name}</SelectItem>}
       </Select>
-      <Select disallowEmptySelection size="sm" selectedKeys={[statusFilter]} onSelectionChange={(k) => setStatusFilter(Array.from(k)[0] as string)} className="w-40" variant="bordered" aria-label="Status">
+      <Select disallowEmptySelection size="sm" selectedKeys={[statusFilter]} onSelectionChange={(k) => setStatusFilter(Array.from(k)[0] as string)} className="w-36" variant="bordered" aria-label="Status">
         <SelectItem key="all">All Status</SelectItem>
         <SelectItem key="active">Active</SelectItem>
         <SelectItem key="inactive">Inactive</SelectItem>
         <SelectItem key="on_leave">On Leave</SelectItem>
         <SelectItem key="terminated">Terminated</SelectItem>
       </Select>
-      <Input size="sm" variant="bordered" placeholder="Search staff no./name" className="w-56" value={q} onChange={(e) => setQ(e.target.value)} />
       <Button size="sm" variant="flat" onPress={() => setShowColumns(true)}>Columns</Button>
     </div>
   );
@@ -654,8 +654,9 @@ export default function PayrollProcessingPanel() {
       const builder = new UniversalPayrollBuilder();
       const country = useComplianceStore.getState().country;
       const runtimeId = prepareBuilderForRun(builder, country);
-      const result = runMonthlyPayroll({ builder, runtimeId, employees, periods: payrollPeriods, month: prepMonth, year: prepYear, userName: currentUserName, complianceCountry: country });
+      const result = runMonthlyPayroll({ builder, runtimeId, employees, periods: payrollPeriods, month: prepMonth, year: prepYear, userName: currentUserName, complianceCountry: country, lineAdjustments: drafts });
       if (!result.ok) { setPrepError(result.error); return; }
+      setDrafts({});
       setPrepOpen(false);
       // Auto-approved months still need the ledger entry that Approve normally posts.
       if (result.autoApproved) {
@@ -720,7 +721,23 @@ export default function PayrollProcessingPanel() {
   };
 
   const openEdit = (r: Row) => {
-    if (!workPeriod || !r.record) return;
+    if (!r.record) {
+      if (!r.e || !canProcessPayroll) return;
+      const draft = drafts[r.e.id];
+      const now = new Date();
+      setEditForm({
+        allowances: String(draft?.allowances ?? (r.e as any).allowances ?? r.allowances ?? 0),
+        overtimeHours: String(draft?.overtimeHours ?? approvedOvertimeFor(r.e.id, now.getMonth() + 1, now.getFullYear())),
+        bonus: String(draft?.bonus ?? 0),
+        otherDeduction: String(draft?.otherDeduction ?? 0),
+        penalty: String(draft?.penalty ?? 0),
+        reason: draft?.reason || '',
+      });
+      setEditError('');
+      setEditRow(r);
+      return;
+    }
+    if (!workPeriod) return;
     const my = monthYearOf(workPeriod);
     const adj = readAdjustments(r.record.notes);
     setEditForm({
@@ -728,17 +745,28 @@ export default function PayrollProcessingPanel() {
       overtimeHours: String(adj.overtimeHours ?? (my ? approvedOvertimeFor(r.record.employeeId, my.month, my.year) : 0)),
       bonus: String(adj.bonus ?? r.record.bonuses ?? 0),
       otherDeduction: String(adj.otherDeduction ?? 0),
+      penalty: String(adj.penalty ?? 0),
       reason: '',
     });
     setEditError('');
     setEditRow(r);
   };
   const doEditSave = () => {
-    if (!workPeriod || !editRow?.record) return;
     const num = (v: string) => (v.trim() === '' ? 0 : Number(v));
-    const values = { allowances: num(editForm.allowances), overtimeHours: num(editForm.overtimeHours), bonus: num(editForm.bonus), otherDeduction: num(editForm.otherDeduction) };
+    const values = { allowances: num(editForm.allowances), overtimeHours: num(editForm.overtimeHours), bonus: num(editForm.bonus), otherDeduction: num(editForm.otherDeduction), penalty: num(editForm.penalty) };
     if (Object.values(values).some((v) => !Number.isFinite(v) || v < 0)) { setEditError('Amounts and hours must be numbers, zero or more.'); return; }
     if (!editForm.reason.trim()) { setEditError('Say why the line is being changed — it is kept with the record.'); return; }
+    if (!editRow?.record) {
+      if (!editRow?.e) return;
+      setDrafts((prev) => ({
+        ...prev,
+        [editRow.e.id]: { ...values, reason: editForm.reason.trim(), editedBy: currentUserName, editedAt: new Date().toISOString() },
+      }));
+      setEditRow(null);
+      notifySuccess(`${editRow.name}: the change is kept and will be included when you prepare the month.`, 'Line updated');
+      return;
+    }
+    if (!workPeriod) return;
     try {
       const builder = new UniversalPayrollBuilder();
       const country = useComplianceStore.getState().country;
@@ -938,16 +966,20 @@ export default function PayrollProcessingPanel() {
         <Tab key="staff" title="Staff Payroll">
           <div className={deskBookTabPanelClassName}>
           <Card className="shadow-sm">
-            <CardHeader className="px-3 py-2 flex items-center gap-3 flex-wrap">
-              <div className="text-sm font-semibold text-gray-800">Staff Payroll</div>
-              {monthSelect(workItems, workSelected, (id) => setWorkKey(id))}
-              <Button size="sm" color="primary" onPress={openPrepare}>+ Prepare</Button>
+            <CardHeader className="flex-col items-stretch gap-2 px-3 py-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-3">
+                  <div className="text-sm font-semibold text-gray-800">Staff Payroll</div>
+                  {monthSelect(workItems, workSelected, (id) => setWorkKey(id), 'w-64')}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <ExportButtons onDownload={(f) => exportStaff(f, workPeriod, workRows)} />
+                  <Button size="sm" color="primary" onPress={openPrepare}>+ Prepare</Button>
+                </div>
+              </div>
+              {filterBar}
             </CardHeader>
             <CardBody className="space-y-3">
-              <div className="flex items-center gap-2 flex-wrap justify-end">
-                {filterBar}
-                <ExportButtons onDownload={(f) => exportStaff(f, workPeriod, workRows)} />
-              </div>
               {workPeriod ? (
                 renderSlimBanner(workPeriod, workRows, staffBannerActions)
               ) : (
@@ -1013,7 +1045,6 @@ export default function PayrollProcessingPanel() {
                           <SortLabel active={adviceSortKey === 'payment'} dir={adviceSortDir} onPress={() => onAdviceSort('payment')}>Payment</SortLabel>
                           {adviceCols.sizer('payment', 'Payment')}
                         </TableColumn>
-                        <TableColumn key="actions">Actions</TableColumn>
                       </TableHeader>
                       <TableBody emptyContent="No payroll records for this month.">
                         {[
@@ -1026,21 +1057,20 @@ export default function PayrollProcessingPanel() {
                               <TableCell className="font-medium"><span className="block truncate" title={g.label}>{g.label}</span></TableCell>
                               <TableCell className="text-center tabular-nums">{g.records.length}</TableCell>
                               <TableCell className="text-right tabular-nums">{formatMoney(g.total)}</TableCell>
-                              <TableCell><span className="block truncate" title={amountToWordsGhana(g.total)}>{amountToWordsGhana(g.total)}</span></TableCell>
+                              <TableCell className="!whitespace-normal !overflow-visible"><span className="block whitespace-normal break-words">{amountToWordsGhana(g.total)}</span></TableCell>
                               <TableCell>
-                                {adviceAwaiting
-                                  ? <Chip size="sm" variant="flat" color="warning">Awaiting approval</Chip>
-                                  : g.paid === g.records.length
-                                    ? <Chip size="sm" variant="flat" color="success">Paid {fmtDay(g.paidAt)}</Chip>
-                                    : g.paid > 0
-                                      ? <Chip size="sm" variant="flat" color="warning">Part paid ({g.paid}/{g.records.length})</Chip>
-                                      : <Chip size="sm" variant="flat">Not paid</Chip>}
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex gap-2" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} role="presentation">
-                                  <Button size="sm" variant="flat" onPress={() => handleOpenAdvice(g.label)}>View list</Button>
+                                <div className="flex items-center gap-2">
+                                  {adviceAwaiting
+                                    ? <Chip size="sm" variant="flat" color="warning">Awaiting approval</Chip>
+                                    : g.paid === g.records.length
+                                      ? <Chip size="sm" variant="flat" color="success">Paid {fmtDay(g.paidAt)}</Chip>
+                                      : g.paid > 0
+                                        ? <Chip size="sm" variant="flat" color="warning">Part paid ({g.paid}/{g.records.length})</Chip>
+                                        : <Chip size="sm" variant="flat">Not paid</Chip>}
                                   {adviceCanPay && g.unpaidIds.length > 0 && (
-                                    <Button size="sm" color="success" variant="flat" isDisabled={!canApprovePayroll} onPress={() => { setPayDate(todayKey()); setPayTarget(g.label); }}>Mark as paid</Button>
+                                    <span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} role="presentation">
+                                      <Button size="sm" color="success" variant="flat" isDisabled={!canApprovePayroll} onPress={() => { setPayDate(todayKey()); setPayTarget(g.label); }}>Mark as paid</Button>
+                                    </span>
                                   )}
                                 </div>
                               </TableCell>
@@ -1051,8 +1081,7 @@ export default function PayrollProcessingPanel() {
                               <TableCell><strong>TOTAL</strong></TableCell>
                               <TableCell className="text-center"><strong>{adviceCount}</strong></TableCell>
                               <TableCell className="text-right tabular-nums"><strong>{formatMoney(adviceTotal)}</strong></TableCell>
-                              <TableCell><strong>{amountToWordsGhana(adviceTotal)}</strong></TableCell>
-                              <TableCell>{''}</TableCell>
+                              <TableCell className="!whitespace-normal !overflow-visible"><strong className="block whitespace-normal break-words">{amountToWordsGhana(adviceTotal)}</strong></TableCell>
                               <TableCell>{''}</TableCell>
                             </TableRow>
                           )] : []),
@@ -1066,7 +1095,7 @@ export default function PayrollProcessingPanel() {
                   <p className="text-xs text-gray-500">
                     {adviceAwaiting
                       ? 'Review the payee / channel summary, then Approve payroll. Mark as paid unlocks after approval.'
-                      : 'Pay one bank, MoMo or cash batch at a time — one click marks every staff member in it as paid. Click a row or “View list” to open the per-staff list (Print, PDF, Excel).'}
+                      : 'Pay one bank, MoMo or cash batch at a time. Click a row to open the staff list (Print, PDF, Excel).'}
                   </p>
                 </>
               )}
@@ -1087,15 +1116,15 @@ export default function PayrollProcessingPanel() {
           <div className={deskBookTabPanelClassName}>
           {historyPeriod ? (
             <Card className="shadow-sm">
-              <CardHeader className="px-3 py-2 justify-between gap-2 flex-wrap">
-                <div className="flex items-center gap-3 flex-wrap">
-                  <Button size="sm" variant="flat" onPress={() => setHistoryKey('')}>← All months</Button>
-                  <div className="text-sm font-semibold text-gray-800">{periodMonth(historyPeriod)}</div>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  {filterBar}
+              <CardHeader className="flex-col items-stretch gap-2 px-3 py-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-3">
+                    <Button size="sm" variant="flat" onPress={() => setHistoryKey('')}>← All months</Button>
+                    <div className="text-sm font-semibold text-gray-800">{periodMonth(historyPeriod)}</div>
+                  </div>
                   <ExportButtons onDownload={(f) => exportStaff(f, historyPeriod, historyRows)} />
                 </div>
+                {filterBar}
               </CardHeader>
               <CardBody className="space-y-3">
                 {renderBanner(historyPeriod, historyRows)}
@@ -1194,66 +1223,94 @@ export default function PayrollProcessingPanel() {
       </Modal>
 
       {/* Payment Advice detail modal */}
-      <Modal isOpen={adviceOpen} onOpenChange={setAdviceOpen} size="2xl">
-        <ModalContent className="max-w-[550px] h-[85vh]">
+      <Modal isOpen={adviceOpen} onOpenChange={setAdviceOpen} size="3xl" scrollBehavior="inside">
+        <ModalContent className="max-w-[820px]">
           {() => {
             const label = adviceLabel || '';
             const { rows, total: listTotal, monthLabel } = label ? buildAdviceForLabel(label) : { rows: [], total: 0, monthLabel: '' } as any;
-            const printAdvice = () => printSimpleReport(
-              `Salary Payment Advice — ${label}`,
-              `${hotelName} · ${monthLabel}`,
-              ['No.', 'Name', 'Account / wallet', 'Net (GHS)'],
-              [
-                ...rows.map((r: any, idx: number) => [idx + 1, r.employeeName, r.accountNumber, formatMoney(r.net)]),
-                ['', 'TOTAL', '', formatMoney(listTotal)],
-                ['', `Amount in words: ${amountToWordsGhana(listTotal)}`, '', ''],
-              ],
-            );
+            const accountHeading = adviceAccountHeading(label);
+            const letterDate = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+            const bankLogo = bankLogoUrlFor(label);
+            const printAdvice = () => printPaymentAdviceLetter({
+              org,
+              bankOrChannel: label,
+              monthLabel,
+              rows,
+              signerName: signerName || 'Authorized Signatory',
+              signerPosition: signerPosition || 'Finance Manager',
+              signature: paySetupSaved ? paySetup?.signature : '',
+              bankLogoUrl: bankLogo,
+              dateLabel: letterDate,
+              instruction: savedInstruction,
+            });
             return (
               <>
-                <ModalHeader>Salary Payment Advice - {label}</ModalHeader>
+                <ModalHeader>Salary payment advice — {label}</ModalHeader>
                 <ModalBody>
-                  <DetailGrid>
-                    <DetailField label="Month" value={monthLabel || '—'} />
-                    <DetailField label="Bank / channel" value={label || '—'} />
-                  </DetailGrid>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
-                    <Input label="Signer Name" size="sm" value={signerName} onChange={(e) => setSignerName(e.target.value)} variant="bordered" />
-                    <Input label="Signer Position" size="sm" value={signerPosition} onChange={(e) => setSignerPosition(e.target.value)} variant="bordered" />
-                  </div>
-                  <div className="text-sm text-gray-700 mt-3">
-                    Please pay the underlisted staff of {hotelName} their net salaries via {label} for {monthLabel}.
-                  </div>
-                  <div className="mt-3 max-h-[50vh] overflow-y-auto">
-                    <Table aria-label="payment-advice-detail" removeWrapper classNames={deskResizableTableClassNames()}>
-                      <TableHeader>
-                        <TableColumn className="w-[12%] text-center">No.</TableColumn>
-                        <TableColumn className="w-[40%]">Name</TableColumn>
-                        <TableColumn className="w-[30%]">Account / wallet</TableColumn>
-                        <TableColumn className="w-[18%] text-right">Net</TableColumn>
-                      </TableHeader>
-                      <TableBody>
-                        {[
-                          ...rows.map((r: any, idx: number) => (
-                            <TableRow key={idx}>
-                              <TableCell className="text-center tabular-nums">{idx + 1}</TableCell>
-                              <TableCell className="font-semibold text-ghana-black">{r.employeeName}</TableCell>
-                              <TableCell>{r.accountNumber}</TableCell>
-                              <TableCell className="text-right tabular-nums">{formatMoney(r.net)}</TableCell>
-                            </TableRow>
-                          )),
-                          <TableRow key="__total" className="bg-gray-50">
-                            <TableCell>{' '}</TableCell>
-                            <TableCell><strong>Total</strong></TableCell>
-                            <TableCell>{' '}</TableCell>
-                            <TableCell className="text-right tabular-nums"><strong>{formatMoney(listTotal)}</strong></TableCell>
-                          </TableRow>,
-                          <TableRow key="__words">
-                            <TableCell colSpan={4}><em>Amount in words: {amountToWordsGhana(listTotal)}</em></TableCell>
-                          </TableRow>,
-                        ]}
-                      </TableBody>
-                    </Table>
+                  <div className="rounded-lg border border-gray-200 bg-white px-4 py-4 text-sm text-ghana-black">
+                    <div className="flex items-start gap-4">
+                      {org.logoUrl ? <img src={org.logoUrl} alt="" className="h-16 w-16 object-contain" onError={(event) => { event.currentTarget.style.display = 'none'; }} /> : null}
+                      <div className="flex-1 text-center leading-snug">
+                        <div className="text-base font-bold">{org.name}</div>
+                        {org.address ? <div>{org.address}</div> : null}
+                        {(org.phone || org.email) ? <div>{[org.phone ? `Tel. ${org.phone}` : '', org.email || ''].filter(Boolean).join(' · ')}</div> : null}
+                        {org.taxId ? <div>TIN {org.taxId}</div> : null}
+                      </div>
+                      {bankLogo ? <img src={bankLogo} alt="" className="h-10 w-16 object-contain" onError={(event) => { event.currentTarget.style.display = 'none'; }} /> : <span className="w-16" />}
+                    </div>
+                    <hr className="my-3 border-gray-900" />
+                    <div className="text-right">{letterDate}</div>
+                    <div className="mt-3 leading-snug">
+                      {adviceAddressee(label).map((line) => <div key={line}>{line}</div>)}
+                    </div>
+                    <div className="mt-3">Dear Sir/Madam,</div>
+                    <div className="my-3 text-center text-sm font-bold tracking-wide">SALARY PAYMENT ADVICE</div>
+                    <p className="leading-relaxed">
+                      {adviceInstruction(label, org.name, monthLabel, listTotal, savedInstruction)}
+                    </p>
+                    <table className="mt-3 w-full border-collapse text-sm">
+                      <colgroup>
+                        <col style={{ width: 42 }} />
+                        <col />
+                        <col style={{ width: '32%' }} />
+                        <col style={{ width: '18%' }} />
+                      </colgroup>
+                      <thead>
+                        <tr className="border border-gray-900">
+                          <th className="border border-gray-900 px-2 py-1 text-center font-semibold">No.</th>
+                          <th className="border border-gray-900 px-2 py-1 text-left font-semibold">Staff name</th>
+                          <th className="border border-gray-900 px-2 py-1 text-left font-semibold">{accountHeading}</th>
+                          <th className="border border-gray-900 px-2 py-1 text-right font-semibold">Amount (GHS)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((r: { employeeName: string; accountNumber: string; net: number }, idx: number) => (
+                          <tr key={idx}>
+                            <td className="border border-gray-900 px-2 py-1 text-center tabular-nums">{idx + 1}</td>
+                            <td className="border border-gray-900 px-2 py-1 font-medium">{r.employeeName}</td>
+                            <td className="border border-gray-900 px-2 py-1 break-all">{r.accountNumber || '—'}</td>
+                            <td className="border border-gray-900 px-2 py-1 text-right tabular-nums whitespace-nowrap">{adviceMoney(r.net)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr>
+                          <td className="border border-gray-900 px-2 py-1" />
+                          <td className="border border-gray-900 px-2 py-1 font-bold">Total</td>
+                          <td className="border border-gray-900 px-2 py-1" />
+                          <td className="border border-gray-900 px-2 py-1 text-right font-bold tabular-nums whitespace-nowrap">{adviceMoney(listTotal)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                    <p className="mt-3 leading-relaxed"><strong>Amount in words:</strong> {amountToWordsGhana(listTotal)}</p>
+                    <p className="mt-4 leading-relaxed">Counting on your usual cooperation.<br />Yours faithfully,</p>
+                    {paySetupSaved && paySetup?.signature ? (
+                      <img src={paySetup.signature} alt="Signature" className="mt-3 h-12 max-w-[180px] object-contain" />
+                    ) : <div className="h-8" />}
+                    <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 max-w-xl">
+                      <Input label="Signer name" size="sm" value={signerName} onChange={(e) => setSignerName(e.target.value)} variant="bordered" />
+                      <Input label="Signer position" size="sm" value={signerPosition} onChange={(e) => setSignerPosition(e.target.value)} variant="bordered" />
+                    </div>
                   </div>
                 </ModalBody>
                 <ModalFooter className="flex flex-wrap justify-between gap-2">
@@ -1287,7 +1344,7 @@ export default function PayrollProcessingPanel() {
             const debtTotal = debtLines.reduce((s, l) => s + l.amount, 0);
             const lines: Array<[string, number, boolean?]> = [
               ['Basic salary', r.basic], ['Allowances', r.allowances], ['Overtime & bonus', r.overtime], ['Gross pay', r.gross, true],
-              ['Income tax', r.tax], [tier1Label, r.tier1], [tier2Label, r.tier2], [tier3Label, r.tier3], ['Other deductions', r.other], ['Net pay', r.net, true],
+              ['Income tax', r.tax], [tier1Label, r.tier1], [tier2Label, r.tier2], [tier3Label, r.tier3], ['Owing', r.owing], ['Penalty', r.penalty], ['Other deductions', r.other], ['Net pay', r.net, true],
             ];
             const printPayslip = () => printDetailSheet(
               `${r.name} — ${r.month}`,
@@ -1333,19 +1390,19 @@ export default function PayrollProcessingPanel() {
                     </TableBody>
                   </Table>
                   {(() => {
-                    const adj = readAdjustments(r.record?.notes);
-                    return adj.reason ? <div className="px-2.5 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-900 mt-1">Adjusted{adj.editedBy ? ` by ${adj.editedBy}` : ''}: {adj.reason}</div> : null;
+                    const adj = r.record ? readAdjustments(r.record.notes) : (r.e ? drafts[r.e.id] : undefined);
+                    return adj?.reason ? <div className="px-2.5 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-900 mt-1">Adjusted{adj.editedBy ? ` by ${adj.editedBy}` : ''}: {adj.reason}</div> : null;
                   })()}
                   {r.pay === 'estimate' && (
                     <div className="px-2.5 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800 mt-1">
-                      These are estimates from today&apos;s rates, not a processed payroll. Prepare a month to get the actual figures.
+                      These are estimates from today&apos;s rates, not a processed payroll. Edit this person if something should change, then prepare the month.
                     </div>
                   )}
                 </ModalBody>
                 <ModalFooter className="flex flex-wrap justify-between gap-2">
                   <Button size="sm" variant="flat" onPress={() => setDetailRow(null)}>Close</Button>
                   <div className="flex items-center gap-2">
-                    {canEditLines && r.record && workPeriod && r.record.payrollPeriodId === workPeriod.id && (
+                    {((canEditLines && r.record && workPeriod && r.record.payrollPeriodId === workPeriod.id) || (r.pay === 'estimate' && canProcessPayroll)) && (
                       <Button
                         size="sm"
                         color="primary"
@@ -1456,21 +1513,27 @@ export default function PayrollProcessingPanel() {
         <ModalContent>
           {editRow && (
             <>
-              <ModalHeader>Edit {editRow.name} — {workPeriod ? periodMonth(workPeriod) : ''}</ModalHeader>
+              <ModalHeader>Edit {editRow.name}{editRow.pay === 'estimate' ? '' : ` — ${workPeriod ? periodMonth(workPeriod) : ''}`}</ModalHeader>
               <ModalBody>
-                <p className="text-sm text-gray-600">Saving recalculates this person&apos;s income tax and contributions with today&apos;s rates, then updates the month&apos;s totals. Currently: gross {formatGhs(editRow.gross)}, net <strong className="text-green-700">{formatGhs(editRow.net)}</strong>.</p>
+                <p className="text-sm text-gray-600">
+                  {editRow.pay === 'estimate'
+                    ? 'This stays with this person until you prepare the month, then it is included in that payroll. Their staff file is not changed. Currently: gross '
+                    : 'Saving recalculates this person\'s income tax and contributions with today\'s rates, then updates the month\'s totals. Currently: gross '}
+                  {formatGhs(editRow.gross)}, net <strong className="text-green-700">{formatGhs(editRow.net)}</strong>.
+                </p>
                 <div className="grid grid-cols-2 gap-3">
                   <Input label="Allowances (GHS)" type="number" min={0} value={editForm.allowances} onChange={(e) => setEditForm({ ...editForm, allowances: e.target.value })} variant="bordered" />
                   <Input label="Overtime hours" type="number" min={0} value={editForm.overtimeHours} onChange={(e) => setEditForm({ ...editForm, overtimeHours: e.target.value })} variant="bordered" description="Starts from the HR-approved hours" />
-                  <Input label="Bonus (GHS, taxable)" type="number" min={0} value={editForm.bonus} onChange={(e) => setEditForm({ ...editForm, bonus: e.target.value })} variant="bordered" />
-                  <Input label="Other deduction (GHS, after tax)" type="number" min={0} value={editForm.otherDeduction} onChange={(e) => setEditForm({ ...editForm, otherDeduction: e.target.value })} variant="bordered" description="Loan repayment, salary advance…" />
+                  <Input labelPlacement="outside" label="Bonus (GHS, taxable)" type="number" min={0} value={editForm.bonus} onChange={(e) => setEditForm({ ...editForm, bonus: e.target.value })} variant="bordered" />
+                  <Input labelPlacement="outside" label="Other deduction (GHS, after tax)" type="number" min={0} value={editForm.otherDeduction} onChange={(e) => setEditForm({ ...editForm, otherDeduction: e.target.value })} variant="bordered" description="Loan repayment, salary advance…" />
+                  <Input className="col-span-2" labelPlacement="outside" label="Penalty (GHS, after tax)" type="number" min={0} value={editForm.penalty || ''} onChange={(e) => setEditForm({ ...editForm, penalty: e.target.value })} variant="bordered" description="A one-off deduction for this month, such as lateness or a disciplinary penalty." />
                 </div>
                 <Input label="Reason for the change" isRequired value={editForm.reason} onChange={(e) => setEditForm({ ...editForm, reason: e.target.value })} variant="bordered" />
                 {editError && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">{editError}</div>}
               </ModalBody>
               <ModalFooter>
                 <Button variant="flat" onPress={() => setEditRow(null)}>Cancel</Button>
-                <Button color="primary" onPress={doEditSave}>Save and recalculate</Button>
+                <Button color="primary" onPress={doEditSave}>{editRow.pay === 'estimate' ? 'Save for payroll' : 'Save and recalculate'}</Button>
               </ModalFooter>
             </>
           )}

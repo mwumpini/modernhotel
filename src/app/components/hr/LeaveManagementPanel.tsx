@@ -9,7 +9,9 @@ import { useLeaveAttendanceStore } from '@/app/lib/hr/leaveAttendanceStore';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { useCurrentUserName } from '@/app/lib/auth/useCurrentUserName';
 import { addDays, countLeaveDays, leaveOn } from '@/app/lib/hr/leaveDates';
+import { bandName, openLeaveTypes, resolveLeaveBandId } from '@/app/lib/hr/leavePolicy';
 import { downloadLeaveForm, printLeaveForm } from '@/app/lib/hr/leaveForm';
+import { downloadCsvRows, printSimpleReport } from '@/app/lib/print/simpleReport';
 import type { LeaveRequest } from '@/app/lib/hr/models';
 import { SortLabel, unifiedTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { DetailGrid, DetailField } from '../frontoffice/detailView';
@@ -46,6 +48,8 @@ export default function LeaveManagementPanel() {
   const deleteLeave = useLeaveAttendanceStore((s) => s.deleteLeave);
   const voidLeave = useLeaveAttendanceStore((s) => s.voidLeave);
   const getLeaveBalance = useLeaveAttendanceStore((s) => s.getLeaveBalance);
+  const leavePolicy = useLeaveAttendanceStore((s) => s.leavePolicy);
+  const leaveTypes = openLeaveTypes(leavePolicy);
   const employees = useEmployeeStore((s) => s.employees);
   const departments = useEmployeeStore((s) => s.departments);
   const userName = useCurrentUserName();
@@ -100,19 +104,22 @@ export default function LeaveManagementPanel() {
   const { page, setPage, pages, paged } = useDeskPagination(filtered, [status, typeFilter, deptFilter, q, sortKey, sortDir]);
 
   const openRequestForm = () => {
-    setForm(emptyForm(employees.find((e) => e.status === 'active')?.id || employees[0]?.id || ''));
+    const next = emptyForm(employees.find((e) => e.status === 'active')?.id || employees[0]?.id || '');
+    if (!leaveTypes.some((type) => type.key === next.leaveType) && leaveTypes[0]) next.leaveType = leaveTypes[0].key;
+    setForm(next);
     setRequestOpen(true);
   };
 
   const submit = () => {
-    if (!form.employeeId || !form.startDate || !form.endDate) return;
+    const leaveType = leaveTypes.some((type) => type.key === form.leaveType) ? form.leaveType : leaveTypes[0]?.key;
+    if (!form.employeeId || !form.startDate || !form.endDate || !leaveType) return;
     if (new Date(form.endDate) < new Date(form.startDate)) return;
     requestLeave({
       employeeId: form.employeeId,
-      leaveType: form.leaveType,
+      leaveType,
       startDate: new Date(form.startDate),
       endDate: new Date(form.endDate),
-      totalDays: countLeaveDays(form.startDate, form.endDate, form.leaveType),
+      totalDays: countLeaveDays(form.startDate, form.endDate, leaveType),
       reason: form.reason,
       coveringEmployeeId: form.coveringEmployeeId || undefined,
       handoverNotes: form.handoverNotes.trim() || undefined,
@@ -137,6 +144,8 @@ export default function LeaveManagementPanel() {
   const requestedDays = form.startDate && form.endDate && form.endDate >= form.startDate
     ? countLeaveDays(form.startDate, form.endDate, form.leaveType)
     : 0;
+  const formEmployee = employees.find((e) => e.id === form.employeeId);
+  const formGroup = formEmployee ? bandName(leavePolicy, resolveLeaveBandId(formEmployee, departments)) : '';
   const balance = form.employeeId
     ? getLeaveBalance(form.employeeId, form.leaveType, form.startDate ? new Date(form.startDate).getUTCFullYear() : new Date().getFullYear())
     : null;
@@ -158,6 +167,22 @@ export default function LeaveManagementPanel() {
     </TableColumn>
   );
 
+  const leaveColumns = ['Employee', 'Type', 'From', 'To', 'Days', 'Covered by', 'Status'];
+  const leaveRows = filtered.map((r) => {
+    const emp = employees.find((e) => e.id === r.employeeId);
+    const cover = employees.find((e) => e.id === r.coveringEmployeeId);
+    return [
+      emp ? `${emp.firstName} ${emp.lastName}` : r.employeeId,
+      r.leaveType || '—',
+      new Date(r.startDate).toLocaleDateString(),
+      new Date(r.endDate).toLocaleDateString(),
+      r.totalDays,
+      cover ? `${cover.firstName} ${cover.lastName}` : '—',
+      r.status || '—',
+    ];
+  });
+  const leaveSubtitle = `${filtered.length} request${filtered.length === 1 ? '' : 's'}`;
+
   const liveView = viewing ? requests.find((r) => r.id === viewing.id) || viewing : null;
   const viewEmp = liveView ? employees.find((e) => e.id === liveView.employeeId) : undefined;
   const viewCover = liveView?.coveringEmployeeId ? employees.find((e) => e.id === liveView.coveringEmployeeId) : undefined;
@@ -165,29 +190,30 @@ export default function LeaveManagementPanel() {
   return (
     <>
       <Card>
-        <CardHeader className="justify-between gap-2 flex-wrap">
-          <div className="font-medium">Leave requests</div>
+        <CardHeader className="flex-col items-stretch gap-2 px-3 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="font-medium">Leave requests</div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button size="sm" variant="flat" onPress={() => printSimpleReport('Leave requests', leaveSubtitle, leaveColumns, leaveRows, { landscape: true })}>PDF</Button>
+              <Button size="sm" variant="flat" onPress={() => downloadCsvRows('leave_requests', leaveColumns, leaveRows)}>Excel</Button>
+              <Button size="sm" color="primary" onPress={openRequestForm}>+ Request Leave</Button>
+            </div>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <Input size="sm" placeholder="Search employee" value={q} onChange={(e) => setQ(e.target.value)} variant="bordered" className="w-44" />
             <Select
               size="sm"
               selectedKeys={[deptFilter]}
               onSelectionChange={(k) => setDeptFilter(Array.from(k)[0] as string)}
-              className="w-44"
+              className="w-52"
               variant="bordered"
               aria-label="Department"
               items={[{ id: 'all', name: 'All departments' }, ...departments.map((d) => ({ id: d.id, name: d.name }))]}
             >
               {(item: any) => <SelectItem key={item.id}>{item.name}</SelectItem>}
             </Select>
-            <Select disallowEmptySelection size="sm" selectedKeys={[typeFilter]} onSelectionChange={(k) => setTypeFilter(Array.from(k)[0] as string)} className="w-36" variant="bordered" aria-label="Leave type">
-              <SelectItem key="all">All types</SelectItem>
-              <SelectItem key="annual">Annual</SelectItem>
-              <SelectItem key="sick">Sick</SelectItem>
-              <SelectItem key="personal">Personal</SelectItem>
-              <SelectItem key="maternity">Maternity</SelectItem>
-              <SelectItem key="paternity">Paternity</SelectItem>
-              <SelectItem key="bereavement">Bereavement</SelectItem>
+            <Select disallowEmptySelection size="sm" selectedKeys={[leaveTypes.some((type) => type.key === typeFilter) || typeFilter === 'all' ? typeFilter : 'all']} onSelectionChange={(k) => setTypeFilter(Array.from(k)[0] as string)} className="w-36" variant="bordered" aria-label="Leave type">
+              {[<SelectItem key="all">All types</SelectItem>, ...leaveTypes.map((type) => <SelectItem key={type.key}>{type.label}</SelectItem>)]}
             </Select>
             <Select disallowEmptySelection size="sm" selectedKeys={[status]} onSelectionChange={(k) => setStatus(Array.from(k)[0] as any)} className="w-36" variant="bordered" aria-label="Status">
               <SelectItem key="all">All status</SelectItem>
@@ -195,7 +221,6 @@ export default function LeaveManagementPanel() {
               <SelectItem key="approved">Approved</SelectItem>
               <SelectItem key="rejected">Rejected</SelectItem>
             </Select>
-            <Button color="primary" onPress={openRequestForm}>+ Request Leave</Button>
           </div>
         </CardHeader>
         <CardBody>
@@ -272,13 +297,8 @@ export default function LeaveManagementPanel() {
                   >
                     {(item: any) => <SelectItem key={item.id}>{item.name}</SelectItem>}
                   </Select>
-                  <Select disallowEmptySelection label="Type" selectedKeys={[form.leaveType]} onSelectionChange={(k) => setForm({ ...form, leaveType: Array.from(k)[0] as LeaveRequest['leaveType'] })} variant="bordered">
-                    <SelectItem key="annual">Annual</SelectItem>
-                    <SelectItem key="sick">Sick</SelectItem>
-                    <SelectItem key="personal">Personal</SelectItem>
-                    <SelectItem key="maternity">Maternity</SelectItem>
-                    <SelectItem key="paternity">Paternity</SelectItem>
-                    <SelectItem key="bereavement">Bereavement</SelectItem>
+                  <Select disallowEmptySelection label="Type" selectedKeys={[leaveTypes.some((type) => type.key === form.leaveType) ? form.leaveType : (leaveTypes[0]?.key || form.leaveType)]} onSelectionChange={(k) => setForm({ ...form, leaveType: Array.from(k)[0] as LeaveRequest['leaveType'] })} variant="bordered">
+                    {leaveTypes.map((type) => <SelectItem key={type.key}>{type.label}</SelectItem>)}
                   </Select>
                   <Input label="Start" type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} variant="bordered" />
                   <Input label="End" type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} variant="bordered" />
@@ -310,7 +330,7 @@ export default function LeaveManagementPanel() {
                 </div>
                 {balance && balance.entitlement > 0 && (
                   <p className={`text-sm ${requestedDays > balance.remaining ? 'text-red-600' : 'text-gray-600'}`}>
-                    {balance.remaining} of {balance.entitlement} {form.leaveType} days left this year
+                    {balance.remaining} of {balance.entitlement} {form.leaveType} days left this year{formGroup ? ` (${formGroup})` : ''}
                     {requestedDays > 0
                       ? ` · this request is ${requestedDays} day${requestedDays === 1 ? '' : 's'}${requestedDays > balance.remaining ? ' — over the balance, so it cannot be approved' : ''}`
                       : ''}

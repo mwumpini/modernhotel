@@ -5,6 +5,7 @@ import { Button, Card, CardBody, CardHeader, Chip, Input, Select, SelectItem, Ta
 import { useLeaveAttendanceStore } from '@/app/lib/hr/leaveAttendanceStore';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { leaveOn, todayKey } from '@/app/lib/hr/leaveDates';
+import { openLeaveTypes } from '@/app/lib/hr/leavePolicy';
 import type { LeaveRequest } from '@/app/lib/hr/models';
 import { printDetailSheet } from '@/app/lib/print/simpleReport';
 import { SortLabel, unifiedTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
@@ -14,10 +15,11 @@ import { useDeskPagination } from '../dashboard/deskTableUi';
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MAX_NAMES = 3;
 
-type OffSortKey = 'date' | 'employee' | 'department' | 'type' | 'status' | 'days';
+type OffSortKey = 'from' | 'to' | 'employee' | 'department' | 'type' | 'status' | 'days';
 
 const defaultWidths: Record<OffSortKey, number> = {
-  date: 120,
+  from: 120,
+  to: 120,
   employee: 160,
   department: 140,
   type: 110,
@@ -27,7 +29,8 @@ const defaultWidths: Record<OffSortKey, number> = {
 
 type OffRow = {
   id: string;
-  date: string;
+  from: string;
+  to: string;
   employeeId: string;
   name: string;
   department: string;
@@ -40,6 +43,7 @@ type OffRow = {
 /** Month view + Desk table of who is off, so cover gaps are obvious. */
 export default function LeaveCalendarTab() {
   const requests = useLeaveAttendanceStore((s) => s.leaveRequests);
+  const leaveTypes = openLeaveTypes(useLeaveAttendanceStore((s) => s.leavePolicy));
   const employees = useEmployeeStore((s) => s.employees);
   const departments = useEmployeeStore((s) => s.departments);
   const getDepartment = useEmployeeStore((s) => s.getDepartment);
@@ -49,7 +53,8 @@ export default function LeaveCalendarTab() {
   const [statusFilter, setStatusFilter] = React.useState<'all' | 'approved' | 'pending'>('all');
   const [typeFilter, setTypeFilter] = React.useState('all');
   const [q, setQ] = React.useState('');
-  const [sortKey, setSortKey] = React.useState<OffSortKey>('date');
+  const [view, setView] = React.useState<'calendar' | 'list'>('calendar');
+  const [sortKey, setSortKey] = React.useState<OffSortKey>('from');
   const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('asc');
   const [viewing, setViewing] = React.useState<OffRow | null>(null);
   const cols = useResizableColumns<OffSortKey>(defaultWidths);
@@ -73,8 +78,11 @@ export default function LeaveCalendarTab() {
       return r ? [{ name: `${e.firstName} ${e.lastName}`, pending: r.status === 'pending', type: r.leaveType }] : [];
     });
 
+  const dayKey = (value: Date) => `${value.getUTCFullYear()}-${p(value.getUTCMonth() + 1)}-${p(value.getUTCDate())}`;
+
   const tableRows = React.useMemo(() => {
-    const monthPrefix = `${cursor.y}-${p(cursor.m + 1)}-`;
+    const monthStart = `${cursor.y}-${p(cursor.m + 1)}-01`;
+    const monthEnd = `${cursor.y}-${p(cursor.m + 1)}-${p(daysInMonth)}`;
     const rows: OffRow[] = [];
     for (const r of requests) {
       if (r.status !== 'approved' && r.status !== 'pending') continue;
@@ -86,28 +94,27 @@ export default function LeaveCalendarTab() {
       const name = `${emp.firstName} ${emp.lastName}`;
       if (q.trim() && !name.toLowerCase().includes(q.trim().toLowerCase())) continue;
 
-      const start = new Date(r.startDate);
-      const end = new Date(r.endDate);
-      for (let d = new Date(start), i = 0; d <= end && i < 400; d.setUTCDate(d.getUTCDate() + 1), i++) {
-        const key = `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`;
-        if (!key.startsWith(monthPrefix)) continue;
-        rows.push({
-          id: `${r.id}-${key}`,
-          date: key,
-          employeeId: emp.id,
-          name,
-          department: getDepartment(emp.departmentId)?.name || '—',
-          type: r.leaveType,
-          status: r.status,
-          days: r.totalDays,
-          request: r,
-        });
-      }
+      const from = dayKey(new Date(r.startDate));
+      const to = dayKey(new Date(r.endDate));
+      if (to < monthStart || from > monthEnd) continue;
+      rows.push({
+        id: r.id,
+        from,
+        to,
+        employeeId: emp.id,
+        name,
+        department: getDepartment(emp.departmentId)?.name || '—',
+        type: r.leaveType,
+        status: r.status,
+        days: r.totalDays,
+        request: r,
+      });
     }
 
     const value = (row: OffRow): string | number => {
       switch (sortKey) {
-        case 'date': return row.date;
+        case 'from': return row.from;
+        case 'to': return row.to;
         case 'employee': return row.name.toLowerCase();
         case 'department': return row.department.toLowerCase();
         case 'type': return row.type;
@@ -124,7 +131,7 @@ export default function LeaveCalendarTab() {
       return 0;
     });
     return sortDir === 'asc' ? sorted : sorted.reverse();
-  }, [requests, employees, cursor, dept, statusFilter, typeFilter, q, sortKey, sortDir, getDepartment]);
+  }, [requests, employees, cursor, daysInMonth, dept, statusFilter, typeFilter, q, sortKey, sortDir, getDepartment]);
 
   const { page, setPage, pages, paged } = useDeskPagination(tableRows, [cursor.y, cursor.m, dept, statusFilter, typeFilter, q, sortKey, sortDir]);
 
@@ -148,22 +155,26 @@ export default function LeaveCalendarTab() {
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader className="justify-between gap-2 flex-wrap">
-          <div className="font-medium">Who&apos;s off — {monthLabel}</div>
+        <CardHeader className="flex-col items-stretch gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="font-medium">Who&apos;s off — {monthLabel}</div>
+            <div role="group" aria-label="View" className="relative grid h-8 grid-cols-2 rounded-full bg-gray-100 p-0.5 text-xs font-medium">
+              <span
+                aria-hidden
+                className={`absolute inset-y-0.5 left-0.5 w-[calc(50%-2px)] rounded-full bg-[#006FEE] shadow-sm transition-transform duration-200 ease-out ${view === 'list' ? 'translate-x-full' : ''}`}
+              />
+              <button type="button" className={`relative z-10 rounded-full px-3 ${view === 'calendar' ? 'text-white' : 'text-gray-600'}`} onClick={() => setView('calendar')}>Calendar</button>
+              <button type="button" className={`relative z-10 rounded-full px-3 ${view === 'list' ? 'text-white' : 'text-gray-600'}`} onClick={() => setView('list')}>List</button>
+            </div>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <Input size="sm" placeholder="Search staff" value={q} onChange={(e) => setQ(e.target.value)} variant="bordered" className="w-40" />
             <Select disallowEmptySelection size="sm" aria-label="Department" className="w-44" variant="bordered" selectedKeys={[dept]} onSelectionChange={(k) => setDept(Array.from(k)[0] as string)}
               items={[{ id: 'all', name: 'All departments' }, ...departments.map((d) => ({ id: d.id, name: d.name }))]}>
               {(item: any) => <SelectItem key={item.id}>{item.name}</SelectItem>}
             </Select>
-            <Select disallowEmptySelection size="sm" aria-label="Type" className="w-36" variant="bordered" selectedKeys={[typeFilter]} onSelectionChange={(k) => setTypeFilter(Array.from(k)[0] as string)}>
-              <SelectItem key="all">All types</SelectItem>
-              <SelectItem key="annual">Annual</SelectItem>
-              <SelectItem key="sick">Sick</SelectItem>
-              <SelectItem key="personal">Personal</SelectItem>
-              <SelectItem key="maternity">Maternity</SelectItem>
-              <SelectItem key="paternity">Paternity</SelectItem>
-              <SelectItem key="bereavement">Bereavement</SelectItem>
+            <Select disallowEmptySelection size="sm" aria-label="Type" className="w-36" variant="bordered" selectedKeys={[leaveTypes.some((type) => type.key === typeFilter) || typeFilter === 'all' ? typeFilter : 'all']} onSelectionChange={(k) => setTypeFilter(Array.from(k)[0] as string)}>
+              {[<SelectItem key="all">All types</SelectItem>, ...leaveTypes.map((type) => <SelectItem key={type.key}>{type.label}</SelectItem>)]}
             </Select>
             <Select disallowEmptySelection size="sm" aria-label="Status" className="w-36" variant="bordered" selectedKeys={[statusFilter]} onSelectionChange={(k) => setStatusFilter(Array.from(k)[0] as any)}>
               <SelectItem key="all">All status</SelectItem>
@@ -176,7 +187,7 @@ export default function LeaveCalendarTab() {
           </div>
         </CardHeader>
         <CardBody className="space-y-4">
-          <div className="grid grid-cols-7 gap-1 text-xs">
+          {view === 'calendar' && <div className="grid grid-cols-7 gap-1 text-xs">
             {WEEKDAYS.map((w) => <div key={w} className="text-center font-medium text-gray-500 py-1">{w}</div>)}
             {cells.map((day, i) => {
               if (!day) return <div key={`pad-${i}`} />;
@@ -205,13 +216,13 @@ export default function LeaveCalendarTab() {
                 </div>
               );
             })}
-          </div>
-          <div className="flex gap-4 text-xs text-gray-500">
+          </div>}
+          {view === 'calendar' && <div className="flex gap-4 text-xs text-gray-500">
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded bg-amber-100" /> Approved</span>
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded border border-dashed border-amber-400" /> Pending approval</span>
-          </div>
+          </div>}
 
-          <div ref={cols.frameRef} style={cols.frameStyle}>
+          {view === 'list' && <div ref={cols.frameRef} style={cols.frameStyle}>
           <Table
             aria-label="whos-off-table"
             removeWrapper
@@ -223,7 +234,8 @@ export default function LeaveCalendarTab() {
             }}
           >
             <TableHeader>
-              {column('date', 'Date')}
+              {column('from', 'From')}
+              {column('to', 'To')}
               {column('employee', 'Employee')}
               {column('department', 'Department')}
               {column('type', 'Type')}
@@ -237,7 +249,8 @@ export default function LeaveCalendarTab() {
                   className={rowClassNames(viewing?.id === row.id)}
                   onClick={() => setViewing(row)}
                 >
-                  <TableCell className="text-gray-600">{new Date(row.date + 'T00:00:00Z').toLocaleDateString()}</TableCell>
+                  <TableCell className="text-gray-600">{new Date(row.from + 'T00:00:00Z').toLocaleDateString()}</TableCell>
+                  <TableCell className="text-gray-600">{new Date(row.to + 'T00:00:00Z').toLocaleDateString()}</TableCell>
                   <TableCell className="font-semibold text-ghana-black">
                     <span className="block truncate" title={row.name}>{row.name}</span>
                   </TableCell>
@@ -251,10 +264,10 @@ export default function LeaveCalendarTab() {
               ))}
             </TableBody>
           </Table>
-          </div>
-          <div className="mt-3 flex justify-end">
+          </div>}
+          {view === 'list' && <div className="mt-3 flex justify-end">
             <Pagination page={page} total={pages} onChange={setPage} showControls size="sm" />
-          </div>
+          </div>}
         </CardBody>
       </Card>
 
@@ -262,34 +275,30 @@ export default function LeaveCalendarTab() {
         <ModalContent>
           {() => viewing && (
             <>
-              <ModalHeader>Leave day</ModalHeader>
+              <ModalHeader>Leave</ModalHeader>
               <ModalBody>
                 <DetailGrid>
-                  <DetailField label="Date" value={new Date(viewing.date + 'T00:00:00Z').toLocaleDateString()} />
+                  <DetailField label="From" value={new Date(viewing.from + 'T00:00:00Z').toLocaleDateString()} />
+                  <DetailField label="To" value={new Date(viewing.to + 'T00:00:00Z').toLocaleDateString()} />
                   <DetailField label="Employee" value={viewing.name} />
                   <DetailField label="Department" value={viewing.department} />
                   <DetailField label="Type" value={<span className="capitalize">{viewing.type}</span>} />
                   <DetailField label="Status" value={<Chip size="sm" variant="flat" color={statusColor(viewing.status)}>{viewing.status}</Chip>} />
-                  <DetailField label="Request days" value={String(viewing.days)} />
-                  <DetailField label="From" value={new Date(viewing.request.startDate).toLocaleDateString()} />
-                  <DetailField label="To" value={new Date(viewing.request.endDate).toLocaleDateString()} />
-                  <DetailField label="Reason" value={viewing.request.reason || '—'} full />
+                  <DetailField label="Days" value={String(viewing.days)} />
                 </DetailGrid>
               </ModalBody>
               <ModalFooter className="flex flex-wrap justify-between gap-2">
                 <Button variant="flat" onPress={() => setViewing(null)}>Close</Button>
                 <Button
                   variant="bordered"
-                  onPress={() => printDetailSheet('Leave day', [
-                    { label: 'Date', value: new Date(viewing.date + 'T00:00:00Z').toLocaleDateString() },
+                  onPress={() => printDetailSheet('Leave', [
+                    { label: 'From', value: new Date(viewing.from + 'T00:00:00Z').toLocaleDateString() },
+                    { label: 'To', value: new Date(viewing.to + 'T00:00:00Z').toLocaleDateString() },
                     { label: 'Employee', value: viewing.name },
                     { label: 'Department', value: viewing.department },
                     { label: 'Type', value: viewing.type },
                     { label: 'Status', value: viewing.status },
-                    { label: 'Request days', value: String(viewing.days) },
-                    { label: 'From', value: new Date(viewing.request.startDate).toLocaleDateString() },
-                    { label: 'To', value: new Date(viewing.request.endDate).toLocaleDateString() },
-                    { label: 'Reason', value: viewing.request.reason || '—' },
+                    { label: 'Days', value: String(viewing.days) },
                   ])}
                 >
                   Print

@@ -43,6 +43,7 @@ const BLOCK_LABELS: Record<BlockType, string> = {
   'retail-slip': 'Retail till slip',
   'noda-bill': 'Noda restaurant bill',
   'ledger-voucher': 'Ledger payment voucher',
+  'workshop-bill': 'Workshop venue bill',
 };
 
 /** Shown on the field row and on add-chips. The long label stays in the tooltip. */
@@ -65,11 +66,12 @@ const BLOCK_ZONE: Record<BlockType, 'header' | 'body' | 'footer'> = {
   'retail-slip': 'body',
   'noda-bill': 'body',
   'ledger-voucher': 'body',
+  'workshop-bill': 'body',
 };
 const ZONE_LABELS: Record<'header' | 'body' | 'footer', string> = { header: 'Header', body: 'Body', footer: 'Footer' };
 
 const ADDABLE_BLOCK_TYPES: BlockType[] = (Object.keys(BLOCK_LABELS) as BlockType[])
-  .filter(t => !(['company-info', 'doc-meta', 'recipient-info', 'totals-summary', 'retail-slip', 'noda-bill', 'ledger-voucher'] as BlockType[]).includes(t));
+  .filter(t => !(['company-info', 'doc-meta', 'recipient-info', 'totals-summary', 'retail-slip', 'noda-bill', 'ledger-voucher', 'workshop-bill'] as BlockType[]).includes(t));
 
 const REPEATABLE_BLOCK_TYPES: BlockType[] = ['container', 'custom-text'];
 

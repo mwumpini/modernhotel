@@ -397,115 +397,93 @@ export function RequisitionModals() {
             <ModalBody>
               {inventoryScreen.viewingRequisition && (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="flex items-end justify-between gap-3">
                     <div>
-                      <div className="text-xs text-gray-500 mb-1">Requisition Number</div>
-                      <div className="font-semibold font-mono">{inventoryScreen.viewingRequisition.requisitionNumber}</div>
+                      <div className="text-xs text-gray-500">Total</div>
+                      <div className="text-2xl font-semibold tabular-nums">₵{inventoryScreen.viewingRequisition.requestedItems.reduce((sum, item) => sum + item.totalCost, 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     </div>
+                    <Badge color={
+                      inventoryScreen.viewingRequisition.status === 'ready' ? 'success' :
+                      inventoryScreen.viewingRequisition.status === 'approved' ? 'primary' :
+                      inventoryScreen.viewingRequisition.status === 'rejected' || inventoryScreen.viewingRequisition.status === 'cancelled' ? 'danger' :
+                      inventoryScreen.viewingRequisition.status === 'converted-to-po' ? 'secondary' :
+                      'warning'
+                    }>
+                      {inventoryScreen.viewingRequisition.status.replace(/-/g, ' ')}
+                    </Badge>
+                  </div>
+                  <div className="grid sm:grid-cols-3 gap-4 text-sm">
                     <div>
-                      <div className="text-xs text-gray-500 mb-1">Status</div>
-                      <Badge color={
-                        inventoryScreen.viewingRequisition.status === 'ready' ? 'success' :
-                        inventoryScreen.viewingRequisition.status === 'approved' ? 'primary' :
-                        inventoryScreen.viewingRequisition.status === 'rejected' || inventoryScreen.viewingRequisition.status === 'cancelled' ? 'danger' :
-                        inventoryScreen.viewingRequisition.status === 'converted-to-po' ? 'secondary' :
-                        'warning'
-                      }>
-                        {inventoryScreen.viewingRequisition.status.replace('-', ' ')}
-                      </Badge>
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-500 mb-1">Requested By</div>
+                      <div className="text-xs text-gray-500 mb-1">Requested by</div>
                       <div className="font-semibold">{inventoryScreen.viewingRequisition.requestedBy}</div>
+                      {inventoryScreen.viewingRequisition.department && (
+                        <div className="text-gray-600">{inventoryScreen.viewingRequisition.department}</div>
+                      )}
                     </div>
                     <div>
-                      <div className="text-xs text-gray-500 mb-1">Requested Date</div>
+                      <div className="text-xs text-gray-500 mb-1">Requested date</div>
                       <div>
-                        {inventoryScreen.viewingRequisition.requestedDate instanceof Date 
+                        {inventoryScreen.viewingRequisition.requestedDate instanceof Date
                           ? inventoryScreen.viewingRequisition.requestedDate.toLocaleDateString()
                           : new Date(inventoryScreen.viewingRequisition.requestedDate).toLocaleDateString()}
                       </div>
                     </div>
-                    {inventoryScreen.viewingRequisition.approvedBy && (
-                      <>
-                        <div>
-                          <div className="text-xs text-gray-500 mb-1">Approved By</div>
+                    <div>
+                      {inventoryScreen.viewingRequisition.approvedBy && (
+                        <>
+                          <div className="text-xs text-gray-500 mb-1">Approved by</div>
                           <div className="font-semibold">{inventoryScreen.viewingRequisition.approvedBy}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs text-gray-500 mb-1">Approved At</div>
-                          <div>
-                            {inventoryScreen.viewingRequisition.approvedAt 
-                              ? (inventoryScreen.viewingRequisition.approvedAt instanceof Date 
-                                  ? inventoryScreen.viewingRequisition.approvedAt.toLocaleDateString()
-                                  : new Date(inventoryScreen.viewingRequisition.approvedAt).toLocaleDateString())
-                              : 'N/A'}
-                          </div>
-                        </div>
-                      </>
-                    )}
-                    {inventoryScreen.viewingRequisition.rejectedBy && (
-                      <>
-                        <div>
-                          <div className="text-xs text-gray-500 mb-1">Rejected By</div>
+                        </>
+                      )}
+                      {inventoryScreen.viewingRequisition.rejectedBy && (
+                        <>
+                          <div className="text-xs text-gray-500 mb-1">Rejected by</div>
                           <div className="font-semibold">{inventoryScreen.viewingRequisition.rejectedBy}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs text-gray-500 mb-1">Rejection Reason</div>
-                          <div className="text-sm">{inventoryScreen.viewingRequisition.rejectionReason || 'No reason provided'}</div>
-                        </div>
-                      </>
-                    )}
-                    {inventoryScreen.viewingRequisition.convertedToPONumber && (
-                      <div className="col-span-2">
-                        <div className="text-xs text-gray-500 mb-1">Converted to PO</div>
-                        <div className="font-semibold font-mono">{inventoryScreen.viewingRequisition.convertedToPONumber}</div>
-                      </div>
-                    )}
-                  </div>
-
-                  <Divider />
-
-                  <div>
-                    <h4 className="font-semibold mb-2">Requested Items</h4>
-                    <Table>
-                      <TableHeader>
-                        <TableColumn>Item Code</TableColumn>
-                        <TableColumn>Item Name</TableColumn>
-                        <TableColumn>Preferred Supplier</TableColumn>
-                        <TableColumn>Quantity</TableColumn>
-                        <TableColumn>Estimated Price</TableColumn>
-                        <TableColumn className="text-right">Total</TableColumn>
-                      </TableHeader>
-                      <TableBody>
-                        {inventoryScreen.viewingRequisition.requestedItems.map((item) => (
-                          <TableRow key={item.id}>
-                            <TableCell className="font-mono">{item.itemCode}</TableCell>
-                            <TableCell>{item.itemName}</TableCell>
-                            <TableCell className="text-sm">
-                              {item.preferredSupplierName || '—'}
-                            </TableCell>
-                            <TableCell>{item.quantity}</TableCell>
-                            <TableCell>₵{item.estimatedPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                            <TableCell className="text-right font-semibold">
-                              ₵{item.totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-
-                  <Divider />
-
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <div className="flex justify-between">
-                      <span className="text-lg font-bold">Total Amount:</span>
-                      <span className="text-lg font-bold">
-                        ₵{inventoryScreen.viewingRequisition.requestedItems.reduce((sum, item) => sum + item.totalCost, 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
+                          <div className="text-gray-600">{inventoryScreen.viewingRequisition.rejectionReason || 'No reason provided'}</div>
+                        </>
+                      )}
+                      {inventoryScreen.viewingRequisition.convertedToPONumber && (
+                        <>
+                          <div className="text-xs text-gray-500 mb-1">Converted to PO</div>
+                          <div className="font-semibold font-mono">{inventoryScreen.viewingRequisition.convertedToPONumber}</div>
+                        </>
+                      )}
                     </div>
                   </div>
+
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="border border-gray-300 px-2 py-1.5 text-left">Item code</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-left">Item</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-left">Preferred supplier</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-center">Qty</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-right">Estimated price</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {inventoryScreen.viewingRequisition.requestedItems.map((item) => (
+                        <tr key={item.id}>
+                          <td className="border border-gray-300 px-2 py-1.5 font-mono">{item.itemCode}</td>
+                          <td className="border border-gray-300 px-2 py-1.5">{item.itemName}</td>
+                          <td className="border border-gray-300 px-2 py-1.5">{item.preferredSupplierName || '—'}</td>
+                          <td className="border border-gray-300 px-2 py-1.5 text-center tabular-nums">{item.quantity}</td>
+                          <td className="border border-gray-300 px-2 py-1.5 text-right tabular-nums">₵{item.estimatedPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="border border-gray-300 px-2 py-1.5 text-right tabular-nums">₵{item.totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  <table className="w-full sm:w-72 ml-auto text-sm border-collapse">
+                    <tbody>
+                      <tr>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right font-semibold">Total</td>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right font-semibold tabular-nums">₵{inventoryScreen.viewingRequisition.requestedItems.reduce((sum, item) => sum + item.totalCost, 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      </tr>
+                    </tbody>
+                  </table>
 
                   {inventoryScreen.viewingRequisition.notes && (
                     <>

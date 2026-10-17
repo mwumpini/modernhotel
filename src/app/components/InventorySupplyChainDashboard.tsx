@@ -36,6 +36,10 @@ import { useComplianceStore } from '../lib/compliance/store';
 import { useCalculateTax } from '../hooks/useCalculateTax';
 import { computePurchaseTax } from '../lib/tax/engine';
 import { openHtmlPrintWindow } from '../lib/print/engine';
+import { buildOrgProfile } from '../lib/print/buildOrgProfile';
+import { purchaseOrderPrintHtml } from '../lib/inventory/purchaseOrderPrint';
+import { requisitionPrintHtml } from '../lib/inventory/requisitionPrint';
+import { goodsIssuePrintHtml, stockCountPrintHtml, stockTransferPrintHtml } from '../lib/inventory/inventoryMovementPrint';
 import { StockItem, Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, RequisitionItem, StockTransfer, StockTransferItem, StockCount, StockCountItem, GoodsIssue, GoodsReceiptNote, GRNItem, SupplierInvoice, InvoiceItem, QualityCheck } from '../lib/inventory/models';
 import { BusinessPartner } from '../lib/accounting/models';
 import { useRouter } from 'next/navigation';
@@ -2710,85 +2714,105 @@ export default function InventorySupplyChainDashboard({
       </body></html>`);
   };
 
-  const handlePrintStockCount = (count: StockCount) => {
-    const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const money = (n: number) => `₵${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    const fmtDate = (d: Date | string | undefined) => {
-      if (!d) return '—';
-      const val = d instanceof Date ? d : new Date(d);
-      return val.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-    };
-    const company = settings.companySettings;
-    const companyName = company?.tradingName || company?.legalName || settings.tenant?.name || 'Hotel';
+  const printPurchaseOrder = (po: PurchaseOrder) => {
+    const supplier = supplierStoreSuppliers.find((s) => s.id === po.supplierId);
+    const supplierLines = [
+      supplier?.address,
+      [supplier?.city, supplier?.postalCode, supplier?.country].filter(Boolean).join(', '),
+      supplier?.phone ? `Tel. ${supplier.phone}` : '',
+      supplier?.email,
+      supplier?.contactPerson ? `Contact: ${supplier.contactPerson}` : '',
+      supplier?.taxId ? `TIN: ${supplier.taxId}` : '',
+    ].filter(Boolean) as string[];
+    const taxLines = po.taxTypeId
+      ? computePOTaxLines(po.totalAmount, po.taxTypeId, po.customTaxRate || 0)
+      : (po.taxAmount ? [{ name: po.taxAmount < 0 ? 'Withholding' : 'Tax', amount: po.taxAmount }] : []);
+    openHtmlPrintWindow(purchaseOrderPrintHtml({
+      org: buildOrgProfile(settings),
+      poNumber: po.poNumber,
+      supplierName: po.supplierName,
+      supplierLines,
+      orderDate: po.orderDate,
+      expectedDeliveryDate: po.expectedDeliveryDate,
+      priority: po.priority,
+      paymentTerms: po.paymentTerms,
+      notes: po.notes,
+      preparedBy: po.createdBy && po.createdBy.toLowerCase() !== 'system' ? po.createdBy : undefined,
+      items: po.items,
+      subtotal: po.totalAmount,
+      taxLines,
+      shipping: po.shippingAmount,
+      discount: po.discountAmount,
+      total: po.finalAmount,
+    }));
+  };
 
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Stock Count ${esc(count.countNumber)}</title>
-          <style>
-            body { font-family: Arial, Helvetica, sans-serif; color: #1a1a1a; padding: 32px 40px; font-size: 13px; }
-            h1 { margin: 0 0 4px; font-size: 22px; }
-            .meta { color: #555; margin-bottom: 20px; }
-            .meta span { margin-right: 16px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-            th { background: #1a1a1a; color: #fff; text-align: left; padding: 8px 10px; font-size: 12px; }
-            td { padding: 8px 10px; border-bottom: 1px solid #eee; }
-            th:nth-child(n+3), td:nth-child(n+3) { text-align: right; }
-            .totals { margin-top: 16px; display: flex; justify-content: flex-end; }
-            .totals table td { border: none; padding: 4px 8px; }
-            .neg { color: #b91c1c; }
-            .pos { color: #15803d; }
-          </style>
-        </head>
-        <body>
-          <h1>Stock Count</h1>
-          <div class="meta">
-            <div><strong>${esc(companyName)}</strong></div>
-            <span>#${esc(count.countNumber)}</span>
-            <span>${esc(count.countType)}</span>
-            <span>${esc(count.location)}</span>
-            <span>${esc(count.status)}</span>
-            <span>Started ${esc(fmtDate(count.startDate))}</span>
-            ${count.endDate ? `<span>Ended ${esc(fmtDate(count.endDate))}</span>` : ''}
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Code</th>
-                <th>Item</th>
-                <th>Expected</th>
-                <th>Counted</th>
-                <th>Variance</th>
-                <th>Variance Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${count.items.map((item) => `
-                <tr>
-                  <td>${esc(item.itemCode)}</td>
-                  <td>${esc(item.itemName)}</td>
-                  <td>${esc(item.expectedQuantity)}</td>
-                  <td>${esc(item.countedQuantity)}</td>
-                  <td class="${item.variance < 0 ? 'neg' : item.variance > 0 ? 'pos' : ''}">${item.variance > 0 ? '+' : ''}${esc(item.variance)}</td>
-                  <td>${money(Math.abs(item.varianceValue))}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-          <div class="totals">
-            <table>
-              <tr><td>Total items</td><td>${esc(count.totalItems)}</td></tr>
-              <tr><td>Variance lines</td><td>${esc(count.varianceItems)}</td></tr>
-              <tr><td>Stock value</td><td>${money(count.totalValue)}</td></tr>
-              <tr><td><strong>Variance value</strong></td><td><strong>${money(count.varianceValue)}</strong></td></tr>
-            </table>
-          </div>
-          ${count.notes ? `<p style="margin-top:24px;color:#555"><strong>Notes:</strong> ${esc(count.notes)}</p>` : ''}
-        </body>
-      </html>
-    `;
-    openHtmlPrintWindow(html);
+  const printRequisition = (req: Requisition) => {
+    const total = (req.requestedItems || []).reduce((sum, item) => sum + (item.totalCost || 0), 0);
+    openHtmlPrintWindow(requisitionPrintHtml({
+      org: buildOrgProfile(settings),
+      requisitionNumber: req.requisitionNumber,
+      requestedBy: req.requestedBy,
+      requestedDate: req.requestedDate,
+      department: req.department,
+      status: req.status,
+      approvedBy: req.approvedBy,
+      notes: req.notes,
+      items: req.requestedItems || [],
+      total,
+    }));
+  };
+
+  const printStockTransfer = (transfer: StockTransfer) => {
+    openHtmlPrintWindow(stockTransferPrintHtml({
+      org: buildOrgProfile(settings),
+      transferNumber: transfer.transferNumber,
+      fromLocation: transfer.fromLocation,
+      toLocation: transfer.toLocation,
+      transferDate: transfer.transferDate,
+      expectedDeliveryDate: transfer.expectedDeliveryDate,
+      status: transfer.status,
+      priority: transfer.priority,
+      notes: transfer.notes,
+      createdBy: transfer.createdBy,
+      items: transfer.items || [],
+      total: transfer.totalValue,
+    }));
+  };
+
+  const printGoodsIssue = (issue: GoodsIssue) => {
+    openHtmlPrintWindow(goodsIssuePrintHtml({
+      org: buildOrgProfile(settings),
+      issueNumber: issue.issueNumber,
+      department: issue.department,
+      issuedTo: issue.issuedTo,
+      issuedBy: issue.issuedBy,
+      issueDate: issue.issueDate,
+      status: issue.status,
+      notes: issue.notes,
+      items: issue.items || [],
+      total: issue.totalValue,
+    }));
+  };
+
+  const handlePrintStockCount = (count: StockCount) => {
+    openHtmlPrintWindow(stockCountPrintHtml({
+      org: buildOrgProfile(settings),
+      countNumber: count.countNumber,
+      countType: count.countType,
+      location: count.location,
+      startDate: count.startDate,
+      endDate: count.endDate,
+      status: count.status,
+      notes: count.notes,
+      performedBy: count.performedBy,
+      createdBy: count.createdBy,
+      items: count.items || [],
+      totalItems: count.totalItems,
+      varianceItems: count.varianceItems,
+      totalValue: count.totalValue,
+      varianceValue: count.varianceValue,
+    }));
     trackEvent('Stores.Issued', { action: 'print_stock_count', countNumber: count.countNumber });
   };
 
@@ -2931,6 +2955,10 @@ export default function InventorySupplyChainDashboard({
     handlePOSupplierChange,
     handlePrintStockCount,
     printInventorySheet,
+    printPurchaseOrder,
+    printRequisition,
+    printStockTransfer,
+    printGoodsIssue,
     handleReceiveGoods,
     handleRemovePOItem,
     handleRemoveRequisitionItem,

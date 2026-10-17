@@ -935,85 +935,87 @@ export function StockCountViewModal() {
             <ModalBody>
               {inventoryScreen.viewingStockCount && (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="flex items-end justify-between gap-3">
                     <div>
-                      <div className="text-xs text-gray-500 mb-1">Count Type</div>
-                      <Chip size="sm" variant="flat">{inventoryScreen.viewingStockCount.countType}</Chip>
+                      <div className="text-xs text-gray-500">Variance value</div>
+                      <div className="text-2xl font-semibold tabular-nums">₵{inventoryScreen.viewingStockCount.varianceValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     </div>
+                    <Badge color={inventoryScreen.viewingStockCount.status === 'completed' ? 'success' : inventoryScreen.viewingStockCount.status === 'in-progress' ? 'warning' : inventoryScreen.viewingStockCount.status === 'cancelled' ? 'danger' : 'default'} variant="flat">
+                      {inventoryScreen.viewingStockCount.status.replace(/-/g, ' ')}
+                    </Badge>
+                  </div>
+                  <div className="grid sm:grid-cols-3 gap-4 text-sm">
                     <div>
                       <div className="text-xs text-gray-500 mb-1">Location</div>
                       <div className="font-semibold">{inventoryScreen.viewingStockCount.location}</div>
                     </div>
                     <div>
-                      <div className="text-xs text-gray-500 mb-1">Start Date</div>
-                      <div>{inventoryScreen.viewingStockCount.startDate instanceof Date ? inventoryScreen.viewingStockCount.startDate.toLocaleDateString() : new Date(inventoryScreen.viewingStockCount.startDate).toLocaleDateString()}</div>
+                      <div className="text-xs text-gray-500 mb-1">Count type</div>
+                      <div className="font-semibold capitalize">{inventoryScreen.viewingStockCount.countType}</div>
                     </div>
                     <div>
-                      <div className="text-xs text-gray-500 mb-1">Status</div>
-                      <Badge color={inventoryScreen.viewingStockCount.status === 'completed' ? 'success' : inventoryScreen.viewingStockCount.status === 'in-progress' ? 'warning' : inventoryScreen.viewingStockCount.status === 'cancelled' ? 'danger' : 'default'} variant="flat">
-                        {inventoryScreen.viewingStockCount.status}
-                      </Badge>
+                      <div className="text-xs text-gray-500 mb-1">Start date</div>
+                      <div>{inventoryScreen.viewingStockCount.startDate instanceof Date ? inventoryScreen.viewingStockCount.startDate.toLocaleDateString() : new Date(inventoryScreen.viewingStockCount.startDate).toLocaleDateString()}</div>
                     </div>
                   </div>
 
-                  <Divider />
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="border border-gray-300 px-2 py-1.5 text-left">Item code</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-left">Item</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-center">Expected</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-center">Counted</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-center">Variance</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-right">Variance value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {inventoryScreen.viewingStockCount.items.map((item) => (
+                        <tr key={item.id}>
+                          <td className="border border-gray-300 px-2 py-1.5 font-mono">{item.itemCode}</td>
+                          <td className="border border-gray-300 px-2 py-1.5">{item.itemName}</td>
+                          <td className="border border-gray-300 px-2 py-1.5 text-center tabular-nums">{item.expectedQuantity}</td>
+                          <td className="border border-gray-300 px-2 py-1.5 text-center tabular-nums">{item.countedQuantity}</td>
+                          <td className={`border border-gray-300 px-2 py-1.5 text-center tabular-nums ${item.variance > 0 ? 'text-green-600' : item.variance < 0 ? 'text-red-600' : ''}`}>
+                            {item.variance > 0 ? '+' : ''}{item.variance}
+                          </td>
+                          <td className="border border-gray-300 px-2 py-1.5 text-right tabular-nums">₵{Math.abs(item.varianceValue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
 
-                  <div>
-                    <h4 className="font-semibold mb-2">Count Results</h4>
-                    <Table>
-                      <TableHeader>
-                        <TableColumn>Item Code</TableColumn>
-                        <TableColumn>Item Name</TableColumn>
-                        <TableColumn>Expected</TableColumn>
-                        <TableColumn>Counted</TableColumn>
-                        <TableColumn>Variance</TableColumn>
-                        <TableColumn className="text-right">Variance Value</TableColumn>
-                      </TableHeader>
-                      <TableBody>
-                        {inventoryScreen.viewingStockCount.items.map((item) => (
-                          <TableRow key={item.id}>
-                            <TableCell className="font-mono">{item.itemCode}</TableCell>
-                            <TableCell>{item.itemName}</TableCell>
-                            <TableCell>{item.expectedQuantity}</TableCell>
-                            <TableCell>{item.countedQuantity}</TableCell>
-                            <TableCell>
-                              <span className={item.variance > 0 ? 'text-green-600' : item.variance < 0 ? 'text-red-600' : 'text-gray-600'}>
-                                {item.variance > 0 ? '+' : ''}{item.variance}
-                              </span>
-                            </TableCell>
-                            <TableCell className="text-right font-semibold">
-                              ₵{Math.abs(item.varianceValue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
+                  <table className="w-full sm:w-72 ml-auto text-sm border-collapse">
+                    <tbody>
+                      <tr>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right">Total items</td>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right tabular-nums">{inventoryScreen.viewingStockCount.totalItems}</td>
+                      </tr>
+                      <tr>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right">Variance lines</td>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right tabular-nums">{inventoryScreen.viewingStockCount.varianceItems}</td>
+                      </tr>
+                      <tr>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right">Stock value</td>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right tabular-nums">₵{inventoryScreen.viewingStockCount.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      </tr>
+                      <tr>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right font-semibold">Variance value</td>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right font-semibold tabular-nums">₵{inventoryScreen.viewingStockCount.varianceValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      </tr>
+                    </tbody>
+                  </table>
 
-                  <Divider />
-
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <div className="grid grid-cols-2 gap-4">
+                  {inventoryScreen.viewingStockCount.notes && (
+                    <>
+                      <Divider />
                       <div>
-                        <div className="text-xs text-gray-500 mb-1">Total Items</div>
-                        <div className="font-semibold">{inventoryScreen.viewingStockCount.totalItems}</div>
+                        <div className="text-xs text-gray-500 mb-1">Notes</div>
+                        <div className="text-sm">{inventoryScreen.viewingStockCount.notes}</div>
                       </div>
-                      <div>
-                        <div className="text-xs text-gray-500 mb-1">Variance Items</div>
-                        <div className="font-semibold text-orange-600">{inventoryScreen.viewingStockCount.varianceItems}</div>
-                      </div>
-                      <div>
-                        <div className="text-xs text-gray-500 mb-1">Total Value</div>
-                        <div className="font-semibold">₵{inventoryScreen.viewingStockCount.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                      </div>
-                      <div>
-                        <div className="text-xs text-gray-500 mb-1">Variance Value</div>
-                        <div className="font-semibold text-orange-600">
-                          ₵{inventoryScreen.viewingStockCount.varianceValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                    </>
+                  )}
                 </div>
               )}
             </ModalBody>

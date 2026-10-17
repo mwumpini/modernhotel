@@ -51,6 +51,7 @@ import ComplianceReportsPanel from './hr/ComplianceReportsPanel';
 import PayrollProcessingPanel from './hr/PayrollProcessingPanel';
 import BenefitsManagementPanel from './hr/BenefitsManagementPanel';
 import StaffDebtsPanel from './hr/StaffDebtsPanel';
+import PaySetupPanel from './hr/PaySetupPanel';
 import HRReportsAnalysis from './HRReportsAnalysis';
 import RecentActivities from './RecentActivities';
 import { useEmployeeStore } from '../lib/hr/employeeStore';
@@ -63,6 +64,7 @@ import { useEmployeeChangesStore } from '../lib/hr/employeeChangesStore';
 import { useBenefitsStore } from '../lib/hr/benefitsStore';
 import { useOnboardingStore } from '../lib/hr/onboardingStore';
 import { useStaffDebtStore } from '../lib/hr/staffDebtStore';
+import { usePaySetupStore } from '../lib/hr/paySetupStore';
 
 type HrBook = 'employees' | 'leave' | 'time' | 'payroll' | 'benefits' | 'performance' | 'training' | 'compliance' | 'departments' | 'reports';
 
@@ -102,6 +104,7 @@ const HR_TARGETS: Record<string, { book: HrBook; panel: string }> = {
   salary: { book: 'reports', panel: 'analysis' },
   debts: { book: 'payroll', panel: 'debts' },
   'staff-debts': { book: 'payroll', panel: 'debts' },
+  'pay-setup': { book: 'payroll', panel: 'setup' },
   benefits: { book: 'benefits', panel: 'benefits' },
   reviews: { book: 'performance', panel: 'reviews' },
   performance: { book: 'performance', panel: 'reviews' },
@@ -215,6 +218,7 @@ export default function HRMainDashboard({
   const hydratePerformance = usePerformanceStore((s) => s.hydrateFromApi);
   const hydrateOnboarding = useOnboardingStore((s) => s.hydrateFromApi);
   const hydrateStaffDebts = useStaffDebtStore((s) => s.hydrateFromApi);
+  const loadPaySetup = usePaySetupStore((s) => s.load);
 
   useEffect(() => {
     hydrateEmployees();
@@ -226,8 +230,8 @@ export default function HRMainDashboard({
     hydrateEmployeeChanges();
     hydrateOnboarding();
     hydrateStaffDebts();
-  }, [hydrateEmployees, hydratePayroll, hydrateLeave, hydrateTraining, hydrateBenefits, hydratePerformance, hydrateEmployeeChanges, hydrateOnboarding, hydrateStaffDebts]);
-
+    void loadPaySetup();
+  }, [hydrateEmployees, hydratePayroll, hydrateLeave, hydrateTraining, hydrateBenefits, hydratePerformance, hydrateEmployeeChanges, hydrateOnboarding, hydrateStaffDebts, loadPaySetup]);
   const today = deskPeriod.todayISO;
   const periodBounds = getPeriodBounds(deskPeriod.period, today);
   const isInPayrollPeriod = (d: Date | string) => {
@@ -541,14 +545,15 @@ export default function HRMainDashboard({
                 <div className={`${deskBookTabPanelClassName} space-y-3`}>
                   <SectionTabs
                     label="Payroll sections"
-                    selected={panel === 'debts' ? 'debts' : 'payroll'}
+                    selected={panel === 'debts' ? 'debts' : panel === 'setup' ? 'setup' : 'payroll'}
                     onChange={setPanel}
                     tabs={[
                       { key: 'payroll', title: 'Run' },
                       { key: 'debts', title: 'Staff debts' },
+                      { key: 'setup', title: 'Pay setup' },
                     ]}
                   />
-                  {panel === 'debts' ? <StaffDebtsPanel /> : <PayrollProcessingPanel />}
+                  {panel === 'debts' ? <StaffDebtsPanel /> : panel === 'setup' ? <PaySetupPanel /> : <PayrollProcessingPanel />}
                 </div>
               )}
             </Tab>

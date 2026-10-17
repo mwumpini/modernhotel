@@ -2657,13 +2657,13 @@ const DEFAULT_PRINTING: SettingsStore['printing'] = {
   'accommodation-proforma': 'builtin-accommodation-proforma-standard',
   'accommodation-invoice': 'builtin-accommodation-invoice-standard',
   'accommodation-receipt': 'builtin-accommodation-receipt-standard',
-  'event-proforma': 'builtin-event-proforma-daily-schedule',
-  'event-invoice': 'builtin-event-invoice-standard',
-  'event-receipt': 'builtin-event-receipt-standard',
+  'event-proforma': 'builtin-event-proforma-workshop',
+  'event-invoice': 'builtin-event-invoice-workshop',
+  'event-receipt': 'builtin-event-receipt-workshop',
   'registration-card': 'builtin-registration-card-standard',
   'fb-receipt': 'builtin-fb-receipt-retail',
   payslip: 'builtin-payslip-grid',
-  'event-contract': 'builtin-event-contract-classic',
+  'event-contract': 'builtin-event-contract-workshop',
 };
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,16 @@ import { getClientTenantSubdomain } from '../api/clientTenant';
 import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
 import { newId } from './newId';
 import { useSettingsStore } from '../settings/store';
+import {
+  DEFAULT_LEAVE_ENTITLEMENTS,
+  DEFAULT_LEAVE_POLICY,
+  entitlementDays,
+  normalizeLeavePolicy,
+  resolveLeaveBandId,
+  type LeavePolicy,
+} from './leavePolicy';
+
+export { DEFAULT_LEAVE_ENTITLEMENTS };
 
 function hrTenantHeaders(): HeadersInit {
   const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
@@ -40,19 +50,6 @@ function deleteShiftFromApi(id: string) {
     .catch((e) => console.warn('[HR] Failed to delete shift on server:', e));
 }
 
-/** Annual leave-day entitlement per type, used when an employee has no override
- * in Employee.leaveEntitlements. Annual is Ghana's Labour Act 2003 minimum (15
- * working days) rounded up to a common 21-day policy; others are reasonable defaults. */
-export const DEFAULT_LEAVE_ENTITLEMENTS: Record<LeaveRequest['leaveType'], number> = {
-  annual: 21,
-  sick: 10,
-  personal: 5,
-  maternity: 84,
-  paternity: 7,
-  bereavement: 5,
-  other: 0,
-};
-
 export interface LeaveBalance {
   entitlement: number;
   used: number;
@@ -83,6 +80,9 @@ interface LeaveAttendanceState {
   deleteAttendance: (id: string) => void;
   voidAttendance: (id: string) => void;
   getLeaveBalance: (employeeId: string, leaveType: LeaveRequest['leaveType'], year: number) => LeaveBalance;
+  leavePolicy: LeavePolicy;
+  loadLeavePolicy: () => Promise<void>;
+  saveLeavePolicy: (policy: LeavePolicy) => Promise<LeavePolicy>;
   hydrateFromApi: () => Promise<void>;
 
   // Time tracking
@@ -111,6 +111,7 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
   leaveRequests: [],
   attendances: [],
   shifts: [],
+  leavePolicy: DEFAULT_LEAVE_POLICY,
 
   requestLeave: (req) => {
     const newReq: LeaveRequest = {
@@ -129,8 +130,10 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
   },
 
   getLeaveBalance: (employeeId, leaveType, year) => {
-    const employee = useEmployeeStore.getState().employees.find((e: any) => e.id === employeeId);
-    const entitlement = employee?.leaveEntitlements?.[leaveType] ?? DEFAULT_LEAVE_ENTITLEMENTS[leaveType];
+    const { employees, departments } = useEmployeeStore.getState();
+    const employee = employees.find((e) => e.id === employeeId);
+    const bandId = employee ? resolveLeaveBandId(employee, departments) : 'staff';
+    const entitlement = entitlementDays(get().leavePolicy, bandId, leaveType, employee?.leaveEntitlements?.[leaveType]);
     const used = get()
       .leaveRequests.filter(
         (r) =>
@@ -378,9 +381,40 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
   },
   getOpenOvertimeCount: () => get().attendances.filter((a) => (a.overtimeHours || 0) > 0).length,
 
+  loadLeavePolicy: async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const res = await fetch('/api/hr/leave-policy', { headers: hrTenantHeaders(), cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      set({ leavePolicy: normalizeLeavePolicy(data.policy) });
+    } catch (e) {
+      console.warn('[HR] Failed to load leave policy:', e);
+    }
+  },
+
+  saveLeavePolicy: async (policy) => {
+    const normalized = normalizeLeavePolicy(policy);
+    const previous = get().leavePolicy;
+    set({ leavePolicy: normalized });
+    try {
+      const res = await fetch('/api/hr/leave-policy', {
+        method: 'POST',
+        headers: hrTenantHeaders(),
+        body: JSON.stringify({ policy: normalized }),
+      });
+      if (!res.ok) throw new Error('save failed');
+      return normalized;
+    } catch (e) {
+      set({ leavePolicy: previous });
+      throw e;
+    }
+  },
+
   hydrateFromApi: async () => {
     if (typeof window === 'undefined') return;
     const headers = hrTenantHeaders();
+    await get().loadLeavePolicy();
     try {
       const res = await fetch('/api/hr/leave-requests', { headers, cache: 'no-store' });
       if (res.ok) {

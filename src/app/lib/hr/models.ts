@@ -45,9 +45,10 @@ export interface Employee {
     filingStatus?: 'single' | 'married' | 'head_of_household' | string;
     allowances?: number;
   };
-  /** Annual leave-day entitlement per leave type. Falls back to DEFAULT_LEAVE_ENTITLEMENTS
-   * (in leaveAttendanceStore.ts) for any type not overridden here. */
+  /** Annual leave-day entitlement per leave type. A set value wins over the Staff / Management group. */
   leaveEntitlements?: Partial<Record<LeaveRequest['leaveType'], number>>;
+  /** Allowance group. Unset means a department named Management uses Management days and everyone else uses Staff days. */
+  leaveBand?: 'staff' | 'management';
   governmentIds?: {
     nationalId?: string;
     ssn?: string;
@@ -224,7 +225,7 @@ export interface Attendance {
 export interface LeaveRequest {
   id: string;
   employeeId: string;
-  leaveType: 'annual' | 'sick' | 'personal' | 'maternity' | 'paternity' | 'bereavement' | 'other';
+  leaveType: 'annual' | 'sick' | 'personal' | 'maternity' | 'paternity' | 'bereavement' | 'unpaid' | 'other';
   startDate: Date;
   endDate: Date;
   totalDays: number;

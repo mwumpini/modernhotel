@@ -65,11 +65,18 @@ export interface GeneratePaymentAdviceArgs {
   hotelName: string;
   monthLabel: string;
   bankOrChannel: string;
-  rows: Array<{ employeeName: string; accountNumber: string; net: number }>; 
+  rows: Array<{ employeeName: string; accountNumber: string; net: number }>;
   signerName: string;
   signerPosition: string;
+  signerSignature?: string;
   companyLogoUrl?: string; // optional http(s) or app-relative path
   bankLogoUrl?: string; // optional http(s) or app-relative path
+  orgAddress?: string;
+  orgPhone?: string;
+  orgEmail?: string;
+  orgTaxId?: string;
+  /** The payment instruction already filled in for this letter. */
+  instruction?: string;
   fileName: string;
 }
 
@@ -94,87 +101,118 @@ export async function generatePaymentAdvicePDF(args: GeneratePaymentAdviceArgs) 
     }
   };
 
-  const companyLogoData = await loadImageAsDataUrl(args.companyLogoUrl);
-  const bankLogoData = await loadImageAsDataUrl(args.bankLogoUrl);
+  const imageData = async (url?: string) => {
+    if (!url) return null;
+    if (url.startsWith('data:image/')) return url;
+    return loadImageAsDataUrl(url);
+  };
+  const companyLogoData = await imageData(args.companyLogoUrl);
+  const bankLogoData = await imageData(args.bankLogoUrl);
+  const paint = (data: string | null, x: number, yPos: number, w: number, h: number) => {
+    if (!data) return;
+    try {
+      const format = data.includes('image/jpeg') || data.includes('image/jpg') ? 'JPEG' : 'PNG';
+      doc.addImage(data, format, x, yPos, w, h);
+    } catch { /* a missing logo still leaves the letter */ }
+  };
 
-  let y = 20;
-  // draw logos if available
-  if (companyLogoData) { try { doc.addImage(companyLogoData, 'PNG', 14, 10, 20, 20); } catch {} }
-  if (bankLogoData) { try { doc.addImage(bankLogoData, 'PNG', 176, 10, 20, 20); } catch {} }
-  if (companyLogoData || bankLogoData) { y = 40; }
-  doc.setFontSize(14); doc.text(args.hotelName, 105, y, { align: 'center' }); y += 8;
-  doc.setFontSize(11); doc.text(`Salary Payment Advice - ${args.bankOrChannel}`, 105, y, { align: 'center' }); y += 6;
-  doc.text(args.monthLabel, 105, y, { align: 'center' }); y += 10;
+  paint(companyLogoData, 14, 10, 22, 22);
+  paint(bankLogoData, 174, 12, 22, 14);
+  let y = 16;
+  doc.setFontSize(14); doc.setFont(undefined, 'bold');
+  doc.text(args.hotelName, 105, y, { align: 'center' }); y += 6;
+  doc.setFontSize(9); doc.setFont(undefined, 'normal');
+  const letterhead = [args.orgAddress, [args.orgPhone ? `Tel. ${args.orgPhone}` : '', args.orgEmail || ''].filter(Boolean).join('  ·  '), args.orgTaxId ? `TIN ${args.orgTaxId}` : ''].filter(Boolean);
+  letterhead.forEach((line) => { doc.text(line, 105, y, { align: 'center' }); y += 4.5; });
+  y = Math.max(y + 2, 36);
+  doc.setDrawColor(0); doc.setLineWidth(0.4); doc.line(14, y, 196, y); y += 8;
 
-  // Letter intro
-  doc.setFontSize(10);
+  const dateLabel = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  doc.setFontSize(10); doc.text(dateLabel, 196, y, { align: 'right' }); y += 8;
+  const addressee = args.bankOrChannel === 'Cash' ? ['The Cashier'] : args.bankOrChannel === 'MoMo' ? ['Mobile Money'] : ['The Manager', args.bankOrChannel];
+  addressee.forEach((line) => { doc.text(line, 14, y); y += 5; });
+  y += 3;
+  doc.text('Dear Sir/Madam,', 14, y); y += 8;
+  doc.setFont(undefined, 'bold'); doc.text('SALARY PAYMENT ADVICE', 105, y, { align: 'center' }); y += 8;
+  doc.setFont(undefined, 'normal');
+
   const total = (args.rows || []).reduce((s, r) => s + (r.net || 0), 0);
   const words = amountToWordsGhana(total);
-  const intro = `Please pay the underlisted staff of ${args.hotelName} their net salaries via ${args.bankOrChannel} for ${args.monthLabel}. The total amount is GHS ${total.toFixed(2)} (${words}).`;
+  const payHow = args.bankOrChannel === 'Cash'
+    ? `Kindly pay the net salaries of the underlisted staff of ${args.hotelName} in cash for ${args.monthLabel}.`
+    : args.bankOrChannel === 'MoMo'
+      ? `Kindly pay the net salaries of the underlisted staff of ${args.hotelName} through Mobile Money for ${args.monthLabel}.`
+      : `Kindly debit our account and credit the net salaries of the underlisted staff of ${args.hotelName} for ${args.monthLabel}.`;
+  const intro = (args.instruction || '').trim()
+    || `${payHow} The total amount is GHS ${total.toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${words}). Please pay as follows:`;
   const introLines = doc.splitTextToSize(intro, 182);
-  doc.text(introLines, 14, y); y += introLines.length * 6 + 6;
+  doc.text(introLines, 14, y); y += introLines.length * 5 + 6;
 
-  // Table with full borders (verticals + top/bottom lines) including No. column
-  const colX = { no: 14, name: 28, acct: 110, net: 164, end: 196 } as const;
-  const rowH = 8;
-  doc.setLineWidth(0.2); doc.setDrawColor(0);
-  // Header box lines
-  const headerTop = y - 5;
-  doc.line(colX.no, headerTop, colX.end, headerTop); // top line over headings
-  doc.line(colX.no, headerTop + rowH, colX.end, headerTop + rowH); // bottom of header
-  // verticals for header
-  doc.line(colX.no, headerTop, colX.no, headerTop + rowH);
-  doc.line(colX.name, headerTop, colX.name, headerTop + rowH);
-  doc.line(colX.acct, headerTop, colX.acct, headerTop + rowH);
-  doc.line(colX.net, headerTop, colX.net, headerTop + rowH);
-  doc.line(colX.end, headerTop, colX.end, headerTop + rowH);
-  // Header text
-  doc.setFont(undefined, 'bold');
-  const headerTextY = headerTop + rowH / 2 + 3;
-  // Center No., left-align Name/Account, right-align Net
-  const noMid = (colX.no + colX.name) / 2;
-  doc.text('No.', noMid, headerTextY, { align: 'center' });
-  doc.text('Name', colX.name + 2, headerTextY);
-  doc.text('Account / Wallet', colX.acct + 2, headerTextY);
-  doc.text('Net Salary (GHS)', colX.end - 2, headerTextY, { align: 'right' });
-  doc.setFont(undefined, 'normal');
-  y += 6;
-  let pageTotal = 0;
+  const colX = { no: 14, name: 28, acct: 112, net: 162, end: 196 } as const;
+  const accountHeading = args.bankOrChannel === 'Cash' ? 'Reference' : args.bankOrChannel === 'MoMo' ? 'Wallet number' : 'Account number';
+  const drawHeader = () => {
+    const rowH = 8;
+    const headerTop = y;
+    doc.setLineWidth(0.2); doc.setDrawColor(0);
+    doc.line(colX.no, headerTop, colX.end, headerTop);
+    doc.line(colX.no, headerTop + rowH, colX.end, headerTop + rowH);
+    [colX.no, colX.name, colX.acct, colX.net, colX.end].forEach((x) => doc.line(x, headerTop, x, headerTop + rowH));
+    doc.setFontSize(9); doc.setFont(undefined, 'bold');
+    const headerTextY = headerTop + 5.4;
+    doc.text('No.', (colX.no + colX.name) / 2, headerTextY, { align: 'center' });
+    doc.text('Staff name', colX.name + 2, headerTextY);
+    doc.text(accountHeading, colX.acct + 2, headerTextY);
+    doc.text('Amount (GHS)', colX.end - 2, headerTextY, { align: 'right' });
+    doc.setFont(undefined, 'normal');
+    y += rowH;
+  };
+  drawHeader();
+
+  let grand = 0;
   (args.rows || []).forEach((r, idx) => {
-    if (y > 270) { doc.addPage(); y = 20; }
-    const top = y - 5;
-    // verticals per row
-    doc.line(colX.no, top, colX.no, top + rowH);
-    doc.line(colX.name, top, colX.name, top + rowH);
-    doc.line(colX.acct, top, colX.acct, top + rowH);
-    doc.line(colX.net, top, colX.net, top + rowH);
-    doc.line(colX.end, top, colX.end, top + rowH);
-    // row text: left-align first two, right-align numeric; vertically centered
-    const yCenter = top + rowH / 2 + 3;
-    const noStr = String(idx + 1);
-    doc.text(noStr, noMid, yCenter, { align: 'center' });
-    doc.text(r.employeeName, colX.name + 2, yCenter);
-    doc.text(String(r.accountNumber || ''), colX.acct + 2, yCenter);
-    doc.text((r.net || 0).toFixed(2), colX.end - 2, yCenter, { align: 'right' });
-    // bottom line for the row
+    const nameLines = doc.splitTextToSize(String(r.employeeName || ''), colX.acct - colX.name - 4);
+    const acctLines = doc.splitTextToSize(String(r.accountNumber || '—'), colX.net - colX.acct - 4);
+    const lineCount = Math.max(nameLines.length, acctLines.length, 1);
+    const rowH = Math.max(8, lineCount * 4.2 + 3);
+    if (y + rowH > 272) { doc.addPage(); y = 16; drawHeader(); }
+    const top = y;
+    doc.setLineWidth(0.2);
+    [colX.no, colX.name, colX.acct, colX.net, colX.end].forEach((x) => doc.line(x, top, x, top + rowH));
     doc.line(colX.no, top + rowH, colX.end, top + rowH);
-    y += 6; pageTotal += (r.net || 0);
+    doc.setFontSize(9);
+    doc.text(String(idx + 1), (colX.no + colX.name) / 2, top + 5.2, { align: 'center' });
+    doc.text(nameLines, colX.name + 2, top + 5.2);
+    doc.text(acctLines, colX.acct + 2, top + 5.2);
+    doc.text((r.net || 0).toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), colX.end - 2, top + 5.2, { align: 'right' });
+    y += rowH;
+    grand += (r.net || 0);
   });
-  y += 4; doc.setDrawColor(0); doc.line(14, y, 196, y); y += 6;
-  doc.setFont(undefined, 'bold'); doc.text('Total', 14, y);
-  doc.text(pageTotal.toFixed(2), 170, y, { align: 'right' });
-  doc.setFont(undefined, 'normal'); y += 12;
 
-  // Closing & signature
-  const closing = 'Counting on your usual cooperation';
-  const closingLines = doc.splitTextToSize(closing, 182);
-  doc.text(closingLines, 14, y); y += closingLines.length * 6 + 12;
+  const totalH = 8;
+  if (y + totalH > 272) { doc.addPage(); y = 16; }
+  doc.setFont(undefined, 'bold');
+  [colX.no, colX.name, colX.acct, colX.net, colX.end].forEach((x) => doc.line(x, y, x, y + totalH));
+  doc.line(colX.no, y + totalH, colX.end, y + totalH);
+  doc.text('Total', colX.name + 2, y + 5.2);
+  doc.text(grand.toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), colX.end - 2, y + 5.2, { align: 'right' });
+  doc.setFont(undefined, 'normal');
+  y += totalH + 8;
 
-  doc.text('Signed:', 14, y); y += 8;
-  doc.text(args.signerName, 14, y); y += 6;
-  doc.text(args.signerPosition, 14, y); y += 6;
-  const printed = new Date().toLocaleDateString('en-GB');
-  doc.text(`Date: ${printed}`, 14, y);
+  if (y > 250) { doc.addPage(); y = 20; }
+  const wordLines = doc.splitTextToSize(`Amount in words: ${words}`, 182);
+  doc.text(wordLines, 14, y); y += wordLines.length * 5 + 8;
+  doc.text('Counting on your usual cooperation.', 14, y); y += 5;
+  doc.text('Yours faithfully,', 14, y); y += 8;
+
+  if (args.signerSignature && args.signerSignature.startsWith('data:image/')) {
+    try {
+      const format = args.signerSignature.includes('image/png') ? 'PNG' : 'JPEG';
+      doc.addImage(args.signerSignature, format, 14, y, 42, 16);
+      y += 18;
+    } catch { /* a bad image still leaves the name and position */ }
+  }
+  doc.setFont(undefined, 'bold'); doc.text(args.signerName, 14, y); y += 5;
+  doc.setFont(undefined, 'normal'); doc.text(args.signerPosition, 14, y);
 
   doc.save(args.fileName);
 }

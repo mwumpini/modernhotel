@@ -542,90 +542,70 @@ export function PurchaseOrderModals() {
             <ModalBody>
               {inventoryScreen.viewingPO && (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="flex items-end justify-between gap-3">
                     <div>
-                      <div className="text-xs text-gray-500 mb-1">PO Number</div>
-                      <div className="font-semibold font-mono">{inventoryScreen.viewingPO.poNumber}</div>
+                      <div className="text-xs text-gray-500">Total</div>
+                      <div className="text-2xl font-semibold tabular-nums">₵{inventoryScreen.viewingPO.finalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     </div>
-                    <div>
-                      <div className="text-xs text-gray-500 mb-1">Status</div>
-                      <Badge color={
-                        inventoryScreen.viewingPO.status === 'delivered' ? 'success' :
-                        inventoryScreen.viewingPO.status === 'confirmed' || inventoryScreen.viewingPO.status === 'in-transit' ? 'warning' :
-                        inventoryScreen.viewingPO.status === 'sent' ? 'primary' :
-                        inventoryScreen.viewingPO.status === 'draft' ? 'default' :
-                        inventoryScreen.viewingPO.status === 'cancelled' ? 'danger' : 'secondary'
-                      }>
-                        {inventoryScreen.viewingPO.status.replace('-', ' ')}
-                      </Badge>
-                    </div>
+                    <Badge color={
+                      inventoryScreen.viewingPO.status === 'delivered' ? 'success' :
+                      inventoryScreen.viewingPO.status === 'confirmed' || inventoryScreen.viewingPO.status === 'in-transit' ? 'warning' :
+                      inventoryScreen.viewingPO.status === 'sent' ? 'primary' :
+                      inventoryScreen.viewingPO.status === 'draft' ? 'default' :
+                      inventoryScreen.viewingPO.status === 'cancelled' ? 'danger' : 'secondary'
+                    }>
+                      {inventoryScreen.viewingPO.status.replace('-', ' ')}
+                    </Badge>
+                  </div>
+                  <div className="grid sm:grid-cols-3 gap-4 text-sm">
                     <div>
                       <div className="text-xs text-gray-500 mb-1">Supplier</div>
                       <div className="font-semibold">{inventoryScreen.viewingPO.supplierName}</div>
                     </div>
                     <div>
-                      <div className="text-xs text-gray-500 mb-1">Priority</div>
-                      <Badge color={
-                        inventoryScreen.viewingPO.priority === 'urgent' ? 'danger' :
-                        inventoryScreen.viewingPO.priority === 'high' ? 'warning' :
-                        inventoryScreen.viewingPO.priority === 'medium' ? 'primary' : 'default'
-                      } variant="flat">
-                        {inventoryScreen.viewingPO.priority}
-                      </Badge>
+                      <div className="text-xs text-gray-500 mb-1">Order</div>
+                      <div>{inventoryScreen.viewingPO.orderDate instanceof Date
+                        ? inventoryScreen.viewingPO.orderDate.toLocaleDateString()
+                        : new Date(inventoryScreen.viewingPO.orderDate).toLocaleDateString()}</div>
+                      <div className="text-gray-600 capitalize">{inventoryScreen.viewingPO.priority} priority</div>
                     </div>
                     <div>
-                      <div className="text-xs text-gray-500 mb-1">Order Date</div>
-                      <div>
-                        {inventoryScreen.viewingPO.orderDate instanceof Date 
-                          ? inventoryScreen.viewingPO.orderDate.toLocaleDateString()
-                          : new Date(inventoryScreen.viewingPO.orderDate).toLocaleDateString()}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-500 mb-1">Expected Delivery</div>
-                      <div>
-                        {inventoryScreen.viewingPO.expectedDeliveryDate instanceof Date
-                          ? inventoryScreen.viewingPO.expectedDeliveryDate.toLocaleDateString()
-                          : new Date(inventoryScreen.viewingPO.expectedDeliveryDate).toLocaleDateString()}
-                      </div>
+                      <div className="text-xs text-gray-500 mb-1">Expected delivery</div>
+                      <div>{inventoryScreen.viewingPO.expectedDeliveryDate instanceof Date
+                        ? inventoryScreen.viewingPO.expectedDeliveryDate.toLocaleDateString()
+                        : new Date(inventoryScreen.viewingPO.expectedDeliveryDate).toLocaleDateString()}</div>
                     </div>
                   </div>
 
-                  <Divider />
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="border border-gray-300 px-2 py-1.5 text-left">Item code</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-left">Item</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-center">Qty</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-right">Unit cost</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {inventoryScreen.viewingPO.items.map((item) => (
+                        <tr key={item.id}>
+                          <td className="border border-gray-300 px-2 py-1.5 font-mono">{item.itemCode}</td>
+                          <td className="border border-gray-300 px-2 py-1.5">{item.itemName}</td>
+                          <td className="border border-gray-300 px-2 py-1.5 text-center tabular-nums">{item.quantity}</td>
+                          <td className="border border-gray-300 px-2 py-1.5 text-right tabular-nums">₵{item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="border border-gray-300 px-2 py-1.5 text-right tabular-nums">₵{item.totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
 
-                  <div>
-                    <h4 className="font-semibold mb-2">Items</h4>
-                    <Table>
-                      <TableHeader>
-                        <TableColumn>Item Code</TableColumn>
-                        <TableColumn>Item Name</TableColumn>
-                        <TableColumn>Quantity</TableColumn>
-                        <TableColumn>Unit Cost</TableColumn>
-                        <TableColumn className="text-right">Total</TableColumn>
-                      </TableHeader>
-                      <TableBody>
-                        {inventoryScreen.viewingPO.items.map((item) => (
-                          <TableRow key={item.id}>
-                            <TableCell className="font-mono">{item.itemCode}</TableCell>
-                            <TableCell>{item.itemName}</TableCell>
-                            <TableCell>{item.quantity}</TableCell>
-                            <TableCell>₵{item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                            <TableCell className="text-right font-semibold">
-                              ₵{item.totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-
-                  <Divider />
-
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <div className="flex justify-between mb-2">
-                      <span className="font-semibold">Subtotal:</span>
-                      <span className="font-semibold">₵{inventoryScreen.viewingPO.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                    </div>
+                  <table className="w-full sm:w-72 ml-auto text-sm border-collapse">
+                    <tbody>
+                    <tr>
+                      <td className="border border-gray-300 px-2 py-1.5 text-right font-medium">Subtotal</td>
+                      <td className="border border-gray-300 px-2 py-1.5 text-right tabular-nums">₵{inventoryScreen.viewingPO.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    </tr>
                     {inventoryScreen.viewingPO.taxAmount !== 0 && (() => {
                       // Real Tax Types are a bundle of rules — show each one (NHIL,
                       // GETFund, VAT, etc.) separately, re-derived live from the current
@@ -637,37 +617,39 @@ export function PurchaseOrderModals() {
                         : [];
                       if (lines.length > 0) {
                         return lines.map((line, idx) => (
-                          <div key={idx} className="flex justify-between mb-2 text-sm">
-                            <span>{line.amount < 0 ? `${line.name} (withheld)` : line.name}:</span>
-                            <span>{line.amount < 0 ? '-' : ''}₵{Math.abs(line.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                          </div>
+                          <tr key={idx}>
+                            <td className="border border-gray-300 px-2 py-1.5 text-right">{line.amount < 0 ? `${line.name} (withheld)` : line.name}</td>
+                            <td className="border border-gray-300 px-2 py-1.5 text-right tabular-nums">{line.amount < 0 ? '-' : ''}₵{Math.abs(line.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          </tr>
                         ));
                       }
                       const rate = inventoryScreen.viewingPO.totalAmount > 0 ? Math.abs((inventoryScreen.viewingPO.taxAmount / inventoryScreen.viewingPO.totalAmount) * 100) : 0;
                       const isWithheld = inventoryScreen.viewingPO.taxAmount < 0;
                       return (
-                        <div className="flex justify-between mb-2 text-sm">
-                          <span>{isWithheld ? 'Withholding' : 'Tax'} ({rate.toFixed(1)}%):</span>
-                          <span>{isWithheld ? '-' : ''}₵{Math.abs(inventoryScreen.viewingPO.taxAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        </div>
+                        <tr>
+                          <td className="border border-gray-300 px-2 py-1.5 text-right">{isWithheld ? 'Withholding' : 'Tax'} ({rate.toFixed(1)}%)</td>
+                          <td className="border border-gray-300 px-2 py-1.5 text-right tabular-nums">{isWithheld ? '-' : ''}₵{Math.abs(inventoryScreen.viewingPO.taxAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        </tr>
                       );
                     })()}
-                    <div className="flex justify-between mb-2 text-sm">
-                      <span>Shipping:</span>
-                      <span>₵{inventoryScreen.viewingPO.shippingAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                    </div>
-                    {inventoryScreen.viewingPO.discountAmount > 0 && (
-                      <div className="flex justify-between mb-2 text-sm">
-                        <span>Discount:</span>
-                        <span>-₵{inventoryScreen.viewingPO.discountAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                      </div>
+                    {inventoryScreen.viewingPO.shippingAmount > 0 && (
+                      <tr>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right">Shipping</td>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right tabular-nums">₵{inventoryScreen.viewingPO.shippingAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      </tr>
                     )}
-                    <Divider className="my-2" />
-                    <div className="flex justify-between">
-                      <span className="text-lg font-bold">Total Amount:</span>
-                      <span className="text-lg font-bold">₵{inventoryScreen.viewingPO.finalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                    </div>
-                  </div>
+                    {inventoryScreen.viewingPO.discountAmount > 0 && (
+                      <tr>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right">Discount</td>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right tabular-nums">-₵{inventoryScreen.viewingPO.discountAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      </tr>
+                    )}
+                    <tr>
+                      <td className="border border-gray-300 px-2 py-1.5 text-right font-semibold">Total</td>
+                      <td className="border border-gray-300 px-2 py-1.5 text-right font-semibold tabular-nums">₵{inventoryScreen.viewingPO.finalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    </tr>
+                    </tbody>
+                  </table>
 
                   {inventoryScreen.viewingPO.notes && (
                     <>
@@ -753,22 +735,7 @@ export function PurchaseOrderModals() {
                 </Button>
               )}
               {inventoryScreen.viewingPO && (
-                <Button variant="flat" onPress={() => {
-                  const po = inventoryScreen.viewingPO;
-                  const money = (n: number) => `₵${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                  inventoryScreen.printInventorySheet({
-                    title: 'Purchase Order',
-                    subtitle: po.poNumber,
-                    fields: [
-                      ['Supplier', po.supplierName],
-                      ['Status', po.status],
-                      ['Order date', new Date(po.orderDate).toLocaleDateString()],
-                      ['Total', money(po.finalAmount)],
-                    ],
-                    columns: ['Item', 'Qty', 'Unit cost', 'Amount'],
-                    rows: po.items.map((item) => [item.itemName, item.quantity, money(item.unitCost), money(item.totalCost)]),
-                  });
-                }}>
+                <Button variant="flat" onPress={() => inventoryScreen.printPurchaseOrder(inventoryScreen.viewingPO)}>
                   Print
                 </Button>
               )}

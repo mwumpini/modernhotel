@@ -136,7 +136,7 @@ export function GoodsIssueModals() {
   return (
   <>
         {/* Goods Issue View Modal */}
-        <Modal isOpen={inventoryScreen.isGoodsIssueViewOpen} onClose={inventoryScreen.onGoodsIssueViewClose} size="3xl" scrollBehavior="inside">
+        <Modal isOpen={inventoryScreen.isGoodsIssueViewOpen} onClose={inventoryScreen.onGoodsIssueViewClose} size="4xl" scrollBehavior="inside">
           <ModalContent>
             <ModalHeader>
               <div>
@@ -147,56 +147,68 @@ export function GoodsIssueModals() {
             <ModalBody>
               {inventoryScreen.viewingGoodsIssue && (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="flex items-end justify-between gap-3">
+                    <div>
+                      <div className="text-xs text-gray-500">Total</div>
+                      <div className="text-2xl font-semibold tabular-nums">₵{inventoryScreen.viewingGoodsIssue.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    </div>
+                    <Badge color={inventoryScreen.viewingGoodsIssue.status === 'issued' ? 'success' : inventoryScreen.viewingGoodsIssue.status === 'void' || inventoryScreen.viewingGoodsIssue.status === 'cancelled' ? 'danger' : 'default'} variant="flat">
+                      {inventoryScreen.viewingGoodsIssue.status.replace(/-/g, ' ')}
+                    </Badge>
+                  </div>
+                  <div className="grid sm:grid-cols-3 gap-4 text-sm">
                     <div>
                       <div className="text-xs text-gray-500 mb-1">Department</div>
                       <div className="font-semibold">{inventoryScreen.viewingGoodsIssue.department}</div>
                     </div>
                     <div>
-                      <div className="text-xs text-gray-500 mb-1">Issued To</div>
+                      <div className="text-xs text-gray-500 mb-1">Issued to</div>
                       <div className="font-semibold">{inventoryScreen.viewingGoodsIssue.issuedTo}</div>
                     </div>
                     <div>
                       <div className="text-xs text-gray-500 mb-1">Date</div>
                       <div>{inventoryScreen.viewingGoodsIssue.issueDate instanceof Date ? inventoryScreen.viewingGoodsIssue.issueDate.toLocaleDateString() : new Date(inventoryScreen.viewingGoodsIssue.issueDate).toLocaleDateString()}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-500 mb-1">By</div>
-                      <div>{inventoryScreen.viewingGoodsIssue.issuedBy}</div>
+                      <div className="text-gray-600">{inventoryScreen.viewingGoodsIssue.issuedBy}</div>
                     </div>
                   </div>
-                  <Divider />
-                  <Table>
-                    <TableHeader>
-                      <TableColumn>Item</TableColumn>
-                      <TableColumn>Qty</TableColumn>
-                      <TableColumn className="text-right">Value</TableColumn>
-                      <TableColumn>Reason</TableColumn>
-                    </TableHeader>
-                    <TableBody>
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="border border-gray-300 px-2 py-1.5 text-left">Item code</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-left">Item</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-center">Qty</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-right">Value</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-left">Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody>
                       {inventoryScreen.viewingGoodsIssue.items.map((item) => (
-                        <TableRow key={item.id}>
-                          <TableCell>
-                            <div className="font-mono text-sm">{item.itemCode}</div>
-                            <div className="text-sm text-gray-500">{item.itemName}</div>
-                          </TableCell>
-                          <TableCell>{item.quantity}</TableCell>
-                          <TableCell className="text-right font-semibold">
-                            ₵{item.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </TableCell>
-                          <TableCell className="text-sm text-slate-600">{item.reason || '—'}</TableCell>
-                        </TableRow>
+                        <tr key={item.id}>
+                          <td className="border border-gray-300 px-2 py-1.5 font-mono">{item.itemCode}</td>
+                          <td className="border border-gray-300 px-2 py-1.5">{item.itemName}</td>
+                          <td className="border border-gray-300 px-2 py-1.5 text-center tabular-nums">{item.quantity}</td>
+                          <td className="border border-gray-300 px-2 py-1.5 text-right tabular-nums">₵{item.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="border border-gray-300 px-2 py-1.5">{item.reason || '—'}</td>
+                        </tr>
                       ))}
-                    </TableBody>
-                  </Table>
-                  <div className="flex justify-between bg-gray-50 p-3 rounded-lg">
-                    <span className="font-semibold">Total</span>
-                    <span className="font-semibold">
-                      ₵{inventoryScreen.viewingGoodsIssue.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
+                    </tbody>
+                  </table>
+                  <table className="w-full sm:w-72 ml-auto text-sm border-collapse">
+                    <tbody>
+                      <tr>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right font-semibold">Total</td>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right font-semibold tabular-nums">₵{inventoryScreen.viewingGoodsIssue.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      </tr>
+                    </tbody>
+                  </table>
                   {inventoryScreen.viewingGoodsIssue.notes && (
-                    <p className="text-sm text-slate-600">{inventoryScreen.viewingGoodsIssue.notes}</p>
+                    <>
+                      <Divider />
+                      <div>
+                        <div className="text-xs text-gray-500 mb-1">Notes</div>
+                        <div className="text-sm">{inventoryScreen.viewingGoodsIssue.notes}</div>
+                      </div>
+                    </>
                   )}
                 </div>
               )}
@@ -205,22 +217,7 @@ export function GoodsIssueModals() {
               <div />
               <div className="flex flex-wrap justify-end gap-2">
               {inventoryScreen.viewingGoodsIssue && (
-                <Button variant="flat" onPress={() => {
-                  const issue = inventoryScreen.viewingGoodsIssue;
-                  const money = (n: number) => `₵${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                  inventoryScreen.printInventorySheet({
-                    title: 'Goods Issue',
-                    subtitle: issue.issueNumber,
-                    fields: [
-                      ['Department', issue.department || '—'],
-                      ['Issued to', issue.issuedTo || '—'],
-                      ['Status', issue.status],
-                      ['Total', money(issue.totalValue)],
-                    ],
-                    columns: ['Item', 'Qty', 'Amount'],
-                    rows: issue.items.map((item) => [item.itemName, item.quantity, money(item.totalValue)]),
-                  });
-                }}>
+                <Button variant="flat" onPress={() => inventoryScreen.printGoodsIssue(inventoryScreen.viewingGoodsIssue)}>
                   Print
                 </Button>
               )}

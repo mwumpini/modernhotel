@@ -95,6 +95,7 @@ function toStoreEmployee(row: any) {
     // Long-tail nested fields
     taxWithholding: details.taxWithholding,
     leaveEntitlements: details.leaveEntitlements,
+    leaveBand: details.leaveBand === 'management' || details.leaveBand === 'staff' ? details.leaveBand : undefined,
     governmentIds: details.governmentIds,
     bankAccount: details.bankAccount || { accountNumber: '', bankName: '', branchCode: '' },
     emergencyContact: details.emergencyContact || { name: '', relationship: '', phone: '' },
@@ -110,14 +111,14 @@ function toStoreEmployee(row: any) {
 
 function splitEmployeeData(e: Partial<Record<string, any>>) {
   const {
-    taxWithholding, leaveEntitlements, governmentIds, bankAccount, emergencyContact,
+    taxWithholding, leaveEntitlements, leaveBand, governmentIds, bankAccount, emergencyContact,
     nextOfKin, address, documents, qualifications, acknowledgments, probation, healthCertificateExpiryDate,
     tier2Number, tier3Number,
     ...columns
   } = e
 
   const details = stripUndefined({
-    taxWithholding, leaveEntitlements, governmentIds, bankAccount, emergencyContact,
+    taxWithholding, leaveEntitlements, leaveBand, governmentIds, bankAccount, emergencyContact,
     nextOfKin, address, documents, qualifications, acknowledgments, probation, healthCertificateExpiryDate,
     tier2Number, tier3Number,
   })

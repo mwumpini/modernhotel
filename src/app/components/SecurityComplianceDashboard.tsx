@@ -29,6 +29,10 @@ import { DetailGrid, DetailField } from './frontoffice/detailView';
 import { deskBookTabsClassNames, deskBookTabPanelClassName } from './dashboard/deskTabsUi';
 import SecurityReportsAnalysis from './SecurityReportsAnalysis';
 import { useDashboardPeriod, isInPeriod } from '../lib/dashboard/useDashboardPeriod';
+import { DateFilterPills, matchesDateFilter, useDateFilter, type DateMode } from './fb/DateFilterPills';
+import { buildOrgProfile } from '../lib/print/buildOrgProfile';
+import { openHtmlPrintWindow } from '../lib/print/engine';
+import { securityListPrintHtml } from '../lib/security/securityListPrint';
 
 // Hideable summary cards for the whole Security module — the Recent
 // Activities/Notices cards that live outside this component, in
@@ -75,6 +79,22 @@ export default function SecurityComplianceDashboard({
   const canManageRoutes = settings.hasPermission('security.manage-routes') || canManagePatrols;
 
   const deskPeriod = useDashboardPeriod('dashboard.period.security', 'today');
+  const incidentDates = useDateFilter();
+  const visitorDates = useDateFilter();
+  const patrolDates = useDateFilter();
+  const shiftDates = useDateFilter();
+  const printOrg = buildOrgProfile(settings);
+
+  const printList = (title: string, dates: { mode: DateMode; single: string; from: string; to: string }, columns: string[], rows: string[][]) => {
+    const rangeLabel = dates.mode === 'today'
+      ? 'Today'
+      : dates.mode === 'specific'
+        ? (dates.single || 'Specific date')
+        : dates.mode === 'range'
+          ? `${dates.from || '…'} to ${dates.to || '…'}`
+          : 'All dates';
+    openHtmlPrintWindow(securityListPrintHtml({ org: printOrg, title, rangeLabel, columns, rows }));
+  };
 
   const [selectedTab, setSelectedTab] = useState(initialTab || 'patrols');
 
@@ -149,7 +169,7 @@ export default function SecurityComplianceDashboard({
 
   // Sort state for each table — one key/dir pair per table, matching the
   // click-header-to-sort behavior Front Desk's stay worksheet uses.
-  type IncidentSortKey = 'incidentNumber' | 'type' | 'severity' | 'location' | 'status' | 'assignedTo';
+  type IncidentSortKey = 'incidentNumber' | 'reportedAt' | 'type' | 'severity' | 'location' | 'status' | 'assignedTo';
   const [incidentSort, setIncidentSort] = useState<{ key: IncidentSortKey; dir: 'asc' | 'desc' }>({ key: 'incidentNumber', dir: 'desc' });
   type VisitorSortKey = 'visitorNumber' | 'name' | 'purpose' | 'hostName' | 'checkInTime' | 'status';
   const [visitorSort, setVisitorSort] = useState<{ key: VisitorSortKey; dir: 'asc' | 'desc' }>({ key: 'checkInTime', dir: 'desc' });
@@ -163,13 +183,23 @@ export default function SecurityComplianceDashboard({
   const [checkpointSort, setCheckpointSort] = useState<{ key: NamedRefSortKey; dir: 'asc' | 'desc' }>({ key: 'name', dir: 'asc' });
   const [routeSort, setRouteSort] = useState<{ key: NamedRefSortKey; dir: 'asc' | 'desc' }>({ key: 'name', dir: 'asc' });
 
-  const incidentColumns = useResizableColumns<IncidentSortKey>({ incidentNumber: 132, type: 140, severity: 108, location: 140, status: 120, assignedTo: 132 });
+  const incidentColumns = useResizableColumns<IncidentSortKey>({ incidentNumber: 120, reportedAt: 148, type: 132, severity: 100, location: 128, status: 112, assignedTo: 128 });
+  const [incidentSearch, setIncidentSearch] = useState('');
+  const [visitorSearch, setVisitorSearch] = useState('');
+  const [patrolSearch, setPatrolSearch] = useState('');
+  const [shiftSearch, setShiftSearch] = useState('');
   const visitorColumns = useResizableColumns<VisitorSortKey>({ visitorNumber: 120, name: 176, purpose: 176, hostName: 132, checkInTime: 140, status: 120 });
   const patrolColumns = useResizableColumns<PatrolSortKey>({ patrolNumber: 120, officerName: 140, route: 160, startTime: 160, checkpoints: 108, status: 108 });
   const shiftColumns = useResizableColumns<ShiftSortKey>({ personName: 160, checkInTime: 160, checkOutTime: 160, duration: 108, status: 108 });
   const personnelColumns = useResizableColumns<PersonnelSortKey>({ name: 160, agency: 140, role: 140, phone: 132, status: 108 });
   const checkpointColumns = useResizableColumns<NamedRefSortKey>({ name: 240, status: 120 });
   const routeColumns = useResizableColumns<NamedRefSortKey>({ name: 240, status: 120 });
+
+  function matchesSearch(query: string, parts: Array<string | number | undefined | null>) {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return true;
+    return parts.some((part) => String(part ?? '').toLowerCase().includes(needle));
+  }
 
   function sortRows<T, K extends string>(rows: T[], sort: { key: K; dir: 'asc' | 'desc' }, getValue: (row: T, key: K) => string | number): T[] {
     const sorted = [...rows].sort((a, b) => {
@@ -484,18 +514,64 @@ export default function SecurityComplianceDashboard({
     setIsPatrolModalOpen(false);
   };
 
-  const renderIncidentManagement = () => (
+  const renderIncidentManagement = () => {
+    const shownIncidents = sortRows(
+      incidents.filter((row) =>
+        matchesDateFilter(row.reportedAt, incidentDates.mode, incidentDates.single, incidentDates.from, incidentDates.to) &&
+        matchesSearch(incidentSearch, [row.incidentNumber, row.type.replace(/_/g, ' '), row.severity, row.location, row.status, row.assignedTo, row.reportedBy, row.description, row.reportedAt.toLocaleString()]),
+      ),
+      incidentSort,
+      (row, key) => {
+        if (key === 'reportedAt') return row.reportedAt.getTime();
+        if (key === 'assignedTo') return row.assignedTo || 'Unassigned';
+        return (row[key] as string) ?? '';
+      },
+    );
+    return (
     <div className="space-y-3">
       <Card className="shadow-sm border border-slate-200">
         <CardHeader className="px-3 py-2">
           <div className="flex flex-wrap items-center justify-between w-full gap-2">
             <h3 className="min-w-0 text-sm font-semibold text-gray-800">🚨 Security Incident Management</h3>
-            <Button size="sm" color="primary" className="bg-red-500 text-white shrink-0" variant="flat" onClick={() => { setViewingIncident(null); setIsIncidentModalOpen(true); }}>
-              🚨 Report Incident
-            </Button>
+            <div className="flex shrink-0 gap-2">
+              <Button size="sm" variant="flat" onClick={() => printList('Security incidents', incidentDates, ['Incident #', 'Type', 'Severity', 'Location', 'Status', 'Assigned to', 'Reported'], shownIncidents.map((incident) => [
+                incident.incidentNumber,
+                incident.type.replace(/_/g, ' '),
+                incident.severity,
+                incident.location,
+                incident.status,
+                incident.assignedTo || 'Unassigned',
+                incident.reportedAt.toLocaleString(),
+              ]))}>
+                Print
+              </Button>
+              <Button size="sm" color="primary" className="bg-red-500 text-white shrink-0" variant="flat" onClick={() => { setViewingIncident(null); setIsIncidentModalOpen(true); }}>
+                🚨 Report Incident
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardBody className="px-3 pt-0 pb-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <Input
+              size="sm"
+              className="w-full max-w-xs"
+              placeholder="Search incidents..."
+              value={incidentSearch}
+              onChange={(e) => setIncidentSearch(e.target.value)}
+              startContent={<span className="text-gray-400">🔍</span>}
+            />
+            <DateFilterPills
+              mode={incidentDates.mode}
+              onMode={incidentDates.setMode}
+              single={incidentDates.single}
+              onSingle={incidentDates.setSingle}
+              from={incidentDates.from}
+              onFrom={incidentDates.setFrom}
+              to={incidentDates.to}
+              onTo={incidentDates.setTo}
+            />
+          </div>
           <div className="max-h-[560px] overflow-y-auto" ref={incidentColumns.frameRef} style={incidentColumns.frameStyle}>
             <Table
               aria-label="Security incidents table"
@@ -508,23 +584,29 @@ export default function SecurityComplianceDashboard({
               }}
             >
               <TableHeader>
-                {(['incidentNumber', 'type', 'severity', 'location', 'status', 'assignedTo'] as IncidentSortKey[]).map((key) => (
+                {(['incidentNumber', 'reportedAt', 'type', 'severity', 'location', 'status', 'assignedTo'] as IncidentSortKey[]).map((key) => (
                   <TableColumn key={key} className="relative" style={incidentColumns.style(key)}>
                     <SortLabel
                       active={incidentSort.key === key}
                       dir={incidentSort.dir}
                       onPress={() => setIncidentSort((s) => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }))}
                     >
-                      {{ incidentNumber: 'Incident #', type: 'Type', severity: 'Severity', location: 'Location', status: 'Status', assignedTo: 'Assigned To' }[key]}
+                      {{ incidentNumber: 'Incident #', reportedAt: 'Reported', type: 'Type', severity: 'Severity', location: 'Location', status: 'Status', assignedTo: 'Assigned To' }[key]}
                     </SortLabel>
                     {incidentColumns.sizer(key, key)}
                   </TableColumn>
                 ))}
               </TableHeader>
-              <TableBody emptyContent="No incidents reported yet.">
-                {sortRows(incidents, incidentSort, (row, key) => (key === 'assignedTo' ? row.assignedTo || 'Unassigned' : (row[key] as string) ?? '')).map((incident) => (
+              <TableBody emptyContent={incidentSearch.trim() || incidentDates.mode !== 'all' ? 'No incidents match this search.' : 'No incidents reported yet.'}>
+                {shownIncidents.map((incident) => (
                   <TableRow key={incident.id} className={rowClassNames(viewingIncident?.id === incident.id)} onClick={() => setViewingIncident(incident)}>
                     <TableCell className="font-mono font-semibold">{incident.incidentNumber}</TableCell>
+                    <TableCell>
+                      <div className="text-sm">
+                        <div>{incident.reportedAt.toLocaleDateString()}</div>
+                        <div className="text-gray-500">{incident.reportedAt.toLocaleTimeString()}</div>
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <Badge color={incident.type === 'theft' ? 'danger' : incident.type === 'fire_alarm' ? 'warning' : incident.type === 'medical_emergency' ? 'primary' : 'default'} size="sm">
                         {incident.type.replace('_', ' ')}
@@ -550,20 +632,66 @@ export default function SecurityComplianceDashboard({
         </CardBody>
       </Card>
     </div>
-  );
+    );
+  };
 
-  const renderVisitorManagement = () => (
+  const renderVisitorManagement = () => {
+    const shownVisitors = sortRows(
+      visitors.filter((row) =>
+        matchesDateFilter(row.checkInTime, visitorDates.mode, visitorDates.single, visitorDates.from, visitorDates.to) &&
+        matchesSearch(visitorSearch, [row.visitorNumber, row.name, row.phone, row.purpose, row.hostName, row.hostRoom, row.status.replace(/_/g, ' '), row.vehicleNumber, row.checkInTime.toLocaleString()]),
+      ),
+      visitorSort,
+      (row, key) => {
+        if (key === 'checkInTime') return row.checkInTime.getTime();
+        if (key === 'hostName') return row.hostName || '';
+        return (row[key] as string) ?? '';
+      },
+    );
+    return (
     <div className="space-y-3">
       <Card className="shadow-sm border border-slate-200">
         <CardHeader className="px-3 py-2">
           <div className="flex flex-wrap items-center justify-between w-full gap-2">
             <h3 className="min-w-0 text-sm font-semibold text-gray-800">👥 Visitor Management</h3>
-            <Button size="sm" color="primary" className="bg-blue-500 text-white shrink-0" variant="flat" onClick={() => { setViewingVisitor(null); setIsVisitorModalOpen(true); }}>
-              👤 Register Visitor
-            </Button>
+            <div className="flex shrink-0 gap-2">
+              <Button size="sm" variant="flat" onClick={() => printList('Visitor log', visitorDates, ['Visitor #', 'Name', 'Purpose', 'Host', 'Check in', 'Status'], shownVisitors.map((visitor) => [
+                visitor.visitorNumber,
+                visitor.name,
+                visitor.purpose,
+                visitor.hostName || '—',
+                visitor.checkInTime.toLocaleString(),
+                visitor.status.replace(/_/g, ' '),
+              ]))}>
+                Print
+              </Button>
+              <Button size="sm" color="primary" className="bg-blue-500 text-white shrink-0" variant="flat" onClick={() => { setViewingVisitor(null); setIsVisitorModalOpen(true); }}>
+                👤 Register Visitor
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardBody className="px-3 pt-0 pb-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <Input
+              size="sm"
+              className="w-full max-w-xs"
+              placeholder="Search visitors..."
+              value={visitorSearch}
+              onChange={(e) => setVisitorSearch(e.target.value)}
+              startContent={<span className="text-gray-400">🔍</span>}
+            />
+            <DateFilterPills
+              mode={visitorDates.mode}
+              onMode={visitorDates.setMode}
+              single={visitorDates.single}
+              onSingle={visitorDates.setSingle}
+              from={visitorDates.from}
+              onFrom={visitorDates.setFrom}
+              to={visitorDates.to}
+              onTo={visitorDates.setTo}
+            />
+          </div>
           <div className="max-h-[560px] overflow-y-auto" ref={visitorColumns.frameRef} style={visitorColumns.frameStyle}>
             <Table
               aria-label="Visitors table"
@@ -589,12 +717,8 @@ export default function SecurityComplianceDashboard({
                   </TableColumn>
                 ))}
               </TableHeader>
-              <TableBody emptyContent="No visitors registered yet.">
-                {sortRows(visitors, visitorSort, (row, key) => {
-                  if (key === 'checkInTime') return row.checkInTime.getTime();
-                  if (key === 'hostName') return row.hostName || '';
-                  return (row[key] as string) ?? '';
-                }).map((visitor) => (
+              <TableBody emptyContent={visitorSearch.trim() || visitorDates.mode !== 'all' ? 'No visitors match this search.' : 'No visitors registered yet.'}>
+                {shownVisitors.map((visitor) => (
                   <TableRow key={visitor.id} className={rowClassNames(viewingVisitor?.id === visitor.id)} onClick={() => setViewingVisitor(visitor)}>
                     <TableCell className="font-mono font-semibold">{visitor.visitorNumber}</TableCell>
                     <TableCell>
@@ -624,9 +748,22 @@ export default function SecurityComplianceDashboard({
         </CardBody>
       </Card>
     </div>
-  );
+    );
+  };
 
   const renderPatrolManagement = () => {
+    const shownPatrols = sortRows(
+      patrols.filter((row) =>
+        matchesDateFilter(row.startTime, patrolDates.mode, patrolDates.single, patrolDates.from, patrolDates.to) &&
+        matchesSearch(patrolSearch, [row.patrolNumber, row.officerName, row.route, row.status, row.notes, row.startTime.toLocaleString()]),
+      ),
+      patrolSort,
+      (row, key) => {
+        if (key === 'startTime') return row.startTime.getTime();
+        if (key === 'checkpoints') return row.checkpoints.filter((c) => c.status !== 'pending').length;
+        return (row[key] as string) ?? '';
+      },
+    );
     const periodPatrols = patrols.filter((p) =>
       isInPeriod(p.startTime, deskPeriod.period, deskPeriod.todayISO),
     );
@@ -671,14 +808,42 @@ export default function SecurityComplianceDashboard({
         <CardHeader className="px-3 py-2">
           <div className="flex flex-wrap items-center justify-between w-full gap-2">
             <h3 className="min-w-0 text-sm font-semibold text-gray-800">🚶 Patrol Log</h3>
-            {canManagePatrols && (
-              <Button size="sm" color="primary" className="bg-ghana-green text-white shrink-0" variant="flat" onClick={openPatrolModal}>
-                🚶 Start Patrol
+            <div className="flex shrink-0 gap-2">
+              <Button size="sm" variant="flat" onClick={() => printList('Patrol log', patrolDates, ['Patrol #', 'Officer', 'Route', 'Started', 'Checkpoints', 'Status'], shownPatrols.map((patrol) => {
+                const logged = patrol.checkpoints.filter((c) => c.status !== 'pending').length;
+                return [patrol.patrolNumber, patrol.officerName, patrol.route, patrol.startTime.toLocaleString(), `${logged}/${patrol.checkpoints.length}`, patrol.status];
+              }))}>
+                Print
               </Button>
-            )}
+              {canManagePatrols && (
+                <Button size="sm" color="primary" className="bg-ghana-green text-white shrink-0" variant="flat" onClick={openPatrolModal}>
+                  🚶 Start Patrol
+                </Button>
+              )}
+            </div>
           </div>
         </CardHeader>
         <CardBody className="px-3 pt-0 pb-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <Input
+              size="sm"
+              className="w-full max-w-xs"
+              placeholder="Search patrols..."
+              value={patrolSearch}
+              onChange={(e) => setPatrolSearch(e.target.value)}
+              startContent={<span className="text-gray-400">🔍</span>}
+            />
+            <DateFilterPills
+              mode={patrolDates.mode}
+              onMode={patrolDates.setMode}
+              single={patrolDates.single}
+              onSingle={patrolDates.setSingle}
+              from={patrolDates.from}
+              onFrom={patrolDates.setFrom}
+              to={patrolDates.to}
+              onTo={patrolDates.setTo}
+            />
+          </div>
           <div className="max-h-[560px] overflow-y-auto" ref={patrolColumns.frameRef} style={patrolColumns.frameStyle}>
             <Table
               aria-label="Patrol log table"
@@ -704,12 +869,8 @@ export default function SecurityComplianceDashboard({
                   </TableColumn>
                 ))}
               </TableHeader>
-              <TableBody emptyContent="No patrols logged yet.">
-                {sortRows(patrols, patrolSort, (row, key) => {
-                  if (key === 'startTime') return row.startTime.getTime();
-                  if (key === 'checkpoints') return row.checkpoints.filter((c) => c.status !== 'pending').length;
-                  return (row[key] as string) ?? '';
-                }).map((patrol) => {
+              <TableBody emptyContent={patrolSearch.trim() || patrolDates.mode !== 'all' ? 'No patrols match this search.' : 'No patrols logged yet.'}>
+                {shownPatrols.map((patrol) => {
                   const logged = patrol.checkpoints.filter((c) => c.status !== 'pending').length;
                   return (
                     <TableRow key={patrol.id} className={rowClassNames(viewingPatrol?.id === patrol.id)} onClick={() => setViewingPatrol(patrol)}>
@@ -736,6 +897,19 @@ export default function SecurityComplianceDashboard({
   };
 
   const renderShiftLog = () => {
+    const shownShifts = sortRows(
+      shifts.filter((row) =>
+        matchesDateFilter(row.checkInTime, shiftDates.mode, shiftDates.single, shiftDates.from, shiftDates.to) &&
+        matchesSearch(shiftSearch, [row.personName, row.status === 'on_duty' ? 'on duty' : 'completed', row.notes, row.checkInTime.toLocaleString()]),
+      ),
+      shiftSort,
+      (row, key) => {
+        if (key === 'checkInTime') return row.checkInTime.getTime();
+        if (key === 'checkOutTime') return row.checkOutTime ? row.checkOutTime.getTime() : Number.MAX_SAFE_INTEGER;
+        if (key === 'duration') return (row.checkOutTime ?? new Date()).getTime() - row.checkInTime.getTime();
+        return (row[key] as string) ?? '';
+      },
+    );
     const checkedInPeriod = shifts.filter((s) =>
       isInPeriod(s.checkInTime, deskPeriod.period, deskPeriod.todayISO),
     ).length;
@@ -766,14 +940,45 @@ export default function SecurityComplianceDashboard({
               <h3 className="text-sm font-semibold text-gray-800">🕒 Shift / Attendance Log</h3>
               <p className="text-xs text-gray-500 truncate">Who's on site now, and when everyone came and left.</p>
             </div>
-            {canManageShifts && (
-              <Button size="sm" color="primary" className="bg-ghana-green text-white shrink-0" variant="flat" onClick={() => setIsCheckInModalOpen(true)}>
-                + Check In
+            <div className="flex shrink-0 gap-2">
+              <Button size="sm" variant="flat" onClick={() => printList('Shift / attendance log', shiftDates, ['Name', 'Checked in', 'Checked out', 'Duration', 'Status'], shownShifts.map((s) => [
+                s.personName,
+                s.checkInTime.toLocaleString(),
+                s.checkOutTime ? s.checkOutTime.toLocaleString() : '—',
+                formatShiftDuration(s.checkInTime, s.checkOutTime),
+                s.status === 'on_duty' ? 'on duty' : 'completed',
+              ]))}>
+                Print
               </Button>
-            )}
+              {canManageShifts && (
+                <Button size="sm" color="primary" className="bg-ghana-green text-white shrink-0" variant="flat" onClick={() => setIsCheckInModalOpen(true)}>
+                  + Check In
+                </Button>
+              )}
+            </div>
           </div>
         </CardHeader>
         <CardBody className="px-3 pt-0 pb-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <Input
+              size="sm"
+              className="w-full max-w-xs"
+              placeholder="Search shifts..."
+              value={shiftSearch}
+              onChange={(e) => setShiftSearch(e.target.value)}
+              startContent={<span className="text-gray-400">🔍</span>}
+            />
+            <DateFilterPills
+              mode={shiftDates.mode}
+              onMode={shiftDates.setMode}
+              single={shiftDates.single}
+              onSingle={shiftDates.setSingle}
+              from={shiftDates.from}
+              onFrom={shiftDates.setFrom}
+              to={shiftDates.to}
+              onTo={shiftDates.setTo}
+            />
+          </div>
           <div ref={shiftColumns.frameRef} style={shiftColumns.frameStyle}>
           <Table
             aria-label="Shift log table"
@@ -799,13 +1004,8 @@ export default function SecurityComplianceDashboard({
                 </TableColumn>
               ))}
             </TableHeader>
-            <TableBody emptyContent="No shifts logged yet.">
-              {sortRows(shifts, shiftSort, (row, key) => {
-                if (key === 'checkInTime') return row.checkInTime.getTime();
-                if (key === 'checkOutTime') return row.checkOutTime ? row.checkOutTime.getTime() : Number.MAX_SAFE_INTEGER;
-                if (key === 'duration') return (row.checkOutTime ?? new Date()).getTime() - row.checkInTime.getTime();
-                return (row[key] as string) ?? '';
-              }).map((s) => (
+            <TableBody emptyContent={shiftSearch.trim() || shiftDates.mode !== 'all' ? 'No shifts match this search.' : 'No shifts logged yet.'}>
+              {shownShifts.map((s) => (
                 <TableRow key={s.id} className={rowClassNames(viewingShift?.id === s.id)} onClick={() => setViewingShift(s)}>
                   <TableCell className="font-semibold">{s.personName}</TableCell>
                   <TableCell>{s.checkInTime.toLocaleString()}</TableCell>

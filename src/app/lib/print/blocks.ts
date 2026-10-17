@@ -56,6 +56,8 @@ export type BlockType =
   | 'noda-bill'
   // Full-page boxed payment voucher. The renderer prints the paper itself.
   | 'ledger-voucher'
+  // Full-page workshop venue bill. The renderer prints the paper itself.
+  | 'workshop-bill'
   // Structural — holds other blocks (including other containers, for arbitrary
   // nesting depth) laid out as a row or column, independent of the top-level
   // "Share a row" pairing. See BlockConfig.children/direction/gap.

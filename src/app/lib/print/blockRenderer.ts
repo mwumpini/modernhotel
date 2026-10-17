@@ -7,6 +7,7 @@ import { computeTotalsBreakdown } from './taxBreakdown';
 import { renderRetailSlipDocument } from './retailSlip';
 import { renderNodaBillDocument } from './nodaBill';
 import { renderLedgerVoucherDocument } from './ledgerVoucher';
+import { renderWorkshopBillDocument } from './workshopBill';
 import { formatHotelDate } from '../settings/hotelDates';
 
 function spoken(amount: number): string {
@@ -123,9 +124,11 @@ function styleBlock(style: TemplateStyle, hotelLogoSize?: TemplateStyle['logoSiz
     .footer { margin-top:16px; font-size:0.85em; color:var(--muted); }
     .badge { padding:2px 6px; border:var(--bw) solid var(--border); border-radius:${style.corners === 'square' ? '0' : '4px'}; font-size:0.85em; }
     .watermark { position:fixed; inset:0; pointer-events:none; opacity:.05; font-size:96px; font-weight:800; display:flex; align-items:center; justify-content:center; color:var(--brand); }
-    .sign-row { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; flex-direction:${narrow ? 'column' : 'row'}; gap:${narrow ? '14px' : '32px'}; width:100%; margin-top:12px; }
-    .sign-slot { flex:${narrow ? '1 1 auto' : '1 1 140px'}; max-width:${narrow ? 'none' : '240px'}; ${narrow ? 'width:100%;' : ''} }
-    .sign-line { border-bottom:1px solid var(--border); height:28px; }
+    .sign-row { display:flex; justify-content:space-between; align-items:stretch; flex-wrap:wrap; flex-direction:${narrow ? 'column' : 'row'}; gap:${narrow ? '14px' : '48px'}; width:100%; margin-top:12px; }
+    .sign-slot { flex:1 1 0; min-width:0; ${narrow ? 'width:100%;' : ''} }
+    .sign-mark { height:56px; display:flex; align-items:flex-end; }
+    .sign-mark img { height:52px; width:auto; max-width:100%; object-fit:contain; object-position:left bottom; }
+    .sign-line { border-bottom:1px solid var(--border); height:0; }
     .custom-text { margin:12px 0; }
     .avoid-break { page-break-inside:avoid; break-inside:avoid; }
     @page { size: ${narrow ? '80mm auto' : 'A4'}; margin: ${narrow ? '0' : '12mm'}; }
@@ -364,7 +367,7 @@ function renderEmployeeDetails(block: BlockConfig, data: PrintData): string {
   const left: Array<[string, string]> = [
     ['Date of Joining', e.dateOfJoining ? formatHotelDate(e.dateOfJoining) : ''],
     ['Pay Period', e.payPeriod || ''],
-    ['Worked Days', e.workedDays != null ? String(e.workedDays) : ''],
+    ['Worked Days', e.workedDays == null ? '' : (e.leaveDays && e.payableDays ? `${e.workedDays} of ${e.payableDays}` : String(e.workedDays))],
   ];
   const right: Array<[string, string]> = [
     ['Employee Name', e.name || ''],
@@ -746,11 +749,11 @@ function partySignatureEntries(block: BlockConfig, data: PrintData): Array<{ lab
   return [customer, attendant, user];
 }
 
-function signatureEntries(block: BlockConfig, data: PrintData): Array<{ label: string; name?: string; role?: string; signedDate?: string }> {
+function signatureEntries(block: BlockConfig, data: PrintData): Array<{ label: string; name?: string; role?: string; signedDate?: string; imageUrl?: string }> {
   const parties = partySignatureEntries(block, data);
   if (parties) return parties;
   if (data.signatures && data.signatures.length) {
-    return data.signatures.map(s => ({ label: s.label, name: s.name, role: s.role, signedDate: s.signedDate }));
+    return data.signatures.map(s => ({ label: s.label, name: s.name, role: s.role, signedDate: s.signedDate, imageUrl: s.imageUrl }));
   }
   if (block.signatures && block.signatures.length) return block.signatures;
   return [{ label: 'Signature' }, { label: 'Signature' }];
@@ -761,6 +764,7 @@ function renderSignatureBlock(block: BlockConfig, data: PrintData): string {
   return `<div class="sign-row">${entries.map((e, i) => `
       <div class="sign-slot">
         <div>${e.label}:</div>
+        <div class="sign-mark">${e.imageUrl ? `<img src="${e.imageUrl}" alt="" />` : ''}</div>
         <div class="sign-line"></div>
         ${e.name ? `<div style="margin-top:2px;">${e.name}</div>` : ''}
         ${e.role ? `<div style="font-size:12px; color:#555;">${e.role}</div>` : ''}
@@ -1061,6 +1065,10 @@ export function renderBlockTemplate(template: BlockTemplate, data: PrintData): s
     return renderLedgerVoucherDocument(data);
   }
   const currency = data.currency || '₵';
+  if (template.blocks.some(b => b.visible && b.type === 'workshop-bill')) {
+    const sheet = template.blocks.find(b => b.visible && b.type === 'workshop-bill');
+    return renderWorkshopBillDocument(data, sheet?.heading || 'INVOICE');
+  }
   const style = template.style;
   const visible = template.blocks.filter(b => b.visible).sort((a, b) => a.order - b.order);
   // 'logo' joins the legacy header row only when a legacy company-info/doc-meta

@@ -3,7 +3,7 @@
 import React from 'react';
 import { Button, Card, CardBody, CardHeader, Input, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Pagination } from '@heroui/react';
 import { useEmployeeChangesStore, type EmployeeChange } from '@/app/lib/hr/employeeChangesStore';
-import { printDetailSheet } from '@/app/lib/print/simpleReport';
+import { downloadCsvRows, printDetailSheet, printSimpleReport } from '@/app/lib/print/simpleReport';
 import { SortLabel, unifiedTableClassNames, rowClassNames, useResizableColumns } from '../frontoffice/columnResize';
 import { DetailGrid, DetailField } from '../frontoffice/detailView';
 import { useDeskPagination } from '../dashboard/deskTableUi';
@@ -93,6 +93,36 @@ export default function EmployeeChangesPanel() {
         <CardHeader className="justify-between">
           <div className="font-medium">Employee Changes</div>
           <div className="flex items-center gap-2">
+            <Button size="sm" variant="flat" onPress={() => printSimpleReport(
+              'Employee changes',
+              `Last ${days} days · ${recent.length} change${recent.length === 1 ? '' : 's'}`,
+              ['Date', 'Employee', 'Type', 'Field', 'From', 'To'],
+              recent.map((c) => [
+                new Date(c.timestamp).toLocaleString(),
+                c.employeeName || c.employeeId,
+                (c.type || '').replace(/_/g, ' '),
+                c.field || '—',
+                String(c.previousValue ?? '—'),
+                String(c.newValue ?? '—'),
+              ]),
+              { landscape: true },
+            )}>
+              PDF
+            </Button>
+            <Button size="sm" variant="flat" onPress={() => downloadCsvRows(
+              'employee_changes',
+              ['Date', 'Employee', 'Type', 'Field', 'From', 'To'],
+              recent.map((c) => [
+                new Date(c.timestamp).toLocaleString(),
+                c.employeeName || c.employeeId,
+                (c.type || '').replace(/_/g, ' '),
+                c.field || '—',
+                String(c.previousValue ?? '—'),
+                String(c.newValue ?? '—'),
+              ]),
+            )}>
+              Excel
+            </Button>
             <Input size="sm" placeholder="Filter by name" value={q} onChange={(e) => setQ(e.target.value)} variant="bordered" className="w-56" />
             <Select disallowEmptySelection size="sm" selectedKeys={[String(days)]} onSelectionChange={(k) => setDays(parseInt(Array.from(k)[0] as string, 10))} className="w-32" variant="bordered" aria-label="Period">
               <SelectItem key="7">7 days</SelectItem>

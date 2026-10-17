@@ -445,65 +445,72 @@ export function StockTransferViewModal() {
             <ModalBody>
               {inventoryScreen.viewingStockTransfer && (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="flex items-end justify-between gap-3">
                     <div>
-                      <div className="text-xs text-gray-500 mb-1">From Location</div>
+                      <div className="text-xs text-gray-500">Total</div>
+                      <div className="text-2xl font-semibold tabular-nums">₵{inventoryScreen.viewingStockTransfer.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    </div>
+                    <Badge color={inventoryScreen.viewingStockTransfer.status === 'delivered' ? 'success' : inventoryScreen.viewingStockTransfer.status === 'in-transit' ? 'warning' : inventoryScreen.viewingStockTransfer.status === 'cancelled' ? 'danger' : 'default'} variant="flat">
+                      {inventoryScreen.viewingStockTransfer.status.replace(/-/g, ' ')}
+                    </Badge>
+                  </div>
+                  <div className="grid sm:grid-cols-3 gap-4 text-sm">
+                    <div>
+                      <div className="text-xs text-gray-500 mb-1">From</div>
                       <div className="font-semibold">{inventoryScreen.viewingStockTransfer.fromLocation}</div>
                     </div>
                     <div>
-                      <div className="text-xs text-gray-500 mb-1">To Location</div>
+                      <div className="text-xs text-gray-500 mb-1">To</div>
                       <div className="font-semibold">{inventoryScreen.viewingStockTransfer.toLocation}</div>
                     </div>
                     <div>
-                      <div className="text-xs text-gray-500 mb-1">Transfer Date</div>
+                      <div className="text-xs text-gray-500 mb-1">Transfer date</div>
                       <div>{inventoryScreen.viewingStockTransfer.transferDate instanceof Date ? inventoryScreen.viewingStockTransfer.transferDate.toLocaleDateString() : new Date(inventoryScreen.viewingStockTransfer.transferDate).toLocaleDateString()}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-500 mb-1">Status</div>
-                      <Badge color={inventoryScreen.viewingStockTransfer.status === 'delivered' ? 'success' : inventoryScreen.viewingStockTransfer.status === 'in-transit' ? 'warning' : 'default'} variant="flat">
-                        {inventoryScreen.viewingStockTransfer.status}
-                      </Badge>
+                      <div className="text-gray-600 capitalize">{inventoryScreen.viewingStockTransfer.priority} priority</div>
                     </div>
                   </div>
 
-                  <Divider />
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="border border-gray-300 px-2 py-1.5 text-left">Item code</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-left">Item</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-center">Qty</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-right">Unit cost</th>
+                        <th className="border border-gray-300 px-2 py-1.5 text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {inventoryScreen.viewingStockTransfer.items.map((item) => (
+                        <tr key={item.id}>
+                          <td className="border border-gray-300 px-2 py-1.5 font-mono">{item.itemCode}</td>
+                          <td className="border border-gray-300 px-2 py-1.5">{item.itemName}</td>
+                          <td className="border border-gray-300 px-2 py-1.5 text-center tabular-nums">{item.quantity}</td>
+                          <td className="border border-gray-300 px-2 py-1.5 text-right tabular-nums">₵{item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="border border-gray-300 px-2 py-1.5 text-right tabular-nums">₵{item.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
 
-                  <div>
-                    <h4 className="font-semibold mb-2">Transfer Items</h4>
-                    <Table>
-                      <TableHeader>
-                        <TableColumn>Item Code</TableColumn>
-                        <TableColumn>Item Name</TableColumn>
-                        <TableColumn>Quantity</TableColumn>
-                        <TableColumn>Unit Cost</TableColumn>
-                        <TableColumn className="text-right">Total Value</TableColumn>
-                      </TableHeader>
-                      <TableBody>
-                        {inventoryScreen.viewingStockTransfer.items.map((item) => (
-                          <TableRow key={item.id}>
-                            <TableCell className="font-mono">{item.itemCode}</TableCell>
-                            <TableCell>{item.itemName}</TableCell>
-                            <TableCell>{item.quantity}</TableCell>
-                            <TableCell>₵{item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                            <TableCell className="text-right font-semibold">
-                              ₵{item.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
+                  <table className="w-full sm:w-72 ml-auto text-sm border-collapse">
+                    <tbody>
+                      <tr>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right font-semibold">Total</td>
+                        <td className="border border-gray-300 px-2 py-1.5 text-right font-semibold tabular-nums">₵{inventoryScreen.viewingStockTransfer.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      </tr>
+                    </tbody>
+                  </table>
 
-                  <Divider />
-
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <div className="flex justify-between">
-                      <span className="font-semibold">Total Value:</span>
-                      <span className="font-semibold">
-                        ₵{inventoryScreen.viewingStockTransfer.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                  </div>
+                  {inventoryScreen.viewingStockTransfer.notes && (
+                    <>
+                      <Divider />
+                      <div>
+                        <div className="text-xs text-gray-500 mb-1">Notes</div>
+                        <div className="text-sm">{inventoryScreen.viewingStockTransfer.notes}</div>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </ModalBody>
@@ -541,22 +548,7 @@ export function StockTransferViewModal() {
                 </Button>
               )}
               {inventoryScreen.viewingStockTransfer && (
-                <Button variant="flat" onPress={() => {
-                  const transfer = inventoryScreen.viewingStockTransfer;
-                  const money = (n: number) => `₵${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                  inventoryScreen.printInventorySheet({
-                    title: 'Stock Transfer',
-                    subtitle: transfer.transferNumber,
-                    fields: [
-                      ['From', transfer.fromLocation],
-                      ['To', transfer.toLocation],
-                      ['Status', transfer.status],
-                      ['Total', money(transfer.totalValue)],
-                    ],
-                    columns: ['Item', 'Qty', 'Amount'],
-                    rows: transfer.items.map((item) => [item.itemName, item.quantity, money(item.totalValue)]),
-                  });
-                }}>
+                <Button variant="flat" onPress={() => inventoryScreen.printStockTransfer(inventoryScreen.viewingStockTransfer)}>
                   Print
                 </Button>
               )}

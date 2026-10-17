@@ -603,15 +603,14 @@ function formalRegistrationCardBlocks(): BlockConfig[] {
  */
 function payslipGridBlocks(): BlockConfig[] {
   return [
-    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { fontSize: 'lg', bold: true } }),
-    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center' }),
-    block({ id: 'doc-title', type: 'doc-title', order: 2, align: 'center', spacing: 'small' }),
-    block({ id: 'employee-details', type: 'employee-details', order: 3, spacing: 'medium' }),
-    block({ id: 'payslip-earnings-table', type: 'payslip-earnings-table', order: 4, columnSpan: 'half', spacing: 'medium' }),
-    block({ id: 'payslip-deductions-table', type: 'payslip-deductions-table', order: 5, columnSpan: 'half', spacing: 'medium' }),
-    block({ id: 'payslip-summary', type: 'payslip-summary', order: 6, showAmountInWords: true, spacing: 'medium' }),
-    block({ id: 'signature-block', type: 'signature-block', order: 7, spacing: 'large', signatures: [{ label: 'Employer Signature' }, { label: 'Employee Signature' }] }),
-    block({ id: 'notes-text', type: 'notes-text', order: 8, align: 'center', style: { fontSize: 'sm' }, text: 'This is a system generated payslip.' }),
+    letterheadHeaderRow(0),
+    block({ id: 'doc-title', type: 'doc-title', order: 1, align: 'center', spacing: 'small' }),
+    block({ id: 'employee-details', type: 'employee-details', order: 2, spacing: 'medium' }),
+    block({ id: 'payslip-earnings-table', type: 'payslip-earnings-table', order: 3, columnSpan: 'half', spacing: 'medium' }),
+    block({ id: 'payslip-deductions-table', type: 'payslip-deductions-table', order: 4, columnSpan: 'half', spacing: 'medium' }),
+    block({ id: 'payslip-summary', type: 'payslip-summary', order: 5, showAmountInWords: true, spacing: 'medium' }),
+    block({ id: 'signature-block', type: 'signature-block', order: 6, spacing: 'large', signatures: [{ label: 'Employer Signature' }, { label: 'Employee Signature' }] }),
+    block({ id: 'notes-text', type: 'notes-text', order: 7, align: 'center', style: { fontSize: 'sm' }, text: 'This is a system generated payslip.' }),
   ];
 }
 
@@ -787,6 +786,10 @@ function paymentVoucherApprovalTail(order: number, opts?: { signatureDisplay?: '
     }),
     block({ id: 'notes-text', type: 'notes-text', order: order + 4 + extra.length }),
   ];
+}
+
+function workshopBlocks(boxLabel: string): BlockConfig[] {
+  return [block({ id: 'workshop-bill', type: 'workshop-bill', order: 0, heading: boxLabel })];
 }
 
 function paymentVoucherLedgerBlocks(): BlockConfig[] {
@@ -1456,6 +1459,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
   ],
   // Events & Conferences — Conference/Catering leg.
   'event-proforma': [
+    template('builtin-event-proforma-workshop', 'event-proforma', 'Workshop', workshopBlocks('INVOICE')),
     template('builtin-event-proforma-standard', 'event-proforma', 'Standard', standardBlocks('Client')),
     template('builtin-event-proforma-noda', 'event-proforma', 'Noda Quotation', nodaProformaBlocks(), CHECKOUT_BILL_STYLE),
     template('builtin-event-proforma-premium', 'event-proforma', 'Premium', premiumBlocks('Client', [
@@ -1477,6 +1481,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-event-proforma-bank-details', 'event-proforma', 'Bank details', withBankDetails(standardBlocks('Client'))),
   ],
   'event-invoice': [
+    template('builtin-event-invoice-workshop', 'event-invoice', 'Workshop', workshopBlocks('INVOICE')),
     template('builtin-event-invoice-standard', 'event-invoice', 'Standard', standardBlocks('Guest / Client')),
     template('builtin-event-invoice-premium', 'event-invoice', 'Premium', premiumBlocks('Guest / Client', [
       { label: 'Guest Signature' }, { label: 'Cashier Signature' },
@@ -1491,6 +1496,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-event-invoice-bank-details', 'event-invoice', 'Bank details', withBankDetails(standardBlocks('Guest / Client'))),
   ],
   'event-receipt': [
+    template('builtin-event-receipt-workshop', 'event-receipt', 'Workshop', workshopBlocks('RECEIPT')),
     template('builtin-event-receipt-standard', 'event-receipt', 'Standard', standardBlocks('Guest / Client')),
     template('builtin-event-receipt-noda', 'event-receipt', 'Noda Receipt', nodaReceiptBlocks(), CHECKOUT_BILL_STYLE),
     template('builtin-event-receipt-premium', 'event-receipt', 'Premium', premiumBlocks('Guest / Client', [
@@ -1502,6 +1508,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-event-receipt-bank-details', 'event-receipt', 'Bank details', withBankDetails(standardBlocks('Guest / Client'))),
   ],
   'event-contract': [
+    template('builtin-event-contract-workshop', 'event-contract', 'Workshop', workshopBlocks('CONTRACT')),
     template('builtin-event-contract-classic', 'event-contract', 'Classic', classicContractBlocks(), { fontFamily: 'serif' }),
     template('builtin-event-contract-letterhead', 'event-contract', 'Letterhead', letterheadContractBlocks(), { fontFamily: 'serif' }),
     template('builtin-event-contract-boxed', 'event-contract', 'Boxed', boxedContractBlocks(), { fontFamily: 'serif', borderWidth: 'thick', corners: 'square' }),
